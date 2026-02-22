@@ -1,0 +1,17 @@
+{
+    "name": "Mission Control",
+    "short_name": "Mission Control",
+    "description": "A dedicated dashboard for Space, AI, and Crypto news.",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#09090b",
+    "theme_color": "#09090b",
+    "orientation": "any",
+    "icons": [
+        {
+            "src": "/favicon.ico",
+            "sizes": "any",
+            "type": "image/x-icon"
+        }
+    ]
+}

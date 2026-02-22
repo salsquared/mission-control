@@ -15,6 +15,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "Mission Control",
   description: "Advanced dashboard for monitoring and autonomous systems control.",
+  manifest: "/manifest.json",
 };
 
 export default function RootLayout({
