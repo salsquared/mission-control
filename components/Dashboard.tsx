@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import { SpaceDashboard } from "./contexts/SpaceDashboard";
 import { AIDashboard } from "./contexts/AIDashboard";
 import { FinanceDashboard } from "./contexts/FinanceDashboard";
+import { AINewsDashboard } from "./contexts/AINewsDashboard";
 import { AICompanion } from "./AICompanion";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare } from "lucide-react";
@@ -32,6 +33,11 @@ export const Dashboard: React.FC = () => {
             component: <FinanceDashboard />,
         },
         {
+            id: "ai-news",
+            title: "AI News",
+            component: <AINewsDashboard />,
+        },
+        {
             id: "ai-partner",
             title: "Internal Systems",
             component: <AIDashboard />,
@@ -52,12 +58,12 @@ export const Dashboard: React.FC = () => {
     };
 
     return (
-        <div className="relative w-full h-screen overflow-hidden bg-dot-white/[0.05] bg-black text-white">
+        <div className="relative w-full h-screen overflow-hidden bg-background text-foreground transition-colors duration-500">
             {/* Background Ambient Glow */}
             <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-0">
-                <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-cyan-500/10 blur-[150px] rounded-full" />
-                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-purple-500/10 blur-[150px] rounded-full" />
-                <div className="absolute top-[40%] left-[40%] w-[20%] h-[20%] bg-blue-500/5 blur-[100px] rounded-full" />
+                <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-white/5 blur-[150px] rounded-full" />
+                <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-white/5 blur-[150px] rounded-full" />
+                <div className="absolute top-[40%] left-[40%] w-[20%] h-[20%] bg-white/5 blur-[100px] rounded-full" />
             </div>
 
             {/* Content Area */}
@@ -71,15 +77,14 @@ export const Dashboard: React.FC = () => {
                         transition={{ duration: 0.3 }}
                         className="relative z-10 w-full h-full p-12 flex flex-col items-center justify-center"
                     >
-                        {/* Current Dash Title */}
-                        <div className="absolute top-8 left-1/2 -translate-x-1/2 px-8 py-3 glass rounded-full border border-white/10 z-20 select-none backdrop-blur-md">
-                            <span className="text-xs font-bold uppercase tracking-[0.3em] text-cyan-200 drop-shadow-glow">
-                                {dashes[currentIndex].title}
-                            </span>
-                        </div>
-
                         {/* Full Screen Module */}
-                        <div className="w-full h-full max-w-7xl mx-auto bg-black/40 border border-white/10 backdrop-blur-xl rounded-3xl overflow-hidden shadow-2xl relative">
+                        <div className="w-full h-full flex flex-col pt-16 pb-4 max-w-7xl mx-auto bg-card/80 border border-white/10 rounded-3xl overflow-hidden shadow-2xl relative transition-colors duration-500">
+                            {/* Current Dash Title Inner */}
+                            <div className="absolute top-6 left-1/2 -translate-x-1/2 select-none z-20">
+                                <span className="text-sm font-bold uppercase tracking-[0.2em] text-foreground/50">
+                                    {dashes[currentIndex].title}
+                                </span>
+                            </div>
                             {dashes[currentIndex].component}
                         </div>
                     </motion.div>
@@ -95,12 +100,12 @@ export const Dashboard: React.FC = () => {
                             <button
                                 key={dash.id}
                                 onClick={() => goToSlide(index)}
-                                className="group relative flex flex-col items-center justify-center p-8 rounded-3xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-cyan-500/50 transition-all duration-300 hover:scale-[1.02]"
+                                className="group relative flex flex-col items-center justify-center p-8 rounded-3xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/30 transition-all duration-300 hover:scale-[1.02]"
                             >
-                                <div className="text-xl font-bold text-white mb-4 tracking-wider group-hover:text-cyan-400">
+                                <div className="text-xl font-bold text-white mb-4 tracking-wider group-hover:text-white/80">
                                     {dash.title}
                                 </div>
-                                <div className="w-full h-48 rounded-xl bg-black/50 border border-white/5 group-hover:border-cyan-500/30 overflow-hidden relative flex items-center justify-center">
+                                <div className="w-full h-48 rounded-xl bg-black/50 border border-white/5 group-hover:border-white/20 overflow-hidden relative flex items-center justify-center">
                                     <div className="text-white/20 text-4xl font-black uppercase tracking-tighter">
                                         PREVIEW
                                     </div>
@@ -116,13 +121,13 @@ export const Dashboard: React.FC = () => {
                 <>
                     <button
                         onClick={prevSlide}
-                        className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-4 rounded-full bg-white/5 border border-white/10 text-white/50 hover:text-cyan-400 hover:bg-white/10 hover:border-cyan-500/50 transition-all backdrop-blur-md"
+                        className="absolute left-4 top-1/2 -translate-y-1/2 z-30 p-4 rounded-full bg-black border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all"
                     >
                         <ChevronLeft className="w-8 h-8" />
                     </button>
                     <button
                         onClick={nextSlide}
-                        className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-4 rounded-full bg-white/5 border border-white/10 text-white/50 hover:text-cyan-400 hover:bg-white/10 hover:border-cyan-500/50 transition-all backdrop-blur-md"
+                        className="absolute right-4 top-1/2 -translate-y-1/2 z-30 p-4 rounded-full bg-black border border-white/10 text-white/50 hover:text-white hover:bg-white/10 transition-all"
                     >
                         <ChevronRight className="w-8 h-8" />
                     </button>
@@ -136,7 +141,7 @@ export const Dashboard: React.FC = () => {
                     className={cn(
                         "p-3 rounded-xl transition-all",
                         isLaunchpadOpen
-                            ? "bg-cyan-500/20 text-cyan-400 border border-cyan-500/50"
+                            ? "bg-white/20 text-white border border-white/30"
                             : "hover:bg-white/10 text-white/70 hover:text-white"
                     )}
                     title="Mission Control Launchpad"
@@ -151,7 +156,7 @@ export const Dashboard: React.FC = () => {
                     className={cn(
                         "p-3 rounded-xl transition-all",
                         isAIChatOpen
-                            ? "bg-purple-500/20 text-purple-400 border border-purple-500/50"
+                            ? "bg-white/20 text-white border border-white/30"
                             : "hover:bg-white/10 text-white/70 hover:text-white"
                     )}
                     title="Toggle AI Assistant"

@@ -3,113 +3,287 @@
 import React, { useEffect, useState } from "react";
 import { WidgetGrid, WidgetItem } from "../WidgetGrid";
 import { Bitcoin, TrendingUp, Wallet, Flame, Loader2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { ResponsiveContainer, LineChart, Line, YAxis, XAxis, Tooltip, CartesianGrid } from "recharts";
+
+const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ timestamp, intervalMins }) => {
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => {
+        const interval = setInterval(() => setNow(Date.now()), 30000);
+        return () => clearInterval(interval);
+    }, []);
+
+    if (!timestamp) return null;
+    const diff = Math.floor((now - timestamp) / 60000);
+    const agoText = diff === 0 ? "just now" : diff === 1 ? "1m ago" : `${diff}m ago`;
+    return (
+        <div className="text-[9px] text-muted-foreground/60 tracking-widest uppercase flex items-center gap-1">
+            {intervalMins}m <span className="text-white/10">|</span> {agoText}
+        </div>
+    );
+};
 
 export const FinanceDashboard: React.FC = () => {
-    const [trending, setTrending] = useState<any[]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [top100, setTop100] = useState<any[]>([]);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [prices, setPrices] = useState<any>({
+        bitcoin: { usd: 0, usd_24h_change: 0 },
+        ethereum: { usd: 0 },
+        solana: { usd: 0 }
+    });
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [fees, setFees] = useState<any>({});
+    const [lastUpdated, setLastUpdated] = useState<number>(0);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const [historyData, setHistoryData] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [range, setRange] = useState("1"); // days: '1', '7', '30'
+
+    const formatXAxisDate = (tickItem: number) => {
+        const d = new Date(tickItem);
+        if (range === "1") return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+        if (range === "7" || range === "30") return d.toLocaleDateString([], { month: "short", day: "numeric" });
+        return d.toLocaleDateString([], { month: "short", year: "2-digit" });
+    };
+
+    const CustomTooltip = ({ active, payload, label }: any) => {
+        if (active && payload && payload.length) {
+            return (
+                <div className="bg-black/80 border border-white/10 p-2 rounded text-xs font-mono">
+                    <p className="text-muted-foreground mb-1">{new Date(label).toLocaleString()}</p>
+                    <p className="text-orange-400 font-bold">${payload[0].value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                </div>
+            );
+        }
+        return null;
+    };
+
+    const fetchFinance = async () => {
+        try {
+            const res = await fetch("/api/finance");
+            const data = await res.json();
+            if (data?.top100) setTop100(data.top100);
+            if (data?.prices) {
+                setPrices(data.prices);
+                // initial history load if returned from finance
+                if (data.prices.bitcoin?.history && historyData.length === 0) {
+                    setHistoryData(data.prices.bitcoin.history);
+                }
+            }
+            if (data?.fees) {
+                setFees(data.fees);
+            }
+            if (data?.timestamp) {
+                setLastUpdated(data.timestamp);
+            }
+        } catch (err) {
+            console.error("Error fetching finance data", err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const fetchHistory = async (days: string) => {
+        setRange(days);
+        try {
+            const res = await fetch(`/api/finance/history?range=${days}&coin=bitcoin`);
+            const data = await res.json();
+            if (data?.history) {
+                setHistoryData(data.history);
+            }
+        } catch (err) {
+            console.error("Error fetching history", err);
+        }
+    };
 
     useEffect(() => {
-        fetch("/api/finance")
-            .then(res => res.json())
-            .then(data => {
-                if (Array.isArray(data)) {
-                    setTrending(data.slice(0, 6));
-                }
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Error fetching finance data", err);
-                setLoading(false);
-            });
-    }, []);
+        fetchFinance();
+        fetchHistory(range);
+        const interval = setInterval(() => {
+            fetchFinance();
+            fetchHistory(range);
+        }, 300000); // 5 min polling
+        return () => clearInterval(interval);
+    }, [range]);
 
     const staticWidgets: WidgetItem[] = [
         {
             id: "fin-1",
-            colSpan: 1,
+            colSpan: 4,
+            rowSpan: 2,
             content: (
-                <div className="flex flex-col h-full">
-                    <div className="flex items-center gap-2 mb-2 text-orange-400">
-                        <Bitcoin className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Bitcoin</h3>
+                <div className="flex flex-col h-[300px] sm:h-[400px]">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center gap-2 text-orange-400">
+                            <Bitcoin className="w-6 h-6" />
+                            <h3 className="font-bold tracking-wider uppercase text-lg">Bitcoin</h3>
+                        </div>
+                        <div className="flex flex-col items-end gap-1">
+                            <LastUpdated timestamp={lastUpdated} intervalMins={5} />
+                        </div>
                     </div>
-                    <div className="text-2xl font-mono text-white">$94,320</div>
-                    <div className="text-xs text-green-400">+4.2% (24h)</div>
+
+                    <div className="flex items-baseline gap-4 mb-2">
+                        <div className="text-4xl font-mono text-white">
+                            {loading && !prices.bitcoin.usd ? "..." : `$${prices.bitcoin.usd.toLocaleString()}`}
+                        </div>
+                        <div className={cn("text-sm font-bold", prices.bitcoin.usd_24h_change >= 0 ? "text-green-400" : "text-red-400")}>
+                            {loading && !prices.bitcoin.usd_24h_change ? "..." : `${prices.bitcoin.usd_24h_change >= 0 ? "+" : ""}${prices.bitcoin.usd_24h_change.toFixed(2)}% (24h)`}
+                        </div>
+                    </div>
+
+                    <div className="flex-1 w-full min-h-[220px]">
+                        {!loading && historyData?.length > 0 ? (
+                            <ResponsiveContainer width="100%" height="100%">
+                                <LineChart data={historyData} margin={{ top: 5, right: 0, left: 10, bottom: 0 }}>
+                                    <CartesianGrid strokeDasharray="3 3" stroke="#555555" />
+                                    <XAxis
+                                        dataKey="time"
+                                        tickFormatter={formatXAxisDate}
+                                        minTickGap={30}
+                                        tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontFamily: 'monospace' }}
+                                        tickMargin={10}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        padding={{ right: 20 }}
+                                    />
+                                    <YAxis
+                                        domain={['auto', 'auto']}
+                                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10, fontFamily: 'monospace' }}
+                                        tickFormatter={(val) => `$${val.toLocaleString()}`}
+                                        axisLine={false}
+                                        tickLine={false}
+                                        width={65}
+                                    />
+                                    <Tooltip content={<CustomTooltip />} />
+                                    <Line
+                                        type="monotone"
+                                        dataKey="price"
+                                        stroke="#f97316"
+                                        strokeWidth={2}
+                                        dot={false}
+                                        activeDot={{ r: 4, fill: '#f97316', stroke: '#000', strokeWidth: 2 }}
+                                        isAnimationActive={true}
+                                    />
+                                </LineChart>
+                            </ResponsiveContainer>
+                        ) : (
+                            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
+                                <Loader2 className="w-6 h-6 animate-spin" />
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="flex gap-2 border border-white/5 rounded-md p-1 bg-black/20 w-max mx-auto mt-4">
+                        {[
+                            { v: "1", l: "1D" },
+                            { v: "7", l: "1W" },
+                            { v: "30", l: "1M" },
+                            { v: "180", l: "6M" },
+                            { v: "365", l: "1Y" },
+                            { v: "max", l: "MAX" }
+                        ].map((r) => (
+                            <button
+                                key={r.v}
+                                onClick={() => fetchHistory(r.v)}
+                                className={cn(
+                                    "px-3 py-1 text-xs font-bold rounded bg-transparent transition-colors",
+                                    range === r.v ? "bg-orange-500 text-white" : "text-muted-foreground hover:text-white"
+                                )}
+                            >
+                                {r.l}
+                            </button>
+                        ))}
+                    </div>
                 </div>
             ),
         },
         {
             id: "fin-2",
             colSpan: 2,
+            rowSpan: 2, // Take up more vertical space for the list
             content: (
-                <div className="flex flex-col h-full">
-                    <div className="flex items-center gap-2 mb-2 text-indigo-400">
-                        <TrendingUp className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Market Overview</h3>
+                <div className="flex flex-col h-[300px] sm:h-[400px]">
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 text-indigo-400">
+                            <TrendingUp className="w-5 h-5" />
+                            <h3 className="font-bold tracking-wider uppercase text-sm">Market Top 100</h3>
+                        </div>
+                        <LastUpdated timestamp={lastUpdated} intervalMins={5} />
                     </div>
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="p-2 bg-white/5 rounded">
-                            <span className="text-muted-foreground">ETH</span>
-                            <div className="text-white font-mono">$4,850</div>
+                    <div className="flex items-center justify-between px-3 pb-2 text-[10px] font-bold text-muted-foreground uppercase tracking-wider border-b border-white/5 mr-2 mb-2">
+                        <div className="flex items-center gap-3 flex-1">
+                            <span className="w-4 text-left">#</span>
+                            <span className="ml-1 text-left">Project Name</span>
                         </div>
-                        <div className="p-2 bg-white/5 rounded">
-                            <span className="text-muted-foreground">SOL</span>
-                            <div className="text-white font-mono">$285</div>
+                        <div className="flex items-center gap-4 justify-end shrink-0">
+                            <span className="hidden sm:block w-[60px] text-right">MCap</span>
+                            <span className="min-w-[70px] text-right">Price</span>
                         </div>
+                    </div>
+                    <div className="flex flex-col gap-2 text-xs flex-1 overflow-y-auto pr-2 custom-scrollbar">
+                        {loading && top100.length === 0 ? (
+                            <div className="flex h-full items-center justify-center text-indigo-500">
+                                <Loader2 className="w-6 h-6 animate-spin" />
+                            </div>
+                        ) : (
+                            top100.map((coin) => (
+                                <div key={coin.id} className="flex justify-between items-center p-3 bg-white/5 rounded-lg border border-white/5 shrink-0 hover:bg-white/10 transition-colors">
+                                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                                        <div className="text-muted-foreground font-mono text-[10px] w-4 text-left">{coin.marketCapRank}</div>
+                                        <img src={coin.image} alt={coin.name} className="w-6 h-6 rounded-full shrink-0" />
+                                        <div className="flex flex-col min-w-0">
+                                            <span className="text-white font-bold truncate max-w-[80px] sm:max-w-[120px]">{coin.name}</span>
+                                            <span className="text-muted-foreground font-mono text-[10px] uppercase truncate">{coin.symbol}</span>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-4 justify-end shrink-0">
+                                        <div className="text-[10px] text-muted-foreground font-mono hidden sm:block w-[60px] text-right">
+                                            ${(coin.marketCap / 1e9).toFixed(2)}B
+                                        </div>
+                                        <div className="flex flex-col items-end min-w-[70px]">
+                                            <div className="text-white font-mono text-sm">
+                                                ${coin.currentPrice.toLocaleString(undefined, { minimumFractionDigits: coin.currentPrice < 1 ? 4 : 2, maximumFractionDigits: coin.currentPrice < 1 ? 4 : 2 })}
+                                            </div>
+                                            <div className={cn("text-[10px] font-bold", coin.priceChange24h >= 0 ? "text-green-400" : "text-red-400")}>
+                                                {coin.priceChange24h >= 0 ? "+" : ""}{coin.priceChange24h?.toFixed(2)}%
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            ))
+                        )}
                     </div>
                 </div>
             ),
         },
         {
             id: "fin-3",
-            colSpan: 1,
+            colSpan: 2,
             content: (
                 <div className="flex flex-col h-full">
-                    <div className="flex items-center gap-2 mb-2 text-green-400">
-                        <Wallet className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Gas</h3>
+                    <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center gap-2 text-green-400">
+                            <Wallet className="w-5 h-5" />
+                            <h3 className="font-bold tracking-wider uppercase text-sm">Gas</h3>
+                        </div>
+                        <LastUpdated timestamp={lastUpdated} intervalMins={5} />
                     </div>
-                    <div className="text-xl font-mono text-white">12 Gwei</div>
-                    <div className="text-xs text-muted-foreground">Low Congestion</div>
+                    <div className="flex items-center justify-center flex-1 w-full h-full bg-black/20 rounded-lg border border-white/5 py-8 min-h-[120px]">
+                        <div className="text-center">
+                            <div className="text-3xl font-mono text-white mb-1">{loading || !fees?.fastestFee ? "..." : `${fees.fastestFee} sat/vB`}</div>
+                            <div className="text-xs text-muted-foreground font-bold uppercase tracking-wider">{loading || !fees?.fastestFee ? "..." : "High Priority"}</div>
+                        </div>
+                    </div>
                 </div>
             ),
         },
     ];
 
-    const trendingWidgets: WidgetItem[] = loading ? [
-        {
-            id: "loading-finance",
-            colSpan: 4,
-            content: (
-                <div className="flex items-center justify-center py-8 text-orange-500">
-                    <Loader2 className="w-8 h-8 animate-spin" />
-                </div>
-            )
-        }
-    ] : trending.map((coin, index) => ({
-        id: `coin-${coin.id || index}`,
-        colSpan: 1,
-        content: (
-            <div className="flex flex-col h-full justify-between items-center text-center">
-                <div className="flex items-center gap-1 mb-2 text-orange-400/80">
-                    <Flame className="w-3 h-3" />
-                    <span className="text-[10px] uppercase tracking-wider font-bold">Trending</span>
-                </div>
-                {coin.thumb && (
-                    <img src={coin.thumb} alt={coin.name} className="w-10 h-10 rounded-full mb-2 mx-auto" />
-                )}
-                <h3 className="text-white font-medium text-sm truncate w-full">
-                    {coin.name}
-                </h3>
-                <span className="text-xs text-muted-foreground uppercase">{coin.symbol}</span>
-                <div className="mt-2 text-[10px] text-muted-foreground">Rank #{coin.marketCapRank}</div>
-            </div>
-        )
-    }));
-
     return (
         <div className="w-full h-full overflow-y-auto pb-8">
-            <WidgetGrid items={[...staticWidgets, ...trendingWidgets]} />
+            <WidgetGrid items={staticWidgets} />
         </div>
     );
 };

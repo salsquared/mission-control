@@ -23,6 +23,9 @@
 # misc
 .DS_Store
 *.pem
+.vscode/
+.idea/
+*.code-workspace
 
 # debug
 npm-debug.log*
@@ -39,3 +42,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# serwist PWA
+public/sw.js
+public/sw.js.map
+public/workbox-*.js
+public/swe-worker-*.js
+
+/lib/generated/prisma
+
+# prisma
+/prisma/*.db
+/prisma/*.db-journal
+*.db
+*.db-journal
