@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { SpaceDashboard } from "./contexts/SpaceDashboard";
-import { InternalDashboard } from "./contexts/InternalDashboard";
-import { FinanceDashboard } from "./contexts/FinanceDashboard";
-import { AIDashboard } from "./contexts/AIDashboard";
+import { SpaceView } from "./views/SpaceView";
+import { InternalView } from "./views/InternalView";
+import { FinanceView } from "./views/FinanceView";
+import { AIView } from "./views/AIView";
 import { AICompanion } from "./AICompanion";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare } from "lucide-react";
@@ -25,22 +25,22 @@ export const Dashboard: React.FC = () => {
         {
             id: "rocketry",
             title: "Launches & Telemetry",
-            component: <SpaceDashboard />,
+            component: <SpaceView />,
         },
         {
             id: "crypto",
             title: "Market Analysis",
-            component: <FinanceDashboard />,
+            component: <FinanceView />,
         },
         {
             id: "ai-news",
             title: "AI News",
-            component: <AIDashboard />,
+            component: <AIView />,
         },
         {
             id: "ai-partner",
             title: "Internal Systems",
-            component: <InternalDashboard />,
+            component: <InternalView />,
         },
     ];
 

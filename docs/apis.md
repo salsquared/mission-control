@@ -100,7 +100,7 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 - **Internal Cache:** 1 hour TTL
 - **Purpose:** Fetches information about the next upcoming rocket launches worldwide.
 - **External API Used:** The Space Devs Launch Library 2
-  - Endpoint: `https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=10`
+  - Endpoint: `https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=100`
 - **Response Schema:**
   ```typescript
   // Returns raw Launch Library 2 Results Payload

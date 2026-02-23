@@ -1,9 +1,14 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { WidgetGrid, WidgetItem } from "../WidgetGrid";
+import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
 import { Rocket, Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
 import { NewsCyclingCard } from "../NewsCyclingCard";
+import { NextLaunchCard } from "../cards/NextLaunchCard";
+import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
+import { Calendar } from "lucide-react";
+
+// (Previous imports and helper functions remain exactly the same...)
 import {
     WiMoonNew,
     WiMoonWaxingCrescent3,
@@ -47,49 +52,7 @@ export interface Launch {
     image: string;
 }
 
-const NextLaunchTimer: React.FC<{ launch: Launch | null }> = ({ launch }) => {
-    const [timeUntilLaunch, setTimeUntilLaunch] = useState<string>("Calculating...");
-
-    useEffect(() => {
-        if (!launch) {
-            setTimeUntilLaunch("Calculating...");
-            return;
-        }
-
-        const nextLaunchNet = new Date(launch.net).getTime();
-
-        const updateTimer = () => {
-            const now = new Date().getTime();
-            const diff = nextLaunchNet - now;
-
-            if (diff <= 0) {
-                setTimeUntilLaunch("Launched!");
-                return;
-            }
-
-            const h = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-            const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-            const s = Math.floor((diff % (1000 * 60)) / 1000);
-
-            let tStr = "T-Minus ";
-            if (diff >= 1000 * 60 * 60 * 24) {
-                const d = Math.floor(diff / (1000 * 60 * 60 * 24));
-                tStr += `${d}d `;
-            }
-            tStr += `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-            setTimeUntilLaunch(tStr);
-        };
-
-        updateTimer(); // Initial call
-        const interval = setInterval(updateTimer, 1000);
-
-        return () => clearInterval(interval);
-    }, [launch]);
-
-    return <div className="text-3xl font-mono text-white">{timeUntilLaunch}</div>;
-};
-
-export const SpaceDashboard: React.FC = () => {
+export const SpaceView: React.FC = () => {
     const [newsBySource, setNewsBySource] = useState<Record<string, SpaceArticle[]>>({});
     const [launches, setLaunches] = useState<Launch[]>([]);
     const [satellitesData, setSatellitesData] = useState<any>(null);
@@ -123,11 +86,11 @@ export const SpaceDashboard: React.FC = () => {
 
     useEffect(() => {
         Promise.all([
-            fetch("/api/space").then(res => res.json()),
-            fetch("/api/space/launches").then(res => res.json()),
-            fetch("/api/space/satellites").then(res => res.json()),
-            fetch("/api/space/solar").then(res => res.json()),
-            fetch("/api/space/moon").then(res => res.json())
+            fetch("/api/space?bust=2").then(res => res.json()),
+            fetch("/api/space/launches?bust=2").then(res => res.json()),
+            fetch("/api/space/satellites?bust=2").then(res => res.json()),
+            fetch("/api/space/solar?bust=2").then(res => res.json()),
+            fetch("/api/space/moon?bust=2").then(res => res.json())
         ])
             .then(([spaceData, launchData, satsData, solar, moon]) => {
                 if (Array.isArray(spaceData)) {
@@ -167,41 +130,31 @@ export const SpaceDashboard: React.FC = () => {
             });
     }, []);
 
-
-
-    const nextLaunch = launches.length > 0 ? launches[0] : null;
-
     const staticWidgets: WidgetItem[] = [
         {
-            id: "space-1",
+            id: "space-launch-info",
+            hFit: true,
+            content: <NextLaunchCard launches={launches} loading={loading} />
+        },
+        {
+            id: "space-calendar",
+            colSpan: 2,
+            rowSpan: 2,
             content: (
-                <div className="flex flex-col h-full">
-                    <div className="flex items-center gap-2 mb-2 text-cyan-400">
-                        <Rocket className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Next Launch</h3>
+                <div className="flex flex-col overflow-y-auto pr-1">
+                    <div className="flex items-center gap-2 mb-2 text-blue-400">
+                        <Calendar className="w-5 h-5 shrink-0" />
+                        <h3 className="font-bold tracking-wider uppercase text-sm">Launch Calendar</h3>
                     </div>
-                    {nextLaunch ? (
-                        <div className="flex-1 flex flex-col justify-center py-4">
-                            <NextLaunchTimer launch={nextLaunch} />
-                            <div className="text-xs text-muted-foreground mt-1 line-clamp-1" title={nextLaunch.name}>
-                                {nextLaunch.name}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1 line-clamp-1 opacity-70">
-                                {nextLaunch.pad?.location?.name || "Unknown Location"}
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="flex-1 flex flex-col justify-center py-4 text-muted-foreground text-sm">
-                            {loading ? "Loading..." : "No upcoming launches found"}
-                        </div>
-                    )}
+                    <LaunchCalendarWidget launches={launches} />
                 </div>
-            ),
+            )
         },
         {
             id: "space-2",
+            hFit: true,
             content: (
-                <div className="flex flex-col h-full overflow-y-auto pr-1">
+                <div className="flex flex-col overflow-y-auto pr-1">
                     <div className="flex items-center gap-2 mb-2 text-purple-400">
                         <Satellite className="w-5 h-5 shrink-0" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">Active Sats</h3>
@@ -262,8 +215,9 @@ export const SpaceDashboard: React.FC = () => {
         },
         {
             id: "space-3",
+            hFit: true,
             content: (
-                <div className="flex flex-col h-full">
+                <div className="flex flex-col">
                     <div className="flex items-center gap-2 mb-2 text-yellow-400">
                         <ThermometerSun className="w-5 h-5" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">Solar Activity</h3>
@@ -283,8 +237,9 @@ export const SpaceDashboard: React.FC = () => {
         },
         {
             id: "space-4",
+            hFit: true,
             content: (
-                <div className="flex flex-col h-full">
+                <div className="flex flex-col">
                     <div className="flex items-center gap-2 mb-2 text-slate-300">
                         <Moon className="w-5 h-5" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">Lunar Cycle</h3>
@@ -357,8 +312,9 @@ export const SpaceDashboard: React.FC = () => {
                     <h2 className="text-2xl font-bold text-white">Space Data</h2>
                     <p className="text-sm text-muted-foreground">Real-time metrics and tracking</p>
                 </div>
-                <WidgetGrid items={staticWidgets} layout="masonry" />
+                <WidgetGrid items={staticWidgets} layout="grid" className="grid-flow-row-dense" />
             </div>
+
 
             <div className="mt-8">
                 <div className="mb-4 px-6">

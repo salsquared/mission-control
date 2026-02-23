@@ -2,7 +2,7 @@
 
 import React, { ReactNode } from "react";
 import { cn } from "@/lib/utils";
-import { GraphWidget } from "./GraphWidget";
+import { GraphWidget } from "../widgets/GraphWidget";
 
 export interface AssetPriceCardProps {
     title: string;

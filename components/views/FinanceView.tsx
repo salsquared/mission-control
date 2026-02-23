@@ -1,11 +1,11 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { WidgetGrid, WidgetItem } from "../WidgetGrid";
+import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
 import { Bitcoin, TrendingUp, Wallet, Flame, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ResponsiveContainer, LineChart, Line, YAxis, XAxis, Tooltip, CartesianGrid } from "recharts";
-import { AssetPriceCard } from "../widgets/AssetPriceCard";
+import { AssetPriceCard } from "../cards/AssetPriceCard";
 
 const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ timestamp, intervalMins }) => {
     const [now, setNow] = useState(Date.now());
@@ -24,7 +24,7 @@ const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ ti
     );
 };
 
-export const FinanceDashboard: React.FC = () => {
+export const FinanceView: React.FC = () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [top100, setTop100] = useState<any[]>([]);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

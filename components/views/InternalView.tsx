@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useState } from "react";
-import { WidgetGrid, WidgetItem } from "../WidgetGrid";
+import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
 import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server } from "lucide-react";
 
-export const InternalDashboard: React.FC = () => {
+export const InternalView: React.FC = () => {
     // Dummy state for settings toggles
     const [autoResearch, setAutoResearch] = useState(true);
     const [backgroundTasks, setBackgroundTasks] = useState(true);

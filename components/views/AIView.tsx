@@ -1,10 +1,10 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { WidgetGrid, WidgetItem } from "../WidgetGrid";
+import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
 import { Terminal, Loader2, Newspaper } from "lucide-react";
 
-export const AIDashboard: React.FC = () => {
+export const AIView: React.FC = () => {
     const [news, setNews] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
