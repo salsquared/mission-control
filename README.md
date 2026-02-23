@@ -1,5 +1,16 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Prerequisites
+
+This project requires **Node.js LTS** (currently **v24.13.1**). We recommend using [nvm](https://github.com/nvm-sh/nvm) (or [nvm-windows](https://github.com/coreybutler/nvm-windows) for Windows) to manage your Node versions.
+
+To install and use the recommended version:
+
+```bash
+nvm install lts
+nvm use lts
+```
+
 ## Getting Started
 
 First, run the development server:

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { withCache } from '../../../../lib/cache';
 
 const LAUNCH_API_URL = 'https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=10';
 
-export async function GET() {
+async function getHandler() {
     try {
         const res = await fetch(LAUNCH_API_URL, {
             next: { revalidate: 3600 }, // Cache for 1 hour to respect 15 req/hour rate limit
@@ -22,3 +23,5 @@ export async function GET() {
         return NextResponse.json({ error: 'Failed to fetch upcoming launches' }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler, 3600);

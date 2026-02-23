@@ -124,10 +124,10 @@ export const SpaceDashboard: React.FC = () => {
     useEffect(() => {
         Promise.all([
             fetch("/api/space").then(res => res.json()),
-            fetch("/api/launches").then(res => res.json()),
-            fetch("/api/satellites").then(res => res.json()),
-            fetch("/api/solar").then(res => res.json()),
-            fetch("/api/moon").then(res => res.json())
+            fetch("/api/space/launches").then(res => res.json()),
+            fetch("/api/space/satellites").then(res => res.json()),
+            fetch("/api/space/solar").then(res => res.json()),
+            fetch("/api/space/moon").then(res => res.json())
         ])
             .then(([spaceData, launchData, satsData, solar, moon]) => {
                 if (Array.isArray(spaceData)) {

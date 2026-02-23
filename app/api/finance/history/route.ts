@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withCache } from '../../../../lib/cache';
 
-export async function GET(request: Request) {
+async function getHandler(request: Request) {
     const { searchParams } = new URL(request.url);
     const range = searchParams.get('range') || '1'; // default to 1 day
     const coin = searchParams.get('coin') || 'bitcoin';
@@ -70,3 +71,5 @@ export async function GET(request: Request) {
         return NextResponse.json({ error: 'Failed to fetch history' }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler as any, 300); // 5 mins TTL

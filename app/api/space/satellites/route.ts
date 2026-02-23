@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { withCache } from '../../../../lib/cache';
 
 export const revalidate = 3600; // Cache for 1 hour
 
-export async function GET() {
+async function getHandler() {
     try {
         const res = await fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json");
 
@@ -63,3 +64,5 @@ export async function GET() {
         return NextResponse.json({ error: "Failed to fetch satellite data" }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler, 3600);

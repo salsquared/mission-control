@@ -9,6 +9,7 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 ### AI Dashboard
 #### AI News
 - **Route:** `GET /api/ai`
+- **Internal Cache:** 1 hour TTL
 - **Purpose:** Fetches the latest stories related to "Artificial Intelligence" or "AI".
 - **External API Used:** Hacker News Algolia API
   - Endpoint: `https://hn.algolia.com/api/v1/search?query="Artificial Intelligence" OR "AI"&tags=story&hitsPerPage=10`
@@ -27,6 +28,7 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 ### Finance Dashboard
 #### Finance Data
 - **Route:** `GET /api/finance`
+- **Internal Cache:** 5 minutes TTL
 - **Purpose:** Fetches current prices for top cryptocurrencies (Bitcoin, Ethereum, Solana), the top 100 list of cryptocurrencies by market cap, and recommended Bitcoin network fees mapping them out for our finance dashboard.
 - **External APIs Used:** 
   - CoinGecko API:
@@ -59,6 +61,7 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 
 #### Finance History (Chart Data)
 - **Route:** `GET /api/finance/history?coin=[coinId]&range=[days]`
+- **Internal Cache:** 5 minutes TTL
 - **Purpose:** Retrieves historical market chart data (price, market cap, and volume) for rendering charts.
 - **External API Used:** CoinGecko API
   - Endpoint: `https://api.coingecko.com/api/v3/coins/[coin_id]/market_chart?vs_currency=usd&days=[range_in_days]`
@@ -75,6 +78,7 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 ### Space Dashboard
 #### Space News
 - **Route:** `GET /api/space`
+- **Internal Cache:** 1 hour TTL
 - **Purpose:** Retrieves the latest articles related to spaceflight and exploration.
 - **External API Used:** Spaceflight News API (SNAPI)
   - Endpoint: `https://api.spaceflightnewsapi.net/v4/articles/?limit=50`
@@ -92,7 +96,8 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   ```
 
 #### Rocket Launches
-- **Route:** `GET /api/launches`
+- **Route:** `GET /api/space/launches`
+- **Internal Cache:** 1 hour TTL
 - **Purpose:** Fetches information about the next upcoming rocket launches worldwide.
 - **External API Used:** The Space Devs Launch Library 2
   - Endpoint: `https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=10`
@@ -112,7 +117,8 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   ```
 
 #### Solar Activity (Planned)
-- **Route:** `GET /api/solar`
+- **Route:** `GET /api/space/solar`
+- **Internal Cache:** 5 minutes TTL
 - **Purpose:** Fetches current solar activity and space weather, such as current X-Ray flux.
 - **External API Used:** NOAA Space Weather Prediction Center (SWPC) JSON REST API
 - **Expected Response Schema:**
@@ -125,7 +131,8 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   ```
 
 #### Satellites (Planned)
-- **Route:** `GET /api/satellites`
+- **Route:** `GET /api/space/satellites`
+- **Internal Cache:** 1 hour TTL
 - **Purpose:** Retrieves information and active counts for all currently active satellites in Earth-centric orbits, categorizing them by orbit type (LEO, MEO, GEO, SSO) and notable sub-categories (e.g., Starlink).
 - **External API Used:** CelesTrak API / Space-Track API / N2YO / UCS Satellite Database
 - **Expected Response Schema:**
@@ -147,7 +154,8 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   ```
 
 #### Moon
-- **Route:** `GET /api/moon`
+- **Route:** `GET /api/space/moon`
+- **Internal Cache:** 24 hours TTL
 - **Purpose:** Provides a weekly calendar of the moon's cycles and highlights upcoming global lunar phenomena, such as supermoons or lunar eclipses (taking place all over the world).
 - **External API Used:** Internal Calculation (Algorithms) / Hardcoded global events
 - **Expected Response Schema:**

@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { withCache } from '../../../../lib/cache';
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -18,7 +19,7 @@ function getStatusFromFlux(category: string): string {
     return "Normal";
 }
 
-export async function GET() {
+async function getHandler() {
     try {
         const res = await fetch("https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json");
 
@@ -42,3 +43,5 @@ export async function GET() {
         return NextResponse.json({ error: "Failed to fetch solar data" }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler, 300); // Cache for 5 mins

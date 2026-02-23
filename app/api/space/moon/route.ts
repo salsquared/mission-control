@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { withCache } from '../../../../lib/cache';
 
 // Constants for lunar calculations
 const LUNAR_MONTH = 29.53058867; // average length of a lunar month in days
@@ -54,7 +55,7 @@ function getMoonPhaseAndIllumination(date: Date) {
     };
 }
 
-export async function GET() {
+async function getHandler() {
     try {
         const today = new Date();
 
@@ -86,3 +87,5 @@ export async function GET() {
         return NextResponse.json({ error: 'Failed to fetch moon data' }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler, 86400); // Cache moon data for 24h

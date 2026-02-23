@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server';
+import { withCache } from '../../../lib/cache';
 
 // Using Hacker News Algolia Search API for "AI" or "Artificial Intelligence"
 const HN_SEARCH_URL = 'https://hn.algolia.com/api/v1/search?query="Artificial Intelligence" OR "AI"&tags=story&hitsPerPage=10';
 
-export async function GET() {
+async function getHandler() {
     try {
         const res = await fetch(HN_SEARCH_URL, {
             next: { revalidate: 3600 }, // Cache for 1 hour
@@ -31,3 +32,5 @@ export async function GET() {
         return NextResponse.json({ error: 'Failed to fetch AI news' }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler, 3600); // 1 hour TTL

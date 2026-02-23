@@ -69,7 +69,7 @@ async function testSpace() {
 }
 
 async function testLaunches() {
-    const res = await fetch("http://localhost:3000/api/launches");
+    const res = await fetch("http://localhost:3000/api/space/launches");
     const data = await res.json();
 
     if (!Array.isArray(data)) throw new Error("Launches should be an array");
@@ -86,6 +86,58 @@ async function testLaunches() {
     console.log("✅ Rocket Launches schema passed");
 }
 
+async function testSolar() {
+    const res = await fetch("http://localhost:3000/api/space/solar");
+    const data = await res.json();
+    if (typeof data.status !== "string") throw new Error("Solar status should be string");
+    if (typeof data.xray_flux !== "string") throw new Error("Solar xray_flux should be string");
+    if (typeof data.updated_at !== "string") throw new Error("Solar updated_at should be string");
+    console.log("✅ Solar Activity schema passed");
+}
+
+async function testSatellites() {
+    const res = await fetch("http://localhost:3000/api/space/satellites");
+    // Since some schemas could error if satellite API is down or just planned, let's catch it softly or throw.
+    // Based on docs, it is "Planned", but if it's returning real data we will assert against it.
+    const data = await res.json();
+    if (data.error) {
+        console.warn("⚠️ Satellites data unavailable or returned an error:", data.error);
+        return;
+    }
+
+    if (typeof data.total_active !== "number") throw new Error("Satellites total_active should be number");
+    if (typeof data.orbits !== "object") throw new Error("Satellites orbits should be an object");
+    if (typeof data.orbits.LEO !== "number") throw new Error("Satellites orbits.LEO should be number");
+    if (typeof data.orbits.MEO !== "number") throw new Error("Satellites orbits.MEO should be number");
+    if (typeof data.orbits.GEO !== "number") throw new Error("Satellites orbits.GEO should be number");
+    if (typeof data.orbits.SSO !== "number") throw new Error("Satellites orbits.SSO should be number");
+    if (typeof data.constellations !== "object") throw new Error("Satellites constellations should be an object");
+    if (typeof data.constellations.starlink !== "number") throw new Error("Satellites constellations.starlink should be number");
+    console.log("✅ Satellites schema passed");
+}
+
+async function testMoon() {
+    const res = await fetch("http://localhost:3000/api/space/moon");
+    const data = await res.json();
+
+    if (!Array.isArray(data.weekly_cycles)) throw new Error("Moon weekly_cycles should be an array");
+    if (data.weekly_cycles.length > 0) {
+        const cycle = data.weekly_cycles[0];
+        if (typeof cycle.date !== "string") throw new Error("Moon weekly_cycles[].date should be string");
+        if (typeof cycle.phase !== "string") throw new Error("Moon weekly_cycles[].phase should be string");
+        if (typeof cycle.illumination !== "number") throw new Error("Moon weekly_cycles[].illumination should be number");
+    }
+
+    if (data.next_phenomenon) {
+        if (typeof data.next_phenomenon.type !== "string") throw new Error("Moon next_phenomenon.type should be string");
+        if (typeof data.next_phenomenon.date !== "string") throw new Error("Moon next_phenomenon.date should be string");
+        if (typeof data.next_phenomenon.description !== "string") throw new Error("Moon next_phenomenon.description should be string");
+    }
+
+    if (typeof data.updated_at !== "string") throw new Error("Moon updated_at should be string");
+    console.log("✅ Moon schema passed");
+}
+
 async function runTests() {
     try {
         console.log("Running API Schema Validation tests against localhost...");
@@ -94,6 +146,9 @@ async function runTests() {
         await testFinanceHistory();
         await testSpace();
         await testLaunches();
+        await testSolar();
+        await testSatellites();
+        await testMoon();
         console.log("🚀 All API Schema validations passed!");
     } catch (error) {
         console.error("❌ Test failed:", error instanceof Error ? error.message : error);

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
+import { withCache } from '../../../lib/cache';
 
 const SNAPI_URL = 'https://api.spaceflightnewsapi.net/v4/articles/?limit=50';
 
-export async function GET() {
+async function getHandler() {
     try {
         const res = await fetch(SNAPI_URL, {
             next: { revalidate: 3600 }, // Cache for 1 hour
@@ -19,3 +20,5 @@ export async function GET() {
         return NextResponse.json({ error: 'Failed to fetch space news' }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler, 3600);

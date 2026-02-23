@@ -1,12 +1,13 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
+import { withCache } from '../../../lib/cache';
 
 // CoinGecko markets API for top 100
 const COINGECKO_TOP100_URL = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=false&price_change_percentage=24h';
 const COINGECKO_PRICES_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true';
 const MEMPOOL_FEES_URL = 'https://mempool.space/api/v1/fees/recommended';
 
-export async function GET() {
+async function getHandler() {
     try {
         const [top100Res, pricesRes, feesRes] = await Promise.all([
             fetch(COINGECKO_TOP100_URL, {
@@ -82,3 +83,5 @@ export async function GET() {
         return NextResponse.json({ error: 'Failed to fetch finance data' }, { status: 500 });
     }
 }
+
+export const GET = withCache(getHandler, 300); // 5 minutes TTL
