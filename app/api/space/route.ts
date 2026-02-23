@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const SNAPI_URL = 'https://api.spaceflightnewsapi.net/v4/articles/?limit=10';
+const SNAPI_URL = 'https://api.spaceflightnewsapi.net/v4/articles/?limit=50';
 
 export async function GET() {
     try {

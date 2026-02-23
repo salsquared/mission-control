@@ -2,9 +2,9 @@
 
 import React, { useState } from "react";
 import { SpaceDashboard } from "./contexts/SpaceDashboard";
-import { AIDashboard } from "./contexts/AIDashboard";
+import { InternalDashboard } from "./contexts/InternalDashboard";
 import { FinanceDashboard } from "./contexts/FinanceDashboard";
-import { AINewsDashboard } from "./contexts/AINewsDashboard";
+import { AIDashboard } from "./contexts/AIDashboard";
 import { AICompanion } from "./AICompanion";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare } from "lucide-react";
@@ -35,12 +35,12 @@ export const Dashboard: React.FC = () => {
         {
             id: "ai-news",
             title: "AI News",
-            component: <AINewsDashboard />,
+            component: <AIDashboard />,
         },
         {
             id: "ai-partner",
             title: "Internal Systems",
-            component: <AIDashboard />,
+            component: <InternalDashboard />,
         },
     ];
 

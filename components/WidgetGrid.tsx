@@ -7,18 +7,24 @@ import { cn } from "@/lib/utils";
 export interface WidgetItem {
     id: string;
     content: React.ReactNode;
-    colSpan?: number; // 1 to 4, assuming 4-col grid
+    colSpan?: number; // 1 to 3, assuming 3-col grid
     rowSpan?: number;
 }
 
 interface WidgetGridProps {
     items: WidgetItem[];
     className?: string;
+    layout?: "grid" | "masonry";
 }
 
-export const WidgetGrid: React.FC<WidgetGridProps> = ({ items, className }) => {
+export const WidgetGrid: React.FC<WidgetGridProps> = ({ items, className, layout = "grid" }) => {
     return (
-        <div className={cn("grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 p-2", className)}>
+        <div className={cn(
+            layout === "grid"
+                ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-2"
+                : "columns-1 md:columns-2 lg:columns-3 gap-4 p-2",
+            className
+        )}>
             {items.map((item) => (
                 <motion.div
                     key={item.id}
@@ -27,10 +33,11 @@ export const WidgetGrid: React.FC<WidgetGridProps> = ({ items, className }) => {
                     dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
                     dragElastic={0.2}
                     className={cn(
-                        "relative bg-black/40 border border-white/5 rounded-lg overflow-hidden backdrop-blur-sm",
+                        "relative bg-black/40 border border-white/5 rounded-lg overflow-hidden backdrop-blur-sm break-inside-avoid",
+                        layout === "masonry" ? "mb-4 inline-block w-full" : "",
                         "hover:border-cyan-500/30 transition-colors group z-0 hover:z-10 cursor-grab active:cursor-grabbing",
-                        item.colSpan ? `col-span-${item.colSpan}` : "col-span-1",
-                        item.rowSpan ? `row-span-${item.rowSpan}` : "row-span-1"
+                        layout === "grid" && item.colSpan ? `col-span-${item.colSpan}` : "",
+                        layout === "grid" && item.rowSpan ? `row-span-${item.rowSpan}` : ""
                     )}
                     whileHover={{ scale: 1.02 }}
                     whileTap={{ scale: 0.98 }}

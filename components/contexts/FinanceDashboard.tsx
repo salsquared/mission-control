@@ -42,9 +42,23 @@ export const FinanceDashboard: React.FC = () => {
 
     const formatXAxisDate = (tickItem: number) => {
         const d = new Date(tickItem);
+
         if (range === "1") return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-        if (range === "7" || range === "30") return d.toLocaleDateString([], { month: "short", day: "numeric" });
-        return d.toLocaleDateString([], { month: "short", year: "2-digit" });
+
+        const getOrdinalNum = (n: number) => {
+            const s = ["th", "st", "nd", "rd"];
+            const v = n % 100;
+            return n + (s[(v - 20) % 10] || s[v] || s[0]);
+        };
+
+        const monthStr = d.toLocaleDateString([], { month: "short" });
+
+        if (range === "7" || range === "30") {
+            return `${monthStr} ${getOrdinalNum(d.getDate())}`;
+        }
+
+        const shortYear = d.getFullYear().toString().slice(-2);
+        return `${monthStr} '${shortYear}`;
     };
 
     const CustomTooltip = ({ active, payload, label }: any) => {
@@ -110,7 +124,7 @@ export const FinanceDashboard: React.FC = () => {
     const staticWidgets: WidgetItem[] = [
         {
             id: "fin-1",
-            colSpan: 4,
+            colSpan: 3,
             rowSpan: 2,
             content: (
                 <div className="flex flex-col h-[300px] sm:h-[400px]">

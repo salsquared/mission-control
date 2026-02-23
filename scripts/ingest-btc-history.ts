@@ -9,25 +9,45 @@
  * Data is inserted in batches to handle large payloads efficiently.
  */
 
+import 'dotenv/config';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
 async function main() {
-    console.log('Fetching BTC history from CoinGecko...');
-    const url = `https://api.coingecko.com/api/v3/coins/bitcoin/market_chart?vs_currency=usd&days=max`;
-    const res = await fetch(url);
+    console.log('Fetching BTC history from Yahoo Finance...');
+    // Yahoo Finance API provides up to max history at daily intervals if we ask for 15y
+    const url = 'https://query1.finance.yahoo.com/v8/finance/chart/BTC-USD?interval=1d&range=15y';
+
+    // Add User-Agent to prevent 403 Forbidden
+    const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+    });
 
     if (!res.ok) {
-        throw new Error(`Failed to fetch history: ${res.statusText}`);
+        throw new Error(`Failed to fetch history: ${res.status} ${res.statusText}`);
     }
 
     const data = await res.json();
-    if (!data?.prices) {
-        throw new Error('Invalid history format');
+    const result = data.chart?.result?.[0];
+
+    if (!result || !result.timestamp || !result.indicators?.quote?.[0]?.close) {
+        throw new Error('Invalid history format from Yahoo Finance');
     }
 
-    const prices = data.prices; // Array of [timestamp, price]
+    const timestamps = result.timestamp;
+    const closes = result.indicators.quote[0].close;
+
+    // Combine timestamp and close prices. Yahoo timestamp is in seconds, so multiply by 1000
+    const prices: [number, number][] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+        const time = timestamps[i] * 1000;
+        const price = closes[i];
+        if (price !== null && price !== undefined) {
+            prices.push([time, price]);
+        }
+    }
+
     console.log(`Fetched ${prices.length} price points.`);
 
     const existingCount = await prisma.cryptoPrice.count({
@@ -35,16 +55,21 @@ async function main() {
     });
     console.log(`Existing DB points: ${existingCount}`);
 
-    // Get the latest timestamp in DB to avoid dupes
+    // Get the earliest and latest timestamp in DB to avoid dupes while allowing backfill
+    const earliest = await prisma.cryptoPrice.findFirst({
+        where: { coinId: 'bitcoin' },
+        orderBy: { timestamp: 'asc' }
+    });
     const latest = await prisma.cryptoPrice.findFirst({
         where: { coinId: 'bitcoin' },
         orderBy: { timestamp: 'desc' }
     });
 
+    const earliestTs = earliest ? earliest.timestamp.getTime() : Date.now();
     const latestTs = latest ? latest.timestamp.getTime() : 0;
 
     const toInsert = prices
-        .filter((pt: [number, number]) => pt[0] > latestTs)
+        .filter((pt: [number, number]) => pt[0] < earliestTs || pt[0] > latestTs)
         .map((pt: [number, number]) => ({
             coinId: 'bitcoin',
             price: pt[1],
