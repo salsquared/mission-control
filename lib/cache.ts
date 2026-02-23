@@ -10,7 +10,7 @@ if (process.env.NODE_ENV !== 'production') {
     (globalThis as any).apiCache = globalCache;
 }
 
-export function withCache(handler: () => Promise<NextResponse>, ttlSeconds: number) {
+export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlSeconds: number) {
     return async function (req: Request) {
         const url = new URL(req.url);
         const cacheKey = url.pathname + url.search;
@@ -29,7 +29,7 @@ export function withCache(handler: () => Promise<NextResponse>, ttlSeconds: numb
             }
         }
 
-        const response = await handler();
+        const response = await handler(req);
 
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
             const clone = response.clone();

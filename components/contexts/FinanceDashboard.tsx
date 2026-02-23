@@ -5,6 +5,7 @@ import { WidgetGrid, WidgetItem } from "../WidgetGrid";
 import { Bitcoin, TrendingUp, Wallet, Flame, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ResponsiveContainer, LineChart, Line, YAxis, XAxis, Tooltip, CartesianGrid } from "recharts";
+import { AssetPriceCard } from "../widgets/AssetPriceCard";
 
 const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ timestamp, intervalMins }) => {
     const [now, setNow] = useState(Date.now());
@@ -101,7 +102,7 @@ export const FinanceDashboard: React.FC = () => {
     const fetchHistory = async (days: string) => {
         setRange(days);
         try {
-            const res = await fetch(`/api/finance/history?range=${days}&coin=bitcoin`);
+            const res = await fetch(`/api/finance/history?range=${days}&coin=bitcoin`, { cache: 'no-store' });
             const data = await res.json();
             if (data?.history) {
                 setHistoryData(data.history);
@@ -127,90 +128,21 @@ export const FinanceDashboard: React.FC = () => {
             colSpan: 3,
             rowSpan: 2,
             content: (
-                <div className="flex flex-col h-[300px] sm:h-[400px]">
-                    <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-2 text-orange-400">
-                            <Bitcoin className="w-6 h-6" />
-                            <h3 className="font-bold tracking-wider uppercase text-lg">Bitcoin</h3>
-                        </div>
-                        <div className="flex flex-col items-end gap-1">
-                            <LastUpdated timestamp={lastUpdated} intervalMins={5} />
-                        </div>
-                    </div>
-
-                    <div className="flex items-baseline gap-4 mb-2">
-                        <div className="text-4xl font-mono text-white">
-                            {loading && !prices.bitcoin.usd ? "..." : `$${prices.bitcoin.usd.toLocaleString()}`}
-                        </div>
-                        <div className={cn("text-sm font-bold", prices.bitcoin.usd_24h_change >= 0 ? "text-green-400" : "text-red-400")}>
-                            {loading && !prices.bitcoin.usd_24h_change ? "..." : `${prices.bitcoin.usd_24h_change >= 0 ? "+" : ""}${prices.bitcoin.usd_24h_change.toFixed(2)}% (24h)`}
-                        </div>
-                    </div>
-
-                    <div className="flex-1 w-full min-h-[220px]">
-                        {!loading && historyData?.length > 0 ? (
-                            <ResponsiveContainer width="100%" height="100%">
-                                <LineChart data={historyData} margin={{ top: 5, right: 0, left: 10, bottom: 0 }}>
-                                    <CartesianGrid strokeDasharray="3 3" stroke="#555555" />
-                                    <XAxis
-                                        dataKey="time"
-                                        tickFormatter={formatXAxisDate}
-                                        minTickGap={30}
-                                        tick={{ fill: 'rgba(255,255,255,0.4)', fontSize: 10, fontFamily: 'monospace' }}
-                                        tickMargin={10}
-                                        axisLine={false}
-                                        tickLine={false}
-                                        padding={{ right: 20 }}
-                                    />
-                                    <YAxis
-                                        domain={['auto', 'auto']}
-                                        tick={{ fill: 'rgba(255,255,255,0.6)', fontSize: 10, fontFamily: 'monospace' }}
-                                        tickFormatter={(val) => `$${val.toLocaleString()}`}
-                                        axisLine={false}
-                                        tickLine={false}
-                                        width={65}
-                                    />
-                                    <Tooltip content={<CustomTooltip />} />
-                                    <Line
-                                        type="monotone"
-                                        dataKey="price"
-                                        stroke="#f97316"
-                                        strokeWidth={2}
-                                        dot={false}
-                                        activeDot={{ r: 4, fill: '#f97316', stroke: '#000', strokeWidth: 2 }}
-                                        isAnimationActive={true}
-                                    />
-                                </LineChart>
-                            </ResponsiveContainer>
-                        ) : (
-                            <div className="w-full h-full flex items-center justify-center text-muted-foreground">
-                                <Loader2 className="w-6 h-6 animate-spin" />
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="flex gap-2 border border-white/5 rounded-md p-1 bg-black/20 w-max mx-auto mt-4">
-                        {[
-                            { v: "1", l: "1D" },
-                            { v: "7", l: "1W" },
-                            { v: "30", l: "1M" },
-                            { v: "180", l: "6M" },
-                            { v: "365", l: "1Y" },
-                            { v: "max", l: "MAX" }
-                        ].map((r) => (
-                            <button
-                                key={r.v}
-                                onClick={() => fetchHistory(r.v)}
-                                className={cn(
-                                    "px-3 py-1 text-xs font-bold rounded bg-transparent transition-colors",
-                                    range === r.v ? "bg-orange-500 text-white" : "text-muted-foreground hover:text-white"
-                                )}
-                            >
-                                {r.l}
-                            </button>
-                        ))}
-                    </div>
-                </div>
+                <AssetPriceCard
+                    title="Bitcoin"
+                    icon={<Bitcoin className="w-6 h-6" />}
+                    price={prices.bitcoin?.usd ?? null}
+                    priceChange24h={prices.bitcoin?.usd_24h_change ?? null}
+                    lastUpdated={lastUpdated}
+                    loading={loading}
+                    historyData={historyData}
+                    range={range}
+                    onRangeChange={fetchHistory}
+                    LastUpdatedComponent={LastUpdated}
+                    formatXAxisDate={formatXAxisDate}
+                    formatYAxisPrice={(val: number) => `$${val.toLocaleString()}`}
+                    CustomTooltip={CustomTooltip}
+                />
             ),
         },
         {
