@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server, Palette } from "lucide-react";
 import { Section } from "../Section";
-import { useThemeStore } from "@/store/themeStore";
+import { useThemeStore } from "@/components/providers/themeStore";
 
 export const InternalView: React.FC = () => {
     // Dummy state for settings toggles

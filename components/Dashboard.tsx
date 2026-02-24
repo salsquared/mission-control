@@ -9,7 +9,7 @@ import { AICompanion } from "./AICompanion";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
-import { useThemeStore } from "@/store/themeStore";
+import { useThemeStore } from "@/components/providers/themeStore";
 import { useEffect } from "react";
 
 interface DashConfig {
