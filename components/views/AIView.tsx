@@ -2,26 +2,45 @@
 
 import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Terminal, Loader2, Newspaper } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
+import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 
 export const AIView: React.FC = () => {
-    const [news, setNews] = useState<any[]>([]);
+    const [hackerNews, setHackerNews] = useState<any[]>([]);
+    const [anthropicNews, setAnthropicNews] = useState<any[]>([]);
+    const [openaiNews, setOpenaiNews] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        fetch("/api/ai")
-            .then(res => res.json())
-            .then(data => {
-                if (Array.isArray(data)) {
-                    setNews(data); // Displaying all fetched news
+        const fetchAll = async () => {
+            try {
+                const [hnRes, anthropicRes, openaiRes] = await Promise.all([
+                    fetch("/api/ai").catch(() => null),
+                    fetch("/api/company-news?company=anthropic").catch(() => null),
+                    fetch("/api/company-news?company=openai").catch(() => null)
+                ]);
+
+                if (hnRes && hnRes.ok) {
+                    const data = await hnRes.json();
+                    if (Array.isArray(data)) setHackerNews(data);
                 }
-                setLoading(false);
-            })
-            .catch(err => {
+                if (anthropicRes && anthropicRes.ok) {
+                    const data = await anthropicRes.json();
+                    if (Array.isArray(data)) setAnthropicNews(data);
+                }
+                if (openaiRes && openaiRes.ok) {
+                    const data = await openaiRes.json();
+                    if (Array.isArray(data)) setOpenaiNews(data);
+                }
+            } catch (err) {
                 console.error("Error fetching AI news", err);
+            } finally {
                 setLoading(false);
-            });
+            }
+        };
+
+        fetchAll();
     }, []);
 
     const newsCards: CardItem[] = loading ? [
@@ -34,26 +53,23 @@ export const AIView: React.FC = () => {
                 </div>
             )
         }
-    ] : news.map((article, index) => ({
-        id: `ai-news-${article.id || index}`,
-        colSpan: 2,
-        content: (
-            <div className="flex flex-col h-full justify-start group relative">
-                <div className="flex items-center gap-2 mb-3 text-emerald-400/80">
-                    <Newspaper className="w-4 h-4" />
-                    <span className="text-xs uppercase tracking-wider font-bold">{article.source}</span>
-                </div>
-                <h3 className="text-white font-medium text-sm leading-relaxed mb-2 group-hover:text-emerald-300 transition-colors">
-                    {article.title}
-                </h3>
-                <div className="mt-auto text-xs text-muted-foreground flex items-center justify-between">
-                    <span>{article.author ? `by ${article.author}` : 'Hacker News'}</span>
-                    <span>{new Date(article.publishedAt).toLocaleDateString()}</span>
-                </div>
-                <a href={article.url} target="_blank" rel="noreferrer" className="absolute inset-0 z-10" />
-            </div>
-        )
-    }));
+    ] : [
+        {
+            id: "ai-news-hn",
+            colSpan: 1,
+            content: <NewsCyclingCard source="Hacker News" articles={hackerNews} />
+        },
+        {
+            id: "ai-news-openai",
+            colSpan: 1,
+            content: <NewsCyclingCard source="OpenAI" articles={openaiNews} />
+        },
+        {
+            id: "ai-news-anthropic",
+            colSpan: 1,
+            content: <NewsCyclingCard source="Anthropic" articles={anthropicNews} />
+        }
+    ];
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8">

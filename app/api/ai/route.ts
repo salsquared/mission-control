@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 
 // Using Hacker News Algolia Search API for "AI" or "Artificial Intelligence"
-const HN_SEARCH_URL = 'https://hn.algolia.com/api/v1/search?query="Artificial Intelligence" OR "AI"&tags=story&hitsPerPage=10';
+const HN_SEARCH_URL = 'https://hn.algolia.com/api/v1/search_by_date?query="Artificial Intelligence" OR "AI"&tags=story&hitsPerPage=30';
 
 async function getHandler() {
     try {
@@ -22,8 +22,11 @@ async function getHandler() {
             title: hit.title,
             url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
             source: 'Hacker News',
+            published_at: hit.created_at,
             publishedAt: hit.created_at,
             author: hit.author,
+            image_url: "",
+            news_site: 'Hacker News'
         }));
 
         return NextResponse.json(formattedNews);

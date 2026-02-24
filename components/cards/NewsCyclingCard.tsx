@@ -8,8 +8,10 @@ interface Article {
     id: string | number;
     title: string;
     url: string;
-    image_url: string;
+    image_url?: string;
     news_site: string;
+    published_at?: string;
+    publishedAt?: string;
 }
 
 interface NewsCyclingCardProps {
@@ -44,18 +46,24 @@ export const NewsCyclingCard: React.FC<NewsCyclingCardProps> = ({ source, articl
     if (!articles || articles.length === 0) return null;
 
     const currentArticle = articles[currentIndex];
+    const dateStr = currentArticle.published_at || currentArticle.publishedAt;
 
     return (
-        <div className="flex flex-col flex-1 justify-between group relative h-full min-h-[160px]">
+        <div className={`flex flex-col flex-1 justify-between group relative h-full ${currentArticle.image_url ? 'min-h-[160px]' : ''}`}>
             <div className="flex-shrink-0">
                 <div className="flex items-center gap-2 mb-2 text-cyan-400">
                     <Newspaper className="w-4 h-4" />
                     <span className="text-xs uppercase tracking-wider font-bold">{source}</span>
                 </div>
-                <div className="relative overflow-hidden mb-2">
-                    <h3 className="text-white font-medium text-sm line-clamp-3 group-hover:text-cyan-400 transition-colors">
+                <div className="flex w-full gap-2 items-start mb-2 relative">
+                    <h3 className="text-white font-medium text-sm line-clamp-3 group-hover:text-cyan-400 transition-colors flex-1 pr-1">
                         {currentArticle.title}
                     </h3>
+                    {dateStr && (
+                        <div className="text-right text-[10px] sm:text-xs text-muted-foreground mt-0.5 shrink-0 whitespace-nowrap">
+                            {new Date(dateStr).toLocaleDateString()}
+                        </div>
+                    )}
                 </div>
             </div>
 
