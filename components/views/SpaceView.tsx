@@ -248,13 +248,19 @@ export const SpaceView: React.FC = () => {
                     {moonData ? (
                         <>
                             <div className="text-xl font-bold text-white py-1">
-                                {moonData.weekly_cycles.find((d: any) => d.date === new Date().toISOString().split('T')[0])?.phase || moonData.weekly_cycles[7]?.phase}
+                                {moonData.weekly_cycles.find((d: any) => {
+                                    const now = new Date();
+                                    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                                    return d.date === todayStr;
+                                })?.phase || moonData.weekly_cycles[7]?.phase}
                             </div>
 
                             <div ref={moonScrollRef} className="flex gap-2 overflow-x-auto pb-2 mt-2 scrollbar-none relative">
                                 {moonData.weekly_cycles.map((day: any) => {
                                     const dateObj = new Date(day.date + 'T00:00:00');
-                                    const isToday = day.date === new Date().toISOString().split('T')[0];
+                                    const now = new Date();
+                                    const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+                                    const isToday = day.date === todayStr;
 
                                     return (
                                         <div

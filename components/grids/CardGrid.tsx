@@ -37,10 +37,10 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
                         "relative bg-black/40 border border-white/5 rounded-lg overflow-hidden backdrop-blur-sm break-inside-avoid",
                         layout === "masonry" ? "mb-4 inline-block w-full" : "",
                         "hover:border-cyan-500/30 transition-colors group z-0 hover:z-10 cursor-grab active:cursor-grabbing",
-                        layout === "grid" && item.colSpan === 2 ? "lg:col-span-2" : "",
-                        layout === "grid" && item.colSpan === 3 ? "lg:col-span-3" : "",
-                        layout === "grid" && item.rowSpan === 2 ? "lg:row-span-2" : "",
-                        layout === "grid" && item.rowSpan === 3 ? "lg:row-span-3" : "",
+                        layout === "grid" && item.colSpan === 2 ? "md:col-span-2 lg:col-span-2" : "",
+                        layout === "grid" && item.colSpan === 3 ? "md:col-span-2 lg:col-span-3" : "",
+                        layout === "grid" && item.rowSpan === 2 ? "md:row-span-2 lg:row-span-2" : "",
+                        layout === "grid" && item.rowSpan === 3 ? "md:row-span-3 lg:row-span-3" : "",
                         layout === "masonry" && item.colSpan && item.colSpan > 1 ? "column-span-all" : "",
                         item.hFit ? "self-start h-fit" : "h-full"
                     )}

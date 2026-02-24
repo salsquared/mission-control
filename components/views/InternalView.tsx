@@ -2,22 +2,37 @@
 
 import React, { useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server } from "lucide-react";
+import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server, Palette } from "lucide-react";
 import { Section } from "../Section";
+import { useThemeStore } from "@/store/themeStore";
 
 export const InternalView: React.FC = () => {
     // Dummy state for settings toggles
     const [autoResearch, setAutoResearch] = useState(true);
     const [backgroundTasks, setBackgroundTasks] = useState(true);
-    const [isDarkMode, setIsDarkMode] = useState(true);
+
+    // Global Theme State
+    const { isDarkMode, setIsDarkMode, viewHues, setViewHue } = useThemeStore();
+
+    const colorPresets = [
+        { name: "Purple", hue: 250, color: "bg-purple-500" },
+        { name: "Pink", hue: 320, color: "bg-pink-500" },
+        { name: "Rose", hue: 350, color: "bg-rose-500" },
+        { name: "Amber", hue: 50, color: "bg-amber-500" },
+        { name: "Emerald", hue: 150, color: "bg-emerald-500" },
+        { name: "Cyan", hue: 190, color: "bg-cyan-500" },
+        { name: "Blue", hue: 220, color: "bg-blue-500" },
+    ];
+
+    const views = [
+        { id: "rocketry", name: "Launches & Telemetry" },
+        { id: "crypto", name: "Market Analysis" },
+        { id: "ai-news", name: "AI News" },
+        { id: "ai-partner", name: "Internal Systems" },
+    ];
 
     const toggleTheme = (checked: boolean) => {
-        setIsDarkMode(checked);
-        if (!checked) {
-            document.documentElement.classList.add("light");
-        } else {
-            document.documentElement.classList.remove("light");
-        }
+        setIsDarkMode(!checked); // because the UI assumes toggle is "Light Mode On" when checked
     };
 
     const staticCards: CardItem[] = [
@@ -147,9 +162,34 @@ export const InternalView: React.FC = () => {
                                 type="checkbox"
                                 className="toggle"
                                 checked={!isDarkMode}
-                                onChange={(e) => toggleTheme(!e.target.checked)}
+                                onChange={(e) => toggleTheme(e.target.checked)}
                             />
                         </label>
+
+                        <div className="flex flex-col gap-4 p-3 rounded-xl bg-black/20 border border-white/5">
+                            <div className="flex flex-col">
+                                <span className="text-sm font-medium text-white flex items-center gap-2">View Colors <Palette className="w-4 h-4 text-primary" /></span>
+                                <span className="text-xs text-muted-foreground pb-2">Assign colors to specific views</span>
+                            </div>
+
+                            <div className="flex flex-col gap-3">
+                                {views.map(view => (
+                                    <div key={view.id} className="flex items-center justify-between">
+                                        <span className="text-xs text-white/80 w-1/3 truncate">{view.name}</span>
+                                        <div className="flex gap-1">
+                                            {colorPresets.map(preset => (
+                                                <button
+                                                    key={preset.name}
+                                                    onClick={() => setViewHue(view.id, preset.hue)}
+                                                    className={`w-5 h-5 rounded-full ${preset.color} transition-all duration-300 ${viewHues[view.id] === preset.hue ? 'ring-2 ring-white scale-110' : 'opacity-50 hover:opacity-100 hover:scale-110'}`}
+                                                    title={preset.name}
+                                                />
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 </div>
             ),

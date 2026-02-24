@@ -62,12 +62,16 @@ async function getHandler() {
         // Generate past 7 days and next 7 days of lunar cycles
         const weekly_cycles = [];
         for (let i = -7; i <= 7; i++) {
-            const targetDate = new Date(today);
-            targetDate.setDate(today.getDate() + i);
+            // Set to 11 PM local time for the specific day
+            const targetDate = new Date(today.getFullYear(), today.getMonth(), today.getDate() + i, 23, 0, 0, 0);
             const { phase, illumination } = getMoonPhaseAndIllumination(targetDate);
 
+            const year = targetDate.getFullYear();
+            const month = String(targetDate.getMonth() + 1).padStart(2, '0');
+            const dayStr = String(targetDate.getDate()).padStart(2, '0');
+
             weekly_cycles.push({
-                date: targetDate.toISOString().split('T')[0], // YYYY-MM-DD
+                date: `${year}-${month}-${dayStr}`,
                 phase,
                 illumination
             });

@@ -26,7 +26,7 @@ const NextLaunchTimer: React.FC<{ launch: Launch | null }> = ({ launch }) => {
             const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
             const s = Math.floor((diff % (1000 * 60)) / 1000);
 
-            let tStr = "T-Minus ";
+            let tStr = "T-";
             if (diff >= 1000 * 60 * 60 * 24) {
                 const d = Math.floor(diff / (1000 * 60 * 60 * 24));
                 tStr += `${d}d `;
@@ -71,8 +71,8 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
                 <h3 className="font-bold tracking-wider uppercase text-sm">Next Launch</h3>
             </div>
             {nextLaunch ? (
-                <div className="flex flex-col">
-                    <div className="flex flex-col justify-center py-4">
+                <div className="flex flex-row w-full">
+                    <div className="w-1/2 flex flex-col justify-center py-4 pr-4">
                         <NextLaunchTimer launch={nextLaunch} />
                         <div className="text-xs text-muted-foreground mt-2 line-clamp-2" title={nextLaunch.name}>
                             {nextLaunch.name}
@@ -81,7 +81,7 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
                             {nextLaunch.pad?.location?.name || "Unknown Location"}
                         </div>
                     </div>
-                    <div className="mt-2 pt-2 border-t border-white/10 shrink-0">
+                    <div className="w-1/2 flex flex-col justify-center pl-4 py-4 border-l border-white/10">
                         <div className="text-[10px] text-muted-foreground uppercase font-bold mb-1.5">Upcoming Highlights</div>
                         <div className="flex flex-col gap-1.5">
                             {upcomingHighlights.map(h => {
