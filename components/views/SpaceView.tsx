@@ -1,12 +1,13 @@
 "use client";
 
 import React, { useEffect, useState, useRef } from "react";
-import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
+import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Rocket, Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
-import { NewsCyclingCard } from "../NewsCyclingCard";
+import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { NextLaunchCard } from "../cards/NextLaunchCard";
 import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
 import { Calendar } from "lucide-react";
+import { Section } from "../Section";
 
 // (Previous imports and helper functions remain exactly the same...)
 import {
@@ -130,7 +131,7 @@ export const SpaceView: React.FC = () => {
             });
     }, []);
 
-    const staticWidgets: WidgetItem[] = [
+    const staticCards: CardItem[] = [
         {
             id: "space-launch-info",
             hFit: true,
@@ -291,7 +292,7 @@ export const SpaceView: React.FC = () => {
         },
     ];
 
-    const newsWidgets: WidgetItem[] = loading ? [
+    const newsCards: CardItem[] = loading ? [
         {
             id: "loading-news",
             content: (
@@ -307,22 +308,13 @@ export const SpaceView: React.FC = () => {
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8 space-y-6">
-            <div>
-                <div className="mb-4 px-6">
-                    <h2 className="text-2xl font-bold text-white">Space Data</h2>
-                    <p className="text-sm text-muted-foreground">Real-time metrics and tracking</p>
-                </div>
-                <WidgetGrid items={staticWidgets} layout="grid" className="grid-flow-row-dense" />
-            </div>
+            <Section title="Space Data" description="Real-time metrics and tracking">
+                <CardGrid items={staticCards} layout="grid" className="grid-flow-row-dense" />
+            </Section>
 
-
-            <div className="mt-8">
-                <div className="mb-4 px-6">
-                    <h2 className="text-2xl font-bold text-white">Space News</h2>
-                    <p className="text-sm text-muted-foreground">Latest headlines from orbit and beyond</p>
-                </div>
-                <WidgetGrid items={newsWidgets} layout="masonry" />
-            </div>
+            <Section title="Space News" description="Latest headlines from orbit and beyond">
+                <CardGrid items={newsCards} layout="masonry" />
+            </Section>
         </div>
     );
 };

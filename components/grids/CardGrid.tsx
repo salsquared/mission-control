@@ -4,7 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 
-export interface WidgetItem {
+export interface CardItem {
     id: string;
     content: React.ReactNode;
     colSpan?: number; // 1 to 3, assuming 3-col grid
@@ -12,13 +12,13 @@ export interface WidgetItem {
     hFit?: boolean; // If true, avoids stretching height to match grid rows
 }
 
-interface WidgetGridProps {
-    items: WidgetItem[];
+interface CardGridProps {
+    items: CardItem[];
     className?: string;
     layout?: "grid" | "masonry";
 }
 
-export const WidgetGrid: React.FC<WidgetGridProps> = ({ items, className, layout = "grid" }) => {
+export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "grid" }) => {
     return (
         <div className={cn(
             layout === "grid"

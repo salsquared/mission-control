@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
+import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Bitcoin, TrendingUp, Wallet, Flame, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ResponsiveContainer, LineChart, Line, YAxis, XAxis, Tooltip, CartesianGrid } from "recharts";
 import { AssetPriceCard } from "../cards/AssetPriceCard";
+import { Section } from "../Section";
 
 const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ timestamp, intervalMins }) => {
     const [now, setNow] = useState(Date.now());
@@ -122,10 +123,10 @@ export const FinanceView: React.FC = () => {
         return () => clearInterval(interval);
     }, [range]);
 
-    const staticWidgets: WidgetItem[] = [
+    const staticCards: CardItem[] = [
         {
             id: "fin-1",
-            colSpan: 3,
+            colSpan: 2,
             rowSpan: 2,
             content: (
                 <AssetPriceCard
@@ -147,7 +148,7 @@ export const FinanceView: React.FC = () => {
         },
         {
             id: "fin-2",
-            colSpan: 2,
+            colSpan: 1,
             rowSpan: 2, // Take up more vertical space for the list
             content: (
                 <div className="flex flex-col h-[300px] sm:h-[400px]">
@@ -206,7 +207,7 @@ export const FinanceView: React.FC = () => {
         },
         {
             id: "fin-3",
-            colSpan: 2,
+            colSpan: 1,
             content: (
                 <div className="flex flex-col h-full">
                     <div className="flex items-center justify-between mb-2">
@@ -229,7 +230,9 @@ export const FinanceView: React.FC = () => {
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8">
-            <WidgetGrid items={staticWidgets} />
+            <Section title="Market Overview" description="Real-time cryptocurrency statistics">
+                <CardGrid items={staticCards} />
+            </Section>
         </div>
     );
 };

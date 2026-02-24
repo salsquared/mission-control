@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
+import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server } from "lucide-react";
+import { Section } from "../Section";
 
 export const InternalView: React.FC = () => {
     // Dummy state for settings toggles
@@ -19,7 +20,7 @@ export const InternalView: React.FC = () => {
         }
     };
 
-    const staticWidgets: WidgetItem[] = [
+    const staticCards: CardItem[] = [
         {
             id: "internal-1",
             colSpan: 3,
@@ -157,7 +158,9 @@ export const InternalView: React.FC = () => {
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8">
-            <WidgetGrid items={staticWidgets} />
+            <Section title="System Diagnostics" description="Internal system vitals and status logs">
+                <CardGrid items={staticCards} />
+            </Section>
         </div>
     );
 };

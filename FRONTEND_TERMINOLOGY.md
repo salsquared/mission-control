@@ -4,7 +4,7 @@ This document defines the core structural terminology and composition hierarchy 
 
 ### Hierarchy (Bottom-Up)
 
-`UI` / `Widgets` < `Cards` < `Grids` < `Sections` < `Views`
+`UI` / `Widgets` < `Cards` / `Windows` < `Grids` < `Sections` < `Views` < `Dashboard`
 
 ---
 
@@ -24,18 +24,28 @@ This document defines the core structural terminology and composition hierarchy 
    - Cards define the aesthetic and structural boundaries of a specific chunk of content.
    - They wrap widgets, provide padding, titles, actions, and consistent styling (like borders or backgrounds).
 
-4. **Grids (`Grids`)**
+4. **Windows (`Windows`)**
+   - Specialized, floating overlay Cards (e.g., AI Companion dialog).
+   - They break out of the normal grid flow to provide draggable, maximizable, interactive overlays or floating content.
+   - Like Cards, they serve as boundary wrappers that can contain Widgets and UI elements.
+
+5. **Grids (`Grids`)**
    - The layout managers for cards.
    - Grids determine how multiple cards are arranged (e.g., responsive columns, CSS Grid layouts).
    - They do not contain intrinsic content or styling other than structural spacing/alignment.
 
-5. **Sections (`Sections`)**
+6. **Sections (`Sections`)**
    - Thematic aggregations superimposed onto the dashboard.
    - A grid is placed within a section.
    - A section groups a specific domain or feature set (e.g., "Financial Overview Section", "Upcoming Launches Section").
    - Many dash sections can be placed in one view.
 
-6. **Views (`Views`)**
+7. **Views (`Views`)**
    - The primary top-level entry point (the main "Card" or screen) where all information for a specific page resides.
    - A view aggregates multiple sections and manages top-level page state or context.
    - Examples: Space View, Finance View, AI View.
+
+8. **Dashboard (`Dashboard`)**
+   - The top-level Host Application Layer (the "Monitor").
+   - Responsible for mounting global application state, animating/switching between Views, and managing global floating overlays (Windows).
+   - Holds persistent root UI elements such as the unified navigation bar, launchpad, and background ambient glow.

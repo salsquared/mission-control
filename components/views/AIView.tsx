@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import { WidgetGrid, WidgetItem } from "../grids/WidgetGrid";
+import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Terminal, Loader2, Newspaper } from "lucide-react";
+import { Section } from "../Section";
 
 export const AIView: React.FC = () => {
     const [news, setNews] = useState<any[]>([]);
@@ -23,7 +24,7 @@ export const AIView: React.FC = () => {
             });
     }, []);
 
-    const newsWidgets: WidgetItem[] = loading ? [
+    const newsCards: CardItem[] = loading ? [
         {
             id: "loading-news",
             colSpan: 3,
@@ -56,7 +57,9 @@ export const AIView: React.FC = () => {
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8">
-            <WidgetGrid items={newsWidgets} />
+            <Section title="AI Chronicles" description="Latest autonomous developments">
+                <CardGrid items={newsCards} />
+            </Section>
         </div>
     );
 };
