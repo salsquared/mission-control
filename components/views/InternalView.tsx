@@ -1,15 +1,35 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server, Palette } from "lucide-react";
+import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server, Palette, Cpu } from "lucide-react";
 import { Section } from "../Section";
 import { useThemeStore } from "@/components/providers/themeStore";
+import { useSettingsStore } from "@/components/providers/settingsStore";
 
 export const InternalView: React.FC = () => {
-    // Dummy state for settings toggles
-    const [autoResearch, setAutoResearch] = useState(true);
-    const [backgroundTasks, setBackgroundTasks] = useState(true);
+    const [sysMetrics, setSysMetrics] = useState<{ cpuUsagePercent: number; memoryUsageFormatted: string; uptimeFormatted: string; dbConnected: boolean } | null>(null);
+
+    useEffect(() => {
+        const fetchMetrics = async () => {
+            try {
+                const res = await fetch('/api/system');
+                if (res.ok) {
+                    const data = await res.json();
+                    setSysMetrics(data);
+                }
+            } catch (error) {
+                console.error("Failed to fetch system metrics", error);
+            }
+        };
+
+        fetchMetrics();
+        const interval = setInterval(fetchMetrics, 5000);
+        return () => clearInterval(interval);
+    }, []);
+
+    // Persisted settings store
+    const { autoResearch, setAutoResearch, backgroundTasks, setBackgroundTasks } = useSettingsStore();
 
     // Global Theme State
     const { isDarkMode, setIsDarkMode, viewHues, setViewHue } = useThemeStore();
@@ -37,6 +57,47 @@ export const InternalView: React.FC = () => {
 
     const staticCards: CardItem[] = [
         {
+            id: "system-telemetry",
+            colSpan: 3,
+            content: (
+                <div className="flex flex-col h-full">
+                    <div className="flex items-center gap-2 mb-4 text-purple-400">
+                        <Cpu className="w-5 h-5" />
+                        <h3 className="font-bold tracking-wider uppercase text-sm">System Telemetry</h3>
+                    </div>
+                    <div className="flex flex-wrap md:flex-nowrap justify-between gap-4 md:gap-6 flex-1 w-full">
+                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                            <span className="text-xs text-muted-foreground mb-1">CPU Load</span>
+                            <span className="text-2xl font-mono text-white">{sysMetrics ? `${sysMetrics.cpuUsagePercent}%` : '--'}</span>
+                        </div>
+                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                            <span className="text-xs text-muted-foreground mb-1">Memory Usage</span>
+                            <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.memoryUsageFormatted : '--'}</span>
+                        </div>
+                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                            <span className="text-xs text-muted-foreground mb-1">Server Uptime</span>
+                            <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.uptimeFormatted : '--'}</span>
+                        </div>
+                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                            <span className="text-xs text-muted-foreground mb-1">Database Status</span>
+                            <div className="flex items-center gap-2 mt-1">
+                                {sysMetrics ? (
+                                    <>
+                                        <div className={`w-3 h-3 rounded-full shrink-0 ${sysMetrics.dbConnected ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-red-500 shadow-[0_0_10px_rgba(239,68,68,0.5)]'}`} />
+                                        <span className={`text-sm font-medium ${sysMetrics.dbConnected ? 'text-emerald-400' : 'text-red-400'}`}>
+                                            {sysMetrics.dbConnected ? 'Connected' : 'Disconnected'}
+                                        </span>
+                                    </>
+                                ) : (
+                                    <span className="text-2xl font-mono text-white">--</span>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            ),
+        },
+        {
             id: "internal-1",
             colSpan: 3,
             content: (
@@ -45,23 +106,8 @@ export const InternalView: React.FC = () => {
                         <Activity className="w-5 h-5" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">Agent System Telemetry</h3>
                     </div>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-6 flex-1">
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5">
-                            <span className="text-xs text-muted-foreground mb-1">CPU Load</span>
-                            <span className="text-2xl font-mono text-white">42%</span>
-                        </div>
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5">
-                            <span className="text-xs text-muted-foreground mb-1">Memory Usage</span>
-                            <span className="text-2xl font-mono text-white">14.2 GB</span>
-                        </div>
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5">
-                            <span className="text-xs text-muted-foreground mb-1">Active Tasks</span>
-                            <span className="text-2xl font-mono text-white">12</span>
-                        </div>
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5">
-                            <span className="text-xs text-muted-foreground mb-1">Agent Uptime</span>
-                            <span className="text-2xl font-mono text-white">72h 14m</span>
-                        </div>
+                    <div className="flex-1 flex items-center justify-center p-6 border border-dashed border-white/10 rounded-xl bg-black/20">
+                        <p className="text-muted-foreground text-sm font-medium">Agent framework currently offline</p>
                     </div>
                 </div>
             ),
@@ -75,27 +121,8 @@ export const InternalView: React.FC = () => {
                         <Server className="w-5 h-5" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">Background Event Log</h3>
                     </div>
-                    <div className="flex-1 overflow-y-auto pr-2 space-y-3 font-mono text-xs">
-                        <div className="flex flex-col gap-1 border-b border-white/5 pb-2">
-                            <span className="text-cyan-500">[19:42:15] SYSTEM</span>
-                            <span className="text-white/80">Completed background synchronization of rocket telemetry</span>
-                        </div>
-                        <div className="flex flex-col gap-1 border-b border-white/5 pb-2">
-                            <span className="text-purple-500">[19:40:02] AGENT</span>
-                            <span className="text-white/80">Compiled daily crypto market analysis report</span>
-                        </div>
-                        <div className="flex flex-col gap-1 border-b border-white/5 pb-2">
-                            <span className="text-emerald-500">[19:35:50] NETWORK</span>
-                            <span className="text-white/80">Re-established secure connection to external API</span>
-                        </div>
-                        <div className="flex flex-col gap-1 border-b border-white/5 pb-2">
-                            <span className="text-cyan-500">[19:30:11] SYSTEM</span>
-                            <span className="text-white/80">Cleaned up temporary workspace directories</span>
-                        </div>
-                        <div className="flex flex-col gap-1 pb-2">
-                            <span className="text-purple-500">[19:15:00] AGENT</span>
-                            <span className="text-white/80">Parsed inbound emails and categorized accordingly</span>
-                        </div>
+                    <div className="flex-1 flex items-center justify-center p-6 border border-dashed border-white/10 rounded-xl bg-black/20">
+                        <p className="text-muted-foreground text-sm font-medium">Event logging currently offline</p>
                     </div>
                 </div>
             ),

@@ -40,12 +40,20 @@ export const AssetPriceCard: React.FC<AssetPriceCardProps> = ({
     colorClass = "text-orange-400",
     graphColor = "#f97316",
     formatXAxisDate,
-    formatYAxisPrice,
+    formatYAxisPrice = (val: any) => {
+        if (typeof val !== 'number') return val;
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency',
+            currency: 'USD',
+            notation: 'compact',
+            maximumSignificantDigits: 3
+        }).format(val);
+    },
     CustomTooltip
 }) => {
     return (
         <div className="flex flex-col h-[300px] sm:h-[400px]">
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex items-center justify-between mb-2">
                 <div className={cn("flex items-center gap-2", colorClass)}>
                     {icon}
                     <h3 className="font-bold tracking-wider uppercase text-lg">{title}</h3>
@@ -55,8 +63,8 @@ export const AssetPriceCard: React.FC<AssetPriceCardProps> = ({
                 </div>
             </div>
 
-            <div className="flex items-baseline gap-4 mb-2">
-                <div className="text-4xl font-mono text-white">
+            <div className="flex items-center gap-4 mb-2">
+                <div className="text-4xl font-mono font-bold text-white">
                     {loading && (price === null || price === undefined) ? "..." : `$${price?.toLocaleString()}`}
                 </div>
                 <div className={cn("text-sm font-bold", (priceChange24h ?? 0) >= 0 ? "text-green-400" : "text-red-400")}>

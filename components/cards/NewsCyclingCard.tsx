@@ -2,7 +2,8 @@
 
 import React, { useState, useEffect } from "react";
 import { Newspaper, ChevronLeft, ChevronRight } from "lucide-react";
-import { AnimatePresence, motion } from "framer-motion";
+import { MAX_NEWS_ARTICLES } from "../../lib/constants";
+
 
 interface Article {
     id: string | number;

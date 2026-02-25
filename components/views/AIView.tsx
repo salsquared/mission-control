@@ -15,10 +15,13 @@ export const AIView: React.FC = () => {
     useEffect(() => {
         const fetchAll = async () => {
             try {
+                // Use a cache-busting parameter based on time or version to bust stale 30-item array caches 
+                // lingering in the browser's disk cache or NextJS global cache.
+                const cacheBuster = `?v=2`;
                 const [hnRes, anthropicRes, openaiRes] = await Promise.all([
-                    fetch("/api/ai").catch(() => null),
-                    fetch("/api/company-news?company=anthropic").catch(() => null),
-                    fetch("/api/company-news?company=openai").catch(() => null)
+                    fetch(`/api/ai${cacheBuster}`).catch(() => null),
+                    fetch(`/api/company-news?company=anthropic&v=2`).catch(() => null),
+                    fetch(`/api/company-news?company=openai&v=2`).catch(() => null)
                 ]);
 
                 if (hnRes && hnRes.ok) {

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
+import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
 
 // Using Hacker News Algolia Search API for "AI" or "Artificial Intelligence"
-const HN_SEARCH_URL = 'https://hn.algolia.com/api/v1/search_by_date?query="Artificial Intelligence" OR "AI"&tags=story&hitsPerPage=30';
+const HN_SEARCH_URL = `https://hn.algolia.com/api/v1/search_by_date?query="Artificial Intelligence" OR "AI"&tags=story&hitsPerPage=${MAX_NEWS_ARTICLES}`;
 
 async function getHandler() {
     try {

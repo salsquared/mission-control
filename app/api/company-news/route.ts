@@ -1,19 +1,40 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import Parser from 'rss-parser';
+import ogs from 'open-graph-scraper';
+import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
 
 const parser = new Parser();
 
 async function fetchOpenAI() {
     const feed = await parser.parseURL('https://openai.com/news/rss.xml');
-    return feed.items.map(item => ({
-        id: item.guid || item.link || Math.random().toString(),
-        title: item.title || "OpenAI News",
-        url: item.link || `https://openai.com`,
-        source: 'OpenAI',
-        published_at: item.isoDate || item.pubDate,
-        image_url: "",
-        news_site: 'OpenAI'
+
+    const items = feed.items.slice(0, MAX_NEWS_ARTICLES);
+
+    return Promise.all(items.map(async (item, i) => {
+        let image_url = "";
+        // Try getting image via microlink API for the first 4 items to save on rate limits, as it bypasses Cloudflare
+        if (i < 4 && item.link) {
+            try {
+                const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(item.link)}`);
+                if (res.ok) {
+                    const data = await res.json();
+                    image_url = data?.data?.image?.url || "";
+                }
+            } catch (err) {
+                console.error("Microlink error for OpenAI image extraction", err);
+            }
+        }
+
+        return {
+            id: item.guid || item.link || Math.random().toString(),
+            title: item.title || "OpenAI News",
+            url: item.link || `https://openai.com`,
+            source: 'OpenAI',
+            published_at: item.isoDate || item.pubDate,
+            image_url,
+            news_site: 'OpenAI'
+        };
     }));
 }
 
@@ -61,13 +82,29 @@ async function fetchAnthropic() {
             }
         }
     }
-    return articles;
+
+    // Fetch missing images using open-graph-scraper
+    const topArticles = articles.slice(0, MAX_NEWS_ARTICLES);
+    return Promise.all(topArticles.map(async (item, i) => {
+        if (i < MAX_NEWS_ARTICLES) {
+            try {
+                const { result } = await ogs({ url: item.url, timeout: 4000 });
+                if (result.ogImage && result.ogImage.length > 0) {
+                    item.image_url = result.ogImage[0].url.replace(/&amp;/g, '&');
+                }
+            } catch (err) {
+                console.error("OGS fetch failed for Anthropic article", item.url, err);
+            }
+        }
+        return item;
+    }));
 }
 
 // Support other RSS feeds directly via URL
 async function fetchGenericRSS(title: string, rssUrl: string) {
     const feed = await parser.parseURL(rssUrl);
-    return feed.items.map(item => ({
+    const items = feed.items.slice(0, MAX_NEWS_ARTICLES);
+    return items.map(item => ({
         id: item.guid || item.link || Math.random().toString(),
         title: item.title || `${title} News`,
         url: item.link || "",
@@ -96,7 +133,7 @@ async function getHandler(request: Request) {
             return NextResponse.json({ error: 'Missing or unsupported company' }, { status: 400 });
         }
 
-        return NextResponse.json(articles.slice(0, 15));
+        return NextResponse.json(articles.slice(0, MAX_NEWS_ARTICLES));
     } catch (error) {
         console.error(`Error fetching company news:`, error);
         return NextResponse.json({ error: 'Failed to fetch company news' }, { status: 500 });
@@ -104,8 +141,4 @@ async function getHandler(request: Request) {
 }
 
 // Create a wrapper function that passes request to handler
-export async function GET(request: Request) {
-    // We get the full URL so caching only happens on standard path but wait, withCache logic ignores Query Params if we aren't careful?
-    // Looking at other routes, we'll try to use standard logic. Let's not use withCache for this dynamic route right now or use Next.js native revalidate
-    return getHandler(request);
-}
+export const GET = withCache(getHandler, 3600);

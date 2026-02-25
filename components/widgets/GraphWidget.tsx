@@ -33,7 +33,7 @@ export const GraphWidget: React.FC<GraphWidgetProps> = ({
         <div className="flex-1 w-full min-h-[220px]">
             {!loading && data?.length > 0 ? (
                 <ResponsiveContainer width="100%" height="100%">
-                    <LineChart data={data} margin={{ top: 5, right: 0, left: 10, bottom: 0 }}>
+                    <LineChart data={data} margin={{ top: 5, right: 10, left: 10, bottom: 0 }}>
                         <CartesianGrid strokeDasharray="3 3" stroke="#555555" />
                         <XAxis
                             dataKey={xKey}
@@ -51,7 +51,7 @@ export const GraphWidget: React.FC<GraphWidgetProps> = ({
                             tickFormatter={yFormatter}
                             axisLine={false}
                             tickLine={false}
-                            width={65}
+                            width={45}
                         />
                         {CustomTooltip ? <Tooltip content={<CustomTooltip />} /> : <Tooltip />}
                         <Line

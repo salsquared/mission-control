@@ -87,11 +87,11 @@ export const SpaceView: React.FC = () => {
 
     useEffect(() => {
         Promise.all([
-            fetch("/api/space?bust=2").then(res => res.json()),
-            fetch("/api/space/launches?bust=2").then(res => res.json()),
-            fetch("/api/space/satellites?bust=2").then(res => res.json()),
-            fetch("/api/space/solar?bust=2").then(res => res.json()),
-            fetch("/api/space/moon?bust=2").then(res => res.json())
+            fetch("/api/space?bust=4").then(res => res.json()),
+            fetch("/api/space/launches?bust=4").then(res => res.json()),
+            fetch("/api/space/satellites?bust=4").then(res => res.json()),
+            fetch("/api/space/solar?bust=4").then(res => res.json()),
+            fetch("/api/space/moon?bust=4").then(res => res.json())
         ])
             .then(([spaceData, launchData, satsData, solar, moon]) => {
                 if (Array.isArray(spaceData)) {

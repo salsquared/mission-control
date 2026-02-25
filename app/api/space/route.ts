@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
+import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
 
-const SNAPI_URL = 'https://api.spaceflightnewsapi.net/v4/articles/?limit=50';
+const SNAPI_URL = `https://api.spaceflightnewsapi.net/v4/articles/?limit=100`;
 
 async function getHandler() {
     try {
@@ -14,7 +15,24 @@ async function getHandler() {
         }
 
         const data = await res.json();
-        return NextResponse.json(data.results);
+
+        // Limit items to MAX_NEWS_ARTICLES *per* news site, not overall!
+        const countsBySite: Record<string, number> = {};
+        const balancedResults = [];
+
+        for (const item of data.results) {
+            const site = item.news_site;
+            if (!countsBySite[site]) {
+                countsBySite[site] = 0;
+            }
+
+            if (countsBySite[site] < MAX_NEWS_ARTICLES) {
+                countsBySite[site]++;
+                balancedResults.push(item);
+            }
+        }
+
+        return NextResponse.json(balancedResults);
     } catch (error) {
         console.error('Error fetching space news:', error);
         return NextResponse.json({ error: 'Failed to fetch space news' }, { status: 500 });

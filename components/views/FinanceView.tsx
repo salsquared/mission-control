@@ -141,7 +141,6 @@ export const FinanceView: React.FC = () => {
                     onRangeChange={fetchHistory}
                     LastUpdatedComponent={LastUpdated}
                     formatXAxisDate={formatXAxisDate}
-                    formatYAxisPrice={(val: number) => `$${val.toLocaleString()}`}
                     CustomTooltip={CustomTooltip}
                 />
             ),

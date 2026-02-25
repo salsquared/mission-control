@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Rocket } from "lucide-react";
 import { Launch } from "../views/SpaceView";
 
-const NextLaunchTimer: React.FC<{ launch: Launch | null }> = ({ launch }) => {
+const NextLaunchTimer: React.FC<{ launch: Launch | null; onExpire: () => void }> = ({ launch, onExpire }) => {
     const [timeUntilLaunch, setTimeUntilLaunch] = useState<string>("Calculating...");
 
     useEffect(() => {
@@ -16,6 +16,11 @@ const NextLaunchTimer: React.FC<{ launch: Launch | null }> = ({ launch }) => {
         const updateTimer = () => {
             const now = new Date().getTime();
             const diff = nextLaunchNet - now;
+
+            if (diff <= -60000) {
+                onExpire();
+                return;
+            }
 
             if (diff <= 0) {
                 setTimeUntilLaunch("Launched!");
@@ -39,7 +44,7 @@ const NextLaunchTimer: React.FC<{ launch: Launch | null }> = ({ launch }) => {
         const interval = setInterval(updateTimer, 1000);
 
         return () => clearInterval(interval);
-    }, [launch]);
+    }, [launch, onExpire]);
 
     return <div className="text-3xl font-mono text-white">{timeUntilLaunch}</div>;
 };
@@ -50,12 +55,15 @@ interface NextLaunchCardProps {
 }
 
 export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loading }) => {
-    const nextLaunch = launches.length > 0 ? launches[0] : null;
+    const [, setExpireCount] = useState(0);
 
-    const nextFalcon9 = launches.find(l => l.name.includes("Falcon 9"));
-    const nextStarship = launches.find(l => l.name.includes("Starship"));
-    const nextNeutron = launches.find(l => l.name.includes("Neutron"));
-    const nextVulcan = launches.find(l => l.name.includes("Vulcan"));
+    const activeLaunches = launches.filter(l => new Date(l.net).getTime() > Date.now() - 60000);
+    const nextLaunch = activeLaunches.length > 0 ? activeLaunches[0] : null;
+
+    const nextFalcon9 = activeLaunches.find(l => l.name.includes("Falcon 9"));
+    const nextStarship = activeLaunches.find(l => l.name.includes("Starship"));
+    const nextNeutron = activeLaunches.find(l => l.name.includes("Neutron"));
+    const nextVulcan = activeLaunches.find(l => l.name.includes("Vulcan"));
 
     const upcomingHighlights = [
         { label: "Falcon 9", launch: nextFalcon9 },
@@ -73,7 +81,7 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
             {nextLaunch ? (
                 <div className="flex flex-row w-full">
                     <div className="w-1/2 flex flex-col justify-center py-4 pr-4">
-                        <NextLaunchTimer launch={nextLaunch} />
+                        <NextLaunchTimer launch={nextLaunch} onExpire={() => setExpireCount(c => c + 1)} />
                         <div className="text-xs text-muted-foreground mt-2 line-clamp-2" title={nextLaunch.name}>
                             {nextLaunch.name}
                         </div>
