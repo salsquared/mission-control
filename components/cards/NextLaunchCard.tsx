@@ -82,7 +82,17 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
                 <div className="flex flex-row w-full">
                     <div className="w-1/2 flex flex-col justify-center py-4 pr-4">
                         <NextLaunchTimer launch={nextLaunch} onExpire={() => setExpireCount(c => c + 1)} />
-                        <div className="text-xs text-muted-foreground mt-2 line-clamp-2" title={nextLaunch.name}>
+                        <div className="text-xs text-cyan-400 mt-1 font-medium bg-black/20 rounded py-0.5 self-start mb-1">
+                            {new Date(nextLaunch.net).toLocaleString(undefined, {
+                                weekday: 'short',
+                                month: 'short',
+                                day: 'numeric',
+                                hour: 'numeric',
+                                minute: '2-digit',
+                                timeZoneName: 'short'
+                            })}
+                        </div>
+                        <div className="text-xs text-muted-foreground line-clamp-2" title={nextLaunch.name}>
                             {nextLaunch.name}
                         </div>
                         <div className="text-xs text-muted-foreground mt-1 line-clamp-1 opacity-70">
