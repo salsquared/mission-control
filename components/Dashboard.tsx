@@ -6,8 +6,9 @@ import { InternalView } from "./views/InternalView";
 import { FinanceView } from "./views/FinanceView";
 import { AIView } from "./views/AIView";
 import { AICompanion } from "./AICompanion";
+import { SavedPapersOverlay } from "./views/SavedPapersOverlay";
 import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare } from "lucide-react";
+import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare, Library } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useEffect } from "react";
@@ -22,6 +23,14 @@ export const Dashboard: React.FC = () => {
     const [currentIndex, setCurrentIndex] = useState(0);
     const [isLaunchpadOpen, setIsLaunchpadOpen] = useState(false);
     const [isAIChatOpen, setIsAIChatOpen] = useState(false);
+    const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+
+    const getTopic = (id: string) => {
+        if (id === 'rocketry') return 'Space';
+        if (id === 'crypto') return 'Crypto';
+        if (id === 'ai-news') return 'AI';
+        return 'General';
+    };
 
     const dashes: DashConfig[] = [
         {
@@ -160,6 +169,21 @@ export const Dashboard: React.FC = () => {
                 <div className="w-px h-8 bg-white/10" />
 
                 <button
+                    onClick={() => setIsLibraryOpen(!isLibraryOpen)}
+                    className={cn(
+                        "p-3 rounded-xl transition-all",
+                        isLibraryOpen
+                            ? "bg-white/20 text-white border border-white/30"
+                            : "hover:bg-white/10 text-white/70 hover:text-white"
+                    )}
+                    title="My Library"
+                >
+                    <Library className="w-6 h-6" />
+                </button>
+
+                <div className="w-px h-8 bg-white/10" />
+
+                <button
                     onClick={() => setIsAIChatOpen(!isAIChatOpen)}
                     className={cn(
                         "p-3 rounded-xl transition-all",
@@ -172,6 +196,15 @@ export const Dashboard: React.FC = () => {
                     <MessageSquare className="w-6 h-6" />
                 </button>
             </div>
+
+            {/* Saved Papers Overlay */}
+            <AnimatePresence>
+                {isLibraryOpen && (
+                    <div className="absolute inset-y-0 right-0 z-50">
+                        <SavedPapersOverlay topic={getTopic(dashes[currentIndex].id)} onClose={() => setIsLibraryOpen(false)} />
+                    </div>
+                )}
+            </AnimatePresence>
 
             {/* AI Companion Overlay */}
             <AnimatePresence>

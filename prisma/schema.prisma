@@ -18,3 +18,37 @@ model CryptoPrice {
 
   @@index([coinId, timestamp])
 }
+
+model SavedPaper {
+  id          String   @id @default(cuid())
+  arxivId     String   @unique
+  title       String
+  summary     String
+  url         String
+  authors     String
+  publishedAt DateTime
+  topic       String   // e.g. "AI", "Space"
+  status      String   // e.g. "READ", "READ_LATER", "FAVORITE"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status, topic])
+}
+
+model SelectedHistoricalPaper {
+  id        String   @id @default(cuid())
+  arxivId   String   @unique
+  topic     String
+  weekStart DateTime // Represents the week it was selected for
+
+  @@index([topic, weekStart])
+}
+
+model SelectedReviewPaper {
+  id        String   @id @default(cuid())
+  arxivId   String   @unique
+  topic     String
+  weekStart DateTime // Represents the week it was selected for
+
+  @@index([topic, weekStart])
+}

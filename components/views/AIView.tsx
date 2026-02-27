@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Loader2 } from "lucide-react";
@@ -13,57 +11,52 @@ export const AIView: React.FC = () => {
     const [openaiNews, setOpenaiNews] = useState<any[]>([]);
     const [arxivYesterday, setArxivYesterday] = useState<any[]>([]);
     const [arxivLastWeek, setArxivLastWeek] = useState<any[]>([]);
+    const [arxivReview, setArxivReview] = useState<any[]>([]);
+    const [arxivHistorical, setArxivHistorical] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
         const fetchAll = async () => {
             try {
-                // Use a cache-busting parameter based on time or version to bust stale 30-item array caches 
-                // lingering in the browser's disk cache or NextJS global cache.
-                const cacheBuster = `?v=2`;
+                const cacheBuster = `?v=3`;
 
-                const now = new Date();
-                const pad = (n: number) => n.toString().padStart(2, '0');
-
-                // Yesterday date strings
-                const yesterday = new Date(now);
-                yesterday.setDate(now.getDate() - 1);
-                const yFrom = `${yesterday.getFullYear()}${pad(yesterday.getMonth() + 1)}${pad(yesterday.getDate())}0000`;
-                const yTo = `${yesterday.getFullYear()}${pad(yesterday.getMonth() + 1)}${pad(yesterday.getDate())}2359`;
-
-                // Last week date strings
-                const lastWeek = new Date(now);
-                lastWeek.setDate(now.getDate() - 7);
-                const wFrom = `${lastWeek.getFullYear()}${pad(lastWeek.getMonth() + 1)}${pad(lastWeek.getDate())}0000`;
-                const wTo = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}2359`;
-
-                const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes] = await Promise.all([
+                const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes, arxivRevRes, arxivHistRes] = await Promise.all([
                     fetch(`/api/ai${cacheBuster}`).catch(() => null),
-                    fetch(`/api/company-news?company=anthropic&v=2`).catch(() => null),
-                    fetch(`/api/company-news?company=openai&v=2`).catch(() => null),
-                    fetch(`/api/arxiv?subject=cs.AI&max_results=5&dateFrom=${yFrom}&dateTo=${yTo}&v=1`).catch(() => null),
-                    fetch(`/api/arxiv?subject=cs.AI&max_results=5&dateFrom=${wFrom}&dateTo=${wTo}&v=1`).catch(() => null)
+                    fetch(`/api/company-news?company=anthropic&v=3`).catch(() => null),
+                    fetch(`/api/company-news?company=openai&v=3`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5&v=3`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=week&limit=5&v=3`).catch(() => null),
+                    fetch(`/api/research/review?topic=ai&v=3`).catch(() => null),
+                    fetch(`/api/research/historical?topic=ai&v=3`).catch(() => null)
                 ]);
 
-                if (hnRes && hnRes.ok) {
+                if (hnRes?.ok) {
                     const data = await hnRes.json();
                     if (Array.isArray(data)) setHackerNews(data);
                 }
-                if (anthropicRes && anthropicRes.ok) {
+                if (anthropicRes?.ok) {
                     const data = await anthropicRes.json();
                     if (Array.isArray(data)) setAnthropicNews(data);
                 }
-                if (openaiRes && openaiRes.ok) {
+                if (openaiRes?.ok) {
                     const data = await openaiRes.json();
                     if (Array.isArray(data)) setOpenaiNews(data);
                 }
-                if (arxivYRes && arxivYRes.ok) {
+                if (arxivYRes?.ok) {
                     const data = await arxivYRes.json();
                     if (Array.isArray(data)) setArxivYesterday(data);
                 }
-                if (arxivWRes && arxivWRes.ok) {
+                if (arxivWRes?.ok) {
                     const data = await arxivWRes.json();
                     if (Array.isArray(data)) setArxivLastWeek(data);
+                }
+                if (arxivRevRes?.ok) {
+                    const data = await arxivRevRes.json();
+                    if (Array.isArray(data)) setArxivReview(data);
+                }
+                if (arxivHistRes?.ok) {
+                    const data = await arxivHistRes.json();
+                    if (Array.isArray(data)) setArxivHistorical(data);
                 }
             } catch (err) {
                 console.error("Error fetching AI news", err);
@@ -108,7 +101,7 @@ export const AIView: React.FC = () => {
             id: "loading-research",
             colSpan: 3,
             content: (
-                <div className="flex items-center justify-center py-8 text-emerald-500">
+                <div className="flex items-center justify-center py-8 text-purple-500">
                     <Loader2 className="w-8 h-8 animate-spin" />
                 </div>
             )
@@ -123,16 +116,29 @@ export const AIView: React.FC = () => {
             id: "ai-research-arxiv-week",
             colSpan: 2,
             content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek} />
+        },
+        {
+            id: "ai-research-arxiv-review",
+            colSpan: 2,
+            content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview} />
+        },
+        {
+            id: "ai-research-arxiv-historical",
+            colSpan: 2,
+            content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical} />
         }
     ];
 
     return (
-        <div className="w-full h-full overflow-y-auto pb-8">
+        <div className="w-full h-full overflow-y-auto pb-8 relative">
             <Section title="AI Chronicles" description="Latest autonomous developments">
                 <CardGrid items={newsCards} layout="masonry" />
             </Section>
 
-            <Section title="Research Papers" description="Latest publications and preprints">
+            <Section
+                title="Research Papers"
+                description="Latest publications and preprints"
+            >
                 <CardGrid items={researchCards} layout="grid" />
             </Section>
         </div>

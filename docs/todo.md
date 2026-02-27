@@ -38,7 +38,13 @@
   - in the log keep track if its from cahce how long until the info expires and will be refetched.
 
 ### API Integrations:
-- Arxiv API: add the ability for any of the views or cards to fetch papers
-- Hugging face: add ability to see papers and model releases
-- Social Media: find a free way to pull in posts/comments from X, Bluesky, from established researchers and field practitioners on certain papers/products/services/blogs.
-
+- **Arxiv API**: add the ability for any of the views or cards to fetch papers
+- **Hugging face & Semantic Scholar Integration**:
+  - [ ] Research HF Daily Papers API (`https://huggingface.co/api/daily_papers`) & Semantic Scholar Graph API (`https://api.semanticscholar.org/graph/v1/paper/batch`).
+  - [ ] Update `app/api/arxiv/route.ts` (or create new `app/api/research/route.ts`) to fetch Hugging Face papers first.
+  - [ ] Extract ArXiv IDs from HF results, then batch query Semantic Scholar for `citationCount`, `authors`, and `abstract`.
+  - [ ] Map combined data into unified `Paper` objects (`id`, `title`, `summary`, `url`, `author`, `published_at`, `source`, `upvotes`, `citationCount`).
+  - [ ] Implement robust caching in the endpoint to avoid strict rate limits.
+  - [ ] Update `ResearchPaperCard.tsx` to display `citationCount` and `upvotes` visually.
+  - [ ] Update `AIView.tsx` to query new endpoints for "Top Yesterday" and "Top Last Week".
+- **Social Media**: find a free way to pull in posts/comments from X, Bluesky, from established researchers and field practitioners on certain papers/products/services/blogs.

@@ -44,8 +44,6 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
                         layout === "masonry" && item.colSpan && item.colSpan > 1 ? "column-span-all" : "",
                         item.hFit ? "self-start h-fit" : "h-full"
                     )}
-                    whileHover={{ scale: 1.02 }}
-                    whileTap={{ scale: 0.98 }}
                 >
                     {/* Drag Handle (Optional, or make whole thing draggable if desired) */}
                     <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab text-white/20 hover:text-white">
