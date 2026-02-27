@@ -44,12 +44,21 @@ async function getHandler(request: Request) {
                 } else {
                     const lastWeek = new Date(now);
                     lastWeek.setDate(now.getDate() - 7);
-                    sliced = sorted.filter((item: any) => {
+                    let weekPapers = sorted.filter((item: any) => {
                         const paper = item.paper || item;
                         const pubDate = Array.isArray(paper.publishedAt) ? paper.publishedAt[0] : paper.publishedAt;
                         if (!pubDate) return false;
                         return new Date(pubDate) >= lastWeek && !pubDate.startsWith(yesterdayStr);
-                    }).slice(0, limit);
+                    });
+
+                    // Sort by upvotes descending
+                    weekPapers.sort((a: any, b: any) => {
+                        const paperA = a.paper || a;
+                        const paperB = b.paper || b;
+                        return (paperB.upvotes || 0) - (paperA.upvotes || 0);
+                    });
+
+                    sliced = weekPapers.slice(0, limit);
                 }
 
                 initialPapers = sliced.map((item: any) => {

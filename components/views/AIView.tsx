@@ -14,20 +14,26 @@ export const AIView: React.FC = () => {
     const [arxivReview, setArxivReview] = useState<any[]>([]);
     const [arxivHistorical, setArxivHistorical] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
+    const [refreshKey, setRefreshKey] = useState(Date.now());
+
+    const handleRefresh = () => {
+        setRefreshKey(Date.now());
+    };
 
     useEffect(() => {
         const fetchAll = async () => {
             try {
-                const cacheBuster = `?v=3`;
+                const cacheBuster = `?v=${refreshKey}`;
+                const cb = cacheBuster.replace('?', '&');
 
                 const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes, arxivRevRes, arxivHistRes] = await Promise.all([
                     fetch(`/api/ai${cacheBuster}`).catch(() => null),
-                    fetch(`/api/company-news?company=anthropic&v=3`).catch(() => null),
-                    fetch(`/api/company-news?company=openai&v=3`).catch(() => null),
-                    fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5&v=3`).catch(() => null),
-                    fetch(`/api/research?topic=ai&timeframe=week&limit=5&v=3`).catch(() => null),
-                    fetch(`/api/research/review?topic=ai&v=3`).catch(() => null),
-                    fetch(`/api/research/historical?topic=ai&v=3`).catch(() => null)
+                    fetch(`/api/company-news?company=anthropic${cb}`).catch(() => null),
+                    fetch(`/api/company-news?company=openai${cb}`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5${cb}`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=week&limit=5${cb}`).catch(() => null),
+                    fetch(`/api/research/review?topic=ai${cb}`).catch(() => null),
+                    fetch(`/api/research/historical?topic=ai${cb}`).catch(() => null)
                 ]);
 
                 if (hnRes?.ok) {
@@ -66,7 +72,7 @@ export const AIView: React.FC = () => {
         };
 
         fetchAll();
-    }, []);
+    }, [refreshKey]);
 
     const newsCards: CardItem[] = loading ? [
         {
@@ -82,16 +88,19 @@ export const AIView: React.FC = () => {
         {
             id: "ai-news-hn",
             colSpan: 1,
+            hFit: true,
             content: <NewsCyclingCard source="Hacker News" articles={hackerNews} />
         },
         {
             id: "ai-news-openai",
             colSpan: 1,
+            hFit: true,
             content: <NewsCyclingCard source="OpenAI" articles={openaiNews} />
         },
         {
             id: "ai-news-anthropic",
             colSpan: 1,
+            hFit: true,
             content: <NewsCyclingCard source="Anthropic" articles={anthropicNews} />
         }
     ];
@@ -109,30 +118,30 @@ export const AIView: React.FC = () => {
     ] : [
         {
             id: "ai-research-arxiv-yesterday",
-            colSpan: 2,
-            content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday} />
+            colSpan: 3,
+            content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday} onRefresh={handleRefresh} />
         },
         {
             id: "ai-research-arxiv-week",
-            colSpan: 2,
-            content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek} />
+            colSpan: 3,
+            content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek} onRefresh={handleRefresh} />
         },
         {
             id: "ai-research-arxiv-review",
-            colSpan: 2,
-            content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview} />
+            colSpan: 3,
+            content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview} onRefresh={handleRefresh} />
         },
         {
             id: "ai-research-arxiv-historical",
-            colSpan: 2,
-            content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical} />
+            colSpan: 3,
+            content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical} onRefresh={handleRefresh} />
         }
     ];
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8 relative">
             <Section title="AI Chronicles" description="Latest autonomous developments">
-                <CardGrid items={newsCards} layout="masonry" />
+                <CardGrid items={newsCards} layout="grid" />
             </Section>
 
             <Section

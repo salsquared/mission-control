@@ -87,7 +87,7 @@ async function getHandler(request: Request) {
         if (topic.toLowerCase() === 'space') arxivQuery = `all:space`;
 
         const fullQuery = `${arxivQuery} AND (ti:review OR ti:survey) AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
-        const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50&sortBy=submittedDate&sortOrder=descending`;
+        const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50&sortBy=relevance&sortOrder=descending`;
 
         const res = await fetch(fetchUrl);
         if (res.ok) {
@@ -103,25 +103,48 @@ async function getHandler(request: Request) {
             });
             const pickedIds = new Set(dbPicked.map((p: any) => p.arxivId));
 
-            let selectedEntry = null;
-            let selectedId = '';
-
-            // Shuffle
-            entries.sort(() => 0.5 - Math.random());
-
+            // Extract IDs from all entries
+            const entryRecords: { entry: string, id: string, citations: number }[] = [];
             for (const entry of entries) {
                 const idMatch = entry.match(/<id>http:\/\/arxiv\.org\/abs\/(.+?)<\/id>/) || entry.match(/<id>http:\/\/arxiv\.org\/abs\/(.+?)v\d+<\/id>/);
                 if (idMatch) {
                     const arxivId = idMatch[1].split('v')[0]; // Strip version if any
                     if (!pickedIds.has(arxivId)) {
-                        selectedEntry = entry;
-                        selectedId = arxivId;
-                        break;
+                        entryRecords.push({ entry, id: arxivId, citations: 0 });
                     }
                 }
             }
 
-            if (selectedEntry && selectedId) {
+            if (entryRecords.length > 0) {
+                // Batch fetch citations for these candidates
+                // Semantic Scholar limits batch to 500, but we only have <= 50
+                const batchIds = entryRecords.map(r => `ArXiv:${r.id}`);
+                try {
+                    const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=citationCount', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids: batchIds })
+                    });
+
+                    if (ssRes.ok) {
+                        const ssData = await ssRes.json();
+                        entryRecords.forEach((record, index) => {
+                            if (ssData[index]) {
+                                record.citations = ssData[index].citationCount || 0;
+                            }
+                        });
+                    }
+                } catch (err) {
+                    console.error("Error fetching citations for review sorting", err);
+                }
+
+                // Sort by citations descending
+                entryRecords.sort((a, b) => b.citations - a.citations);
+
+                const topRecord = entryRecords[0];
+                const selectedEntry = topRecord.entry;
+                const selectedId = topRecord.id;
+
                 // Save it to DB
                 await prisma.selectedReviewPaper.create({
                     data: {
@@ -145,22 +168,10 @@ async function getHandler(request: Request) {
                     author: authorMatch ? authorMatch[1].trim() : 'Unknown',
                     published_at: publishedMatch ? publishedMatch[1].trim() : new Date().toISOString(),
                     source: 'Weekly Recommended Review',
-                    arxivId: selectedId
+                    arxivId: selectedId,
+                    upvotes: 0,
+                    citationCount: topRecord.citations
                 };
-
-                // fetch Semantic scholar details
-                const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: [`ArXiv:${selectedId}`] })
-                });
-
-                if (ssRes.ok) {
-                    const ssData = await ssRes.json();
-                    if (ssData[0]) {
-                        (mappedPaper as any).citationCount = ssData[0].citationCount || 0;
-                    }
-                }
 
                 return NextResponse.json([mappedPaper]);
             }

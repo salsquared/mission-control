@@ -114,25 +114,33 @@ async function getHandler(request: Request) {
                 return NextResponse.json({ history: [] });
             }
 
-            // To avoid UI lag with 4000+ data points, we downsample the array to ~500 points
-            const maxPoints = 500;
-            const step = Math.max(1, Math.floor(allPrices.length / maxPoints));
-
-            const history: { time: number; price: number }[] = [];
-            for (let i = 0; i < allPrices.length; i += step) {
-                history.push({
-                    time: allPrices[i].timestamp.getTime(),
-                    price: allPrices[i].price
+            // Group by day to ensure we only have 1 data point per day
+            const historyMap = new Map<string, { time: number; price: number }>();
+            for (const item of allPrices) {
+                const dateKey = item.timestamp.toISOString().split('T')[0];
+                historyMap.set(dateKey, {
+                    time: item.timestamp.getTime(),
+                    price: item.price
                 });
             }
 
-            // Always ensure the very last (most recent) point is included if not already
-            const lastPoint = allPrices[allPrices.length - 1];
-            if (history[history.length - 1].time !== lastPoint.timestamp.getTime()) {
-                history.push({
-                    time: lastPoint.timestamp.getTime(),
-                    price: lastPoint.price
-                });
+            let history = Array.from(historyMap.values());
+
+            // To avoid UI lag with too many days, we downsample the array to ~500 points
+            const maxPoints = 500;
+            const step = Math.max(1, Math.floor(history.length / maxPoints));
+
+            if (step > 1) {
+                const sampled = [];
+                for (let i = 0; i < history.length; i += step) {
+                    sampled.push(history[i]);
+                }
+                // Always ensure the very last (most recent) point is included if not already
+                const lastPoint = history[history.length - 1];
+                if (sampled.length > 0 && sampled[sampled.length - 1].time !== lastPoint.time) {
+                    sampled.push(lastPoint);
+                }
+                history = sampled;
             }
 
             return NextResponse.json({ history });

@@ -78,27 +78,20 @@ async function getHandler(request: Request) {
             // If failed to fetch, fall back to searching a new one maybe?
         }
 
-        // We need a new historical paper. Pick one from 1 to 5 years ago.
-        const yearsAgo = Math.floor(Math.random() * 4) + 1; // 1 to 4 years ago
+        // We need a new historical paper. Pick one from 3 to 30 years ago to find truly historical papers
+        const yearsAgo = Math.floor(Math.random() * 28) + 3; // 3 to 30 years ago
         const pastDate = new Date(now);
         pastDate.setFullYear(now.getFullYear() - yearsAgo);
 
-        const pad = (n: number) => n.toString().padStart(2, '0');
-
-        let dateFromStr = `${pastDate.getFullYear()}${pad(pastDate.getMonth() + 1)}010000`; // First day of that month
-        let dateToStr = `${pastDate.getFullYear()}${pad(pastDate.getMonth() + 1)}282359`; // roughly end of month
+        let dateFromStr = `${pastDate.getFullYear()}01010000`; // First day of that year
+        let dateToStr = `${pastDate.getFullYear()}12312359`; // Last day of that year
 
         let arxivQuery = `cat:cs.AI`;
         if (topic.toLowerCase() === 'crypto') arxivQuery = `all:crypto`;
         if (topic.toLowerCase() === 'space') arxivQuery = `all:space`;
 
-        // Fetch up to 50 results from that month and pick a random one that isn't already in DB
-        const arxivApiUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(arxivQuery)}&start=0&max_results=50&sortBy=submittedDate&sortOrder=descending`;
-
-        // Wait, export.arxiv doesn't easily filter by date range unless we use submittedDate in the query:
-        // `submittedDate:[202001010000 TO 202001312359]`
         const fullQuery = `${arxivQuery} AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
-        const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50`;
+        const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=100&sortBy=relevance&sortOrder=descending`;
 
         const res2 = await fetch(fetchUrl);
         if (res2.ok) {
@@ -114,25 +107,48 @@ async function getHandler(request: Request) {
             });
             const pickedIds = new Set(dbPicked.map((p: any) => p.arxivId));
 
-            let selectedEntry = null;
-            let selectedId = '';
-
-            // Shuffle
-            entries.sort(() => 0.5 - Math.random());
-
+            // Extract IDs from all entries
+            const entryRecords: { entry: string, id: string, citations: number }[] = [];
             for (const entry of entries) {
                 const idMatch = entry.match(/<id>http:\/\/arxiv\.org\/abs\/(.+?)<\/id>/) || entry.match(/<id>http:\/\/arxiv\.org\/abs\/(.+?)v\d+<\/id>/);
                 if (idMatch) {
                     const arxivId = idMatch[1].split('v')[0]; // Strip version if any
                     if (!pickedIds.has(arxivId)) {
-                        selectedEntry = entry;
-                        selectedId = arxivId;
-                        break;
+                        entryRecords.push({ entry, id: arxivId, citations: 0 });
                     }
                 }
             }
 
-            if (selectedEntry && selectedId) {
+            if (entryRecords.length > 0) {
+                // Batch fetch citations for these candidates
+                const batchIds = entryRecords.map(r => `ArXiv:${r.id}`);
+                // Semantic Scholar limits batch to 500, we have <= 100
+                try {
+                    const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=citationCount', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids: batchIds })
+                    });
+
+                    if (ssRes.ok) {
+                        const ssData = await ssRes.json();
+                        entryRecords.forEach((record, index) => {
+                            if (ssData[index]) {
+                                record.citations = ssData[index].citationCount || 0;
+                            }
+                        });
+                    }
+                } catch (err) {
+                    console.error("Error fetching citations for historical sorting", err);
+                }
+
+                // Sort by citations descending
+                entryRecords.sort((a, b) => b.citations - a.citations);
+
+                const topRecord = entryRecords[0];
+                const selectedEntry = topRecord.entry;
+                const selectedId = topRecord.id;
+
                 // Save it to DB
                 await prisma.selectedHistoricalPaper.create({
                     data: {
@@ -156,22 +172,10 @@ async function getHandler(request: Request) {
                     author: authorMatch ? authorMatch[1].trim() : 'Unknown',
                     published_at: publishedMatch ? publishedMatch[1].trim() : new Date().toISOString(),
                     source: 'ArXiv Historical Selection',
-                    arxivId: selectedId
+                    arxivId: selectedId,
+                    upvotes: 0,
+                    citationCount: topRecord.citations
                 };
-
-                // fetch Semantic scholar details
-                const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ ids: [`ArXiv:${selectedId}`] })
-                });
-
-                if (ssRes.ok) {
-                    const ssData = await ssRes.json();
-                    if (ssData[0]) {
-                        (mappedPaper as any).citationCount = ssData[0].citationCount || 0;
-                    }
-                }
 
                 return NextResponse.json([mappedPaper]);
             }

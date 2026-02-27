@@ -45,3 +45,4 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
         return response;
     };
 }
+

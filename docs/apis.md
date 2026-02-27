@@ -25,6 +25,74 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   }>
   ```
 
+#### Research Papers (Recent)
+- **Route:** `GET /api/research?topic=[topic]&timeframe=[timeframe]&limit=[limit]&type=[type]`
+- **Internal Cache:** 1 hour TTL
+- **Purpose:** Fetches recent research papers for a given topic ('ai', 'crypto', 'space'). Default timeframe is 'yesterday'. For the 'ai' topic, it first uses the Hugging Face Daily Papers API. For other topics or older timeframes, it falls back to the arXiv API. It enriches all papers with citation counts using the Semantic Scholar API.
+- **External APIs Used:** 
+  - Hugging Face Daily Papers API: `https://huggingface.co/api/daily_papers`
+  - arXiv API: `http://export.arxiv.org/api/query`
+  - Semantic Scholar API (for enrichment): `https://api.semanticscholar.org/graph/v1/paper/batch`
+- **Response Schema:**
+  ```typescript
+  Array<{
+    id: string;
+    title: string;
+    summary: string;
+    url: string;
+    author: string;
+    published_at: string;
+    source: string;              // e.g., "Hugging Face Daily Papers" or "arXiv"
+    arxivId: string;
+    upvotes?: number;            // Only for Hugging Face source
+    citationCount?: number;      // Fetched from Semantic Scholar
+  }>
+  ```
+
+#### Historical Research Paper of the Week
+- **Route:** `GET /api/research/historical?topic=[topic]`
+- **Internal Cache:** 1 hour TTL
+- **Purpose:** Selects and fetches one historical research paper (published 1 to 5 years ago) per week for a specific topic, circumventing duplicates. Assigned papers are locked in the database (`SelectedHistoricalPaper` table) for weekly persistence. Also enriches with the Semantic Scholar API.
+- **External APIs Used:**
+  - arXiv API: `http://export.arxiv.org/api/query`
+  - Semantic Scholar API: `https://api.semanticscholar.org/graph/v1/paper/batch`
+- **Response Schema:**
+  ```typescript
+  Array<{
+    id: string;
+    title: string;
+    summary: string;
+    url: string;
+    author: string;
+    published_at: string;
+    source: string;              // "ArXiv Historical Selection"
+    arxivId: string;
+    citationCount?: number;      // Fetched from Semantic Scholar
+  }>
+  ```
+
+#### Weekly Recommended Review Paper
+- **Route:** `GET /api/research/review?topic=[topic]`
+- **Internal Cache:** 1 hour TTL
+- **Purpose:** Picks and features one review or survey research paper (from last 365 days) weekly for a specific topic. Ensures zero duplication by storing tracked IDs in the local database (`SelectedReviewPaper` table). Enriches with the Semantic Scholar API.
+- **External APIs Used:**
+  - arXiv API: `http://export.arxiv.org/api/query`
+  - Semantic Scholar API: `https://api.semanticscholar.org/graph/v1/paper/batch`
+- **Response Schema:**
+  ```typescript
+  Array<{
+    id: string;
+    title: string;
+    summary: string;
+    url: string;
+    author: string;
+    published_at: string;
+    source: string;              // "Weekly Recommended Review"
+    arxivId: string;
+    citationCount?: number;      // Fetched from Semantic Scholar
+  }>
+  ```
+
 ### Finance Dashboard
 #### Finance Data
 - **Route:** `GET /api/finance`
@@ -116,7 +184,7 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   }>
   ```
 
-#### Solar Activity (Planned)
+#### Solar Activity
 - **Route:** `GET /api/space/solar`
 - **Internal Cache:** 5 minutes TTL
 - **Purpose:** Fetches current solar activity and space weather, such as current X-Ray flux.
@@ -130,7 +198,7 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   }
   ```
 
-#### Satellites (Planned)
+#### Satellites
 - **Route:** `GET /api/space/satellites`
 - **Internal Cache:** 1 hour TTL
 - **Purpose:** Retrieves information and active counts for all currently active satellites in Earth-centric orbits, categorizing them by orbit type (LEO, MEO, GEO, SSO) and notable sub-categories (e.g., Starlink).

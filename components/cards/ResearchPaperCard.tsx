@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, User, Bookmark, Heart, Check, Star, Quote, ArrowUp } from "lucide-react";
+import { BookOpen, ChevronLeft, ChevronRight, User, Bookmark, Heart, Check, Star, Quote, ArrowUp, RefreshCw } from "lucide-react";
 
 interface Paper {
     id: string;
@@ -20,9 +20,10 @@ interface Paper {
 interface ResearchPaperCardProps {
     subject: string;
     papers: Paper[];
+    onRefresh?: () => void;
 }
 
-export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, papers }) => {
+export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, papers, onRefresh }) => {
     const [currentIndex, setCurrentIndex] = useState(0);
 
     useEffect(() => {
@@ -164,7 +165,7 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
             </div>
 
             <div className="flex-1 relative mb-4">
-                <div className="text-sm text-white/80 leading-relaxed whitespace-pre-line">
+                <div className="text-sm text-white/80 leading-relaxed whitespace-pre-line md:columns-2 md:gap-8 text-justify">
                     {currentPaper.summary}
                 </div>
             </div>
@@ -178,6 +179,15 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
                 {/* Save Actions */}
                 {currentPaper.arxivId && (
                     <div className="flex items-center gap-1 bg-black/40 rounded-full p-0.5 border border-white/5">
+                        {onRefresh && (
+                            <button
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRefresh(); }}
+                                className="p-1.5 rounded-full transition-colors text-white/40 hover:text-white hover:bg-white/10"
+                                title="Reload"
+                            >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                            </button>
+                        )}
                         <button
                             onClick={(e) => handleSave(e, 'READ')}
                             className={`p-1.5 rounded-full transition-colors ${activeStatus === 'READ' ? 'bg-emerald-500/20 text-emerald-400' : 'text-white/40 hover:text-emerald-400 hover:bg-white/10'}`}
