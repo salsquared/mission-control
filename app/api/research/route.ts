@@ -30,6 +30,7 @@ async function getHandler(request: Request) {
                 const yesterday = new Date(now);
                 yesterday.setDate(now.getDate() - 1);
                 const yesterdayStr = `${yesterday.getFullYear()}-${pad(yesterday.getMonth() + 1)}-${pad(yesterday.getDate())}`;
+                const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
 
                 let sliced = sorted;
 
@@ -42,13 +43,21 @@ async function getHandler(request: Request) {
                         return pubDate.startsWith(yesterdayStr);
                     }).slice(0, limit);
                 } else {
-                    const lastWeek = new Date(now);
-                    lastWeek.setDate(now.getDate() - 7);
+                    const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
+                    const lastWeekStart = new Date(now);
+                    lastWeekStart.setDate(now.getDate() - dayOfWeek - 7);
+                    lastWeekStart.setHours(0, 0, 0, 0);
+
+                    const lastWeekEnd = new Date(lastWeekStart);
+                    lastWeekEnd.setDate(lastWeekStart.getDate() + 6);
+                    lastWeekEnd.setHours(23, 59, 59, 999);
+
                     let weekPapers = sorted.filter((item: any) => {
                         const paper = item.paper || item;
-                        const pubDate = Array.isArray(paper.publishedAt) ? paper.publishedAt[0] : paper.publishedAt;
-                        if (!pubDate) return false;
-                        return new Date(pubDate) >= lastWeek && !pubDate.startsWith(yesterdayStr);
+                        const pubDateStr = Array.isArray(paper.publishedAt) ? paper.publishedAt[0] : paper.publishedAt;
+                        if (!pubDateStr) return false;
+                        const pubDateObj = new Date(pubDateStr);
+                        return pubDateObj >= lastWeekStart && pubDateObj <= lastWeekEnd;
                     });
 
                     // Sort by upvotes descending
@@ -107,10 +116,21 @@ async function getHandler(request: Request) {
                 dateToStr = `${yesterday.getFullYear()}${pad(yesterday.getMonth() + 1)}${pad(yesterday.getDate())}2359`;
             } else {
                 const searchDays = type === 'review' ? 365 : 7;
-                const lastWeek = new Date(now);
-                lastWeek.setDate(now.getDate() - searchDays);
-                dateFromStr = `${lastWeek.getFullYear()}${pad(lastWeek.getMonth() + 1)}${pad(lastWeek.getDate())}0000`;
-                dateToStr = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}2359`;
+                let startDate = new Date(now);
+                let endDate = new Date(now);
+
+                if (type !== 'review') {
+                    // For the 'week' timeframe, use the previous calendar week (Monday - Sunday)
+                    const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
+                    startDate.setDate(now.getDate() - dayOfWeek - 7);
+                    endDate = new Date(startDate);
+                    endDate.setDate(startDate.getDate() + 6);
+                } else {
+                    startDate.setDate(now.getDate() - searchDays);
+                }
+
+                dateFromStr = `${startDate.getFullYear()}${pad(startDate.getMonth() + 1)}${pad(startDate.getDate())}0000`;
+                dateToStr = `${endDate.getFullYear()}${pad(endDate.getMonth() + 1)}${pad(endDate.getDate())}2359`;
             }
 
             searchQueryParts.push(`submittedDate:[${dateFromStr}+TO+${dateToStr}]`);

@@ -4,7 +4,6 @@ import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Bitcoin, TrendingUp, Wallet, Flame, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { ResponsiveContainer, LineChart, Line, YAxis, XAxis, Tooltip, CartesianGrid } from "recharts";
 import { AssetPriceCard } from "../cards/AssetPriceCard";
 import { Section } from "../Section";
 
@@ -101,7 +100,6 @@ export const FinanceView: React.FC = () => {
     };
 
     const fetchHistory = async (days: string) => {
-        setRange(days);
         try {
             const res = await fetch(`/api/finance/history?range=${days}&coin=bitcoin`, { cache: 'no-store' });
             const data = await res.json();
@@ -115,9 +113,15 @@ export const FinanceView: React.FC = () => {
 
     useEffect(() => {
         fetchFinance();
-        fetchHistory(range);
         const interval = setInterval(() => {
             fetchFinance();
+        }, 300000); // 5 min polling
+        return () => clearInterval(interval);
+    }, []);
+
+    useEffect(() => {
+        fetchHistory(range);
+        const interval = setInterval(() => {
             fetchHistory(range);
         }, 300000); // 5 min polling
         return () => clearInterval(interval);
@@ -138,7 +142,7 @@ export const FinanceView: React.FC = () => {
                     loading={loading}
                     historyData={historyData}
                     range={range}
-                    onRangeChange={fetchHistory}
+                    onRangeChange={setRange}
                     LastUpdatedComponent={LastUpdated}
                     formatXAxisDate={formatXAxisDate}
                     CustomTooltip={CustomTooltip}

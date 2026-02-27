@@ -14,26 +14,58 @@ export const AIView: React.FC = () => {
     const [arxivReview, setArxivReview] = useState<any[]>([]);
     const [arxivHistorical, setArxivHistorical] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
-    const [refreshKey, setRefreshKey] = useState(Date.now());
 
-    const handleRefresh = () => {
-        setRefreshKey(Date.now());
+    const handleRefreshYesterday = async () => {
+        try {
+            const res = await fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5&v=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) setArxivYesterday(data);
+            }
+        } catch (err) { console.error(err); }
+    };
+
+    const handleRefreshWeek = async () => {
+        try {
+            const res = await fetch(`/api/research?topic=ai&timeframe=week&limit=5&v=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) setArxivLastWeek(data);
+            }
+        } catch (err) { console.error(err); }
+    };
+
+    const handleRefreshReview = async () => {
+        try {
+            const res = await fetch(`/api/research/review?topic=ai&v=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) setArxivReview(data);
+            }
+        } catch (err) { console.error(err); }
+    };
+
+    const handleRefreshHistorical = async () => {
+        try {
+            const res = await fetch(`/api/research/historical?topic=ai&v=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) setArxivHistorical(data);
+            }
+        } catch (err) { console.error(err); }
     };
 
     useEffect(() => {
         const fetchAll = async () => {
             try {
-                const cacheBuster = `?v=${refreshKey}`;
-                const cb = cacheBuster.replace('?', '&');
-
                 const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes, arxivRevRes, arxivHistRes] = await Promise.all([
-                    fetch(`/api/ai${cacheBuster}`).catch(() => null),
-                    fetch(`/api/company-news?company=anthropic${cb}`).catch(() => null),
-                    fetch(`/api/company-news?company=openai${cb}`).catch(() => null),
-                    fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5${cb}`).catch(() => null),
-                    fetch(`/api/research?topic=ai&timeframe=week&limit=5${cb}`).catch(() => null),
-                    fetch(`/api/research/review?topic=ai${cb}`).catch(() => null),
-                    fetch(`/api/research/historical?topic=ai${cb}`).catch(() => null)
+                    fetch(`/api/ai`).catch(() => null),
+                    fetch(`/api/company-news?company=anthropic`).catch(() => null),
+                    fetch(`/api/company-news?company=openai`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=week&limit=5`).catch(() => null),
+                    fetch(`/api/research/review?topic=ai`).catch(() => null),
+                    fetch(`/api/research/historical?topic=ai`).catch(() => null)
                 ]);
 
                 if (hnRes?.ok) {
@@ -72,7 +104,7 @@ export const AIView: React.FC = () => {
         };
 
         fetchAll();
-    }, [refreshKey]);
+    }, []);
 
     const newsCards: CardItem[] = loading ? [
         {
@@ -119,22 +151,22 @@ export const AIView: React.FC = () => {
         {
             id: "ai-research-arxiv-yesterday",
             colSpan: 3,
-            content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday} onRefresh={handleRefresh} />
+            content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday} onRefresh={handleRefreshYesterday} />
         },
         {
             id: "ai-research-arxiv-week",
             colSpan: 3,
-            content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek} onRefresh={handleRefresh} />
+            content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek} onRefresh={handleRefreshWeek} />
         },
         {
             id: "ai-research-arxiv-review",
             colSpan: 3,
-            content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview} onRefresh={handleRefresh} />
+            content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview} onRefresh={handleRefreshReview} />
         },
         {
             id: "ai-research-arxiv-historical",
             colSpan: 3,
-            content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical} onRefresh={handleRefresh} />
+            content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical} onRefresh={handleRefreshHistorical} />
         }
     ];
 

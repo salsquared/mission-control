@@ -13,9 +13,18 @@ if (process.env.NODE_ENV !== 'production') {
 export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlSeconds: number) {
     return async function (req: Request) {
         const url = new URL(req.url);
-        const cacheKey = url.pathname + url.search;
+        // Remove cache buster 'v' to get base cache key
+        const params = new URLSearchParams(url.search);
+        const isRefresh = params.has('v');
+        if (isRefresh) {
+            params.delete('v');
+        }
 
-        if (globalCache.has(cacheKey)) {
+        let targetSearch = params.toString();
+        if (targetSearch.length > 0) targetSearch = '?' + targetSearch;
+        const cacheKey = url.pathname + targetSearch;
+
+        if (!isRefresh && globalCache.has(cacheKey)) {
             const entry = globalCache.get(cacheKey)!;
             if (Date.now() < entry.expiry) {
                 return NextResponse.json(entry.data, {
