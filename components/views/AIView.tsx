@@ -15,6 +15,7 @@ export const AIView: React.FC = () => {
     const [arxivReview, setArxivReview] = useState<any[]>([]);
     const [arxivHistorical, setArxivHistorical] = useState<any[]>([]);
     const [llmLeaderboard, setLlmLeaderboard] = useState<LLMModelInfo[]>([]);
+    const [llmCategory, setLlmCategory] = useState("text");
     const [loading, setLoading] = useState(true);
 
     const handleRefreshYesterday = async () => {
@@ -59,7 +60,19 @@ export const AIView: React.FC = () => {
 
     const handleRefreshLeaderboard = async () => {
         try {
-            const res = await fetch(`/api/ai/llmleaderboard?v=${Date.now()}`);
+            const res = await fetch(`/api/ai/llmleaderboard?category=${llmCategory}&v=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) setLlmLeaderboard(data);
+            }
+        } catch (err) { console.error(err); }
+    };
+
+    const handleLeaderboardCategoryChange = async (category: string) => {
+        setLlmCategory(category);
+        // We can optionally show loading or just clear current list, removing clearing to prevent layout jumps right now is better.
+        try {
+            const res = await fetch(`/api/ai/llmleaderboard?category=${category}&v=${Date.now()}`);
             if (res.ok) {
                 const data = await res.json();
                 if (Array.isArray(data)) setLlmLeaderboard(data);
@@ -78,7 +91,7 @@ export const AIView: React.FC = () => {
                     fetch(`/api/research?topic=ai&timeframe=week&limit=5`).catch(() => null),
                     fetch(`/api/research/review?topic=ai`).catch(() => null),
                     fetch(`/api/research/historical?topic=ai`).catch(() => null),
-                    fetch(`/api/ai/llmleaderboard`).catch(() => null)
+                    fetch(`/api/ai/llmleaderboard?category=text`).catch(() => null)
                 ]);
 
                 if (hnRes?.ok) {
@@ -187,6 +200,17 @@ export const AIView: React.FC = () => {
         }
     ];
 
+    const leaderboardCategories = [
+        { id: 'text', label: 'Text' },
+        { id: 'code', label: 'Code' },
+        { id: 'vision', label: 'Vision' },
+        { id: 'text-to-image', label: 'Text-to-Image' },
+        { id: 'image-edit', label: 'Image Edit' },
+        { id: 'search', label: 'Search' },
+        { id: 'text-to-video', label: 'Text-to-Video' },
+        { id: 'image-to-video', label: 'Image-to-Video' },
+    ];
+
     const leaderboardCards: CardItem[] = loading ? [
         {
             id: "loading-leaderboard",
@@ -201,7 +225,15 @@ export const AIView: React.FC = () => {
         {
             id: "ai-llm-leaderboard",
             colSpan: 3,
-            content: <LLMLeaderboardCard models={llmLeaderboard} onRefresh={handleRefreshLeaderboard} />
+            content: (
+                <LLMLeaderboardCard
+                    models={llmLeaderboard}
+                    onRefresh={handleRefreshLeaderboard}
+                    activeCategory={llmCategory}
+                    categories={leaderboardCategories}
+                    onCategoryChange={handleLeaderboardCategoryChange}
+                />
+            )
         }
     ];
 

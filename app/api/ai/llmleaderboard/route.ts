@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
 
@@ -28,9 +28,12 @@ function resolveOrgName(modelName: string, parsedOrg: string): string {
     return '';
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
     try {
-        const url = 'https://lmarena.ai/leaderboard';
+        const { searchParams } = new URL(req.url);
+        const category = searchParams.get('category') || 'text';
+
+        const url = `https://lmarena.ai/leaderboard/${category}`;
         const response = await axios.get(url, {
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -48,13 +51,13 @@ export async function GET() {
             if (i > 80) return;
 
             const cells = $(row).find('td');
-            if (cells.length >= 4) {
+            if (cells.length >= 5) {
                 let rankText = $(cells[0]).text().trim();
                 let rank = parseInt(rankText, 10);
 
-                // Format is usually: Rank, ModelName (with org span), Score (Elo), Votes
+                // Format is usually: Rank, Trend, ModelName (with org span), Score (Elo), Votes
                 // Sometimes the model cell has the organization text in it, so we extract carefully
-                let modelNameNode = $(cells[1]).find('a[title]').first();
+                let modelNameNode = $(cells[2]).find('a[title]').first();
                 let modelName = modelNameNode.attr('title')?.trim();
 
                 // If the title span isn't explicitly there, grab the raw text
@@ -62,18 +65,18 @@ export async function GET() {
                     modelName = modelNameNode.text().trim();
                 }
                 if (!modelName) {
-                    modelName = $(cells[1]).text().trim();
+                    modelName = $(cells[2]).text().trim();
                 }
 
                 // Extract organization name and logo
-                const svgNode = $(cells[1]).find('svg').first();
+                const svgNode = $(cells[2]).find('svg').first();
                 let orgName = svgNode.find('title').text() || 'Unknown';
                 const orgLogo = $.html(svgNode) || '';
 
                 orgName = resolveOrgName(modelName, orgName);
 
-                let scoreText = $(cells[2]).text().trim().replace(/,/g, '');
-                let votesText = $(cells[3]).text().trim().replace(/,/g, '');
+                let scoreText = $(cells[3]).text().trim().replace(/,/g, '');
+                let votesText = $(cells[4]).text().trim().replace(/,/g, '');
 
                 let eloScore = parseInt(scoreText, 10);
                 let votes = parseInt(votesText, 10);

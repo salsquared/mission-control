@@ -13,15 +13,29 @@ export interface LLMModelInfo {
     votes: number;
 }
 
+export interface LLMLeaderboardCategory {
+    id: string;
+    label: string;
+}
+
 interface LLMLeaderboardCardProps {
     models: LLMModelInfo[];
     onRefresh?: () => void;
+    activeCategory?: string;
+    onCategoryChange?: (category: string) => void;
+    categories?: LLMLeaderboardCategory[];
 }
 
 type SortField = 'rank' | 'eloScore' | 'votes';
 type SortOrder = 'asc' | 'desc';
 
-export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({ models, onRefresh }) => {
+export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
+    models,
+    onRefresh,
+    activeCategory,
+    onCategoryChange,
+    categories
+}) => {
     const [sortField, setSortField] = useState<SortField>('rank');
     const [sortOrder, setSortOrder] = useState<SortOrder>('asc');
 
@@ -72,6 +86,23 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({ models, 
                     </button>
                 )}
             </div>
+
+            {categories && categories.length > 0 && onCategoryChange && (
+                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 pb-scroll">
+                    {categories.map((cat) => (
+                        <button
+                            key={cat.id}
+                            onClick={() => onCategoryChange(cat.id)}
+                            className={`px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${activeCategory === cat.id
+                                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                    : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80 border border-white/5'
+                                }`}
+                        >
+                            {cat.label}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             <div className="flex items-center justify-between gap-4 px-3 pb-2 text-xs font-medium text-white/50 uppercase tracking-wider border-b border-white/10 mb-2">
                 <div className="flex-1 min-w-0 flex items-center gap-1 w-20 text-[10px]">
