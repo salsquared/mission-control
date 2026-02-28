@@ -7,7 +7,7 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  reactStrictMode: false,
 };
 
 export default withSerwist(nextConfig);

@@ -43,7 +43,7 @@ export const GraphWidget: React.FC<GraphWidgetProps> = ({
                             tickMargin={10}
                             axisLine={false}
                             tickLine={false}
-                            padding={{ right: 20 }}
+                            padding={{}}
                         />
                         <YAxis
                             domain={['auto', 'auto']}

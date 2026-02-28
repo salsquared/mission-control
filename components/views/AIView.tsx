@@ -4,6 +4,7 @@ import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { ResearchPaperCard } from "../cards/ResearchPaperCard";
+import { LLMLeaderboardCard, LLMModelInfo } from "../cards/LLMLeaderboardCard";
 
 export const AIView: React.FC = () => {
     const [hackerNews, setHackerNews] = useState<any[]>([]);
@@ -13,6 +14,7 @@ export const AIView: React.FC = () => {
     const [arxivLastWeek, setArxivLastWeek] = useState<any[]>([]);
     const [arxivReview, setArxivReview] = useState<any[]>([]);
     const [arxivHistorical, setArxivHistorical] = useState<any[]>([]);
+    const [llmLeaderboard, setLlmLeaderboard] = useState<LLMModelInfo[]>([]);
     const [loading, setLoading] = useState(true);
 
     const handleRefreshYesterday = async () => {
@@ -55,17 +57,28 @@ export const AIView: React.FC = () => {
         } catch (err) { console.error(err); }
     };
 
+    const handleRefreshLeaderboard = async () => {
+        try {
+            const res = await fetch(`/api/ai/llmleaderboard?v=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) setLlmLeaderboard(data);
+            }
+        } catch (err) { console.error(err); }
+    };
+
     useEffect(() => {
         const fetchAll = async () => {
             try {
-                const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes, arxivRevRes, arxivHistRes] = await Promise.all([
+                const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes, arxivRevRes, arxivHistRes, llmRes] = await Promise.all([
                     fetch(`/api/ai`).catch(() => null),
                     fetch(`/api/company-news?company=anthropic`).catch(() => null),
                     fetch(`/api/company-news?company=openai`).catch(() => null),
                     fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5`).catch(() => null),
                     fetch(`/api/research?topic=ai&timeframe=week&limit=5`).catch(() => null),
                     fetch(`/api/research/review?topic=ai`).catch(() => null),
-                    fetch(`/api/research/historical?topic=ai`).catch(() => null)
+                    fetch(`/api/research/historical?topic=ai`).catch(() => null),
+                    fetch(`/api/ai/llmleaderboard`).catch(() => null)
                 ]);
 
                 if (hnRes?.ok) {
@@ -95,6 +108,10 @@ export const AIView: React.FC = () => {
                 if (arxivHistRes?.ok) {
                     const data = await arxivHistRes.json();
                     if (Array.isArray(data)) setArxivHistorical(data);
+                }
+                if (llmRes?.ok) {
+                    const data = await llmRes.json();
+                    if (Array.isArray(data)) setLlmLeaderboard(data);
                 }
             } catch (err) {
                 console.error("Error fetching AI news", err);
@@ -170,10 +187,32 @@ export const AIView: React.FC = () => {
         }
     ];
 
+    const leaderboardCards: CardItem[] = loading ? [
+        {
+            id: "loading-leaderboard",
+            colSpan: 3,
+            content: (
+                <div className="flex items-center justify-center py-8 text-indigo-500">
+                    <Loader2 className="w-8 h-8 animate-spin" />
+                </div>
+            )
+        }
+    ] : [
+        {
+            id: "ai-llm-leaderboard",
+            colSpan: 3,
+            content: <LLMLeaderboardCard models={llmLeaderboard} onRefresh={handleRefreshLeaderboard} />
+        }
+    ];
+
     return (
         <div className="w-full h-full overflow-y-auto pb-8 relative">
             <Section title="AI Chronicles" description="Latest autonomous developments">
                 <CardGrid items={newsCards} layout="grid" />
+            </Section>
+
+            <Section title="Chatbot Arena Leaderboard" description="Top models by Arena Elo rating">
+                <CardGrid items={leaderboardCards} layout="grid" />
             </Section>
 
             <Section
