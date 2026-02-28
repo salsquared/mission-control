@@ -1,5 +1,4 @@
 "use client";
-/* eslint-disable @typescript-eslint/no-unused-vars */
 
 import React, { useState, useEffect } from "react";
 import { BookOpen, ChevronLeft, ChevronRight, User, Bookmark, Heart, Check, Star, Quote, ArrowUp, RefreshCw } from "lucide-react";

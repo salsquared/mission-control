@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 export type LogEntry = {
     id: string;
     timestamp: string;

@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Loader2 } from "lucide-react";

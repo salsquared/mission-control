@@ -1,5 +1,3 @@
-/* eslint-disable react-hooks/set-state-in-effect */
-/* eslint-disable @next/next/no-img-element */
 import React, { useMemo, useState, useEffect } from "react";
 import { Launch } from "../views/SpaceView";
 import { motion, AnimatePresence } from "framer-motion";

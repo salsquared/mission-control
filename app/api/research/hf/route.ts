@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 

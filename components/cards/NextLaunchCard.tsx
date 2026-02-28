@@ -1,4 +1,3 @@
-/* eslint-disable */
 import React, { useEffect, useState } from "react";
 import { Rocket } from "lucide-react";
 import { Launch } from "../views/SpaceView";

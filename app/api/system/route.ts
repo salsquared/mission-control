@@ -1,4 +1,3 @@
-/* eslint-disable */
 import { NextResponse } from 'next/server';
 import os from 'os';
 import { prisma } from '@/lib/prisma';
