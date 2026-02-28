@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
 import os from 'os';
 import { prisma } from '@/lib/prisma';
+import fs from 'fs';
+import path from 'path';
+
+let cachedMaxMemSysLimitGB: number | null = null;
 
 let lastCpuUsage = process.cpuUsage();
 let lastCpuTime = Date.now();
@@ -34,9 +38,26 @@ export async function GET() {
 
         const usedMemGB = (usedMemRSS / (1024 ** 3)).toFixed(2);
 
-        // Let's implement a soft 4GB visual limit to monitor its resources
-        const maxMemSysLimitGB = 4; // A defined 4GB limit 
-        const memoryUsageFormatted = `${usedMemGB} GB / ${maxMemSysLimitGB} GB`;
+        // Dynamically get the RAM limit defined in package.json
+        if (cachedMaxMemSysLimitGB === null) {
+            try {
+                const pkgPath = path.join(process.cwd(), 'package.json');
+                const pkgContent = fs.readFileSync(pkgPath, 'utf-8');
+                const pkgJson = JSON.parse(pkgContent);
+                const devScript = pkgJson.scripts?.dev || '';
+                const match = devScript.match(/--max-old-space-size=(\d+)/);
+                if (match && match[1]) {
+                    cachedMaxMemSysLimitGB = parseInt(match[1], 10) / 1024; // Convert MB to GB
+                } else {
+                    cachedMaxMemSysLimitGB = 4; // Fallback to 4GB
+                }
+            } catch (e) {
+                console.warn("Could not read max-old-space-size from package.json", e);
+                cachedMaxMemSysLimitGB = 4; // Fallback
+            }
+        }
+
+        const memoryUsageFormatted = `${usedMemGB} GB / ${cachedMaxMemSysLimitGB} GB`;
 
         // Process Uptime (Server specifically, instead of whole system)
         const uptimeSeconds = process.uptime();
