@@ -7,6 +7,22 @@ const COINGECKO_TOP100_URL = 'https://api.coingecko.com/api/v3/coins/markets?vs_
 const COINGECKO_PRICES_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true';
 const MEMPOOL_FEES_URL = 'https://mempool.space/api/v1/fees/recommended';
 
+const SPAM_COIN_IDS = new Set([
+    'figure-heloc',
+    'whitebit',
+    'whitebit-coin',
+    'eutbl',
+    'canton-network',
+    'blackrock-usd-institutional-digital-liquidity-fund',
+    'hashnote-usyc',
+    'falcon-finance',
+    'superstate-short-duration-us-government-securities-fund-ustb',
+    'usdtb',
+    'ousg',
+    'janus-henderson-anemoy-aaa-clo-fund',
+    'janus-henderson-anemoy-treasury-fund'
+]);
+
 async function getHandler() {
     try {
         const [top100Res, pricesRes, feesRes] = await Promise.all([
@@ -51,16 +67,18 @@ async function getHandler() {
 
         // Extract top 100 coins
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const top100Coins = top100Data.map((item: any) => ({
-            id: item.id,
-            name: item.name,
-            symbol: item.symbol,
-            marketCapRank: item.market_cap_rank,
-            image: item.image,
-            currentPrice: item.current_price,
-            priceChange24h: item.price_change_percentage_24h,
-            marketCap: item.market_cap
-        }));
+        const top100Coins = top100Data
+            .filter((item: any) => !SPAM_COIN_IDS.has(item.id))
+            .map((item: any) => ({
+                id: item.id,
+                name: item.name,
+                symbol: item.symbol,
+                marketCapRank: item.market_cap_rank,
+                image: item.image,
+                currentPrice: item.current_price,
+                priceChange24h: item.price_change_percentage_24h,
+                marketCap: item.market_cap
+            }));
 
         return NextResponse.json({
             top100: top100Coins,

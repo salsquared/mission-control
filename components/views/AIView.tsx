@@ -240,7 +240,7 @@ export const AIView: React.FC = () => {
     return (
         <div className="w-full h-full overflow-y-auto pb-8 relative">
             <Section title="AI Chronicles" description="Latest autonomous developments">
-                <CardGrid items={newsCards} layout="grid" />
+                <CardGrid items={newsCards} layout="masonry" />
             </Section>
 
             <Section title="Chatbot Arena Leaderboard" description="Top models by Arena Elo rating">

@@ -21,6 +21,7 @@ interface DashConfig {
 
 export const Dashboard: React.FC = () => {
     const [currentIndex, setCurrentIndex] = useState(0);
+    const [isMounted, setIsMounted] = useState(false);
     const [isLaunchpadOpen, setIsLaunchpadOpen] = useState(false);
     const [isAIChatOpen, setIsAIChatOpen] = useState(false);
     const [isLibraryOpen, setIsLibraryOpen] = useState(false);
@@ -58,8 +59,20 @@ export const Dashboard: React.FC = () => {
     const { setActiveViewId } = useThemeStore();
 
     useEffect(() => {
-        setActiveViewId(dashes[currentIndex].id);
-    }, [currentIndex, setActiveViewId]);
+        const storedId = useThemeStore.getState().activeViewId;
+        const index = dashes.findIndex((d) => d.id === storedId);
+        if (index !== -1) {
+            setCurrentIndex(index);
+        }
+        setIsMounted(true);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    useEffect(() => {
+        if (isMounted) {
+            setActiveViewId(dashes[currentIndex].id);
+        }
+    }, [currentIndex, setActiveViewId, isMounted]);
 
     const nextSlide = () => {
         setCurrentIndex((prev) => (prev + 1) % dashes.length);
