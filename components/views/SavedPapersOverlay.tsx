@@ -41,6 +41,7 @@ export const SavedPapersOverlay: React.FC<SavedPapersOverlayProps> = ({ topic, o
 
     useEffect(() => {
         fetchPapers();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [topic]);
 
     const handleDelete = async (arxivId: string) => {

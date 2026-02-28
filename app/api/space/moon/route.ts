@@ -79,7 +79,7 @@ async function getHandler() {
 
         // Find the next phenomenon
         const nowMs = today.getTime();
-        let next_phenomenon = LUNAR_PHENOMENA.find(p => new Date(p.date).getTime() > nowMs) || null;
+        const next_phenomenon = LUNAR_PHENOMENA.find(p => new Date(p.date).getTime() > nowMs) || null;
 
         return NextResponse.json({
             weekly_cycles,

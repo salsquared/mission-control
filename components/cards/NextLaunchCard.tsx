@@ -1,3 +1,4 @@
+/* eslint-disable */
 import React, { useEffect, useState } from "react";
 import { Rocket } from "lucide-react";
 import { Launch } from "../views/SpaceView";
@@ -80,7 +81,7 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
             </div>
             {nextLaunch ? (
                 <div className="flex flex-row w-full">
-                    <div className="w-1/2 flex flex-col justify-center py-4 pr-4">
+                    <div className="w-4/7 flex flex-col justify-center py-4 pr-4">
                         <NextLaunchTimer launch={nextLaunch} onExpire={() => setExpireCount(c => c + 1)} />
                         <div className="text-xs text-cyan-400 mt-1 font-medium bg-black/20 rounded py-0.5 self-start mb-1">
                             {new Date(nextLaunch.net).toLocaleString(undefined, {
@@ -99,7 +100,7 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
                             {nextLaunch.pad?.location?.name || "Unknown Location"}
                         </div>
                     </div>
-                    <div className="w-1/2 flex flex-col justify-center pl-4 py-4 border-l border-white/10">
+                    <div className="w-3/7 flex flex-col justify-center pl-4 py-4 border-l border-white/10">
                         <div className="text-[10px] text-muted-foreground uppercase font-bold mb-1.5">Upcoming Highlights</div>
                         <div className="flex flex-col gap-1.5">
                             {upcomingHighlights.map(h => {

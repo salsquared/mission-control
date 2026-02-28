@@ -1,8 +1,9 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import React, { useEffect, useState, useRef } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Rocket, Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
+import { Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { NextLaunchCard } from "../cards/NextLaunchCard";
 import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";

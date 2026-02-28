@@ -1,8 +1,8 @@
 "use client";
+/* eslint-disable @next/next/no-img-element */
 
 import React, { useState, useEffect } from "react";
 import { Newspaper, ChevronLeft, ChevronRight } from "lucide-react";
-import { MAX_NEWS_ARTICLES } from "../../lib/constants";
 
 
 interface Article {

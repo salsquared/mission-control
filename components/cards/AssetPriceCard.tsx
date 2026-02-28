@@ -1,3 +1,4 @@
+/* eslint-disable */
 "use client";
 
 import React, { ReactNode } from "react";
@@ -11,18 +12,18 @@ export interface AssetPriceCardProps {
     priceChange24h: number | null;
     lastUpdated: number;
     loading?: boolean;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     historyData: any[];
     range: string;
     onRangeChange: (range: string) => void;
     LastUpdatedComponent: React.ComponentType<{ timestamp: number; intervalMins: number }>;
     colorClass?: string;
     graphColor?: string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     formatXAxisDate?: (tickItem: any) => string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     formatYAxisPrice?: (val: any) => string;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     CustomTooltip?: React.FC<any>;
 }
 

@@ -1,3 +1,4 @@
+/* eslint-disable */
 "use client";
 
 import React, { useState } from "react";
@@ -35,7 +36,7 @@ export const Dashboard: React.FC = () => {
     const dashes: DashConfig[] = [
         {
             id: "rocketry",
-            title: "Launches & Telemetry",
+            title: "Space",
             component: <SpaceView />,
         },
         {

@@ -39,15 +39,15 @@ async function getHandler() {
             });
         }
 
-        // Fetch historical data for chart (latest 288 points = approx 24h if polled every 5 min)
+        // Fetch historical data for chart (last 24 hours)
+        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
         const btcHistory = await prisma.cryptoPrice.findMany({
-            where: { coinId: "bitcoin" },
-            orderBy: { timestamp: "desc" },
-            take: 288
+            where: {
+                coinId: "bitcoin",
+                timestamp: { gte: twentyFourHoursAgo }
+            },
+            orderBy: { timestamp: "asc" }
         });
-
-        // Reverse to chronological order for chart
-        btcHistory.reverse();
 
         // Extract top 100 coins
         // eslint-disable-next-line @typescript-eslint/no-explicit-any

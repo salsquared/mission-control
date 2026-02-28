@@ -2,13 +2,40 @@
 
 import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Brain, MessageSquare, Shield, Activity, Settings, Database, Server, Palette, Cpu } from "lucide-react";
+import { Activity, Settings, Server, Palette, Cpu } from "lucide-react";
 import { Section } from "../Section";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
 
+const formatLogMessage = (message: string) => {
+    const regex = /\b(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|[2345]\d{2})\b/g;
+    if (!regex.test(message)) return message;
+
+    const parts = message.split(regex);
+    return parts.map((part, index) => {
+        if (part === 'GET') return <span key={index} className="text-emerald-400 font-bold">GET</span>;
+        if (part === 'POST') return <span key={index} className="text-blue-400 font-bold">POST</span>;
+        if (part === 'PUT') return <span key={index} className="text-amber-400 font-bold">PUT</span>;
+        if (part === 'DELETE') return <span key={index} className="text-red-400 font-bold">DELETE</span>;
+        if (part === 'PATCH') return <span key={index} className="text-purple-400 font-bold">PATCH</span>;
+        if (part === 'OPTIONS') return <span key={index} className="text-gray-400 font-bold">OPTIONS</span>;
+        if (part === 'HEAD') return <span key={index} className="text-gray-400 font-bold">HEAD</span>;
+
+        if (/^[2345]\d{2}$/.test(part)) {
+            const code = parseInt(part, 10);
+            if (code >= 200 && code < 300) return <span key={index} className="text-emerald-400 font-bold">{part}</span>;
+            if (code >= 300 && code < 400) return <span key={index} className="text-cyan-400 font-bold">{part}</span>;
+            if (code >= 400 && code < 500) return <span key={index} className="text-amber-400 font-bold">{part}</span>;
+            if (code >= 500) return <span key={index} className="text-red-400 font-bold">{part}</span>;
+        }
+
+        return part;
+    });
+};
+
 export const InternalView: React.FC = () => {
     const [sysMetrics, setSysMetrics] = useState<{ cpuUsagePercent: number; memoryUsageFormatted: string; uptimeFormatted: string; dbConnected: boolean } | null>(null);
+    const [sysLogs, setSysLogs] = useState<{ id: string; timestamp: string; level: string; message: string; }[]>([]);
 
     useEffect(() => {
         const fetchMetrics = async () => {
@@ -24,8 +51,39 @@ export const InternalView: React.FC = () => {
         };
 
         fetchMetrics();
-        const interval = setInterval(fetchMetrics, 5000);
-        return () => clearInterval(interval);
+        const intervalMetrics = setInterval(fetchMetrics, 5000);
+
+        // Set up SSE for logs
+        const eventSource = new EventSource('/api/system/logs');
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'initial') {
+                    setSysLogs(data.logs || []);
+                } else if (data.type === 'new') {
+                    setSysLogs((prevLogs) => {
+                        const nextLogs = [...prevLogs, data.log];
+                        if (nextLogs.length > 500) {
+                            nextLogs.shift();
+                        }
+                        return nextLogs;
+                    });
+                }
+            } catch (err) {
+                console.error("Failed to parse log message", err);
+            }
+        };
+
+        eventSource.onerror = (error) => {
+            console.error("EventSource failed:", error);
+            eventSource.close();
+        };
+
+        return () => {
+            clearInterval(intervalMetrics);
+            eventSource.close();
+        };
     }, []);
 
     // Persisted settings store
@@ -37,15 +95,16 @@ export const InternalView: React.FC = () => {
     const colorPresets = [
         { name: "Purple", hue: 250, color: "bg-purple-500" },
         { name: "Pink", hue: 320, color: "bg-pink-500" },
-        { name: "Rose", hue: 350, color: "bg-rose-500" },
-        { name: "Amber", hue: 50, color: "bg-amber-500" },
+        { name: "Red", hue: 0, color: "bg-red-500" },
+        { name: "Orange", hue: 30, color: "bg-orange-500" },
+        { name: "Yellow", hue: 60, color: "bg-yellow-500" },
         { name: "Emerald", hue: 150, color: "bg-emerald-500" },
         { name: "Cyan", hue: 190, color: "bg-cyan-500" },
         { name: "Blue", hue: 220, color: "bg-blue-500" },
     ];
 
     const views = [
-        { id: "rocketry", name: "Launches & Telemetry" },
+        { id: "rocketry", name: "Space" },
         { id: "crypto", name: "Market Analysis" },
         { id: "ai-news", name: "AI News" },
         { id: "ai-partner", name: "Internal Systems" },
@@ -66,19 +125,19 @@ export const InternalView: React.FC = () => {
                         <h3 className="font-bold tracking-wider uppercase text-sm">System Telemetry</h3>
                     </div>
                     <div className="flex flex-wrap md:flex-nowrap justify-between gap-4 md:gap-6 flex-1 w-full">
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">CPU Load</span>
                             <span className="text-2xl font-mono text-white">{sysMetrics ? `${sysMetrics.cpuUsagePercent}%` : '--'}</span>
                         </div>
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Memory Usage</span>
                             <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.memoryUsageFormatted : '--'}</span>
                         </div>
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Server Uptime</span>
                             <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.uptimeFormatted : '--'}</span>
                         </div>
-                        <div className="flex flex-col bg-black/20 p-4 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Database Status</span>
                             <div className="flex items-center gap-2 mt-1">
                                 {sysMetrics ? (
@@ -114,22 +173,38 @@ export const InternalView: React.FC = () => {
         },
         {
             id: "internal-2",
-            colSpan: 2,
+            colSpan: 3,
             content: (
-                <div className="flex flex-col h-full">
-                    <div className="flex items-center gap-2 mb-4 text-cyan-400">
+                <div className="flex flex-col h-[400px]">
+                    <div className="flex items-center gap-2 mb-4 text-cyan-400 shrink-0">
                         <Server className="w-5 h-5" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">Background Event Log</h3>
                     </div>
-                    <div className="flex-1 flex items-center justify-center p-6 border border-dashed border-white/10 rounded-xl bg-black/20">
-                        <p className="text-muted-foreground text-sm font-medium">Event logging currently offline</p>
+                    <div className="flex-1 flex flex-col p-4 border border-dashed border-white/10 rounded-xl bg-black/40 overflow-hidden relative">
+                        {sysLogs.length === 0 ? (
+                            <div className="flex-1 flex items-center justify-center">
+                                <p className="text-muted-foreground text-sm font-medium">Event logging currently offline or no logs yet</p>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col-reverse overflow-y-auto gap-1.5 font-mono text-xs w-full h-full pr-2 select-text cursor-text">
+                                {[...sysLogs].reverse().map((log) => (
+                                    <div key={log.id} className="flex gap-3 w-full border-b border-white/5 pb-1.5 first:border-0 first:pb-0">
+                                        <div className="flex gap-2 shrink-0">
+                                            <span className="text-white/40">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
+                                            <span className={`w-[60px] text-center ${log.level === 'error' ? 'text-red-400 font-bold' : log.level === 'warn' ? 'text-amber-400 font-bold' : 'text-cyan-400'}`}>[{log.level.toUpperCase()}]</span>
+                                        </div>
+                                        <span className={`break-words whitespace-pre-wrap ${log.level === 'error' ? 'text-red-300' : 'text-white'}`}>{formatLogMessage(log.message)}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             ),
         },
         {
             id: "internal-3",
-            colSpan: 2,
+            colSpan: 1,
             content: (
                 <div className="flex flex-col h-full">
                     <div className="flex items-center gap-2 mb-4 text-emerald-400">
@@ -172,7 +247,7 @@ export const InternalView: React.FC = () => {
         },
         {
             id: "internal-4",
-            colSpan: 2,
+            colSpan: 1,
             content: (
                 <div className="flex flex-col h-full">
                     <div className="flex items-center gap-2 mb-4 text-blue-400">

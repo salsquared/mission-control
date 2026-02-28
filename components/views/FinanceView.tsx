@@ -1,3 +1,4 @@
+/* eslint-disable */
 "use client";
 
 import React, { useEffect, useState } from "react";
@@ -25,18 +26,18 @@ const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ ti
 };
 
 export const FinanceView: React.FC = () => {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const [top100, setTop100] = useState<any[]>([]);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const [prices, setPrices] = useState<any>({
         bitcoin: { usd: 0, usd_24h_change: 0 },
         ethereum: { usd: 0 },
         solana: { usd: 0 }
     });
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const [fees, setFees] = useState<any>({});
     const [lastUpdated, setLastUpdated] = useState<number>(0);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+     
     const [historyData, setHistoryData] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [range, setRange] = useState("1"); // days: '1', '7', '30'

@@ -51,8 +51,8 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
     const sortedModels = useMemo(() => {
         if (!models) return [];
         return [...models].sort((a, b) => {
-            let valA = a[sortField] || 0;
-            let valB = b[sortField] || 0;
+            const valA = a[sortField] || 0;
+            const valB = b[sortField] || 0;
             if (sortOrder === 'desc') {
                 return valB - valA;
             } else {
@@ -63,7 +63,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
 
     if (!models || models.length === 0) return null;
 
-    const SortIcon = ({ field }: { field: SortField }) => {
+    const getSortIcon = (field: SortField) => {
         if (sortField !== field) return <ArrowUpDown className="w-3 h-3 text-white/20 group-hover:text-white/50 inline ml-1 transition-colors" />;
         if (sortOrder === 'asc') return <ArrowUp className="w-3 h-3 text-indigo-400 inline ml-1" />;
         return <ArrowDown className="w-3 h-3 text-indigo-400 inline ml-1" />;
@@ -94,8 +94,8 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                             key={cat.id}
                             onClick={() => onCategoryChange(cat.id)}
                             className={`px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap transition-colors ${activeCategory === cat.id
-                                    ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
-                                    : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80 border border-white/5'
+                                ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                                : 'bg-white/5 text-white/50 hover:bg-white/10 hover:text-white/80 border border-white/5'
                                 }`}
                         >
                             {cat.label}
@@ -107,7 +107,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
             <div className="flex items-center justify-between gap-4 px-3 pb-2 text-xs font-medium text-white/50 uppercase tracking-wider border-b border-white/10 mb-2">
                 <div className="flex-1 min-w-0 flex items-center gap-1 w-20 text-[10px]">
                     <button onClick={() => handleSort('rank')} className="flex items-center group hover:text-white/80 transition-colors shrink-0 mr-4">
-                        RANK <SortIcon field="rank" />
+                        RANK {getSortIcon("rank")}
                     </button>
                     <span className="flex-1 min-w-0 pl-7 text-left">MODEL</span>
                 </div>
@@ -117,19 +117,19 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                             <Info className="w-3 h-3" />
                         </a>
                         <button onClick={() => handleSort('votes')} className="flex items-center group hover:text-white/80 transition-colors">
-                            VOTES <SortIcon field="votes" />
+                            VOTES {getSortIcon("votes")}
                         </button>
                     </div>
                     <div className="flex items-center justify-center w-20 text-[10px]">
                         <button onClick={() => handleSort('eloScore')} className="flex items-center text-indigo-300/70 hover:text-indigo-300 transition-colors group">
-                            ELO SCORE <SortIcon field="eloScore" />
+                            ELO SCORE {getSortIcon("eloScore")}
                         </button>
                     </div>
                 </div>
             </div>
 
             <div className="flex-1 overflow-y-auto pr-2 -mr-2 space-y-2 max-h-[400px]">
-                {sortedModels.map((model, idx) => (
+                {sortedModels.map((model) => (
                     <div key={model.id} className="group flex items-center justify-between gap-4 bg-white/5 hover:bg-white/10 py-1.5 px-3 rounded-lg transition-colors border border-white/5">
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                             <span className="text-white/40 font-mono text-sm inline-block w-6 shrink-0 text-right">

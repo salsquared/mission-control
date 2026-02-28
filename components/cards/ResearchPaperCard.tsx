@@ -1,4 +1,5 @@
 "use client";
+/* eslint-disable @typescript-eslint/no-unused-vars */
 
 import React, { useState, useEffect } from "react";
 import { BookOpen, ChevronLeft, ChevronRight, User, Bookmark, Heart, Check, Star, Quote, ArrowUp, RefreshCw } from "lucide-react";
@@ -47,12 +48,12 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
         setCurrentIndex((prev) => (prev - 1 + papers.length) % papers.length);
     };
 
+    // Local optimistic UI state for saving
+    const [localStatuses, setLocalStatuses] = useState<Record<string, string>>({});
+
     if (!papers || papers.length === 0) return null;
 
     const currentPaper = papers[currentIndex];
-
-    // Local optimistic UI state for saving
-    const [localStatuses, setLocalStatuses] = useState<Record<string, string>>({});
 
     const handleSave = async (e: React.MouseEvent, status: string) => {
         e.preventDefault();
