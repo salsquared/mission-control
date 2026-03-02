@@ -50,7 +50,32 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
     // Local optimistic UI state for saving
     const [localStatuses, setLocalStatuses] = useState<Record<string, string>>({});
 
-    if (!papers || papers.length === 0) return null;
+    if (!papers || papers.length === 0) {
+        return (
+            <div className="flex flex-col flex-1 justify-between group relative h-full min-h-[160px]">
+                <div className="flex-shrink-0 mb-4">
+                    <div className="flex items-center justify-between gap-4 mb-2">
+                        <div className="flex items-center gap-2 text-purple-400 min-w-0 flex-1">
+                            <BookOpen className="w-4 h-4 shrink-0" />
+                            <span className="text-xs uppercase tracking-wider font-bold truncate">arXiv • {subject}</span>
+                        </div>
+                    </div>
+                </div>
+                <div className="flex-1 flex flex-col items-center justify-center text-white/40 text-sm gap-2 mt-4">
+                    <span>No papers found for this period.</span>
+                    {onRefresh && (
+                        <button
+                            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRefresh(); }}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 hover:text-white transition-colors text-xs cursor-pointer"
+                        >
+                            <RefreshCw className="w-3.5 h-3.5" />
+                            <span>Refresh</span>
+                        </button>
+                    )}
+                </div>
+            </div>
+        );
+    }
 
     const currentPaper = papers[currentIndex];
 

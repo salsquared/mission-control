@@ -84,14 +84,14 @@ export const AIView: React.FC = () => {
         const fetchAll = async () => {
             try {
                 const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes, arxivRevRes, arxivHistRes, llmRes] = await Promise.all([
-                    fetch(`/api/ai`).catch(() => null),
-                    fetch(`/api/company-news?company=anthropic`).catch(() => null),
-                    fetch(`/api/company-news?company=openai`).catch(() => null),
-                    fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5`).catch(() => null),
-                    fetch(`/api/research?topic=ai&timeframe=week&limit=5`).catch(() => null),
-                    fetch(`/api/research/review?topic=ai`).catch(() => null),
-                    fetch(`/api/research/historical?topic=ai`).catch(() => null),
-                    fetch(`/api/ai/llmleaderboard?category=text`).catch(() => null)
+                    fetch(`/api/ai?v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/company-news?company=anthropic&v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/company-news?company=openai&v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5&v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/research?topic=ai&timeframe=week&limit=5&v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/research/review?topic=ai&v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/research/historical?topic=ai&v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/ai/llmleaderboard?category=text&v=${Date.now()}`).catch(() => null)
                 ]);
 
                 if (hnRes?.ok) {

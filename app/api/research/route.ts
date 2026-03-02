@@ -20,7 +20,7 @@ async function getHandler(request: Request) {
 
         // 1. Fetch from source based on topic
         if (topic.toLowerCase() === 'ai' && type !== 'review') {
-            const hfRes = await fetch('https://huggingface.co/api/daily_papers');
+            const hfRes = await fetch('https://huggingface.co/api/daily_papers', { cache: 'no-store' });
             if (hfRes.ok) {
                 const data = await hfRes.json();
                 const sorted = data;
@@ -34,14 +34,10 @@ async function getHandler(request: Request) {
 
                 let sliced = sorted;
 
-                // We must filter strictly by Arxiv publishing date
+                // Just slice the sorted papers, since Hugging Face's API returns the most recent day's curated papers automatically
+                // This accounts for weekends/holidays when no papers are published exactly "yesterday"
                 if (timeframe === 'yesterday') {
-                    sliced = sorted.filter((item: any) => {
-                        const paper = item.paper || item;
-                        const pubDate = Array.isArray(paper.publishedAt) ? paper.publishedAt[0] : paper.publishedAt;
-                        if (!pubDate) return false;
-                        return pubDate.startsWith(yesterdayStr);
-                    }).slice(0, limit);
+                    sliced = sorted.slice(0, limit);
                 } else {
                     const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
                     const lastWeekStart = new Date(now);
@@ -110,10 +106,13 @@ async function getHandler(request: Request) {
             let dateToStr = "";
 
             if (timeframe === 'yesterday') {
-                const yesterday = new Date(now);
-                yesterday.setDate(now.getDate() - 1);
-                dateFromStr = `${yesterday.getFullYear()}${pad(yesterday.getMonth() + 1)}${pad(yesterday.getDate())}0000`;
-                dateToStr = `${yesterday.getFullYear()}${pad(yesterday.getMonth() + 1)}${pad(yesterday.getDate())}2359`;
+                // Use a 3-day lookback for "yesterday" to ensure papers are found on weekends or holidays
+                const start = new Date(now);
+                start.setDate(now.getDate() - 3);
+                dateFromStr = `${start.getFullYear()}${pad(start.getMonth() + 1)}${pad(start.getDate())}0000`;
+
+                const end = new Date(now);
+                dateToStr = `${end.getFullYear()}${pad(end.getMonth() + 1)}${pad(end.getDate())}2359`;
             } else {
                 const searchDays = type === 'review' ? 365 : 7;
                 const startDate = new Date(now);
@@ -167,7 +166,8 @@ async function getHandler(request: Request) {
             const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids: arxivIds })
+                body: JSON.stringify({ ids: arxivIds }),
+                cache: 'no-store'
             });
 
             if (ssRes.ok) {
