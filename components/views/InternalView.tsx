@@ -34,7 +34,13 @@ const formatLogMessage = (message: string) => {
 };
 
 export const InternalView: React.FC = () => {
-    const [sysMetrics, setSysMetrics] = useState<{ cpuUsagePercent: number; memoryUsageFormatted: string; uptimeFormatted: string; dbConnected: boolean } | null>(null);
+    const [sysMetrics, setSysMetrics] = useState<{
+        cpuUsagePercent: number;
+        memoryUsageFormatted: string;
+        uptimeFormatted: string;
+        dbConnected: boolean;
+        cache?: { hits: number, misses: number, activeEntries: { key: string, remainingTtl: number }[] };
+    } | null>(null);
     const [sysLogs, setSysLogs] = useState<{ id: string; timestamp: string; level: string; message: string; }[]>([]);
 
     useEffect(() => {
@@ -198,6 +204,58 @@ export const InternalView: React.FC = () => {
                                 ))}
                             </div>
                         )}
+                    </div>
+                </div>
+            ),
+        },
+        {
+            id: "cache-analytics",
+            colSpan: 3,
+            content: (
+                <div className="flex flex-col h-[280px]">
+                    <div className="flex items-center gap-2 mb-4 text-emerald-400 shrink-0">
+                        <Activity className="w-5 h-5" />
+                        <h3 className="font-bold tracking-wider uppercase text-sm">Cache Telemetry</h3>
+                    </div>
+                    <div className="flex flex-col md:flex-row gap-4 h-full min-h-0">
+                        <div className="flex flex-col gap-4 w-full md:w-1/3 shrink-0">
+                            <div className="flex flex-col bg-black/20 py-4 px-6 rounded-xl border border-white/5 w-full">
+                                <span className="text-xs text-muted-foreground mb-1">Cache Hit Rate</span>
+                                <span className="text-2xl font-mono text-white">
+                                    {sysMetrics?.cache && (sysMetrics.cache.hits + sysMetrics.cache.misses > 0)
+                                        ? `${Math.round((sysMetrics.cache.hits / (sysMetrics.cache.hits + sysMetrics.cache.misses)) * 100)}%`
+                                        : '--'}
+                                </span>
+                            </div>
+                            <div className="flex gap-4">
+                                <div className="flex flex-col bg-black/20 py-3 px-4 rounded-xl border border-white/5 w-full">
+                                    <span className="text-xs text-muted-foreground mb-1">Hits</span>
+                                    <span className="text-xl font-mono text-emerald-400">{sysMetrics?.cache?.hits || 0}</span>
+                                </div>
+                                <div className="flex flex-col bg-black/20 py-3 px-4 rounded-xl border border-white/5 w-full">
+                                    <span className="text-xs text-muted-foreground mb-1">Misses</span>
+                                    <span className="text-xl font-mono text-amber-400">{sysMetrics?.cache?.misses || 0}</span>
+                                </div>
+                            </div>
+                        </div>
+                        <div className="flex-1 flex flex-col p-4 border border-dashed border-white/10 rounded-xl bg-black/40 overflow-hidden relative">
+                            {sysMetrics?.cache?.activeEntries && sysMetrics.cache.activeEntries.length > 0 ? (
+                                <div className="flex flex-col overflow-y-auto gap-2 font-mono text-xs w-full h-full pr-2">
+                                    {[...sysMetrics.cache.activeEntries].sort((a, b) => a.remainingTtl - b.remainingTtl).map((entry, idx) => (
+                                        <div key={idx} className="flex justify-between items-center w-full border-b border-white/5 pb-1.5 last:border-0 last:pb-0 shrink-0">
+                                            <span className="text-cyan-400 truncate w-3/4 pr-4" title={entry.key}>{entry.key}</span>
+                                            <span className={`w-1/4 text-right ${entry.remainingTtl < 60 ? 'text-red-400 font-bold' : 'text-emerald-400'}`}>
+                                                {entry.remainingTtl}s TTL
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="flex-1 flex items-center justify-center">
+                                    <p className="text-muted-foreground text-sm font-medium">Cache is completely empty</p>
+                                </div>
+                            )}
+                        </div>
                     </div>
                 </div>
             ),

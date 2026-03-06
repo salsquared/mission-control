@@ -6,7 +6,7 @@ import { InternalView } from "./views/InternalView";
 import { FinanceView } from "./views/FinanceView";
 import { AIView } from "./views/AIView";
 import { AICompanion } from "./AICompanion";
-import { SavedPapersOverlay } from "./views/SavedPapersOverlay";
+import { SavedPapersOverlay } from "./overlays/SavedPapersOverlay";
 import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare, Library } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";

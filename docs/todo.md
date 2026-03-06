@@ -59,8 +59,8 @@
     - [x] Update all API routes to log incoming requests (method, endpoint, timestamps).
     - [x] Add logging to distinguish the data source: DB, external API, or Cache.
   - **Cache Analytics**:
-    - [ ] Enhance generic caching layers to attach TTL (Time-To-Live) and expiration details to the log payload.
-    - [ ] Build a dashboard View or terminal output that visuals cache hit rates and remaining TTLs for cached data.
+    - [x] Enhance generic caching layers to attach TTL (Time-To-Live) and expiration details to the log payload.
+    - [x] Build a dashboard View or terminal output that visuals cache hit rates and remaining TTLs for cached data.
 
 ### API Integrations:
 - **Arxiv API**: add the ability for any of the views or cards to fetch papers

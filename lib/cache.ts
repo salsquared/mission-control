@@ -5,9 +5,24 @@ interface CacheEntry {
     expiry: number;
 }
 
-const globalCache = (globalThis as any).apiCache || new Map<string, CacheEntry>();
+const globalCache: Map<string, CacheEntry> = (globalThis as any).apiCache || new Map<string, CacheEntry>();
+const cacheStats: { hits: number, misses: number } = (globalThis as any).apiCacheStats || { hits: 0, misses: 0 };
+
 if (process.env.NODE_ENV !== 'production') {
     (globalThis as any).apiCache = globalCache;
+    (globalThis as any).apiCacheStats = cacheStats;
+}
+
+export function getCacheStats() {
+    const activeEntries = Array.from(globalCache.entries()).map(([key, entry]) => ({
+        key,
+        remainingTtl: Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000))
+    }));
+    return {
+        hits: cacheStats.hits,
+        misses: cacheStats.misses,
+        activeEntries
+    };
 }
 
 export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlSeconds: number) {
@@ -27,7 +42,9 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
         if (!isRefresh && globalCache.has(cacheKey)) {
             const entry = globalCache.get(cacheKey)!;
             if (Date.now() < entry.expiry) {
-                console.info(`[CACHE HIT] ${cacheKey}`);
+                cacheStats.hits++;
+                const remaining = Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000));
+                console.info(`[CACHE HIT] ${cacheKey} (TTL: ${remaining}s remaining)`);
                 return NextResponse.json(entry.data, {
                     headers: {
                         'X-Cache': 'HIT',
@@ -39,7 +56,8 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
             }
         }
 
-        console.info(`[CACHE MISS] ${cacheKey} - Fetching fresh data`);
+        cacheStats.misses++;
+        console.info(`[CACHE MISS] ${cacheKey} - Fetching fresh data (TTL set: ${ttlSeconds}s)`);
         const response = await handler(req);
 
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {

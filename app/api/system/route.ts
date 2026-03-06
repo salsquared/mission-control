@@ -3,6 +3,7 @@ import os from 'os';
 import { prisma } from '@/lib/prisma';
 import fs from 'fs';
 import path from 'path';
+import { getCacheStats } from '@/lib/cache';
 
 let cachedMaxMemSysLimitGB: number | null = null;
 
@@ -78,11 +79,14 @@ export async function GET() {
             console.warn("DB connection check failed:", e);
         }
 
+        const cache = getCacheStats();
+
         return NextResponse.json({
             cpuUsagePercent,
             memoryUsageFormatted,
             uptimeFormatted,
-            dbConnected
+            dbConnected,
+            cache
         });
     } catch (error) {
         console.error("Error fetching system telemetry:", error);
