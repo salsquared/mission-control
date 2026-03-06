@@ -21,6 +21,7 @@ async function getHandler(req: Request) {
             url = `https://ll.thespacedevs.com/2.2.0/launch/?limit=100&net__gte=${gte}&net__lte=${lte}`;
         }
 
+        console.info(`[EXTERNAL API] Fetching from The Space Devs (Launches): ${url}`);
         const res = await fetch(url, {
             next: { revalidate: 21600 }, // Cache for 6 hours
             headers: {

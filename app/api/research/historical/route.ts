@@ -31,6 +31,7 @@ async function getHandler(request: Request) {
         if (existingSelection) {
             // Fetch that specific paper's details from arxiv
             const baseUrl = process.env.NEXTAUTH_URL || `http://localhost:${process.env.PORT || 3000}`;
+            console.info(`[EXTERNAL API] Fetching existing historical paper from arXiv: ${existingSelection.arxivId}`);
             const res = await fetch(`http://export.arxiv.org/api/query?id_list=${existingSelection.arxivId}`);
 
             if (res.ok) {
@@ -59,6 +60,7 @@ async function getHandler(request: Request) {
                         };
 
                         // fetch Semantic scholar details
+                        console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${existingSelection.arxivId}...`);
                         const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -93,6 +95,7 @@ async function getHandler(request: Request) {
         const fullQuery = `${arxivQuery} AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
         const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=100&sortBy=relevance&sortOrder=descending`;
 
+        console.info(`[EXTERNAL API] Fetching new historical papers from arXiv: ${fullQuery}`);
         const res2 = await fetch(fetchUrl);
         if (res2.ok) {
             const xml = await res2.text();
@@ -124,6 +127,7 @@ async function getHandler(request: Request) {
                 const batchIds = entryRecords.map(r => `ArXiv:${r.id}`);
                 // Semantic Scholar limits batch to 500, we have <= 100
                 try {
+                    console.info(`[EXTERNAL API] Fetching citations from Semantic Scholar for ${batchIds.length} historical candidates...`);
                     const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=citationCount', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

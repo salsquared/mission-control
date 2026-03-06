@@ -5,6 +5,7 @@ export const revalidate = 3600; // Cache for 1 hour
 
 async function getHandler() {
     try {
+        console.info('[EXTERNAL API] Fetching from Celestrak (Active Satellites)...');
         const res = await fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json");
 
         if (!res.ok) {

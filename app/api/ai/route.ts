@@ -7,6 +7,7 @@ const HN_SEARCH_URL = `https://hn.algolia.com/api/v1/search_by_date?query="Artif
 
 async function getHandler() {
     try {
+        console.info('[EXTERNAL API] Fetching from Hacker News API...');
         const res = await fetch(HN_SEARCH_URL, {
             next: { revalidate: 3600 }, // Cache for 1 hour
         });

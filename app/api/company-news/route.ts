@@ -7,6 +7,7 @@ import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
 const parser = new Parser();
 
 async function fetchOpenAI() {
+    console.info('[EXTERNAL API] Fetching RSS from OpenAI...');
     const feed = await parser.parseURL('https://openai.com/news/rss.xml');
 
     const items = feed.items.slice(0, MAX_NEWS_ARTICLES);
@@ -16,6 +17,7 @@ async function fetchOpenAI() {
         // Try getting image via microlink API for the first 4 items to save on rate limits, as it bypasses Cloudflare
         if (i < 4 && item.link) {
             try {
+                console.info(`[EXTERNAL API] Fetching image via Microlink API...`);
                 const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(item.link)}`);
                 if (res.ok) {
                     const data = await res.json();
@@ -39,6 +41,7 @@ async function fetchOpenAI() {
 }
 
 async function fetchAnthropic() {
+    console.info('[EXTERNAL API] Fetching from Anthropic News...');
     const res = await fetch('https://www.anthropic.com/news', {
         headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
@@ -102,6 +105,7 @@ async function fetchAnthropic() {
 
 // Support other RSS feeds directly via URL
 async function fetchGenericRSS(title: string, rssUrl: string) {
+    console.info(`[EXTERNAL API] Fetching Generic RSS from: ${rssUrl}`);
     const feed = await parser.parseURL(rssUrl);
     const items = feed.items.slice(0, MAX_NEWS_ARTICLES);
     return items.map(item => ({

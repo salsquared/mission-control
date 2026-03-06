@@ -27,6 +27,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
         if (!isRefresh && globalCache.has(cacheKey)) {
             const entry = globalCache.get(cacheKey)!;
             if (Date.now() < entry.expiry) {
+                console.info(`[CACHE HIT] ${cacheKey}`);
                 return NextResponse.json(entry.data, {
                     headers: {
                         'X-Cache': 'HIT',
@@ -38,6 +39,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
             }
         }
 
+        console.info(`[CACHE MISS] ${cacheKey} - Fetching fresh data`);
         const response = await handler(req);
 
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {

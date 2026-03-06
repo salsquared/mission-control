@@ -29,6 +29,7 @@ async function getHandler(request: Request) {
         });
 
         if (existingSelection) {
+            console.info(`[EXTERNAL API] Fetching existing review paper from arXiv: ${existingSelection.arxivId}`);
             const res = await fetch(`http://export.arxiv.org/api/query?id_list=${existingSelection.arxivId}`);
 
             if (res.ok) {
@@ -56,6 +57,7 @@ async function getHandler(request: Request) {
                         };
 
                         // fetch Semantic scholar details
+                        console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${existingSelection.arxivId}...`);
                         const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
@@ -89,6 +91,7 @@ async function getHandler(request: Request) {
         const fullQuery = `${arxivQuery} AND (ti:review OR ti:survey) AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
         const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50&sortBy=relevance&sortOrder=descending`;
 
+        console.info(`[EXTERNAL API] Fetching new review papers from arXiv: ${fullQuery}`);
         const res = await fetch(fetchUrl);
         if (res.ok) {
             const xml = await res.text();
@@ -120,6 +123,7 @@ async function getHandler(request: Request) {
                 // Semantic Scholar limits batch to 500, but we only have <= 50
                 const batchIds = entryRecords.map(r => `ArXiv:${r.id}`);
                 try {
+                    console.info(`[EXTERNAL API] Fetching citations from Semantic Scholar for ${batchIds.length} review candidates...`);
                     const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=citationCount', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },

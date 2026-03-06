@@ -11,6 +11,7 @@ async function ingestMaxHistory(coinId: string) {
     const ticker = symbolMap[coinId] || `${coinId.toUpperCase()}-USD`;
     const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?interval=1d&range=15y`;
 
+    console.info(`[EXTERNAL API] Fetching from Yahoo Finance: ${url}`);
     const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
     if (!res.ok) {
         console.error(`Failed to fetch max history from Yahoo for ${ticker}`);
@@ -154,6 +155,7 @@ async function getHandler(request: Request) {
     const url = `https://api.coingecko.com/api/v3/coins/${coin}/market_chart?vs_currency=usd&days=${range}`;
 
     try {
+        console.info(`[EXTERNAL API] Fetching from CoinGecko (market_chart): ${url}`);
         const apiKey = process.env.COINGECKO_API_KEY || '';
         const res = await fetch(url, {
             headers: apiKey ? { 'x-cg-demo-api-key': apiKey } : {},

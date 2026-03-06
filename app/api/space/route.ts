@@ -6,6 +6,7 @@ const SNAPI_URL = `https://api.spaceflightnewsapi.net/v4/articles/?limit=100`;
 
 async function getHandler() {
     try {
+        console.info(`[EXTERNAL API] Fetching from Spaceflight News API...`);
         const res = await fetch(SNAPI_URL, {
             next: { revalidate: 3600 }, // Cache for 1 hour
         });

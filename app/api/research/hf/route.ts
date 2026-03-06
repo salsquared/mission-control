@@ -6,6 +6,7 @@ async function getHandler(request: Request) {
         const { searchParams } = new URL(request.url);
         const limit = parseInt(searchParams.get('limit') || '10', 10);
 
+        console.info('[EXTERNAL API] Fetching daily papers from Hugging Face...');
         const res = await fetch('https://huggingface.co/api/daily_papers', {
             headers: {
                 'User-Agent': 'mission-control-app'

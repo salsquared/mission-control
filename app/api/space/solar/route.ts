@@ -21,6 +21,7 @@ function getStatusFromFlux(category: string): string {
 
 async function getHandler() {
     try {
+        console.info('[EXTERNAL API] Fetching from NOAA Space Weather Prediction Center...');
         const res = await fetch("https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json");
 
         if (!res.ok) {

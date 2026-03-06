@@ -20,6 +20,7 @@ async function getHandler(request: Request) {
 
         // 1. Fetch from source based on topic
         if (topic.toLowerCase() === 'ai' && type !== 'review') {
+            console.info(`[EXTERNAL API] Fetching daily papers from Hugging Face...`);
             const hfRes = await fetch('https://huggingface.co/api/daily_papers', { cache: 'no-store' });
             if (hfRes.ok) {
                 const data = await hfRes.json();
@@ -34,10 +35,28 @@ async function getHandler(request: Request) {
 
                 let sliced = sorted;
 
-                // Just slice the sorted papers, since Hugging Face's API returns the most recent day's curated papers automatically
-                // This accounts for weekends/holidays when no papers are published exactly "yesterday"
                 if (timeframe === 'yesterday') {
-                    sliced = sorted.slice(0, limit);
+                    // Start from yesterday and go back up to 3 days to find the most recent papers
+                    let foundPapers: any[] = [];
+                    for (let daysAgo = 1; daysAgo <= 4; daysAgo++) {
+                        const targetDate = new Date(now);
+                        targetDate.setDate(now.getDate() - daysAgo);
+                        const targetStr = `${targetDate.getFullYear()}-${pad(targetDate.getMonth() + 1)}-${pad(targetDate.getDate())}`;
+
+                        foundPapers = sorted.filter((item: any) => {
+                            const paper = item.paper || item;
+                            const pubDateStr = Array.isArray(paper.publishedAt) ? paper.publishedAt[0] : paper.publishedAt;
+                            if (!pubDateStr) return false;
+                            return pubDateStr.startsWith(targetStr);
+                        });
+
+                        if (foundPapers.length > 0) {
+                            break; // We found the most recently published papers
+                        }
+                    }
+
+                    // Fallback to the top overall if all last 4 days were empty (rare)
+                    sliced = foundPapers.length > 0 ? foundPapers.slice(0, limit) : sorted.slice(0, limit);
                 } else {
                     const dayOfWeek = now.getDay() === 0 ? 6 : now.getDay() - 1;
                     const lastWeekStart = new Date(now);
@@ -106,7 +125,7 @@ async function getHandler(request: Request) {
             let dateToStr = "";
 
             if (timeframe === 'yesterday') {
-                // Use a 3-day lookback for "yesterday" to ensure papers are found on weekends or holidays
+                // Use a 3-day lookback window just in case we are on a weekend and no recent ones were found
                 const start = new Date(now);
                 start.setDate(now.getDate() - 3);
                 dateFromStr = `${start.getFullYear()}${pad(start.getMonth() + 1)}${pad(start.getDate())}0000`;
@@ -138,6 +157,7 @@ async function getHandler(request: Request) {
             const arxivApiUrl = `http://export.arxiv.org/api/query?search_query=${searchQuery}&start=0&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
 
             try {
+                console.info(`[EXTERNAL API] Fetching from arXiv: ${arxivApiUrl}`);
                 const feed = await parser.parseURL(arxivApiUrl);
                 initialPapers = feed.items.map(item => {
                     const rawId = item.id || item.link || Math.random().toString();
@@ -163,6 +183,7 @@ async function getHandler(request: Request) {
         if (initialPapers.length > 0) {
             const arxivIds = initialPapers.map(p => `ArXiv:${p.arxivId}`);
 
+            console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${arxivIds.length} papers...`);
             const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

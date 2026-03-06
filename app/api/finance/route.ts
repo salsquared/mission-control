@@ -25,6 +25,7 @@ const SPAM_COIN_IDS = new Set([
 
 async function getHandler() {
     try {
+        console.info('[EXTERNAL API] Fetching from CoinGecko & Mempool Space...');
         const [top100Res, pricesRes, feesRes] = await Promise.all([
             fetch(COINGECKO_TOP100_URL, {
                 next: { revalidate: 300 }, // Cache for 5 mins
