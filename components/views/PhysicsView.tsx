@@ -9,6 +9,7 @@ import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 export const PhysicsView: React.FC = () => {
     const [arxivYesterday, setArxivYesterday] = useState<any[]>([]);
     const [arxivLastWeek, setArxivLastWeek] = useState<any[]>([]);
+    const [arxivReview, setArxivReview] = useState<any[]>([]);
     const [arxivHistorical, setArxivHistorical] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
 
@@ -32,6 +33,16 @@ export const PhysicsView: React.FC = () => {
         } catch (err) { console.error(err); }
     };
 
+    const handleRefreshReview = async () => {
+        try {
+            const res = await fetch(`/api/research/review?topic=physics&v=${Date.now()}`);
+            if (res.ok) {
+                const data = await res.json();
+                if (Array.isArray(data)) setArxivReview(data);
+            }
+        } catch (err) { console.error(err); }
+    };
+
     const handleRefreshHistorical = async () => {
         try {
             const res = await fetch(`/api/research/historical?topic=physics&v=${Date.now()}`);
@@ -45,9 +56,10 @@ export const PhysicsView: React.FC = () => {
     useEffect(() => {
         const fetchAll = async () => {
             try {
-                const [arxivYRes, arxivWRes, arxivHistRes] = await Promise.all([
+                const [arxivYRes, arxivWRes, arxivRevRes, arxivHistRes] = await Promise.all([
                     fetch(`/api/research?topic=physics&timeframe=yesterday&limit=5&v=${Date.now()}`).catch(() => null),
                     fetch(`/api/research?topic=physics&timeframe=week&limit=5&v=${Date.now()}`).catch(() => null),
+                    fetch(`/api/research/review?topic=physics&v=${Date.now()}`).catch(() => null),
                     fetch(`/api/research/historical?topic=physics&v=${Date.now()}`).catch(() => null)
                 ]);
 
@@ -58,6 +70,10 @@ export const PhysicsView: React.FC = () => {
                 if (arxivWRes?.ok) {
                     const data = await arxivWRes.json();
                     if (Array.isArray(data)) setArxivLastWeek(data);
+                }
+                if (arxivRevRes?.ok) {
+                    const data = await arxivRevRes.json();
+                    if (Array.isArray(data)) setArxivReview(data);
                 }
                 if (arxivHistRes?.ok) {
                     const data = await arxivHistRes.json();
@@ -93,6 +109,11 @@ export const PhysicsView: React.FC = () => {
             id: "physics-research-arxiv-week",
             colSpan: 3,
             content: <ResearchPaperCard subject="Top Physics Papers Past Week" papers={arxivLastWeek} onRefresh={handleRefreshWeek} />
+        },
+        {
+            id: "physics-research-arxiv-review",
+            colSpan: 3,
+            content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview} onRefresh={handleRefreshReview} />
         },
         {
             id: "physics-research-arxiv-historical",

@@ -37,18 +37,20 @@ model SavedPaper {
 
 model SelectedHistoricalPaper {
   id        String   @id @default(cuid())
-  paperId   String   @unique
+  paperId   String
   topic     String
   weekStart DateTime // Represents the week it was selected for
 
+  @@unique([paperId, topic])
   @@index([topic, weekStart])
 }
 
 model SelectedReviewPaper {
   id        String   @id @default(cuid())
-  paperId   String   @unique
+  paperId   String
   topic     String
   weekStart DateTime // Represents the week it was selected for
 
+  @@unique([paperId, topic])
   @@index([topic, weekStart])
 }

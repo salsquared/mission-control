@@ -87,6 +87,7 @@ async function getHandler(request: Request) {
         let arxivQuery = `cat:cs.AI`;
         if (topic.toLowerCase() === 'crypto') arxivQuery = `all:crypto`;
         if (topic.toLowerCase() === 'space') arxivQuery = `all:space`;
+        if (topic.toLowerCase() === 'physics') arxivQuery = `all:physics`;
 
         const fullQuery = `${arxivQuery} AND (ti:review OR ti:survey) AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
         const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50&sortBy=relevance&sortOrder=descending`;
