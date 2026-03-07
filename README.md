@@ -13,7 +13,7 @@ nvm use lts
 
 ## Getting Started
 
-First, run the development server:
+To test the application run the development server:
 
 ```bash
 npm run dev
@@ -25,11 +25,21 @@ pnpm dev
 bun dev
 ```
 
+The development server runs on **port 3000** and is configured to use up to **2GB of RAM** (`--max-old-space-size=2048`).
+
 Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Running as a Desktop App (Production)
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+To run the application natively on the desktop without terminal windows:
+
+```bash
+npm run build
+./launch-ms.sh
+```
+
+The production build runs on **port 3100** to avoid conflicts with active development, and is optimized to use a maximum of **1GB of RAM** (`--max-old-space-size=1024`). The `launch-ms.sh` script automatically opens a Chrome window in "App Mode" pointing to `http://127.0.0.1:3100`.
+
 
 ## Documentation
 

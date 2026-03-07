@@ -93,6 +93,114 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
   }>
   ```
 
+#### Hugging Face Daily Papers (Direct Fetch)
+- **Route:** `GET /api/research/hf?limit=[limit]`
+- **Internal Cache:** 1 hour TTL
+- **Purpose:** Fetches daily papers directly from the Hugging Face API without additional arXiv fallback or Semantic Scholar enrichment.
+- **External API Used:** Hugging Face Daily Papers API
+  - Endpoint: `https://huggingface.co/api/daily_papers`
+- **Response Schema:**
+  ```typescript
+  Array<{
+    id: string;                  // e.g. "2602.16729"
+    title: string;
+    summary: string;
+    url: string;                 // URL to arxiv abs view
+    author: string;
+    published_at: string;        // ISO Date String
+    source: "Hugging Face Daily Papers";
+    upvotes: number;
+  }>
+  ```
+
+#### Import Research Paper
+- **Route:** `POST /api/research/import`
+- **Purpose:** Imports a specific research paper by passing an ArXiv ID, DOI, or generic URL. Fetches comprehensive metadata by first trying Semantic Scholar and falling back to arXiv.
+- **External APIs Used:**
+  - Semantic Scholar API: `https://api.semanticscholar.org/graph/v1/paper/[id]`
+  - arXiv API (Fallback): `http://export.arxiv.org/api/query?id_list=[id]`
+- **Request Body Payload:**
+  ```typescript
+  {
+    input: string; // DOI, ArXiv ID, or URL
+  }
+  ```
+- **Response Schema:**
+  ```typescript
+  {
+    id: string;                  // Semantic Scholar paperId or arXiv raw ID
+    title: string;
+    summary: string;             // Abstract
+    url: string;
+    author: string;
+    published_at: string;
+    source: string;              // "Semantic Scholar" or "arXiv"
+    paperId: string;             // Cleaned ID used for tracking
+    citationCount: number;
+  }
+  ```
+
+#### Saved Research Papers
+- **Route:** `GET /api/research/saved`, `POST /api/research/saved`, `DELETE /api/research/saved`
+- **Purpose:** Manages the user's saved research library, including tracking read status and topics. Retrieves, upserts, or deletes tracked papers from the local database (`SavedPaper` table).
+- **External APIs Used:** None (Database only)
+- **Query Parameters (GET):** `?topic=[topic]&status=[status]`
+- **Query Parameters (DELETE):** `?paperId=[paperId]`
+- **Request Body Payload (POST):**
+  ```typescript
+  {
+    paperId: string;
+    title: string;
+    summary: string;
+    url: string;
+    authors: string;
+    publishedAt: string | Date;
+    topic: string;
+    status: string;              // e.g., "READ", "READ_LATER", "FAVORITE"
+  }
+  ```
+- **Response Schema:** Returns database objects mapping to the `SavedPaper` Prisma model.
+
+#### LLM Leaderboard
+- **Route:** `GET /api/ai/llmleaderboard?category=[category]`
+- **Internal Cache:** 1 hour TTL
+- **Purpose:** Fetches and parses the latest LLM Arena leaderboard for the specified category (default: "text"). Returns the top 50 models sorted by Elo score.
+- **External API Used:** LM Arena Leaderboard HTML Parsing
+  - Endpoint: `https://lmarena.ai/leaderboard/[category]`
+- **Response Schema:**
+  ```typescript
+  Array<{
+    id: string;
+    rank: number;
+    name: string;
+    orgName: string;
+    orgLogo: string;             // SVG HTML string
+    eloScore: number;
+    votes: number;
+  }>
+  ```
+
+#### Company News
+- **Route:** `GET /api/company-news?company=[company]&rss=[url]&title=[title]`
+- **Internal Cache:** 1 hour TTL
+- **Purpose:** Fetches the latest news articles from specific AI companies (OpenAI, Anthropic) or generic RSS feeds. Attempts to enrich articles with preview images via Microlink API or Open Graph Scraper.
+- **External APIs Used:**
+  - OpenAI RSS feed / Anthropic news site scraping / Generic RSS
+  - Microlink API: `https://api.microlink.io` (Image enrichment)
+  - Open Graph Scraper (Fallback image enrichment)
+- **Response Schema:**
+  ```typescript
+  Array<{
+    id: string;                  // Unique identifier or link
+    title: string;
+    url: string;
+    source: string;              // e.g., "OpenAI", "Anthropic", custom
+    published_at: string;        // ISO Date String
+    image_url: string;
+    news_site: string;           // Site name
+  }>
+  ```
+
 ### Finance Dashboard
 #### Finance Data
 - **Route:** `GET /api/finance`
@@ -242,6 +350,34 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
     updated_at: string;     // ISO String Date
   }
   ```
+
+### System Dashboard
+#### System Telemetry
+- **Route:** `GET /api/system`
+- **Purpose:** Retrieves real-time application and system telemetry including CPU usage, memory usage compared to Node limits, server uptime, database connection status, and cache hit/miss statistics.
+- **External APIs Used:** None (Internal health check)
+- **Response Schema:**
+  ```typescript
+  {
+    cpuUsagePercent: number;
+    memoryUsageFormatted: string; // e.g., "1.23 GB / 4 GB"
+    uptimeFormatted: string;      // e.g., "1d 2h 34m"
+    dbConnected: boolean;
+    cache: {
+      hits: number;
+      misses: number;
+      keys: number;
+      sizeMB: string;
+    };
+  }
+  ```
+
+#### System Logs Stream
+- **Route:** `GET /api/system/logs`
+- **Purpose:** Subscribes to the server's real-time error, warn, info, and request event logs via Server-Sent Events (SSE). Keep-alive pings are dispatched automatically.
+- **External APIs Used:** None
+- **Response Format:** Event Stream / SSE (`text/event-stream`)
+  - Yields chunks containing: `{ type: 'initial' | 'new', log: LogEntry | LogEntry[] }`
 
 ---
 
