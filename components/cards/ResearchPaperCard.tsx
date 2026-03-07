@@ -11,7 +11,8 @@ interface Paper {
     author: string;
     published_at: string;
     source: string;
-    arxivId?: string;
+    arxivId?: string; // Kept for legacy compatibility if needed
+    paperId?: string;
     upvotes?: number;
     citationCount?: number;
     status?: 'READ' | 'READ_LATER' | 'FAVORITE' | null;
@@ -84,23 +85,24 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
         e.stopPropagation();
 
         const paper = papers[currentIndex];
-        if (!paper.arxivId) return;
+        const idToUse = paper.paperId || paper.arxivId;
+        if (!idToUse) return;
 
         // Toggle logic: if already this status, remove it (DELETE)
-        const currentStatus = localStatuses[paper.arxivId] || paper.status;
+        const currentStatus = localStatuses[idToUse] || paper.status;
         const isRemoving = currentStatus === status;
 
-        setLocalStatuses(prev => ({ ...prev, [paper.arxivId!]: isRemoving ? '' : status }));
+        setLocalStatuses(prev => ({ ...prev, [idToUse]: isRemoving ? '' : status }));
 
         try {
             if (isRemoving) {
-                await fetch(`/api/research/saved?arxivId=${paper.arxivId}`, { method: 'DELETE' });
+                await fetch(`/api/research/saved?paperId=${idToUse}`, { method: 'DELETE' });
             } else {
                 await fetch('/api/research/saved', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        arxivId: paper.arxivId,
+                        paperId: idToUse,
                         title: paper.title,
                         summary: paper.summary,
                         url: paper.url,
@@ -114,11 +116,11 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
         } catch (error) {
             console.error("Failed to save paper", error);
             // Revert on fail
-            setLocalStatuses(prev => ({ ...prev, [paper.arxivId!]: currentStatus || '' }));
+            setLocalStatuses(prev => ({ ...prev, [idToUse]: currentStatus || '' }));
         }
     };
 
-    const activeStatus = localStatuses[currentPaper.arxivId || ''] || currentPaper.status;
+    const activeStatus = localStatuses[currentPaper.paperId || currentPaper.arxivId || ''] || currentPaper.status;
 
     return (
         <div className="flex flex-col flex-1 justify-between group relative h-full">

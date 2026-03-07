@@ -21,7 +21,7 @@ model CryptoPrice {
 
 model SavedPaper {
   id          String   @id @default(cuid())
-  arxivId     String   @unique
+  paperId     String   @unique
   title       String
   summary     String
   url         String
@@ -37,7 +37,7 @@ model SavedPaper {
 
 model SelectedHistoricalPaper {
   id        String   @id @default(cuid())
-  arxivId   String   @unique
+  paperId   String   @unique
   topic     String
   weekStart DateTime // Represents the week it was selected for
 
@@ -46,7 +46,7 @@ model SelectedHistoricalPaper {
 
 model SelectedReviewPaper {
   id        String   @id @default(cuid())
-  arxivId   String   @unique
+  paperId   String   @unique
   topic     String
   weekStart DateTime // Represents the week it was selected for
 

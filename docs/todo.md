@@ -25,20 +25,6 @@
 
 
 ### Feature List:
-- **Logs**:
-  - **Route Request Logging**:
-    - [x] Create a centralized logging utility module (e.g., `utils/logger.ts`).
-    - [x] Update all API routes to log incoming requests (method, endpoint, timestamps).
-    - [x] Add logging to distinguish the data source: DB, external API, or Cache.
-  - **Cache Analytics**:
-    - [x] Enhance generic caching layers to attach TTL (Time-To-Live) and expiration details to the log payload.
-    - [x] Build a dashboard View or terminal output that visuals cache hit rates and remaining TTLs for cached data.
-
-### API Integrations:
-- **Arxiv API**: add the ability for any of the views or cards to fetch papers
-- **Social Media**: find a free way to pull in posts/comments from X, Bluesky, from established researchers and field practitioners on certain papers/products/services/blogs.
-
----
 
 ### Completed Items:
 - **Research papers**:
@@ -69,8 +55,17 @@
     - [x] Implement a backend API route to parse the DOI/URL and fetch paper metadata (e.g., via Crossref or Semantic Scholar API).
     - [x] Build a selection prompt to ask the user which View/reading list to add the paper to, including an option to create a new one.
     - [x] Setup a "Physics" View to track physics science news and papers, and save the fetched paper there.
+- **Logs**:
+  - **Route Request Logging**:
+    - [x] Create a centralized logging utility module (e.g., `utils/logger.ts`).
+    - [x] Update all API routes to log incoming requests (method, endpoint, timestamps).
+    - [x] Add logging to distinguish the data source: DB, external API, or Cache.
+  - **Cache Analytics**:
+    - [x] Enhance generic caching layers to attach TTL (Time-To-Live) and expiration details to the log payload.
+    - [x] Build a dashboard View or terminal output that visuals cache hit rates and remaining TTLs for cached data.
 
 ### API Integrations (Completed):
+- **Arxiv API**: add the ability for any of the views or cards to fetch papers
 - **Hugging face & Semantic Scholar Integration**:
   - [x] Research HF Daily Papers API (`https://huggingface.co/api/daily_papers`) & Semantic Scholar Graph API (`https://api.semanticscholar.org/graph/v1/paper/batch`).
   - [x] Update `app/api/arxiv/route.ts` (or create new `app/api/research/route.ts`) to fetch Hugging Face papers first.

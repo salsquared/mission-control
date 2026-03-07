@@ -5,6 +5,7 @@ import { SpaceView } from "./views/SpaceView";
 import { InternalView } from "./views/InternalView";
 import { FinanceView } from "./views/FinanceView";
 import { AIView } from "./views/AIView";
+import { PhysicsView } from "./views/PhysicsView";
 import { AICompanion } from "./AICompanion";
 import { SavedPapersOverlay } from "./overlays/SavedPapersOverlay";
 import { cn } from "@/lib/utils";
@@ -30,6 +31,7 @@ export const Dashboard: React.FC = () => {
         if (id === 'rocketry') return 'Space';
         if (id === 'crypto') return 'Crypto';
         if (id === 'ai-news') return 'AI';
+        if (id === 'physics') return 'Physics';
         return 'General';
     };
 
@@ -53,6 +55,11 @@ export const Dashboard: React.FC = () => {
             id: "ai-partner",
             title: "Internal Systems",
             component: <InternalView />,
+        },
+        {
+            id: "physics",
+            title: "Physics",
+            component: <PhysicsView />,
         },
     ];
 

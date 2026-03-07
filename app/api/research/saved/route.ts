@@ -29,24 +29,24 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     try {
         const body = await request.json();
-        const { arxivId, title, summary, url, authors, publishedAt, topic, status } = body;
+        const { paperId, title, summary, url, authors, publishedAt, topic, status } = body;
 
-        if (!arxivId || !status || !topic) {
-            return NextResponse.json({ error: "Missing required fields: arxivId, status, topic" }, { status: 400 });
+        if (!paperId || !status || !topic) {
+            return NextResponse.json({ error: "Missing required fields: paperId, status, topic" }, { status: 400 });
         }
 
         // @ts-ignore
         const paper = await (prisma as any).savedPaper.upsert({
-            where: { arxivId },
+            where: { paperId },
             update: {
                 status,
                 topic
             },
             create: {
-                arxivId,
+                paperId,
                 title: title || "Unknown Title",
                 summary: summary || "",
-                url: url || `https://arxiv.org/abs/${arxivId}`,
+                url: url || `https://arxiv.org/abs/${paperId}`,
                 authors: authors || "Unknown",
                 publishedAt: publishedAt ? new Date(publishedAt) : new Date(),
                 topic,
@@ -64,14 +64,14 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
-        const arxivId = searchParams.get('arxivId');
+        const paperId = searchParams.get('paperId');
 
-        if (!arxivId) {
-            return NextResponse.json({ error: "Missing arxivId" }, { status: 400 });
+        if (!paperId) {
+            return NextResponse.json({ error: "Missing paperId" }, { status: 400 });
         }
 
         await (prisma as any).savedPaper.delete({
-            where: { arxivId }
+            where: { paperId }
         });
 
         return NextResponse.json({ success: true });

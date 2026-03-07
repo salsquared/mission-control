@@ -161,7 +161,7 @@ async function getHandler(request: Request) {
                 const feed = await parser.parseURL(arxivApiUrl);
                 initialPapers = feed.items.map(item => {
                     const rawId = item.id || item.link || Math.random().toString();
-                    const arxivId = (rawId.split('/abs/')[1] || rawId).replace(/v\d+$/, '');
+                    const paperId = (rawId.split('/abs/')[1] || rawId).replace(/v\d+$/, '');
 
                     return {
                         id: rawId,
@@ -171,7 +171,7 @@ async function getHandler(request: Request) {
                         author: item.author || item['dc:creator'] || 'Unknown',
                         published_at: item.isoDate || item.pubDate || new Date().toISOString(),
                         source: 'arXiv',
-                        arxivId: arxivId
+                        paperId: paperId
                     };
                 });
             } catch (err) {
@@ -181,7 +181,7 @@ async function getHandler(request: Request) {
 
         // 2. Enrich with Semantic Scholar
         if (initialPapers.length > 0) {
-            const arxivIds = initialPapers.map(p => `ArXiv:${p.arxivId}`);
+            const arxivIds = initialPapers.map(p => `ArXiv:${p.paperId}`);
 
             console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${arxivIds.length} papers...`);
             const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {

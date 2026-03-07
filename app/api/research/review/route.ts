@@ -29,8 +29,8 @@ async function getHandler(request: Request) {
         });
 
         if (existingSelection) {
-            console.info(`[EXTERNAL API] Fetching existing review paper from arXiv: ${existingSelection.arxivId}`);
-            const res = await fetch(`http://export.arxiv.org/api/query?id_list=${existingSelection.arxivId}`);
+            console.info(`[EXTERNAL API] Fetching existing review paper from arXiv: ${existingSelection.paperId}`);
+            const res = await fetch(`http://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 
             if (res.ok) {
                 const xml = await res.text();
@@ -46,22 +46,22 @@ async function getHandler(request: Request) {
 
                     if (titleMatch && summaryMatch) {
                         const mappedPaper = {
-                            id: `http://arxiv.org/abs/${existingSelection.arxivId}`,
+                            id: `http://arxiv.org/abs/${existingSelection.paperId}`,
                             title: titleMatch[1].trim().replace(/\n/g, ' '),
                             summary: summaryMatch[1].trim(),
-                            url: `https://arxiv.org/abs/${existingSelection.arxivId}`,
+                            url: `https://arxiv.org/abs/${existingSelection.paperId}`,
                             author: authorMatch ? authorMatch[1].trim() : 'Unknown',
                             published_at: publishedMatch ? publishedMatch[1].trim() : new Date().toISOString(),
                             source: 'Weekly Recommended Review',
-                            arxivId: existingSelection.arxivId
+                            paperId: existingSelection.paperId
                         };
 
                         // fetch Semantic scholar details
-                        console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${existingSelection.arxivId}...`);
+                        console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${existingSelection.paperId}...`);
                         const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ ids: [`ArXiv:${existingSelection.arxivId}`] })
+                            body: JSON.stringify({ ids: [`ArXiv:${existingSelection.paperId}`] })
                         });
 
                         if (ssRes.ok) {
@@ -102,18 +102,18 @@ async function getHandler(request: Request) {
 
             const dbPicked = await prisma.selectedReviewPaper.findMany({
                 where: { topic: topic.toLowerCase() },
-                select: { arxivId: true }
+                select: { paperId: true }
             });
-            const pickedIds = new Set(dbPicked.map((p: any) => p.arxivId));
+            const pickedIds = new Set(dbPicked.map((p: any) => p.paperId));
 
             // Extract IDs from all entries
             const entryRecords: { entry: string, id: string, citations: number }[] = [];
             for (const entry of entries) {
                 const idMatch = entry.match(/<id>http:\/\/arxiv\.org\/abs\/(.+?)<\/id>/) || entry.match(/<id>http:\/\/arxiv\.org\/abs\/(.+?)v\d+<\/id>/);
                 if (idMatch) {
-                    const arxivId = idMatch[1].split('v')[0]; // Strip version if any
-                    if (!pickedIds.has(arxivId)) {
-                        entryRecords.push({ entry, id: arxivId, citations: 0 });
+                    const paperId = idMatch[1].split('v')[0]; // Strip version if any
+                    if (!pickedIds.has(paperId)) {
+                        entryRecords.push({ entry, id: paperId, citations: 0 });
                     }
                 }
             }
@@ -152,7 +152,7 @@ async function getHandler(request: Request) {
                 // Save it to DB
                 await prisma.selectedReviewPaper.create({
                     data: {
-                        arxivId: selectedId,
+                        paperId: selectedId,
                         topic: topic.toLowerCase(),
                         weekStart: weekStart
                     }
@@ -172,7 +172,7 @@ async function getHandler(request: Request) {
                     author: authorMatch ? authorMatch[1].trim() : 'Unknown',
                     published_at: publishedMatch ? publishedMatch[1].trim() : new Date().toISOString(),
                     source: 'Weekly Recommended Review',
-                    arxivId: selectedId,
+                    paperId: selectedId,
                     upvotes: 0,
                     citationCount: topRecord.citations
                 };
