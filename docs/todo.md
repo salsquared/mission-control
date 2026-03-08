@@ -23,8 +23,28 @@
 - host historical price data and ingestion on hte mac-mini
 - host personal website on mac-mini
 
+### Feature Fixes
+- Mission Control App
+  - [ ] Fix issue where app was starting up but wouldnt load localhost; could be b/c ipv4 is used by node but chrome expects ipv6 (?)
+    - [ ] Get to reason of this error and document it
+  - [ ] Fix issue where externaly dependent apis arent loading; could it be that we are not exporting .env as we are when running dev through next js dev script
+    - [ ] Get reason to why and document it
+  - [ ] Fix issue where we dont get dark scroll bars in the chrome app as we do in safari in dev mode
+    - [ ] Get reason to why and document it; my guess is that its bc the default scroll color uses a diff config on safari than on chrome
 
-### Feature List:
+
+### New Feature List:
+- [ ] Experiment with standard col width of having either p/3, p/4 or p/5 where p is the width of the page or available space for items
+- [ ] Add youtube features
+  - [ ] Make youtube card
+  - [ ] Filter through new suggested videos and subscription videos into one auto-scrolling carousel based on subject/view
+    - [ ] Create whitelist of channels for each view to make sure that their new videos are always shown. eg: Physics View/ Sabine Hossenfelder, PBS Space Time, Veritasium, etc.
+- [ ] Set the "npm run start" script to setup startup logs in the first 1m after the app starts up to better diagnose prod issues
+  - [ ] Use UNIX time to name logs that save to a new log folder; these are not build logs but startup logs. (Would this be written in bash or node process?)
+- [ ] Create cards for research papers that filter through view sub-subjects. eg: Physics View - Quantum Physics, Particle Physics, Astrophysics, etc.
+- [ ] Once prod server is fixed, broadcase the server on the local network and make it mobile-compatible so I can access it on my phone
+- [ ] Integrate local LLM calls w/ Gemma 3.
+
 
 ### Completed Items:
 - **Research papers**:
