@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Rocket } from "lucide-react";
+import { ReloadButton } from "../ui/ReloadButton";
 import { Launch } from "../views/SpaceView";
 
 const NextLaunchTimer: React.FC<{ launch: Launch | null; onExpire: () => void }> = ({ launch, onExpire }) => {
@@ -52,9 +53,10 @@ const NextLaunchTimer: React.FC<{ launch: Launch | null; onExpire: () => void }>
 interface NextLaunchCardProps {
     launches: Launch[];
     loading: boolean;
+    onReload?: () => void;
 }
 
-export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loading }) => {
+export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loading, onReload }) => {
     const [, setExpireCount] = useState(0);
 
     const activeLaunches = launches.filter(l => new Date(l.net).getTime() > Date.now() - 60000);
@@ -73,10 +75,15 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
     ];
 
     return (
-        <div className="flex flex-col pr-1">
-            <div className="flex items-center gap-2 mb-2 text-cyan-400">
-                <Rocket className="w-5 h-5 shrink-0" />
-                <h3 className="font-bold tracking-wider uppercase text-sm">Next Launch</h3>
+        <div className="flex flex-col pr-1 h-full">
+            <div className="flex items-center justify-between mb-2 text-cyan-400">
+                <div className="flex items-center gap-2">
+                    <Rocket className="w-5 h-5 shrink-0" />
+                    <h3 className="font-bold tracking-wider uppercase text-sm">Next Launch</h3>
+                </div>
+                {onReload && (
+                    <ReloadButton onReload={onReload} title="Reload Next Launch" />
+                )}
             </div>
             {nextLaunch ? (
                 <div className="flex flex-row w-full">

@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { BookOpen, ChevronLeft, ChevronRight, User, Bookmark, Heart, Check, Star, Quote, ArrowUp, RefreshCw } from "lucide-react";
+import { BookOpen, User, Quote, ArrowUp, RefreshCw } from "lucide-react";
+import { CarouselControls } from "../ui/CarouselControls";
+import { PaperActions } from "../ui/PaperActions";
 
 interface Paper {
     id: string;
@@ -151,32 +153,12 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
                         </div>
 
                         {/* Pagination Indicators and Controls */}
-                        {papers.length > 1 && (
-                            <div className="flex items-center gap-2 z-20 shrink-0">
-                                <div className="flex gap-1 hidden sm:flex">
-                                    {papers.map((_, i) => (
-                                        <div
-                                            key={i}
-                                            className={`h-1.5 rounded-full transition-all duration-300 ${i === currentIndex ? 'w-3 bg-purple-400' : 'w-1.5 bg-white/20'}`}
-                                        />
-                                    ))}
-                                </div>
-                                <div className="flex gap-0.5 bg-black/50 rounded-md backdrop-blur-sm">
-                                    <button
-                                        onClick={prevPaper}
-                                        onPointerDown={(e) => e.stopPropagation()}
-                                        className="p-0.5 rounded-md hover:bg-white/10 text-white/50 hover:text-white transition-colors cursor-pointer" title="Previous Paper">
-                                        <ChevronLeft className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={nextPaper}
-                                        onPointerDown={(e) => e.stopPropagation()}
-                                        className="p-0.5 rounded-md hover:bg-white/10 text-white/50 hover:text-white transition-colors cursor-pointer" title="Next Paper">
-                                        <ChevronRight className="w-4 h-4" />
-                                    </button>
-                                </div>
-                            </div>
-                        )}
+                        <CarouselControls
+                            currentIndex={currentIndex}
+                            totalItems={papers.length}
+                            onNext={nextPaper}
+                            onPrev={prevPaper}
+                        />
                     </div>
                 </div>
                 <div className="flex w-full gap-2 items-start relative">
@@ -204,39 +186,12 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
                 </div>
 
                 {/* Save Actions */}
-                {currentPaper.arxivId && (
-                    <div className="flex items-center gap-1 bg-black/40 rounded-full p-0.5 border border-white/5">
-                        {onRefresh && (
-                            <button
-                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRefresh(); }}
-                                className="p-1.5 rounded-full transition-colors text-white/40 hover:text-white hover:bg-white/10"
-                                title="Reload"
-                            >
-                                <RefreshCw className="w-3.5 h-3.5" />
-                            </button>
-                        )}
-                        <button
-                            onClick={(e) => handleSave(e, 'READ')}
-                            className={`p-1.5 rounded-full transition-colors ${activeStatus === 'READ' ? 'bg-emerald-500/20 text-emerald-400' : 'text-white/40 hover:text-emerald-400 hover:bg-white/10'}`}
-                            title="Mark as Read"
-                        >
-                            <Check className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                            onClick={(e) => handleSave(e, 'READ_LATER')}
-                            className={`p-1.5 rounded-full transition-colors ${activeStatus === 'READ_LATER' ? 'bg-blue-500/20 text-blue-400' : 'text-white/40 hover:text-blue-400 hover:bg-white/10'}`}
-                            title="Read Later"
-                        >
-                            <Bookmark className={`w-3.5 h-3.5 ${activeStatus === 'READ_LATER' ? 'fill-blue-400' : ''}`} />
-                        </button>
-                        <button
-                            onClick={(e) => handleSave(e, 'FAVORITE')}
-                            className={`p-1.5 rounded-full transition-colors ${activeStatus === 'FAVORITE' ? 'bg-rose-500/20 text-rose-400' : 'text-white/40 hover:text-rose-400 hover:bg-white/10'}`}
-                            title="Favorite"
-                        >
-                            <Heart className={`w-3.5 h-3.5 ${activeStatus === 'FAVORITE' ? 'fill-rose-400' : ''}`} />
-                        </button>
-                    </div>
+                {(currentPaper.arxivId || currentPaper.paperId) && (
+                    <PaperActions
+                        activeStatus={activeStatus}
+                        onAction={handleSave}
+                        onRefresh={onRefresh}
+                    />
                 )}
             </div>
 

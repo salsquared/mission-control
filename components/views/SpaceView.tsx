@@ -3,6 +3,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
+import { ReloadButton } from "../ui/ReloadButton";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { NextLaunchCard } from "../cards/NextLaunchCard";
 import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
@@ -85,17 +86,36 @@ export const SpaceView: React.FC = () => {
         }
     }, [moonData]);
 
+    const reloadNews = () => {
+        fetch(`/api/space?bust=${Date.now()}`).then(res => res.json()).then(spaceData => {
+            if (Array.isArray(spaceData)) {
+                const grouped: Record<string, SpaceArticle[]> = {};
+                spaceData.forEach((article: SpaceArticle) => {
+                    const site = article.news_site;
+                    if (!grouped[site]) grouped[site] = [];
+                    grouped[site].push(article);
+                });
+                setNewsBySource(grouped);
+            }
+        }).catch(err => console.error(err));
+    };
+
+    const reloadLaunches = () => fetch(`/api/space/launches?bust=${Date.now()}`).then(res => res.json()).then(data => { if (Array.isArray(data)) setLaunches(data); }).catch(err => console.error(err));
+    const reloadSats = () => fetch(`/api/space/satellites?bust=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.total_active) setSatellitesData(data); }).catch(err => console.error(err));
+    const reloadSolar = () => fetch(`/api/space/solar?bust=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.status) setSolarData(data); }).catch(err => console.error(err));
+    const reloadMoon = () => fetch(`/api/space/moon?bust=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.weekly_cycles) setMoonData(data); }).catch(err => console.error(err));
+
     useEffect(() => {
+        const initial = Date.now();
         Promise.all([
-            fetch("/api/space?bust=4").then(res => res.json()),
-            fetch("/api/space/launches?bust=4").then(res => res.json()),
-            fetch("/api/space/satellites?bust=4").then(res => res.json()),
-            fetch("/api/space/solar?bust=4").then(res => res.json()),
-            fetch("/api/space/moon?bust=4").then(res => res.json())
+            fetch(`/api/space?bust=${initial}`).then(res => res.json()),
+            fetch(`/api/space/launches?bust=${initial}`).then(res => res.json()),
+            fetch(`/api/space/satellites?bust=${initial}`).then(res => res.json()),
+            fetch(`/api/space/solar?bust=${initial}`).then(res => res.json()),
+            fetch(`/api/space/moon?bust=${initial}`).then(res => res.json())
         ])
             .then(([spaceData, launchData, satsData, solar, moon]) => {
                 if (Array.isArray(spaceData)) {
-                    // Group articles by their news_site
                     const grouped: Record<string, SpaceArticle[]> = {};
                     spaceData.forEach((article: SpaceArticle) => {
                         const site = article.news_site;
@@ -135,7 +155,7 @@ export const SpaceView: React.FC = () => {
         {
             id: "space-launch-info",
             hFit: true,
-            content: <NextLaunchCard launches={launches} loading={loading} />
+            content: <NextLaunchCard launches={launches} loading={loading} onReload={reloadLaunches} />
         },
         {
             id: "space-calendar",
@@ -143,9 +163,12 @@ export const SpaceView: React.FC = () => {
             rowSpan: 2,
             content: (
                 <div className="flex flex-col overflow-y-auto pr-1">
-                    <div className="flex items-center gap-2 mb-2 text-blue-400">
-                        <Calendar className="w-5 h-5 shrink-0" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Launch Calendar</h3>
+                    <div className="flex items-center justify-between mb-2 text-blue-400">
+                        <div className="flex items-center gap-2">
+                            <Calendar className="w-5 h-5 shrink-0" />
+                            <h3 className="font-bold tracking-wider uppercase text-sm">Launch Calendar</h3>
+                        </div>
+                        <ReloadButton onReload={reloadLaunches} title="Reload Calendar" />
                     </div>
                     <LaunchCalendarWidget launches={launches} />
                 </div>
@@ -156,9 +179,12 @@ export const SpaceView: React.FC = () => {
             hFit: true,
             content: (
                 <div className="flex flex-col overflow-y-auto pr-1">
-                    <div className="flex items-center gap-2 mb-2 text-purple-400">
-                        <Satellite className="w-5 h-5 shrink-0" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Active Sats</h3>
+                    <div className="flex items-center justify-between mb-2 text-purple-400">
+                        <div className="flex items-center gap-2">
+                            <Satellite className="w-5 h-5 shrink-0" />
+                            <h3 className="font-bold tracking-wider uppercase text-sm">Active Sats</h3>
+                        </div>
+                        <ReloadButton onReload={reloadSats} title="Reload Active Sats" />
                     </div>
                     {satellitesData ? (
                         <>
@@ -219,9 +245,12 @@ export const SpaceView: React.FC = () => {
             hFit: true,
             content: (
                 <div className="flex flex-col">
-                    <div className="flex items-center gap-2 mb-2 text-yellow-400">
-                        <ThermometerSun className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Solar Activity</h3>
+                    <div className="flex items-center justify-between mb-2 text-yellow-400">
+                        <div className="flex items-center gap-2">
+                            <ThermometerSun className="w-5 h-5" />
+                            <h3 className="font-bold tracking-wider uppercase text-sm">Solar Activity</h3>
+                        </div>
+                        <ReloadButton onReload={reloadSolar} title="Reload Solar Activity" />
                     </div>
                     {solarData ? (
                         <>
@@ -241,9 +270,12 @@ export const SpaceView: React.FC = () => {
             hFit: true,
             content: (
                 <div className="flex flex-col">
-                    <div className="flex items-center gap-2 mb-2 text-slate-300">
-                        <Moon className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Lunar Cycle</h3>
+                    <div className="flex items-center justify-between mb-2 text-slate-300">
+                        <div className="flex items-center gap-2">
+                            <Moon className="w-5 h-5" />
+                            <h3 className="font-bold tracking-wider uppercase text-sm">Lunar Cycle</h3>
+                        </div>
+                        <ReloadButton onReload={reloadMoon} title="Reload Lunar Cycle" />
                     </div>
                     {moonData ? (
                         <>

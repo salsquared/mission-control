@@ -23,7 +23,7 @@ async function getHandler(req: Request) {
 
         console.info(`[EXTERNAL API] Fetching from The Space Devs (Launches): ${url}`);
         const res = await fetch(url, {
-            next: { revalidate: 21600 }, // Cache for 6 hours
+            cache: 'no-store', // Let withCache handle the caching to prevent stale-while-revalidate overlap
             headers: {
                 'User-Agent': 'MissionControl/1.0',
             }
@@ -41,4 +41,4 @@ async function getHandler(req: Request) {
     }
 }
 
-export const GET = withCache(getHandler, 21600);
+export const GET = withCache(getHandler, 1800);

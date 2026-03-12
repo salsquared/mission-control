@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { Trophy, RefreshCw, ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
+import { Trophy, ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
+import { ReloadButton } from "../ui/ReloadButton";
 
 export interface LLMModelInfo {
     id: string;
@@ -77,13 +78,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                     <span className="text-xs uppercase tracking-wider font-bold">Chatbot Arena Leaderboard (LMSYS)</span>
                 </div>
                 {onRefresh && (
-                    <button
-                        onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRefresh(); }}
-                        className="p-1.5 rounded-full transition-colors shrink-0 bg-black/40 text-white/40 hover:text-white hover:bg-white/10 border border-white/5"
-                        title="Reload"
-                    >
-                        <RefreshCw className="w-3.5 h-3.5" />
-                    </button>
+                    <ReloadButton onReload={onRefresh} />
                 )}
             </div>
 

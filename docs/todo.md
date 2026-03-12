@@ -23,6 +23,10 @@
 - host historical price data and ingestion on hte mac-mini
 - host personal website on mac-mini
 
+### Personal To-Do
+- [ ] Read up on pm2
+  - [ ] Investigate whether pm2 or some other utility to prevent mac-mini software shutdown when specific services (like pulsar, personal website server or mission control are running)
+ 
 ### Feature Fixes
 - Mission Control App
   - [ ] Fix issue where app was starting up but wouldnt load localhost; could be b/c ipv4 is used by node but chrome expects ipv6 (?)
@@ -31,7 +35,7 @@
     - [ ] Get reason to why and document it
   - [ ] Fix issue where we dont get dark scroll bars in the chrome app as we do in safari in dev mode
     - [ ] Get reason to why and document it; my guess is that its bc the default scroll color uses a diff config on safari than on chrome
-
+  - [ ] Find a way to make the API calls/card assets displaying data coming in async so they either pop in as soon as the payload comes back OR have the entire view show a loading wheel/graphic while all assets load in; pick which ever looks best
 
 ### New Feature List:
 - [ ] Experiment with standard col width of having either p/3, p/4 or p/5 where p is the width of the page or available space for items
