@@ -18,11 +18,12 @@
       - [ ] Qwen-3.5-2B
       - [ ] Qwen-3.5-4B
       - [ ] Quantizations?
-    - [ ] gemma
+    - [ ] Gemma
       - [ ] Gemma 3
       - [ ] Gemma 3n
-    - [ ] mini max
-    - [ ] kimi
+    - [ ] Mini Max
+    - [ ] Kimi
+  - _Notes: After investigating a 2B or up to 4B param model seems like the best option for local inference on the mac-mini. Anything else seems to be too slow. Could also look into quantization for 2-4B but haven't done or designed tests to compare ablitiveness._ 
   - [ ] Run a container specifcally for inference using WSL2 or VM on the windows laptop
 
 <br>
@@ -32,16 +33,25 @@
 ### Broad To-Do:
 - [ ] Host prisma db on mac-mini
   - [ ] Finish the first version of the financial db and analysis system. Its called Pulsar and it is its own project now.
-- [x] Host historical price data and ingestion on mac-mini
 - [ ] Host personal website on mac-mini
+  
+
+
 
 <br>
 
 ---
 
 ### Personal To-Do
-- [ ] Read up on pm2
-  - [ ] Investigate whether pm2 or some other utility to prevent mac-mini software shutdown when specific services (like pulsar, personal website server or mission control are running)
+- [x] Read up on pm2
+  - [x] Investigate whether pm2 or some other utility to prevent mac-mini software shutdown when specific services (like pulsar, personal website server or mission control are running)
+    - _Notes: Looks like for now pm2 is the way to go. It is build on node but it can run any process. Simple and easy to use compared to docker compose. Will need to upgrade to docker compose when the processes grow in number and complexity._
+- [x] Fix antigravity/vscode ssh from windows pc to mac-mini issues
+    - _Notes: Turns out that antigravity doesnt have darwin-arm binary for the antigravity-specific ssh client. It only works on windows machines so you cannot ssh into antigravity on the mac-mini from antigravity on the windows pc. There is a solution but its not user-friendly: https://gist.github.com/onekung/b0d5d644033099c48f404d3b694c1876_
+- [ ] Copy the github instructions for compiling our own darwin-arm binary for the antigravity-specific ssh client to a file in this repo so we can easily access it.
+- [ ] Read into what darwin-arm is and whether it is for all M series chips or just specific ones.
+- [ ] Investigate whether we'll need to recompile the ssh client for every new antigravity update.
+- [ ] Upload the script that the agent made to compile the ssh client to a github gist page and link to it from the repo. Make sure to credit onekung for the solution.
 
 <br>
  
