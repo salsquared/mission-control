@@ -23,7 +23,18 @@
 - [ ] Create cards for research papers that filter through view sub-subjects. eg: Physics View - Quantum Physics, Particle Physics, Astrophysics, etc.
 - [ ] Once prod server is fixed, broadcase the server on the local network and make it mobile-compatible so I can access it on my phone
 - [ ] Integrate local LLM calls w/ Gemma 3.
+- [ ] Add a new view for monitoring Github project progress.
+  - [ ] Create todo list utility that shows the todo list from the project files.
+    - [ ] Should be able to edit, add, delete todo items from a markdown file in the repo itself
 
+- [ ] Create card that shows the background services running on the mac-mini using pm2 or some other service monitoring utility. Not the internal services that are for MS but the ones that it connects to like pulsar, personal website, etc.
+  - [ ] Show the stats like:
+    - [ ] CPU Usage
+    - [ ] Memory Usage
+    - [ ] Uptime
+- [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
+  - [ ] Connect to Gmail and Gcal to get updates when new emails come in
+  - [ ] Create events in Gcal from emails for appointments,interviews, etc.
 <br>
 
 ---
