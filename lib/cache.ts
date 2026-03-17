@@ -39,6 +39,8 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
         if (targetSearch.length > 0) targetSearch = '?' + targetSearch;
         const cacheKey = url.pathname + targetSearch;
 
+        let staleEntry: CacheEntry | null = null;
+
         if (!isRefresh && globalCache.has(cacheKey)) {
             const entry = globalCache.get(cacheKey)!;
             if (Date.now() < entry.expiry) {
@@ -52,13 +54,33 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
                     }
                 });
             } else {
-                globalCache.delete(cacheKey);
+                staleEntry = entry;
             }
         }
 
         cacheStats.misses++;
         console.info(`[CACHE MISS] ${cacheKey} - Fetching fresh data (TTL set: ${ttlSeconds}s)`);
-        const response = await handler(req);
+        
+        let response: NextResponse | undefined;
+        try {
+            response = await handler(req);
+        } catch (error) {
+            if (staleEntry) {
+                console.info(`[CACHE FALLBACK] ${cacheKey} - Handler threw error, returning stale data`);
+                const retryTtl = 60;
+                globalCache.set(cacheKey, {
+                    data: staleEntry.data,
+                    expiry: Date.now() + retryTtl * 1000
+                });
+                return NextResponse.json(staleEntry.data, {
+                    headers: {
+                        'X-Cache': 'STALE-FALLBACK',
+                        'Cache-Control': `public, max-age=${retryTtl}, stale-while-revalidate=${retryTtl / 2}`
+                    }
+                });
+            }
+            throw error;
+        }
 
         if (response.ok && response.headers.get('content-type')?.includes('application/json')) {
             const clone = response.clone();
@@ -69,6 +91,22 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
             });
             response.headers.set('X-Cache', 'MISS');
             response.headers.set('Cache-Control', `public, max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds / 2}`);
+        } else if (!response.ok && staleEntry) {
+            console.info(`[CACHE FALLBACK] ${cacheKey} - Fetch failed (${response.status}), returning stale data`);
+            
+            // Backoff: 60 seconds retry window to avoid spamming a failing API
+            const retryTtl = 60;
+            globalCache.set(cacheKey, {
+                data: staleEntry.data,
+                expiry: Date.now() + retryTtl * 1000
+            });
+            
+            return NextResponse.json(staleEntry.data, {
+                headers: {
+                    'X-Cache': 'STALE-FALLBACK',
+                    'Cache-Control': `public, max-age=${retryTtl}, stale-while-revalidate=${retryTtl / 2}`
+                }
+            });
         }
 
         return response;

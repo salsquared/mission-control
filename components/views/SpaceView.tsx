@@ -87,7 +87,7 @@ export const SpaceView: React.FC = () => {
     }, [moonData]);
 
     const reloadNews = () => {
-        fetch(`/api/space?bust=${Date.now()}`).then(res => res.json()).then(spaceData => {
+        fetch(`/api/space?v=${Date.now()}`).then(res => res.json()).then(spaceData => {
             if (Array.isArray(spaceData)) {
                 const grouped: Record<string, SpaceArticle[]> = {};
                 spaceData.forEach((article: SpaceArticle) => {
@@ -100,19 +100,19 @@ export const SpaceView: React.FC = () => {
         }).catch(err => console.error(err));
     };
 
-    const reloadLaunches = () => fetch(`/api/space/launches?bust=${Date.now()}`).then(res => res.json()).then(data => { if (Array.isArray(data)) setLaunches(data); }).catch(err => console.error(err));
-    const reloadSats = () => fetch(`/api/space/satellites?bust=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.total_active) setSatellitesData(data); }).catch(err => console.error(err));
-    const reloadSolar = () => fetch(`/api/space/solar?bust=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.status) setSolarData(data); }).catch(err => console.error(err));
-    const reloadMoon = () => fetch(`/api/space/moon?bust=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.weekly_cycles) setMoonData(data); }).catch(err => console.error(err));
+    const reloadLaunches = () => fetch(`/api/space/launches?v=${Date.now()}`).then(res => res.json()).then(data => { if (Array.isArray(data)) setLaunches(data); }).catch(err => console.error(err));
+    const reloadSats = () => fetch(`/api/space/satellites?v=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.total_active) setSatellitesData(data); }).catch(err => console.error(err));
+    const reloadSolar = () => fetch(`/api/space/solar?v=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.status) setSolarData(data); }).catch(err => console.error(err));
+    const reloadMoon = () => fetch(`/api/space/moon?v=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.weekly_cycles) setMoonData(data); }).catch(err => console.error(err));
 
     useEffect(() => {
         const initial = Date.now();
         Promise.all([
-            fetch(`/api/space?bust=${initial}`).then(res => res.json()),
-            fetch(`/api/space/launches?bust=${initial}`).then(res => res.json()),
-            fetch(`/api/space/satellites?bust=${initial}`).then(res => res.json()),
-            fetch(`/api/space/solar?bust=${initial}`).then(res => res.json()),
-            fetch(`/api/space/moon?bust=${initial}`).then(res => res.json())
+            fetch(`/api/space`).then(res => res.json()),
+            fetch(`/api/space/launches`).then(res => res.json()),
+            fetch(`/api/space/satellites`).then(res => res.json()),
+            fetch(`/api/space/solar`).then(res => res.json()),
+            fetch(`/api/space/moon`).then(res => res.json())
         ])
             .then(([spaceData, launchData, satsData, solar, moon]) => {
                 if (Array.isArray(spaceData)) {

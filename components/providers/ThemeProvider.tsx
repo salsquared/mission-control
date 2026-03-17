@@ -15,8 +15,12 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
         if (mounted) {
             if (isDarkMode) {
                 document.documentElement.classList.remove("light");
+                document.documentElement.classList.add("dark");
+                document.documentElement.style.colorScheme = "dark";
             } else {
                 document.documentElement.classList.add("light");
+                document.documentElement.classList.remove("dark");
+                document.documentElement.style.colorScheme = "light";
             }
             const hue = viewHuesEnabled ? (viewHues[activeViewId] ?? 250) : 250;
             document.documentElement.style.setProperty("--theme-hue", `${hue}deg`);

@@ -99,6 +99,7 @@
 }
 
 :root {
+  color-scheme: dark;
   --theme-hue: 250deg;
   transition: --theme-hue 1s ease-in-out;
   --background: oklch(0.15 0.01 var(--theme-hue));
@@ -129,6 +130,7 @@
 }
 
 html.light {
+  color-scheme: light;
   --background: oklch(0.98 0.01 var(--theme-hue));
   --foreground: oklch(0.05 0.02 var(--theme-hue));
   --card: oklch(0.96 0.01 var(--theme-hue) / 0.85);
