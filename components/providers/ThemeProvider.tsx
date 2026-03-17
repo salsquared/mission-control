@@ -19,7 +19,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
                 document.documentElement.classList.add("light");
             }
             const hue = viewHuesEnabled ? (viewHues[activeViewId] ?? 250) : 250;
-            document.documentElement.style.setProperty("--theme-hue", hue.toString());
+            document.documentElement.style.setProperty("--theme-hue", `${hue}deg`);
         }
     }, [mounted, isDarkMode, viewHues, viewHuesEnabled, activeViewId]);
 

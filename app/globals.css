@@ -93,13 +93,13 @@
 }
 
 @property --theme-hue {
-  syntax: "<number>";
+  syntax: "<angle>";
   inherits: true;
-  initial-value: 250;
+  initial-value: 250deg;
 }
 
 :root {
-  --theme-hue: 250;
+  --theme-hue: 250deg;
   transition: --theme-hue 1s ease-in-out;
   --background: oklch(0.15 0.01 var(--theme-hue));
   --foreground: oklch(0.95 0.01 var(--theme-hue));
@@ -115,15 +115,15 @@
   --muted-foreground: oklch(0.7 0.02 var(--theme-hue));
   --accent: oklch(0.25 0.04 var(--theme-hue));
   --accent-foreground: oklch(0.95 0.01 var(--theme-hue));
-  --destructive-foreground: oklch(0.98 0.01 20);
+  --destructive-foreground: oklch(0.98 0.01 20deg);
   --border: oklch(0.2 0.03 var(--theme-hue));
   --input: oklch(0.2 0.03 var(--theme-hue));
   --ring: oklch(0.6 0.2 var(--theme-hue));
   --radius: 0.75rem;
 
   --chart-1: oklch(0.6 0.2 var(--theme-hue));
-  --chart-2: oklch(0.7 0.15 180);
-  --chart-3: oklch(0.5 0.2 300);
+  --chart-2: oklch(0.7 0.15 180deg);
+  --chart-3: oklch(0.5 0.2 300deg);
   --chart-4: oklch(0.8 0.1 var(--theme-hue));
   --chart-5: oklch(0.4 0.1 var(--theme-hue));
 }
@@ -143,8 +143,8 @@ html.light {
   --muted-foreground: oklch(0.4 0.02 var(--theme-hue));
   --accent: oklch(0.88 0.04 var(--theme-hue));
   --accent-foreground: oklch(0.05 0.02 var(--theme-hue));
-  --destructive: oklch(0.5 0.2 20);
-  --destructive-foreground: oklch(0.98 0.01 20);
+  --destructive: oklch(0.5 0.2 20deg);
+  --destructive-foreground: oklch(0.98 0.01 20deg);
   --border: oklch(0.85 0.03 var(--theme-hue));
   --input: oklch(0.85 0.03 var(--theme-hue));
   --ring: oklch(0.6 0.2 var(--theme-hue));

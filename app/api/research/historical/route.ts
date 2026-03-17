@@ -30,7 +30,7 @@ async function getHandler(request: Request) {
 
         if (existingSelection) {
             // Fetch that specific paper's details from arxiv
-            const baseUrl = process.env.NEXTAUTH_URL || `http://localhost:${process.env.PORT || 3000}`;
+            const baseUrl = process.env.NEXTAUTH_URL || `http://localhost:${process.env.PORT || 3101}`;
             console.info(`[EXTERNAL API] Fetching existing historical paper from arXiv: ${existingSelection.paperId}`);
             const res = await fetch(`http://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 

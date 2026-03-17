@@ -10,14 +10,14 @@ nvm use 24
 # Go to your project directory
 cd /Users/sal/salsquared/mission-control
 
-# Set the port to 3100 to avoid conflicting with active development on port 3000
-export PORT=3100
+# Set the port to 3101 to avoid conflicting with active development on port 4101
+export PORT=3101
 
 # Start the Next.js server in the background using the production build
 npm run start &
 SERVER_PID=$!
 
-# Wait for the server to bind to our custom port 3100
+# Wait for the server to bind to our custom port 3101
 echo "Waiting for Mission Control server to start on port $PORT..."
 while ! nc -z 127.0.0.1 $PORT; do
   sleep 1

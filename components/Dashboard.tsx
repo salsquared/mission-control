@@ -12,13 +12,50 @@ import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare, Library } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useThemeStore } from "@/components/providers/themeStore";
+import { LaunchpadOverlay } from "./overlays/LaunchpadOverlay";
 import { useEffect } from "react";
 
-interface DashConfig {
+export interface DashConfig {
     id: string;
     title: string;
     component: React.ReactNode;
 }
+
+const getTopic = (id: string) => {
+    if (id === 'rocketry') return 'Space';
+    if (id === 'crypto') return 'Crypto';
+    if (id === 'ai-news') return 'AI';
+    if (id === 'physics') return 'Physics';
+    return 'General';
+};
+
+const BASE_DASHES: DashConfig[] = [
+    {
+        id: "rocketry",
+        title: "Space",
+        component: <SpaceView />,
+    },
+    {
+        id: "crypto",
+        title: "Market Analysis",
+        component: <FinanceView />,
+    },
+    {
+        id: "ai-news",
+        title: "AI News",
+        component: <AIView />,
+    },
+    {
+        id: "ai-partner",
+        title: "Internal Systems",
+        component: <InternalView />,
+    },
+    {
+        id: "physics",
+        title: "Physics",
+        component: <PhysicsView />,
+    },
+];
 
 export const Dashboard: React.FC = () => {
     const [currentIndex, setCurrentIndex] = useState(0);
@@ -27,47 +64,27 @@ export const Dashboard: React.FC = () => {
     const [isAIChatOpen, setIsAIChatOpen] = useState(false);
     const [isLibraryOpen, setIsLibraryOpen] = useState(false);
 
-    const getTopic = (id: string) => {
-        if (id === 'rocketry') return 'Space';
-        if (id === 'crypto') return 'Crypto';
-        if (id === 'ai-news') return 'AI';
-        if (id === 'physics') return 'Physics';
-        return 'General';
-    };
+    const { setActiveViewId, dashOrder, dashTitles } = useThemeStore();
 
-    const dashes: DashConfig[] = [
-        {
-            id: "rocketry",
-            title: "Space",
-            component: <SpaceView />,
-        },
-        {
-            id: "crypto",
-            title: "Market Analysis",
-            component: <FinanceView />,
-        },
-        {
-            id: "ai-news",
-            title: "AI News",
-            component: <AIView />,
-        },
-        {
-            id: "ai-partner",
-            title: "Internal Systems",
-            component: <InternalView />,
-        },
-        {
-            id: "physics",
-            title: "Physics",
-            component: <PhysicsView />,
-        },
-    ];
-
-    const { setActiveViewId } = useThemeStore();
+    const orderedDashes = React.useMemo(() => {
+        return [...BASE_DASHES]
+            .map(dash => ({
+                ...dash,
+                title: dashTitles[dash.id] || dash.title
+            }))
+            .sort((a, b) => {
+                const indexA = dashOrder.indexOf(a.id);
+                const indexB = dashOrder.indexOf(b.id);
+                if (indexA === -1 && indexB === -1) return 0;
+                if (indexA === -1) return 1;
+                if (indexB === -1) return -1;
+                return indexA - indexB;
+            });
+    }, [dashOrder, dashTitles]);
 
     useEffect(() => {
         const storedId = useThemeStore.getState().activeViewId;
-        const index = dashes.findIndex((d) => d.id === storedId);
+        const index = orderedDashes.findIndex((d) => d.id === storedId);
         if (index !== -1) {
             setCurrentIndex(index);
         }
@@ -75,22 +92,27 @@ export const Dashboard: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    const currentDashId = orderedDashes[currentIndex]?.id;
+
     useEffect(() => {
-        if (isMounted) {
-            setActiveViewId(dashes[currentIndex].id);
+        if (isMounted && currentDashId) {
+            setActiveViewId(currentDashId);
         }
-    }, [currentIndex, setActiveViewId, isMounted]);
+    }, [currentDashId, setActiveViewId, isMounted]);
 
     const nextSlide = () => {
-        setCurrentIndex((prev) => (prev + 1) % dashes.length);
+        setCurrentIndex((prev) => (prev + 1) % orderedDashes.length);
     };
 
     const prevSlide = () => {
-        setCurrentIndex((prev) => (prev - 1 + dashes.length) % dashes.length);
+        setCurrentIndex((prev) => (prev - 1 + orderedDashes.length) % orderedDashes.length);
     };
 
-    const goToSlide = (index: number) => {
-        setCurrentIndex(index);
+    const goToSlide = (id: string) => {
+        const index = orderedDashes.findIndex(d => d.id === id);
+        if (index !== -1) {
+            setCurrentIndex(index);
+        }
         setIsLaunchpadOpen(false);
     };
 
@@ -119,37 +141,14 @@ export const Dashboard: React.FC = () => {
                             {/* Current Dash Title Inner */}
                             <div className="absolute top-6 left-1/2 -translate-x-1/2 select-none z-20">
                                 <span className="text-sm font-bold uppercase tracking-[0.2em] text-foreground/50">
-                                    {dashes[currentIndex].title}
+                                    {orderedDashes[currentIndex]?.title}
                                 </span>
                             </div>
-                            {dashes[currentIndex].component}
+                            {orderedDashes[currentIndex]?.component}
                         </div>
                     </motion.div>
                 ) : (
-                    <motion.div
-                        key="launchpad"
-                        initial={{ opacity: 0, y: 20 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -20 }}
-                        className="relative z-10 w-full h-full p-20 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 overflow-y-auto"
-                    >
-                        {dashes.map((dash, index) => (
-                            <button
-                                key={dash.id}
-                                onClick={() => goToSlide(index)}
-                                className="group relative flex flex-col items-center justify-center p-8 rounded-3xl border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/30 transition-all duration-300 hover:scale-[1.02]"
-                            >
-                                <div className="text-xl font-bold text-white mb-4 tracking-wider group-hover:text-white/80">
-                                    {dash.title}
-                                </div>
-                                <div className="w-full h-48 rounded-xl bg-black/50 border border-white/5 group-hover:border-white/20 overflow-hidden relative flex items-center justify-center">
-                                    <div className="text-white/20 text-4xl font-black uppercase tracking-tighter">
-                                        PREVIEW
-                                    </div>
-                                </div>
-                            </button>
-                        ))}
-                    </motion.div>
+                    <LaunchpadOverlay dashes={BASE_DASHES} goToSlide={goToSlide} />
                 )}
             </AnimatePresence>
 
@@ -219,23 +218,23 @@ export const Dashboard: React.FC = () => {
 
             {/* Saved Papers Overlay */}
             <AnimatePresence>
-                {isLibraryOpen && (
+                {isLibraryOpen && orderedDashes[currentIndex] && (
                     <div className="absolute inset-y-0 right-0 z-50">
-                        <SavedPapersOverlay topic={getTopic(dashes[currentIndex].id)} onClose={() => setIsLibraryOpen(false)} />
+                        <SavedPapersOverlay topic={getTopic(orderedDashes[currentIndex].id)} onClose={() => setIsLibraryOpen(false)} />
                     </div>
                 )}
             </AnimatePresence>
 
             {/* AI Companion Overlay */}
             <AnimatePresence>
-                {isAIChatOpen && (
+                {isAIChatOpen && orderedDashes[currentIndex] && (
                     <motion.div
                         initial={{ opacity: 0, x: 20, scale: 0.95 }}
                         animate={{ opacity: 1, x: 0, scale: 1 }}
                         exit={{ opacity: 0, x: 20, scale: 0.95 }}
                         className="absolute bottom-24 right-6 w-[400px] h-[600px] z-50 shadow-2xl shadow-purple-900/20"
                     >
-                        <AICompanion activeContext={dashes[currentIndex].id} />
+                        <AICompanion activeContext={orderedDashes[currentIndex].id} />
                     </motion.div>
                 )}
             </AnimatePresence>

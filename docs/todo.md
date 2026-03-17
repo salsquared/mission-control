@@ -35,6 +35,12 @@
 - [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
   - [ ] Connect to Gmail and Gcal to get updates when new emails come in
   - [ ] Create events in Gcal from emails for appointments,interviews, etc.
+
+- [x] Add an edit button to the top right corner of the launchpad overlay that allows you to edit the order and name views.
+  - [x] Allow view name change only when the editing option is active
+  - [x] Add the three dots handle to move and drag the views around. 
+- [x] Add semi-live previews of the views in the launchpad overlay
+  
 <br>
 
 ---

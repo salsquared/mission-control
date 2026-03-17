@@ -40,8 +40,8 @@ pm2 save
 ```
 
 ## 5. Accessing the App (Windows & Mac)
-Your server is now running on port `3000` (by default).
+Your server is now running on port `3101` (by default).
 1. On your Mac mini, open `System Settings` -> `Network` to find its local IP address (e.g., `192.168.1.10`).
 2. On your Windows PC (or any device on your Wi-Fi), open Chrome or Edge and navigate to:
-   `http://[MAC_MINI_IP_ADDRESS]:3000`
+   `http://[MAC_MINI_IP_ADDRESS]:3101`
 3. Click the "Install App" icon in the address bar to install it as a standalone PWA!

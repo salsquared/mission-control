@@ -25,9 +25,9 @@ pnpm dev
 bun dev
 ```
 
-The development server runs on **port 3000** and is configured to use up to **2GB of RAM** (`--max-old-space-size=2048`).
+The development server runs on **port 4101** and is configured to use up to **2GB of RAM** (`--max-old-space-size=2048`).
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:4101](http://localhost:4101) with your browser to see the result.
 
 ### Running as a Desktop App (Production)
 
@@ -38,7 +38,7 @@ npm run build
 ./launch-ms.sh
 ```
 
-The production build runs on **port 3100** to avoid conflicts with active development, and is optimized to use a maximum of **1GB of RAM** (`--max-old-space-size=1024`). The `launch-ms.sh` script automatically opens a Chrome window in "App Mode" pointing to `http://127.0.0.1:3100`.
+The production build runs on **port 3101** to avoid conflicts with active development, and is optimized to use a maximum of **1GB of RAM** (`--max-old-space-size=1024`). The `launch-ms.sh` script automatically opens a Chrome window in "App Mode" pointing to `http://127.0.0.1:3101`.
 
 
 ## Documentation
