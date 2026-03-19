@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { motion, Reorder } from "framer-motion";
+import { motion } from "framer-motion";
 import { DashConfig } from "../Dashboard";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { Edit2, Check, GripHorizontal } from "lucide-react";
@@ -12,8 +12,56 @@ interface LaunchpadOverlayProps {
 export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({ dashes, goToSlide }) => {
     const { dashOrder, setDashOrder, dashTitles, setDashTitle } = useThemeStore();
     const [isEditing, setIsEditing] = useState(false);
-    const handleReorder = (newItems: string[]) => {
-        setDashOrder(newItems);
+    
+    // Use a local state for dragging to prevent global store/localStorage trashing on every frame
+    const initialOrder = Array.from(new Set([...dashOrder, ...dashes.map(d => d.id)]));
+    const [localOrder, setLocalOrder] = useState(initialOrder);
+
+    // Sync initialOrder if dashOrder updates externally (e.g. hydration)
+    React.useEffect(() => {
+        setLocalOrder(initialOrder);
+    }, [dashOrder]); // Do not include dashes/initialOrder directly to avoid loops
+
+    const [draggedItem, setDraggedItem] = useState<string | null>(null);
+
+    const handleDragStart = (e: React.DragEvent<HTMLDivElement>, id: string) => {
+        setDraggedItem(id);
+        e.dataTransfer.effectAllowed = "move";
+        // Provide transparent standard drag image to prevent glitchy box
+        // or just let browser use default. Default is fine as it captures the paused state.
+    };
+
+    const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+        e.preventDefault(); // Necessary to allow dropping
+        e.dataTransfer.dropEffect = "move";
+    };
+
+    const handleDragEnter = (e: React.DragEvent<HTMLDivElement>, id: string) => {
+        e.preventDefault();
+        
+        if (!draggedItem || draggedItem === id) return;
+
+        const draggedIndex = localOrder.indexOf(draggedItem);
+        const targetIndex = localOrder.indexOf(id);
+        
+        if (draggedIndex !== -1 && targetIndex !== -1) {
+            const newOrder = [...localOrder];
+            newOrder.splice(draggedIndex, 1);
+            newOrder.splice(targetIndex, 0, draggedItem);
+            setLocalOrder(newOrder);
+        }
+    };
+
+    const handleDragEnd = () => {
+        setDraggedItem(null);
+        setDashOrder(localOrder);
+    };
+
+    const toggleEdit = () => {
+        if (isEditing) {
+            setDashOrder(localOrder);
+        }
+        setIsEditing(!isEditing);
     };
 
     return (
@@ -27,7 +75,7 @@ export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({ dashes, goTo
             {/* Edit Toggles */}
             <div className="flex justify-end mb-8 w-full shrink-0 z-20">
                 <button
-                    onClick={() => setIsEditing(!isEditing)}
+                    onClick={toggleEdit}
                     className="flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 border border-white/20 rounded-full transition-all text-white"
                 >
                     {isEditing ? (
@@ -42,25 +90,24 @@ export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({ dashes, goTo
                 </button>
             </div>
 
-            <Reorder.Group
-                axis="y"
-                values={dashOrder}
-                onReorder={handleReorder}
-                className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 w-full"
-                layoutScroll
-            >
-                {dashOrder.map((id) => {
+            <motion.div layout className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 w-full">
+                {localOrder.map((id) => {
                     const dash = dashes.find(d => d.id === id);
                     if (!dash) return null;
 
                     return (
-                        <Reorder.Item
-                            key={id}
-                            value={id}
-                            dragListener={isEditing}
-                            className={`group relative flex flex-col items-center justify-center pt-10 pb-8 px-8 rounded-3xl border ${isEditing ? 'border-primary/50 bg-white/10' : 'border-white/10 bg-white/5'} hover:bg-white/10 hover:border-white/30 transition-all duration-300 hover:scale-[1.02] ${isEditing ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'}`}
-                        >
-                            {!isEditing && (
+                        <motion.div layout key={id} className="h-full w-full">
+                            <div
+                                draggable={isEditing}
+                                onDragStart={(e) => handleDragStart(e, id)}
+                                onDragOver={handleDragOver}
+                                onDragEnter={(e) => handleDragEnter(e, id)}
+                                onDragEnd={handleDragEnd}
+                                className={`group relative flex flex-col items-center justify-center pt-10 pb-8 px-8 rounded-3xl border transition-all duration-300 h-full w-full 
+                                    ${isEditing ? 'border-primary/50 bg-white/10 cursor-grab active:cursor-grabbing hover:scale-[1.02]' : 'border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/30 cursor-pointer hover:scale-[1.02]'} 
+                                    ${draggedItem === id ? 'opacity-40 z-50 shadow-2xl shadow-primary/20' : 'opacity-100 z-10'}`}
+                            >
+                                {!isEditing && (
                                 <div 
                                     className="absolute inset-0 z-10" 
                                     onClick={() => goToSlide(dash.id)} 
@@ -87,18 +134,25 @@ export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({ dashes, goTo
                                 )}
                             </div>
                             <div className="w-full h-48 rounded-xl bg-black/50 border border-white/5 group-hover:border-white/20 overflow-hidden relative flex items-center justify-center pointer-events-none">
-                                <div className="absolute inset-0 w-[400%] h-[400%] origin-top-left scale-[0.25]">
-                                    <div className="w-full h-full p-8 relative">
-                                        <div className="absolute inset-0 z-50 bg-transparent pointer-events-auto" /> 
-                                        {/* Block pointer events on inner views so charts/inputs don't capture drags */}
-                                        {dash.component}
+                                {isEditing ? (
+                                    <div className="text-white/30 text-sm italic">
+                                        [View Paused for Editing]
                                     </div>
-                                </div>
+                                ) : (
+                                    <div className="absolute inset-0 w-[400%] h-[400%] origin-top-left scale-[0.25]">
+                                        <div className="w-full h-full p-8 relative">
+                                            <div className="absolute inset-0 z-50 bg-transparent pointer-events-auto" /> 
+                                            {/* Block pointer events on inner views so charts/inputs don't capture drags */}
+                                            {dash.component}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
-                        </Reorder.Item>
+                        </div>
+                        </motion.div>
                     );
                 })}
-            </Reorder.Group>
+            </motion.div>
         </motion.div>
     );
 };

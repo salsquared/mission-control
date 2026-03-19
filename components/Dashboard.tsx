@@ -67,6 +67,8 @@ export const Dashboard: React.FC = () => {
     const { setActiveViewId, dashOrder, dashTitles } = useThemeStore();
 
     const orderedDashes = React.useMemo(() => {
+        if (!isMounted) return [...BASE_DASHES];
+
         return [...BASE_DASHES]
             .map(dash => ({
                 ...dash,
@@ -80,7 +82,7 @@ export const Dashboard: React.FC = () => {
                 if (indexB === -1) return -1;
                 return indexA - indexB;
             });
-    }, [dashOrder, dashTitles]);
+    }, [dashOrder, dashTitles, isMounted]);
 
     useEffect(() => {
         const storedId = useThemeStore.getState().activeViewId;

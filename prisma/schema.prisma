@@ -54,3 +54,9 @@ model SelectedReviewPaper {
   @@unique([paperId, topic])
   @@index([topic, weekStart])
 }
+
+model GlobalSetting {
+  id        String   @id @default("global")
+  data      String   // JSON payload of settings
+  updatedAt DateTime @updatedAt
+}

@@ -1,13 +1,4 @@
 ### Feature Fixes
-- Mission Control App
-  - [ ] Fix issue where app was starting up but wouldnt load localhost; could be b/c ipv4 is used by node but chrome expects ipv6 (?)
-    - [ ] Get to reason of this error and document it
-  - [ ] Fix issue where externaly dependent apis arent loading; could it be that we are not exporting .env as we are when running dev through next js dev script
-    - [ ] Get reason to why and document it
-  - [ ] Fix issue where we dont get dark scroll bars in the chrome app as we do in safari in dev mode
-    - [ ] Get reason to why and document it; my guess is that its bc the default scroll color uses a diff config on safari than on chrome
-  - [ ] Find a way to make the API calls/card assets displaying data coming in async so they either pop in as soon as the payload comes back OR have the entire view show a loading wheel/graphic while all assets load in; pick which ever looks best
-
 <br>
 
 ---
@@ -46,6 +37,22 @@
 ---
 
 ### Completed Items:
+- **Mission Control App**:
+  - **Internal Systems View**:
+    - [x] Add feature that changes the display of ram allocated to the service based on the input variable we give in @package.json
+      - Ex: For dev we give it 2GB but in prod mode its only 1GB.
+  - **UI Design / CSS**:
+    - [x] Fix issue where we dont get dark scroll bars in the chrome app as we do in safari in dev mode.
+      - [x] **Root Cause & Fix**: Chrome and Safari have different default OS heuristics for rendering scrollbars even in a dark UI. We fixed this by strictly declaring `color-scheme: dark;` in `:root` and adding explicit `::-webkit-scrollbar` pseudo-element classes in `globals.css` to enforce a unified dark, glass-like scroll track layer across all Webkit-based browsers.
+    - [x] Add a new dynamically rendered color toggle in internal views for new views.
+      - [x] **Implementation**: Modified `InternalView.tsx` to construct color toggles by deriving the list directly from `dashOrder` and `defaultDashTitles` state, so new views automatically populate without touching UI code. Swapped browser `localStorage` persist middleware to a Prisma database table for `GlobalSettings`, making customizations persistent across distinct client devices.
+    - [x] Fix how laggy the view tiles are when moving them around in the edit mode using the handles to drag them.
+    - [x] Fix issue where view order is not saved and defaults to the original.
+  - **Backend / Launch Script**:
+  - [x] Fix issue where app was starting up but wouldnt load localhost; could be b/c ipv4 is used by node but chrome expects ipv6 (?)
+    - [x] **Root Cause & Fix**: Node 17+ defaults to binding `localhost` to IPv6 (`::1`), while hardcoding `127.0.0.1` inside the launch script forces Chrome to strictly look for IPv4. By switching the launch script to call `http://localhost:$PORT`, Chrome resolves IPv6/IPv4 natively.
+  - [x] Fix issue where externaly dependent apis arent loading; could it be that we are not exporting .env as we are when running dev through next js dev script
+    - [x] **Root Cause & Fix**: In standalone bash script execution for production (`next start`), environment variables from `.env` are sometimes not loaded into `process.env` automatically as they are via `next dev`. We solved this by explicitly sourcing the variables using `set -a` and `source .env` directly in `launch-ms.sh` prior to starting the process.
 - **Research papers**:
   - **Weekly recommended subject review paper**:
     - [x] Create scheduled task or API endpoint to query for highly cited review/survey papers matching current View topics.

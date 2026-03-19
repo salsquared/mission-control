@@ -37,6 +37,7 @@ export const InternalView: React.FC = () => {
     const [sysMetrics, setSysMetrics] = useState<{
         cpuUsagePercent: number;
         memoryUsageFormatted: string;
+        maxAllocatedRamGB?: number;
         uptimeFormatted: string;
         dbConnected: boolean;
         cache?: { hits: number, misses: number, activeEntries: { key: string, remainingTtl: number }[] };
@@ -96,7 +97,7 @@ export const InternalView: React.FC = () => {
     const { autoResearch, setAutoResearch, backgroundTasks, setBackgroundTasks } = useSettingsStore();
 
     // Global Theme State
-    const { isDarkMode, setIsDarkMode, viewHues, setViewHue } = useThemeStore();
+    const { isDarkMode, setIsDarkMode, viewHues, setViewHue, dashOrder, dashTitles, defaultDashTitles } = useThemeStore();
 
     const colorPresets = [
         { name: "Purple", hue: 250, color: "bg-purple-500" },
@@ -109,12 +110,12 @@ export const InternalView: React.FC = () => {
         { name: "Blue", hue: 220, color: "bg-blue-500" },
     ];
 
-    const views = [
-        { id: "rocketry", name: "Space" },
-        { id: "crypto", name: "Market Analysis" },
-        { id: "ai-news", name: "AI News" },
-        { id: "ai-partner", name: "Internal Systems" },
-    ];
+    const currentOrder = Array.from(new Set([...dashOrder, ...Object.keys(defaultDashTitles)]));
+
+    const views = currentOrder.map(id => ({
+        id,
+        name: dashTitles[id] || defaultDashTitles[id] || id
+    }));
 
     const toggleTheme = (checked: boolean) => {
         setIsDarkMode(!checked); // because the UI assumes toggle is "Light Mode On" when checked
@@ -137,7 +138,11 @@ export const InternalView: React.FC = () => {
                         </div>
                         <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Memory Usage</span>
-                            <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.memoryUsageFormatted : '--'}</span>
+                            <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.memoryUsageFormatted.split(' / ')[0] : '--'}</span>
+                        </div>
+                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                            <span className="text-xs text-muted-foreground mb-1">Allocated RAM</span>
+                            <span className="text-2xl font-mono text-white">{sysMetrics?.maxAllocatedRamGB ? `${sysMetrics.maxAllocatedRamGB} GB` : '--'}</span>
                         </div>
                         <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Server Uptime</span>

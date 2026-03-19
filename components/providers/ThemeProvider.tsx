@@ -7,9 +7,45 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const [mounted, setMounted] = useState(false);
     const { isDarkMode, viewHues, viewHuesEnabled, activeViewId } = useThemeStore();
 
+    // Pull from API on mount
     useEffect(() => {
-        setMounted(true);
+        fetch('/api/settings')
+            .then(res => res.json())
+            .then(res => {
+                if (res.data) {
+                    useThemeStore.setState(res.data);
+                }
+                setMounted(true);
+            })
+            .catch(err => {
+                console.error("Failed to load settings:", err);
+                setMounted(true);
+            });
     }, []);
+
+    // Push to API on state change
+    useEffect(() => {
+        if (!mounted) return;
+
+        const unsubscribe = useThemeStore.subscribe((state) => {
+            const dataToSave = {
+                isDarkMode: state.isDarkMode,
+                viewHues: state.viewHues,
+                viewHuesEnabled: state.viewHuesEnabled,
+                activeViewId: state.activeViewId,
+                dashOrder: state.dashOrder,
+                dashTitles: state.dashTitles
+            };
+
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(dataToSave)
+            }).catch(err => console.error("Failed to default save settings:", err));
+        });
+
+        return () => unsubscribe();
+    }, [mounted]);
 
     useEffect(() => {
         if (mounted) {

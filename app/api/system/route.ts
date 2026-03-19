@@ -45,16 +45,18 @@ export async function GET() {
                 const pkgPath = path.join(process.cwd(), 'package.json');
                 const pkgContent = fs.readFileSync(pkgPath, 'utf-8');
                 const pkgJson = JSON.parse(pkgContent);
-                const devScript = pkgJson.scripts?.dev || '';
-                const match = devScript.match(/--max-old-space-size=(\d+)/);
+                const scriptToUse = process.env.NODE_ENV === 'production' 
+                    ? (pkgJson.scripts?.start || '') 
+                    : (pkgJson.scripts?.dev || '');
+                const match = scriptToUse.match(/--max-old-space-size=(\d+)/);
                 if (match && match[1]) {
                     cachedMaxMemSysLimitGB = parseInt(match[1], 10) / 1024; // Convert MB to GB
                 } else {
-                    cachedMaxMemSysLimitGB = 4; // Fallback to 4GB
+                    cachedMaxMemSysLimitGB = process.env.NODE_ENV === 'production' ? 1 : 2; // Fallback based on env
                 }
             } catch (e) {
                 console.warn("Could not read max-old-space-size from package.json", e);
-                cachedMaxMemSysLimitGB = 4; // Fallback
+                cachedMaxMemSysLimitGB = process.env.NODE_ENV === 'production' ? 1 : 2; // Fallback
             }
         }
 
@@ -84,6 +86,7 @@ export async function GET() {
         return NextResponse.json({
             cpuUsagePercent,
             memoryUsageFormatted,
+            maxAllocatedRamGB: cachedMaxMemSysLimitGB,
             uptimeFormatted,
             dbConnected,
             cache
