@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.1",
+    "@auth/prisma-adapter": "^2.11.1",
     "@gradio/client": "^2.1.0",
     "@prisma/client": "^6.19.2",
     "@radix-ui/react-accordion": "^1.2.12",

@@ -25,8 +25,15 @@
     - [ ] Uptime
 - [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
   - [ ] Connect to Gmail and Gcal to get updates when new emails come in
+    - [ ] **Integration Plan:**
+      - **OAuth 2.0:** Set up a Google Cloud Project with Gmail API and Google Calendar API scopes. Use `next-auth` to easily authenticate and store the refresh token securely in Prisma without a custom dashboard.
+      - **Gmail Syncing Strategy:** Use Cloudflare Tunnels (via `salsquared.xyz`) and Google Cloud Pub/Sub to receive live webhook push notifications. This provides a real-time sync while heavily conserving RAM and CPU on the Mac Mini compared to polling.
+      - **Data Parsing:** Use an LLM or standard regex parser to extract application status updates, interview details, and next steps from incoming emails.
+      - **Dashboard DB:** Store parsed application instances (Company/Institution, Status, Next Steps, Dates) in our internal db.
   - [ ] Create events in Gcal from emails for appointments,interviews, etc.
-
+    - [ ] **Automation Plan:**
+      - Expose a Next.js API route that the background worker or UI can hit to construct and push a Google Calendar event.
+      - Auto-fill event details (title, description with email link, start/end time) based on the parsed email contents.
 - [x] Add an edit button to the top right corner of the launchpad overlay that allows you to edit the order and name views.
   - [x] Allow view name change only when the editing option is active
   - [x] Add the three dots handle to move and drag the views around. 
