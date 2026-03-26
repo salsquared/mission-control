@@ -2,8 +2,9 @@
 
 import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Activity, Settings, Server, Palette, Cpu } from "lucide-react";
+import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn } from "lucide-react";
 import { Section } from "../Section";
+import { useSession, signIn, signOut } from "next-auth/react";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
 
@@ -34,6 +35,7 @@ const formatLogMessage = (message: string) => {
 };
 
 export const InternalView: React.FC = () => {
+    const { data: session } = useSession();
     const [sysMetrics, setSysMetrics] = useState<{
         cpuUsagePercent: number;
         memoryUsageFormatted: string;
@@ -355,6 +357,55 @@ export const InternalView: React.FC = () => {
                                 ))}
                             </div>
                         </div>
+                    </div>
+                </div>
+            ),
+        },
+        {
+            id: "internal-5",
+            colSpan: 1,
+            content: (
+                <div className="flex flex-col h-full">
+                    <div className="flex items-center gap-2 mb-4 text-purple-400">
+                        <User className="w-5 h-5" />
+                        <h3 className="font-bold tracking-wider uppercase text-sm">Account Status</h3>
+                    </div>
+                    <div className="flex-1 flex flex-col gap-4">
+                        {session ? (
+                            <div className="flex flex-col gap-4 p-4 rounded-xl bg-black/20 border border-white/5">
+                                <div className="flex items-center gap-3">
+                                    {session.user?.image ? (
+                                        <img src={session.user.image} alt="Avatar" className="w-10 h-10 rounded-full border border-slate-700/50" />
+                                    ) : (
+                                        <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
+                                            <User className="w-5 h-5 text-slate-400" />
+                                        </div>
+                                    )}
+                                    <div className="flex flex-col truncate">
+                                        <span className="text-sm font-semibold text-slate-200 truncate">{session.user?.name || "Connected User"}</span>
+                                        <span className="text-xs text-slate-500 truncate">{session.user?.email}</span>
+                                    </div>
+                                </div>
+                                <button 
+                                    onClick={() => signOut()}
+                                    className="flex items-center justify-center gap-2 mt-auto px-4 py-2 border border-slate-700 bg-slate-800 text-sm rounded-xl font-medium hover:bg-slate-700 transition-colors w-full"
+                                >
+                                    <LogOut className="w-4 h-4" />
+                                    Sign Out
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="flex flex-col items-center justify-center h-full gap-4 p-4 rounded-xl bg-black/20 border border-white/5 text-center">
+                                <span className="text-sm text-slate-400">You are currently disconnected. Sign in via Google Workspace to enable integrations.</span>
+                                <button 
+                                    onClick={() => signIn("google")}
+                                    className="flex items-center justify-center gap-2 mt-auto px-4 py-2 border border-blue-600 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white text-sm rounded-xl font-medium transition-colors w-full"
+                                >
+                                    <LogIn className="w-4 h-4" />
+                                    Sign In with Google
+                                </button>
+                            </div>
+                        )}
                     </div>
                 </div>
             ),

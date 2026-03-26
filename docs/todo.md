@@ -23,6 +23,7 @@
     - [ ] CPU Usage
     - [ ] Memory Usage
     - [ ] Uptime
+
 - [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
   - [ ] Connect to Gmail and Gcal to get updates when new emails come in
     - [ ] **Integration Plan:**
@@ -34,11 +35,7 @@
     - [ ] **Automation Plan:**
       - Expose a Next.js API route that the background worker or UI can hit to construct and push a Google Calendar event.
       - Auto-fill event details (title, description with email link, start/end time) based on the parsed email contents.
-- [x] Add an edit button to the top right corner of the launchpad overlay that allows you to edit the order and name views.
-  - [x] Allow view name change only when the editing option is active
-  - [x] Add the three dots handle to move and drag the views around. 
-- [x] Add semi-live previews of the views in the launchpad overlay
-  
+
 <br>
 
 ---
@@ -49,6 +46,10 @@
     - [x] Add feature that changes the display of ram allocated to the service based on the input variable we give in @package.json
       - Ex: For dev we give it 2GB but in prod mode its only 1GB.
   - **UI Design / CSS**:
+    - [x] Add an edit button to the top right corner of the launchpad overlay that allows you to edit the order and name views.
+      - [x] Allow view name change only when the editing option is active
+      - [x] Add the three dots handle to move and drag the views around. 
+    - [x] Add semi-live previews of the views in the launchpad overlay
     - [x] Fix issue where we dont get dark scroll bars in the chrome app as we do in safari in dev mode.
       - [x] **Root Cause & Fix**: Chrome and Safari have different default OS heuristics for rendering scrollbars even in a dark UI. We fixed this by strictly declaring `color-scheme: dark;` in `:root` and adding explicit `::-webkit-scrollbar` pseudo-element classes in `globals.css` to enforce a unified dark, glass-like scroll track layer across all Webkit-based browsers.
     - [x] Add a new dynamically rendered color toggle in internal views for new views.
