@@ -31,6 +31,8 @@
       - **Gmail Syncing Strategy:** Use Cloudflare Tunnels (via `salsquared.xyz`) and Google Cloud Pub/Sub to receive live webhook push notifications. This provides a real-time sync while heavily conserving RAM and CPU on the Mac Mini compared to polling.
       - **Data Parsing:** Use an LLM or standard regex parser to extract application status updates, interview details, and next steps from incoming emails.
       - **Dashboard DB:** Store parsed application instances (Company/Institution, Status, Next Steps, Dates) in our internal db.
+    - [ ] Create front-end component that shows gcal events from personal gmail account. 
+      - [ ] Allow the editing of events, adding new events, deleting events, etc.
   - [ ] Create events in Gcal from emails for appointments,interviews, etc.
     - [ ] **Automation Plan:**
       - Expose a Next.js API route that the background worker or UI can hit to construct and push a Google Calendar event.

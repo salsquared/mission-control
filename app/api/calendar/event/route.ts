@@ -71,3 +71,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }
+
+// DELETE handler to delete an event
+export async function DELETE(req: NextRequest) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const userId = searchParams.get("userId");
+    const eventId = searchParams.get("eventId");
+
+    if (!userId || !eventId) {
+      return NextResponse.json({ error: "Missing userId or eventId" }, { status: 400 });
+    }
+
+    const authClient = await getGoogleAuthClient(userId);
+    const calendar = google.calendar({ version: "v3", auth: authClient });
+
+    await calendar.events.delete({
+      calendarId: "primary",
+      eventId: eventId,
+    });
+
+    return NextResponse.json({ success: true }, { status: 200 });
+  } catch (error: any) {
+    console.error("Error deleting calendar event:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+}
