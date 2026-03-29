@@ -1,4 +1,7 @@
 ### Feature Fixes
+#### Company News API
+- [ ] Fix issue where meta ai news is not showing up at all.
+- [ ] Fix issue where deepmind, meta, microsoft and nvidia images arent showing.
 <br>
 
 ---
@@ -23,6 +26,17 @@
     - [ ] CPU Usage
     - [ ] Memory Usage
     - [ ] Uptime
+
+- [ ] Add feeds for these companies blogs in their respective views. 
+  - [x] SpaceX
+  - [x] RocketLab
+  - [ ] Blue Origin
+  - [x] Google DeepMind/AI
+  - [x] Meta AI
+  - [x] Microsoft AI
+  - [x] Nvidia AI
+  - [x] OpenAI blogs
+  - [x] Anthropic blogs
 
 - [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
   - [ ] Connect to Gmail and Gcal to get updates when new emails come in

@@ -10,6 +10,7 @@ export interface CardItem {
     colSpan?: number; // 1 to 3, assuming 3-col grid
     rowSpan?: number;
     hFit?: boolean; // If true, avoids stretching height to match grid rows
+    className?: string;
 }
 
 interface CardGridProps {
@@ -42,7 +43,8 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
                         layout === "grid" && item.rowSpan === 2 ? "md:row-span-2 lg:row-span-2" : "",
                         layout === "grid" && item.rowSpan === 3 ? "md:row-span-3 lg:row-span-3" : "",
                         layout === "masonry" && item.colSpan && item.colSpan > 1 ? "column-span-all" : "",
-                        item.hFit ? "self-start h-fit" : "h-full"
+                        item.hFit ? "self-start h-fit" : "h-full",
+                        item.className
                     )}
                 >
                     {/* Drag Handle (Optional, or make whole thing draggable if desired) */}

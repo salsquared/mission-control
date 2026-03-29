@@ -10,6 +10,10 @@ export const AIView: React.FC = () => {
     const [hackerNews, setHackerNews] = useState<any[]>([]);
     const [anthropicNews, setAnthropicNews] = useState<any[]>([]);
     const [openaiNews, setOpenaiNews] = useState<any[]>([]);
+    const [googleNews, setGoogleNews] = useState<any[]>([]);
+    const [metaNews, setMetaNews] = useState<any[]>([]);
+    const [microsoftNews, setMicrosoftNews] = useState<any[]>([]);
+    const [nvidiaNews, setNvidiaNews] = useState<any[]>([]);
     const [arxivYesterday, setArxivYesterday] = useState<any[]>([]);
     const [arxivLastWeek, setArxivLastWeek] = useState<any[]>([]);
     const [arxivReview, setArxivReview] = useState<any[]>([]);
@@ -83,10 +87,17 @@ export const AIView: React.FC = () => {
     useEffect(() => {
         const fetchAll = async () => {
             try {
-                const [hnRes, anthropicRes, openaiRes, arxivYRes, arxivWRes, arxivRevRes, arxivHistRes, llmRes] = await Promise.all([
+                const [
+                    hnRes, anthropicRes, openaiRes, googleRes, metaRes, microsoftRes, nvidiaRes,
+                    arxivYRes, arxivWRes, arxivRevRes, arxivHistRes, llmRes
+                ] = await Promise.all([
                     fetch(`/api/ai`).catch(() => null),
                     fetch(`/api/company-news?company=anthropic`).catch(() => null),
                     fetch(`/api/company-news?company=openai`).catch(() => null),
+                    fetch(`/api/company-news?company=google`).catch(() => null),
+                    fetch(`/api/company-news?company=meta`).catch(() => null),
+                    fetch(`/api/company-news?company=microsoft`).catch(() => null),
+                    fetch(`/api/company-news?company=nvidia`).catch(() => null),
                     fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5`).catch(() => null),
                     fetch(`/api/research?topic=ai&timeframe=week&limit=5`).catch(() => null),
                     fetch(`/api/research/review?topic=ai`).catch(() => null),
@@ -105,6 +116,22 @@ export const AIView: React.FC = () => {
                 if (openaiRes?.ok) {
                     const data = await openaiRes.json();
                     if (Array.isArray(data)) setOpenaiNews(data);
+                }
+                if (googleRes?.ok) {
+                    const data = await googleRes.json();
+                    if (Array.isArray(data)) setGoogleNews(data);
+                }
+                if (metaRes?.ok) {
+                    const data = await metaRes.json();
+                    if (Array.isArray(data)) setMetaNews(data);
+                }
+                if (microsoftRes?.ok) {
+                    const data = await microsoftRes.json();
+                    if (Array.isArray(data)) setMicrosoftNews(data);
+                }
+                if (nvidiaRes?.ok) {
+                    const data = await nvidiaRes.json();
+                    if (Array.isArray(data)) setNvidiaNews(data);
                 }
                 if (arxivYRes?.ok) {
                     const data = await arxivYRes.json();
@@ -164,6 +191,30 @@ export const AIView: React.FC = () => {
             colSpan: 1,
             hFit: true,
             content: <NewsCyclingCard source="Anthropic" articles={anthropicNews} />
+        },
+        {
+            id: "ai-news-google",
+            colSpan: 1,
+            hFit: true,
+            content: <NewsCyclingCard source="Google DeepMind" articles={googleNews} />
+        },
+        {
+            id: "ai-news-meta",
+            colSpan: 1,
+            hFit: true,
+            content: <NewsCyclingCard source="Meta AI" articles={metaNews} />
+        },
+        {
+            id: "ai-news-microsoft",
+            colSpan: 1,
+            hFit: true,
+            content: <NewsCyclingCard source="Microsoft AI" articles={microsoftNews} />
+        },
+        {
+            id: "ai-news-nvidia",
+            colSpan: 1,
+            hFit: true,
+            content: <NewsCyclingCard source="Nvidia AI" articles={nvidiaNews} />
         }
     ];
 

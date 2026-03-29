@@ -87,16 +87,23 @@ export const SpaceView: React.FC = () => {
     }, [moonData]);
 
     const reloadNews = () => {
-        fetch(`/api/space?v=${Date.now()}`).then(res => res.json()).then(spaceData => {
+        Promise.all([
+            fetch(`/api/space?v=${Date.now()}`).then(res => res.json()).catch(err => { console.error(err); return []; }),
+            fetch(`/api/company-news?company=spacex&v=${Date.now()}`).then(res => res.json()).catch(err => { console.error(err); return []; }),
+            fetch(`/api/company-news?company=rocketlab&v=${Date.now()}`).then(res => res.json()).catch(err => { console.error(err); return []; })
+        ]).then(([spaceData, spacexNews, rocketlabNews]) => {
+            const grouped: Record<string, SpaceArticle[]> = {};
             if (Array.isArray(spaceData)) {
-                const grouped: Record<string, SpaceArticle[]> = {};
                 spaceData.forEach((article: SpaceArticle) => {
                     const site = article.news_site;
                     if (!grouped[site]) grouped[site] = [];
                     grouped[site].push(article);
                 });
-                setNewsBySource(grouped);
             }
+            if (Array.isArray(spacexNews) && spacexNews.length > 0) grouped['SpaceX'] = spacexNews;
+            if (Array.isArray(rocketlabNews) && rocketlabNews.length > 0) grouped['Rocket Lab'] = rocketlabNews;
+            
+            setNewsBySource(grouped);
         }).catch(err => console.error(err));
     };
 
@@ -108,15 +115,17 @@ export const SpaceView: React.FC = () => {
     useEffect(() => {
         const initial = Date.now();
         Promise.all([
-            fetch(`/api/space`).then(res => res.json()),
-            fetch(`/api/space/launches`).then(res => res.json()),
-            fetch(`/api/space/satellites`).then(res => res.json()),
-            fetch(`/api/space/solar`).then(res => res.json()),
-            fetch(`/api/space/moon`).then(res => res.json())
+            fetch(`/api/space`).then(res => res.json()).catch(() => []),
+            fetch(`/api/space/launches`).then(res => res.json()).catch(() => []),
+            fetch(`/api/space/satellites`).then(res => res.json()).catch(() => []),
+            fetch(`/api/space/solar`).then(res => res.json()).catch(() => []),
+            fetch(`/api/space/moon`).then(res => res.json()).catch(() => []),
+            fetch(`/api/company-news?company=spacex`).then(res => res.json()).catch(() => []),
+            fetch(`/api/company-news?company=rocketlab`).then(res => res.json()).catch(() => [])
         ])
-            .then(([spaceData, launchData, satsData, solar, moon]) => {
+            .then(([spaceData, launchData, satsData, solar, moon, spacexNews, rocketlabNews]) => {
+                const grouped: Record<string, SpaceArticle[]> = {};
                 if (Array.isArray(spaceData)) {
-                    const grouped: Record<string, SpaceArticle[]> = {};
                     spaceData.forEach((article: SpaceArticle) => {
                         const site = article.news_site;
                         if (!grouped[site]) {
@@ -124,8 +133,11 @@ export const SpaceView: React.FC = () => {
                         }
                         grouped[site].push(article);
                     });
-                    setNewsBySource(grouped);
                 }
+                if (Array.isArray(spacexNews) && spacexNews.length > 0) grouped['SpaceX'] = spacexNews;
+                if (Array.isArray(rocketlabNews) && rocketlabNews.length > 0) grouped['Rocket Lab'] = rocketlabNews;
+                
+                setNewsBySource(grouped);
 
                 if (Array.isArray(launchData)) {
                     setLaunches(launchData);

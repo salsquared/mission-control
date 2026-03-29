@@ -87,39 +87,9 @@ export const ApplicationsView: React.FC = () => {
 
     const cards: CardItem[] = [
         {
-            id: "conn-status",
-            colSpan: 3,
-            hFit: true,
-            content: (
-                <Card 
-                    title="Account Status" 
-                    icon={Mail} 
-                    iconColorClass="text-purple-400"
-                    action={
-                        <button onClick={fetchApps} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
-                            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status
-                        </button>
-                    }
-                >
-                    <div className="flex items-center gap-3 bg-black/20 p-4 border border-white/5 rounded-xl">
-                        {session?.user?.image ? (
-                            <img src={session.user.image} className="w-10 h-10 rounded-full border border-slate-700/50" alt="avatar" />
-                        ) : (
-                            <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
-                                <Mail className="w-5 h-5 text-slate-400" />
-                            </div>
-                        )}
-                        <div className="flex flex-col">
-                            <span className="text-sm font-semibold text-slate-200 truncate">{session?.user?.name || "Connected User"}</span>
-                            <span className="text-xs text-slate-500 truncate">{session?.user?.email}</span>
-                        </div>
-                    </div>
-                </Card>
-            )
-        },
-        {
             id: "kanban",
             colSpan: 1,
+            className: "col-span-1 md:col-span-2 lg:col-span-1",
             content: (
                 <Card 
                     title="Pipeline Kanban" 
@@ -158,6 +128,37 @@ export const ApplicationsView: React.FC = () => {
                     withInnerContainer
                 >
                     <CalendarWidget isAdding={isCalendarAdding} setIsAdding={setIsCalendarAdding} />
+                </Card>
+            )
+        },
+        {
+            id: "conn-status",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <Card 
+                    title="Account Status" 
+                    icon={Mail} 
+                    iconColorClass="text-purple-400"
+                    action={
+                        <button onClick={fetchApps} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
+                            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status
+                        </button>
+                    }
+                >
+                    <div className="flex items-center gap-3 bg-black/20 p-4 border border-white/5 rounded-xl">
+                        {session?.user?.image ? (
+                            <img src={session.user.image} className="w-10 h-10 rounded-full border border-slate-700/50" alt="avatar" />
+                        ) : (
+                            <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
+                                <Mail className="w-5 h-5 text-slate-400" />
+                            </div>
+                        )}
+                        <div className="flex flex-col">
+                            <span className="text-sm font-semibold text-slate-200 truncate">{session?.user?.name || "Connected User"}</span>
+                            <span className="text-xs text-slate-500 truncate">{session?.user?.email}</span>
+                        </div>
+                    </div>
                 </Card>
             )
         }
