@@ -2,6 +2,15 @@
 #### Company News API
 - [ ] Fix issue where meta ai news is not showing up at all.
 - [ ] Fix issue where deepmind, meta, microsoft and nvidia images arent showing.
+- [ ] Get rid of Hackernews in the AI company feed. 
+  - [ ] Create a new section for general AI news. 
+    - [ ] 404media
+    - [ ] YC Forums (?)
+    - [ ] Hacker News (?)
+    - [ ] The Verge
+    - [ ] WIRED
+    - [ ] TechCrunch
+    - [ ] MIT Technology Review
 <br>
 
 ---
@@ -27,17 +36,89 @@
     - [ ] Memory Usage
     - [ ] Uptime
 
-- [ ] Add feeds for these companies blogs in their respective views. 
-  - [x] SpaceX
-  - [x] RocketLab
-  - [ ] Blue Origin
-  - [x] Google DeepMind/AI
-  - [x] Meta AI
-  - [x] Microsoft AI
-  - [x] Nvidia AI
-  - [x] OpenAI blogs
-  - [x] Anthropic blogs
+- [ ] Create a new widget that allows relationships between nodes to be shown. (eg: family tree, company org chart, research paper/idea relationships, etc.)
+  - [ ] Create a specific kind of graph that details the relationships between research papers. 
+    - [ ] Decide how to visually represent higher dimensional relationships between papers in 2D.
+      - [ ] Idea 1: Use columns to represent different topics and rows to represent the date relative to each other. This would make the whole thing 2D.
+      - [ ] Idea 2: Take a slice of a higher dimensional object containing all papers where the slice is a 2D representation of the single topic with nothing else being shown. This would make the relationship between ideas easier to navigate. For example if a research paper uses a mathematical technique developed in another paper, we can easily navigate between slices where the nodes in each slice are connected through a higher dimensions not shown in the slices. This would be a high dimensional graph where the axies are time and the topics as we continue to add more papers and topics.
+    - [ ] Make the x coord the paper topic in relation to other papers.
+    - [ ] Make the y coord the date of the paper so we can see the progression of time.
+    - [ ] Create a search utility to find research papers by author, title, date, or keywords.
+  - [ ] Choose a readable text file format to store the relationships in. (csv, .md, mermaid?)
+  - [ ] Create a way to add new relationships to the graph. 
 
+- [ ] Add feeds for these companies blogs in their respective views. 
+  - [ ] Space View
+    - [ ] Prime Contractors/Launch Providers
+      - [x] SpaceX
+      - [x] RocketLab
+      - [ ] Blue Origin
+      - [ ] Northrop Grumman
+      - [ ] Boeing
+      - [ ] Lockheed Martin
+      - [ ] ArianeGroup
+      - [ ] ULA
+    - [ ] Upstart Launch Providers
+      - [ ] Relativity
+      - [ ] Firefly
+      - [ ] Stoke
+      - [ ] Rocket Factory Augsburg
+    - [ ] Space Hardware/Component Manufacturers
+      - [ ] Redwire
+      - [ ] Aerojet Rocketdyne
+      - [ ] Ursa Major
+      - [ ] Xona Space Systems
+      - [ ] Blue Canyon Technologies
+      - [ ] Hadrian
+      - [ ] Apex
+    - [ ] Government Space Agencies (NASA, ESA, etc.)
+      - [ ] NASA
+      - [ ] ESA
+      - [ ] JAXA
+      - [ ] CNSA
+      - [ ] Roscosmos
+      - [ ] ISRO
+      - [ ] CSA
+    - [ ] 
+  - [ ] AI View
+    - [ ] Computation
+      - [ ] Fabless
+        - [ ] Nvidia
+        - [ ] AMD
+        - [ ] Intel 
+        - [ ] Qualcomm
+        - [ ] Broadcom
+        - [ ] Apple
+        - [ ] Google
+      - [ ] AI Accelerators
+        - [ ] Groq
+        - [ ] Cerebras
+      - [ ] IP/Architecture
+        - [ ] arm
+      - [ ] Foundries
+        - [ ] Samsung Foundries
+        - [ ] TSMC
+        - [ ] Global Foundries
+        - [ ] UMC
+        - [ ] SMIC
+        - [ ] Intel Foundry
+        - [ ] Micron
+    - [ ] AI Software/Model Developers
+      - [ ] Google DeepMind/AI
+      - [ ] Meta AI
+      - [ ] Microsoft AI
+      - [ ] xAI
+      - [ ] Mistral
+      - [ ] Hugging Face
+      - [ ] Deepseek
+      - [ ] Baidu
+      - [ ] Bytedance
+      - [x] OpenAI blogs
+      - [x] Anthropic blogs
+- [ ] Add feeds for news sources for computation and AI. 
+  - [ ] Tech Tech Potato
+  - [ ] Semi Analysis
+  
 - [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
   - [ ] Connect to Gmail and Gcal to get updates when new emails come in
     - [ ] **Integration Plan:**
