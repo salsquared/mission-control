@@ -5,15 +5,24 @@ import { Section } from "../Section";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 import { LLMLeaderboardCard, LLMModelInfo } from "../cards/LLMLeaderboardCard";
+import { COMPANY_REGISTRY } from "../../lib/company-registry";
+
+// All AI-view companies from the registry
+const AI_COMPANIES = COMPANY_REGISTRY.filter(c => c.view === 'ai');
+
+// Ordered category labels for display grouping
+const AI_CATEGORIES = [
+    'AI Model Developers',
+    'Fabless',
+    'AI Accelerators',
+    'IP/Architecture',
+    'Foundries',
+    'News Sources',
+];
 
 export const AIView: React.FC = () => {
+    const [companyNews, setCompanyNews] = useState<Record<string, any[]>>({});
     const [hackerNews, setHackerNews] = useState<any[]>([]);
-    const [anthropicNews, setAnthropicNews] = useState<any[]>([]);
-    const [openaiNews, setOpenaiNews] = useState<any[]>([]);
-    const [googleNews, setGoogleNews] = useState<any[]>([]);
-    const [metaNews, setMetaNews] = useState<any[]>([]);
-    const [microsoftNews, setMicrosoftNews] = useState<any[]>([]);
-    const [nvidiaNews, setNvidiaNews] = useState<any[]>([]);
     const [arxivYesterday, setArxivYesterday] = useState<any[]>([]);
     const [arxivLastWeek, setArxivLastWeek] = useState<any[]>([]);
     const [arxivReview, setArxivReview] = useState<any[]>([]);
@@ -87,52 +96,42 @@ export const AIView: React.FC = () => {
     useEffect(() => {
         const fetchAll = async () => {
             try {
+                // Fetch all AI companies from registry
+                const companyFetches = AI_COMPANIES.map(c =>
+                    fetch(`/api/company-news?company=${c.id}`)
+                        .then(res => res.ok ? res.json() : [])
+                        .catch(() => [])
+                );
+
                 const [
-                    hnRes, anthropicRes, openaiRes, googleRes, metaRes, microsoftRes, nvidiaRes,
-                    arxivYRes, arxivWRes, arxivRevRes, arxivHistRes, llmRes
+                    hnRes,
+                    arxivYRes, arxivWRes, arxivRevRes, arxivHistRes, llmRes,
+                    ...companyResults
                 ] = await Promise.all([
                     fetch(`/api/ai`).catch(() => null),
-                    fetch(`/api/company-news?company=anthropic`).catch(() => null),
-                    fetch(`/api/company-news?company=openai`).catch(() => null),
-                    fetch(`/api/company-news?company=google`).catch(() => null),
-                    fetch(`/api/company-news?company=meta`).catch(() => null),
-                    fetch(`/api/company-news?company=microsoft`).catch(() => null),
-                    fetch(`/api/company-news?company=nvidia`).catch(() => null),
                     fetch(`/api/research?topic=ai&timeframe=yesterday&limit=5`).catch(() => null),
                     fetch(`/api/research?topic=ai&timeframe=week&limit=5`).catch(() => null),
                     fetch(`/api/research/review?topic=ai`).catch(() => null),
                     fetch(`/api/research/historical?topic=ai`).catch(() => null),
-                    fetch(`/api/ai/llmleaderboard?category=text`).catch(() => null)
+                    fetch(`/api/ai/llmleaderboard?category=text`).catch(() => null),
+                    ...companyFetches
                 ]);
 
                 if (hnRes?.ok) {
                     const data = await hnRes.json();
                     if (Array.isArray(data)) setHackerNews(data);
                 }
-                if (anthropicRes?.ok) {
-                    const data = await anthropicRes.json();
-                    if (Array.isArray(data)) setAnthropicNews(data);
-                }
-                if (openaiRes?.ok) {
-                    const data = await openaiRes.json();
-                    if (Array.isArray(data)) setOpenaiNews(data);
-                }
-                if (googleRes?.ok) {
-                    const data = await googleRes.json();
-                    if (Array.isArray(data)) setGoogleNews(data);
-                }
-                if (metaRes?.ok) {
-                    const data = await metaRes.json();
-                    if (Array.isArray(data)) setMetaNews(data);
-                }
-                if (microsoftRes?.ok) {
-                    const data = await microsoftRes.json();
-                    if (Array.isArray(data)) setMicrosoftNews(data);
-                }
-                if (nvidiaRes?.ok) {
-                    const data = await nvidiaRes.json();
-                    if (Array.isArray(data)) setNvidiaNews(data);
-                }
+
+                // Build company news map from registry results
+                const newsMap: Record<string, any[]> = {};
+                AI_COMPANIES.forEach((company, i) => {
+                    const articles = companyResults[i];
+                    if (Array.isArray(articles) && articles.length > 0) {
+                        newsMap[company.name] = articles;
+                    }
+                });
+                setCompanyNews(newsMap);
+
                 if (arxivYRes?.ok) {
                     const data = await arxivYRes.json();
                     if (Array.isArray(data)) setArxivYesterday(data);
@@ -163,60 +162,53 @@ export const AIView: React.FC = () => {
         fetchAll();
     }, []);
 
-    const newsCards: CardItem[] = loading ? [
-        {
-            id: "loading-news",
-            colSpan: 3,
-            content: (
-                <div className="flex items-center justify-center py-8 text-emerald-500">
-                    <Loader2 className="w-8 h-8 animate-spin" />
-                </div>
-            )
+    // Build grouped company news for the Section groups prop
+    const buildCompanyGroups = () => {
+        if (loading) return [];
+
+        const groups: { label: string; items: CardItem[] }[] = [];
+
+        for (const category of AI_CATEGORIES) {
+            const companiesInCategory = AI_COMPANIES.filter(c => c.category === category);
+            const categoryCards: CardItem[] = [];
+
+            for (const company of companiesInCategory) {
+                const articles = companyNews[company.name];
+                if (articles && articles.length > 0) {
+                    categoryCards.push({
+                        id: `ai-news-${company.id}`,
+                        colSpan: 1,
+                        hFit: true,
+                        content: <NewsCyclingCard source={company.name} articles={articles} />
+                    });
+                }
+            }
+
+            if (categoryCards.length > 0) {
+                groups.push({ label: category, items: categoryCards });
+            }
         }
-    ] : [
-        {
-            id: "ai-news-hn",
-            colSpan: 1,
-            hFit: true,
-            content: <NewsCyclingCard source="Hacker News" articles={hackerNews} />
-        },
-        {
-            id: "ai-news-openai",
-            colSpan: 1,
-            hFit: true,
-            content: <NewsCyclingCard source="OpenAI" articles={openaiNews} />
-        },
-        {
-            id: "ai-news-anthropic",
-            colSpan: 1,
-            hFit: true,
-            content: <NewsCyclingCard source="Anthropic" articles={anthropicNews} />
-        },
-        {
-            id: "ai-news-google",
-            colSpan: 1,
-            hFit: true,
-            content: <NewsCyclingCard source="Google DeepMind" articles={googleNews} />
-        },
-        {
-            id: "ai-news-meta",
-            colSpan: 1,
-            hFit: true,
-            content: <NewsCyclingCard source="Meta AI" articles={metaNews} />
-        },
-        {
-            id: "ai-news-microsoft",
-            colSpan: 1,
-            hFit: true,
-            content: <NewsCyclingCard source="Microsoft AI" articles={microsoftNews} />
-        },
-        {
-            id: "ai-news-nvidia",
-            colSpan: 1,
-            hFit: true,
-            content: <NewsCyclingCard source="Nvidia AI" articles={nvidiaNews} />
-        }
-    ];
+
+        return groups;
+    };
+
+    // Build Hacker News card (general AI news aggregator)
+    const hnCards: CardItem[] = loading ? [{
+        id: "loading-news",
+        colSpan: 3,
+        content: (
+            <div className="flex items-center justify-center py-8 text-emerald-500">
+                <Loader2 className="w-8 h-8 animate-spin" />
+            </div>
+        )
+    }] : hackerNews.length > 0 ? [{
+        id: "ai-news-hn",
+        colSpan: 1,
+        hFit: true,
+        content: <NewsCyclingCard source="Hacker News" articles={hackerNews} />
+    }] : [];
+
+    const companyGroups = buildCompanyGroups();
 
     const researchCards: CardItem[] = loading ? [
         {
@@ -290,9 +282,15 @@ export const AIView: React.FC = () => {
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8 relative">
-            <Section title="AI Chronicles" description="Latest autonomous developments">
-                <CardGrid items={newsCards} layout="masonry" />
+            <Section title="AI News" description="Latest autonomous developments">
+                <CardGrid items={hnCards} layout="masonry" />
             </Section>
+
+            <Section
+                title="Company News"
+                description="Direct feeds from AI companies"
+                groups={companyGroups}
+            />
 
             <Section title="Chatbot Arena Leaderboard" description="Top models by Arena Elo rating">
                 <CardGrid items={leaderboardCards} layout="grid" />

@@ -70,6 +70,133 @@ async function fetchOpenAI(): Promise<NewsArticle[]> {
     }));
 }
 
+/** Groq publishes on two separate pages — /blog (technical) and /newsroom (press releases).
+ *  This fetcher scrapes both listing pages in parallel, extracting dates, titles, and images
+ *  directly from the card HTML (Groq's individual article pages lack OG date metadata).
+ *  Results are deduplicated by URL and merged chronologically. */
+async function fetchGroq(): Promise<NewsArticle[]> {
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+
+    // Each card on groq.com/blog and /newsroom follows this HTML structure:
+    //   <time dateTime="2026-02-16T00:00:00.000Z" class="card__eyebrow ...">Feb 16, 2026</time>
+    //   <div class="card__media ..."><picture>...<img src="IMAGE_URL" .../>...</picture></div>
+    //   <h2 class="card__title ..."><a href="/blog/slug-here">Title Text</a></h2>
+    //
+    // We extract all three from the listing page in one pass using a regex that captures
+    // the time dateTime, then looks ahead for the img src and href+title within the same card.
+    const cardRegex = /<time\s+dateTime="([^"]+)"[^>]*>[^<]*<\/time>[\s\S]*?<img\s+src="([^"]+)"[\s\S]*?<a\s+href="(\/(?:blog|newsroom)\/[a-zA-Z0-9-]+(?:\/[a-zA-Z0-9-]+)*)"[^>]*>([^<]+)<\/a>/g;
+
+    const pages = [
+        'https://groq.com/blog',
+        'https://groq.com/newsroom',
+    ];
+
+    const seen = new Set<string>();
+    const allArticles: NewsArticle[] = [];
+
+    const results = await Promise.allSettled(pages.map(async (pageUrl) => {
+        console.info(`[EXTERNAL API] Scraping Groq from: ${pageUrl}`);
+        const res = await fetch(pageUrl, { headers: { 'User-Agent': UA } });
+        if (!res.ok) throw new Error(`Failed to fetch ${pageUrl}: ${res.status}`);
+        const html = await res.text();
+
+        const re = new RegExp(cardRegex.source, cardRegex.flags);
+        let match;
+        while ((match = re.exec(html)) !== null) {
+            const [, dateTime, imgSrc, slug, title] = match;
+            if (!slug || slug.length < 15) continue;
+
+            const fullUrl = `https://groq.com${slug}`;
+            if (seen.has(fullUrl)) continue;
+            seen.add(fullUrl);
+
+            allArticles.push({
+                id: slug,
+                title: (title || 'Groq News').replace(/&amp;/g, '&').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim(),
+                url: fullUrl,
+                source: 'Groq',
+                // Groq's dateTime uses midnight UTC (T00:00:00.000Z) which rolls back
+                // a day when displayed in western timezones like PST. Shift to noon UTC
+                // so the calendar date is correct regardless of viewer timezone.
+                published_at: dateTime
+                    ? dateTime.replace('T00:00:00.000Z', 'T12:00:00.000Z')
+                    : new Date().toISOString(),
+                image_url: (imgSrc || '').replace(/&amp;/g, '&'),
+                news_site: 'Groq',
+            });
+        }
+    }));
+
+    // Log any page-level failures without crashing
+    results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+            console.error(`[SCRAPE] Groq page ${pages[i]} failed:`, r.reason);
+        }
+    });
+
+    // Sort by date descending and return top N
+    allArticles.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+    return allArticles.slice(0, MAX_NEWS_ARTICLES);
+}
+
+
+/** Cerebras blog has client-rendered dates, so we scrape the listing HTML.
+ *  It uses a unified card regex to capture titles, dates, and images carefully to avoid
+ *  cross-card mismatches (since hero cards vs grid cards have different nesting). */
+async function fetchCerebras(): Promise<NewsArticle[]> {
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    console.info(`[EXTERNAL API] Scraping Cerebras from: https://cerebras.ai/blog`);
+    
+    const res = await fetch('https://cerebras.ai/blog', { headers: { 'User-Agent': UA } });
+    if (!res.ok) throw new Error(`Failed to fetch cerebras blog: ${res.status}`);
+    const html = await res.text();
+
+    const aRegex = /<a[^>]*href="(\/blog\/[a-zA-Z0-9][a-zA-Z0-9-]+)"[^>]*>([\s\S]*?)<\/a>/g;
+    const months = 'January|February|March|April|May|June|July|August|September|October|November|December';
+    const dateRe = new RegExp(`text-disabled-foreground">((?:${months})\\s+\\d{1,2},\\s+\\d{4})<\\/p>`);
+    const titleRe = /<(?:h2|h3)[^>]*>([\s\S]*?)<\/(?:h2|h3)>/;
+    const imgRe = /<img[^>]*\ssrc="([^"]+)"/;
+
+    let match;
+    const seen = new Set<string>();
+    const allArticles: NewsArticle[] = [];
+
+    while ((match = aRegex.exec(html)) !== null) {
+        const [, slug, inner] = match;
+        if (seen.has(slug)) continue;
+
+        const dateMatch = inner.match(dateRe);
+        const titleMatch = inner.match(titleRe);
+        if (!dateMatch || !titleMatch) continue;
+
+        seen.add(slug);
+        const imgMatch = inner.match(imgRe);
+
+        // Normalize text content
+        const title = titleMatch[1].trim()
+            .replace(/&amp;/g, '&')
+            .replace(/&#x27;/g, "'")
+            .replace(/&quot;/g, '"');
+
+        // Note: parsed dates will be midnight local time of parsing machine unless shifted.
+        // JS Date parsing of "January 14, 2026" inherently produces midnight local.
+        const parsedDate = new Date(dateMatch[1]);
+        
+        allArticles.push({
+            id: slug,
+            title,
+            url: `https://cerebras.ai${slug}`,
+            source: 'Cerebras',
+            published_at: isNaN(parsedDate.getTime()) ? new Date().toISOString() : parsedDate.toISOString(),
+            image_url: imgMatch ? imgMatch[1].replace(/&amp;/g, '&') : "",
+            news_site: 'Cerebras',
+        });
+    }
+
+    // Sort by date descending and return top N
+    allArticles.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+    return allArticles.slice(0, MAX_NEWS_ARTICLES);
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  REGISTRY
@@ -370,16 +497,12 @@ export const COMPANY_REGISTRY: CompanyFeedConfig[] = [
     {
         id: 'meta',
         name: 'Meta AI',
-        strategy: 'scrape',
+        strategy: 'google-news',
         view: 'ai',
         category: 'AI Model Developers',
-        scrapeUrl: 'https://ai.meta.com/blog/',
-        scrapeConfig: {
-            articleRegex: /href="(?:https:\/\/ai\.meta\.com)?(\/blog\/[a-zA-Z0-9-]+\/?)"/g,
-            baseUrl: 'https://ai.meta.com',
-            titleSuffix: ' - AI at Meta',
-            userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        },
+        googleNewsQuery: 'Meta AI research',
+        // Meta's blog is a React SPA — no server-rendered dates or OG metadata.
+        // Google News gives us real publish dates from third-party coverage.
     },
     {
         id: 'microsoft',
@@ -536,29 +659,20 @@ export const COMPANY_REGISTRY: CompanyFeedConfig[] = [
     {
         id: 'groq',
         name: 'Groq',
-        strategy: 'scrape',
+        strategy: 'custom',
         view: 'ai',
         category: 'AI Accelerators',
-        scrapeUrl: 'https://groq.com/news/',
-        scrapeConfig: {
-            articleRegex: /href="(https:\/\/groq\.com\/[a-zA-Z0-9\/-]+)"/g,
-            baseUrl: 'https://groq.com',
-            minSlugLength: 20,
-        },
+        customFetcher: fetchGroq,
         ttlSeconds: TTL_LOW_VOLUME,
+        // Custom fetcher scrapes both /blog and /newsroom, deduplicates, and merges by date.
     },
     {
         id: 'cerebras',
         name: 'Cerebras',
-        strategy: 'scrape',
+        strategy: 'custom',
         view: 'ai',
         category: 'AI Accelerators',
-        scrapeUrl: 'https://cerebras.ai/blog',
-        scrapeConfig: {
-            articleRegex: /href="(\/blog\/[a-zA-Z0-9\/-]+)"/g,
-            baseUrl: 'https://cerebras.ai',
-            minSlugLength: 10,
-        },
+        customFetcher: fetchCerebras,
         ttlSeconds: TTL_LOW_VOLUME,
     },
 

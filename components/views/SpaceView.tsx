@@ -9,6 +9,18 @@ import { NextLaunchCard } from "../cards/NextLaunchCard";
 import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
 import { Calendar } from "lucide-react";
 import { Section } from "../Section";
+import { COMPANY_REGISTRY } from "../../lib/company-registry";
+
+// All space-view companies from the registry (used for dynamic fetching)
+const SPACE_COMPANIES = COMPANY_REGISTRY.filter(c => c.view === 'space');
+
+// Ordered category labels for display grouping
+const SPACE_CATEGORIES = [
+    'Prime Contractors',
+    'Upstart Launch Providers',
+    'Space Hardware',
+    'Government Agencies',
+];
 
 // (Previous imports and helper functions remain exactly the same...)
 import {
@@ -87,11 +99,16 @@ export const SpaceView: React.FC = () => {
     }, [moonData]);
 
     const reloadNews = () => {
+        const companyFetches = SPACE_COMPANIES.map(c =>
+            fetch(`/api/company-news?company=${c.id}&v=${Date.now()}`)
+                .then(res => res.json())
+                .catch(() => [])
+        );
+
         Promise.all([
-            fetch(`/api/space?v=${Date.now()}`).then(res => res.json()).catch(err => { console.error(err); return []; }),
-            fetch(`/api/company-news?company=spacex&v=${Date.now()}`).then(res => res.json()).catch(err => { console.error(err); return []; }),
-            fetch(`/api/company-news?company=rocketlab&v=${Date.now()}`).then(res => res.json()).catch(err => { console.error(err); return []; })
-        ]).then(([spaceData, spacexNews, rocketlabNews]) => {
+            fetch(`/api/space?v=${Date.now()}`).then(res => res.json()).catch(() => []),
+            ...companyFetches
+        ]).then(([spaceData, ...companyResults]) => {
             const grouped: Record<string, SpaceArticle[]> = {};
             if (Array.isArray(spaceData)) {
                 spaceData.forEach((article: SpaceArticle) => {
@@ -100,9 +117,12 @@ export const SpaceView: React.FC = () => {
                     grouped[site].push(article);
                 });
             }
-            if (Array.isArray(spacexNews) && spacexNews.length > 0) grouped['SpaceX'] = spacexNews;
-            if (Array.isArray(rocketlabNews) && rocketlabNews.length > 0) grouped['Rocket Lab'] = rocketlabNews;
-            
+            SPACE_COMPANIES.forEach((company, i) => {
+                const articles = companyResults[i];
+                if (Array.isArray(articles) && articles.length > 0) {
+                    grouped[company.name] = articles;
+                }
+            });
             setNewsBySource(grouped);
         }).catch(err => console.error(err));
     };
@@ -113,47 +133,41 @@ export const SpaceView: React.FC = () => {
     const reloadMoon = () => fetch(`/api/space/moon?v=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.weekly_cycles) setMoonData(data); }).catch(err => console.error(err));
 
     useEffect(() => {
-        const initial = Date.now();
+        const companyFetches = SPACE_COMPANIES.map(c =>
+            fetch(`/api/company-news?company=${c.id}`)
+                .then(res => res.json())
+                .catch(() => [])
+        );
+
         Promise.all([
             fetch(`/api/space`).then(res => res.json()).catch(() => []),
             fetch(`/api/space/launches`).then(res => res.json()).catch(() => []),
             fetch(`/api/space/satellites`).then(res => res.json()).catch(() => []),
             fetch(`/api/space/solar`).then(res => res.json()).catch(() => []),
             fetch(`/api/space/moon`).then(res => res.json()).catch(() => []),
-            fetch(`/api/company-news?company=spacex`).then(res => res.json()).catch(() => []),
-            fetch(`/api/company-news?company=rocketlab`).then(res => res.json()).catch(() => [])
+            ...companyFetches
         ])
-            .then(([spaceData, launchData, satsData, solar, moon, spacexNews, rocketlabNews]) => {
+            .then(([spaceData, launchData, satsData, solar, moon, ...companyResults]) => {
                 const grouped: Record<string, SpaceArticle[]> = {};
                 if (Array.isArray(spaceData)) {
                     spaceData.forEach((article: SpaceArticle) => {
                         const site = article.news_site;
-                        if (!grouped[site]) {
-                            grouped[site] = [];
-                        }
+                        if (!grouped[site]) grouped[site] = [];
                         grouped[site].push(article);
                     });
                 }
-                if (Array.isArray(spacexNews) && spacexNews.length > 0) grouped['SpaceX'] = spacexNews;
-                if (Array.isArray(rocketlabNews) && rocketlabNews.length > 0) grouped['Rocket Lab'] = rocketlabNews;
-                
+                SPACE_COMPANIES.forEach((company, i) => {
+                    const articles = companyResults[i] as SpaceArticle[];
+                    if (Array.isArray(articles) && articles.length > 0) {
+                        grouped[company.name] = articles;
+                    }
+                });
                 setNewsBySource(grouped);
 
-                if (Array.isArray(launchData)) {
-                    setLaunches(launchData);
-                }
-
-                if (satsData && satsData.total_active) {
-                    setSatellitesData(satsData);
-                }
-
-                if (solar && solar.status) {
-                    setSolarData(solar);
-                }
-
-                if (moon && moon.weekly_cycles) {
-                    setMoonData(moon);
-                }
+                if (Array.isArray(launchData)) setLaunches(launchData);
+                if (satsData && satsData.total_active) setSatellitesData(satsData);
+                if (solar && solar.status) setSolarData(solar);
+                if (moon && moon.weekly_cycles) setMoonData(moon);
 
                 setLoading(false);
             })
@@ -342,19 +356,58 @@ export const SpaceView: React.FC = () => {
         },
     ];
 
-    const newsCards: CardItem[] = loading ? [
-        {
-            id: "loading-news",
-            content: (
-                <div className="flex items-center justify-center h-full w-full text-cyan-500 py-8">
-                    <Loader2 className="w-8 h-8 animate-spin" />
-                </div>
-            )
+    // Build grouped company news for the Section groups prop
+    const buildCompanyGroups = () => {
+        if (loading) return [];
+
+        const groups: { label: string; items: CardItem[] }[] = [];
+
+        for (const category of SPACE_CATEGORIES) {
+            const companiesInCategory = SPACE_COMPANIES.filter(c => c.category === category);
+            const categoryCards: CardItem[] = [];
+
+            for (const company of companiesInCategory) {
+                const articles = newsBySource[company.name];
+                if (articles && articles.length > 0) {
+                    categoryCards.push({
+                        id: `news-${company.id}`,
+                        content: <NewsCyclingCard source={company.name} articles={articles} />
+                    });
+                }
+            }
+
+            if (categoryCards.length > 0) {
+                groups.push({ label: category, items: categoryCards });
+            }
         }
-    ] : Object.entries(newsBySource).map(([source, articles], index) => ({
-        id: `news-${source}-${index}`,
-        content: <NewsCyclingCard source={source} articles={articles} />
-    }));
+
+        return groups;
+    };
+
+    // Build general space news outlet cards (from SNAPI aggregator, not company-specific)
+    const buildOutletCards = (): CardItem[] => {
+        if (loading) {
+            return [{
+                id: "loading-news",
+                content: (
+                    <div className="flex items-center justify-center h-full w-full text-cyan-500 py-8">
+                        <Loader2 className="w-8 h-8 animate-spin" />
+                    </div>
+                )
+            }];
+        }
+
+        const companyNames = new Set(SPACE_COMPANIES.map(c => c.name));
+        return Object.entries(newsBySource)
+            .filter(([source]) => !companyNames.has(source))
+            .map(([source, articles]) => ({
+                id: `news-outlet-${source}`,
+                content: <NewsCyclingCard source={source} articles={articles} />
+            }));
+    };
+
+    const companyGroups = buildCompanyGroups();
+    const outletCards = buildOutletCards();
 
     return (
         <div className="w-full h-full overflow-y-auto pb-8 space-y-6">
@@ -362,10 +415,15 @@ export const SpaceView: React.FC = () => {
                 <CardGrid items={staticCards} layout="grid" className="grid-flow-row-dense" />
             </Section>
 
+            <Section
+                title="Company News"
+                description="Direct feeds from space companies"
+                groups={companyGroups}
+            />
+
             <Section title="Space News" description="Latest headlines from orbit and beyond">
-                <CardGrid items={newsCards} layout="masonry" />
+                <CardGrid items={outletCards} layout="masonry" />
             </Section>
         </div>
     );
 };
-

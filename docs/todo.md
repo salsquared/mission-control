@@ -83,16 +83,20 @@
   - [ ] AI View
     - [ ] Computation
       - [ ] Fabless
-        - [ ] Nvidia
+        - [x] Nvidia
         - [ ] AMD
+          - [ ] Notes: Internal server error.
         - [ ] Intel 
         - [ ] Qualcomm
         - [ ] Broadcom
+          - [ ] Notes: Getting stories about but not from the actual blog/news site. 
         - [ ] Apple
         - [ ] Google
       - [ ] AI Accelerators
-        - [ ] Groq
-        - [ ] Cerebras
+        - [x] Groq
+          - [x] Notes: Seems to be getting blog posts but only retrieved 2 from 2025 when there are much more recent ones. https://groq.com/blog. 
+        - [x] Cerebras
+          - [x] Notes: Same problem as with Meta AI blog where they do have a dedicated blog page, the blog includes a date for each post but it is not being picked up. 
       - [ ] IP/Architecture
         - [ ] arm
       - [ ] Foundries
@@ -106,12 +110,16 @@
     - [ ] AI Software/Model Developers
       - [ ] Google DeepMind/AI
       - [ ] Meta AI
+        - [ ] Notes: The FB page doesnt have proper dating for posts, moved over to google news but its just showing news stories about them not the actual blogs/releases of new ai or research innovations/releases. 
       - [ ] Microsoft AI
+        - [ ] Notes: Showing stories from 2022? Not sure if we have the right link for these blogs. 
       - [ ] xAI
       - [ ] Mistral
       - [ ] Hugging Face
       - [ ] Deepseek
+        - [ ] Notes: Same issue as with Meta AI, we are getting stories about deepseek not the actual deepseek release blogs
       - [ ] Baidu
+        - [ ] Notes: Same issue as with Deepseek. Seems like chinese companies are harder to get info from. 
       - [ ] Bytedance
       - [x] OpenAI blogs
       - [x] Anthropic blogs

@@ -5,6 +5,26 @@ import { getCompanyConfig, resolveCompanyId } from '../../../lib/company-registr
 import { fetchRSS, fetchScrape, fetchSNAPI, fetchGoogleNews } from '../../../lib/fetchers';
 import type { NewsArticle, CompanyFeedConfig } from '../../../lib/fetchers/types';
 
+// Opt out of Next.js built-in fetch cache — we handle caching ourselves via withCache
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+
+/**
+ * Sort articles by published_at date, newest first.
+ * Invalid or missing dates are pushed to the end.
+ */
+function sortByDate(articles: NewsArticle[]): NewsArticle[] {
+    return articles.sort((a, b) => {
+        const dateA = new Date(a.published_at).getTime();
+        const dateB = new Date(b.published_at).getTime();
+        // If either date is invalid (NaN), push it to the end
+        if (isNaN(dateA) && isNaN(dateB)) return 0;
+        if (isNaN(dateA)) return 1;
+        if (isNaN(dateB)) return -1;
+        return dateB - dateA; // Newest first
+    });
+}
+
 /**
  * Dispatch to the appropriate fetcher based on the company's configured strategy.
  */
@@ -52,7 +72,7 @@ async function getHandler(request: Request) {
             const rssUrl = searchParams.get('rss')!;
             const rssTitle = searchParams.get('title') || rawCompany || 'News';
             const articles = await fetchRSS(rssTitle, rssUrl);
-            return NextResponse.json(articles.slice(0, MAX_NEWS_ARTICLES));
+            return NextResponse.json(sortByDate(articles).slice(0, MAX_NEWS_ARTICLES));
         }
 
         if (!rawCompany) {
@@ -71,7 +91,7 @@ async function getHandler(request: Request) {
         }
 
         const articles = await fetchForCompany(config);
-        return NextResponse.json(articles.slice(0, MAX_NEWS_ARTICLES));
+        return NextResponse.json(sortByDate(articles).slice(0, MAX_NEWS_ARTICLES));
 
     } catch (error) {
         console.error(`Error fetching company news:`, error);

@@ -5,12 +5,22 @@ interface CacheEntry {
     expiry: number;
 }
 
-const globalCache: Map<string, CacheEntry> = (globalThis as any).apiCache || new Map<string, CacheEntry>();
-const cacheStats: { hits: number, misses: number } = (globalThis as any).apiCacheStats || { hits: 0, misses: 0 };
+// Boot stamp — changes on every server restart, invalidating stale entries
+const BOOT_STAMP = Date.now();
 
+const globalCache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
+const cacheStats: { hits: number, misses: number } = { hits: 0, misses: 0 };
+
+// In dev, attach to globalThis for HMR persistence, but clear if boot stamp changed
 if (process.env.NODE_ENV !== 'production') {
-    (globalThis as any).apiCache = globalCache;
-    (globalThis as any).apiCacheStats = cacheStats;
+    const prev = (globalThis as any).apiCacheBootStamp;
+    if (prev !== BOOT_STAMP) {
+        // New process or restart — start fresh
+        (globalThis as any).apiCache = globalCache;
+        (globalThis as any).apiCacheStats = cacheStats;
+        (globalThis as any).apiCacheBootStamp = BOOT_STAMP;
+        console.info(`[CACHE] Initialized fresh cache (boot: ${BOOT_STAMP})`);
+    }
 }
 
 export function getCacheStats() {
@@ -47,10 +57,13 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
                 cacheStats.hits++;
                 const remaining = Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000));
                 console.info(`[CACHE HIT] ${cacheKey} (TTL: ${remaining}s remaining)`);
+                const cacheControl = process.env.NODE_ENV === 'production'
+                    ? `private, max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds / 2}`
+                    : 'private, no-store, max-age=0';
                 return NextResponse.json(entry.data, {
                     headers: {
                         'X-Cache': 'HIT',
-                        'Cache-Control': `public, max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds / 2}`
+                        'Cache-Control': cacheControl
                     }
                 });
             } else {
@@ -75,7 +88,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
                 return NextResponse.json(staleEntry.data, {
                     headers: {
                         'X-Cache': 'STALE-FALLBACK',
-                        'Cache-Control': `public, max-age=${retryTtl}, stale-while-revalidate=${retryTtl / 2}`
+                        'Cache-Control': 'private, no-store, max-age=0'
                     }
                 });
             }
@@ -89,8 +102,11 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
                 data,
                 expiry: Date.now() + ttlSeconds * 1000
             });
+            const cacheControl = process.env.NODE_ENV === 'production'
+                ? `private, max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds / 2}`
+                : 'private, no-store, max-age=0';
             response.headers.set('X-Cache', 'MISS');
-            response.headers.set('Cache-Control', `public, max-age=${ttlSeconds}, stale-while-revalidate=${ttlSeconds / 2}`);
+            response.headers.set('Cache-Control', cacheControl);
         } else if (!response.ok && staleEntry) {
             console.info(`[CACHE FALLBACK] ${cacheKey} - Fetch failed (${response.status}), returning stale data`);
             
@@ -104,7 +120,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
             return NextResponse.json(staleEntry.data, {
                 headers: {
                     'X-Cache': 'STALE-FALLBACK',
-                    'Cache-Control': `public, max-age=${retryTtl}, stale-while-revalidate=${retryTtl / 2}`
+                    'Cache-Control': 'private, no-store, max-age=0'
                 }
             });
         }
