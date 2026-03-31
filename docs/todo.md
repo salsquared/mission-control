@@ -108,11 +108,11 @@
         - [ ] Intel Foundry
         - [ ] Micron
     - [ ] AI Software/Model Developers
-      - [ ] Google DeepMind/AI
-      - [ ] Meta AI
-        - [ ] Notes: The FB page doesnt have proper dating for posts, moved over to google news but its just showing news stories about them not the actual blogs/releases of new ai or research innovations/releases. 
-      - [ ] Microsoft AI
-        - [ ] Notes: Showing stories from 2022? Not sure if we have the right link for these blogs. 
+      - [x] Google DeepMind/AI
+      - [x] Meta AI
+        - [x] Notes: Custom fetcher scrapes ai.meta.com/blog/ listing page. Dates extracted from positional proximity to blog URLs. Titles from aria-label/anchor text with OGS fallback for impact story cards.
+      - [x] Microsoft AI
+        - [x] Notes: Old RSS feed (blogs.microsoft.com/ai/feed/) was abandoned in 2022. Swapped to active Microsoft Research blog feed (microsoft.com/en-us/research/feed/).
       - [ ] xAI
       - [ ] Mistral
       - [ ] Hugging Face

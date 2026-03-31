@@ -29,7 +29,7 @@ async function testRSS(url: string) {
 async function main() {
     await testRSS('https://deepmind.google/blog/rss.xml');
     await testRSS('https://ai.meta.com/blog/rss/');
-    await testRSS('https://blogs.microsoft.com/ai/feed/');
+    await testRSS('https://www.microsoft.com/en-us/research/feed/');
     await testRSS('https://blogs.nvidia.com/feed/');
     await testRSS('https://blogs.nvidia.com/category/artificial-intelligence/feed/');
 }

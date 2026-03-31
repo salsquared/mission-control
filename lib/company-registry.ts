@@ -198,6 +198,97 @@ async function fetchCerebras(): Promise<NewsArticle[]> {
     return allArticles.slice(0, MAX_NEWS_ARTICLES);
 }
 
+/** Meta AI blog (ai.meta.com/blog/) has server-rendered dates on the listing page
+ *  but no OG date metadata on individual posts. This fetcher scrapes the listing page,
+ *  extracting URLs + dates from positional proximity (dates appear near anchors in
+ *  both grid cards and impact-story cards). Titles come from aria-label or anchor text;
+ *  for impact stories without inline titles, OGS fills them in. */
+async function fetchMetaAI(): Promise<NewsArticle[]> {
+    const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
+    console.info('[EXTERNAL API] Scraping Meta AI from: https://ai.meta.com/blog/');
+
+    const res = await fetch('https://ai.meta.com/blog/', { headers: { 'User-Agent': UA } });
+    if (!res.ok) throw new Error(`Failed to fetch Meta AI blog: ${res.status}`);
+    const html = await res.text();
+
+    // Matches both short (Mar 27, 2026) and long (March 27, 2026) month formats
+    const datePattern = '(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\\s+\\d{1,2},\\s+\\d{4}';
+
+    // Scan every blog URL on the page and pair it with the nearest date + title
+    const urlDateMap = new Map<string, { date: string; title: string }>();
+    const urlRegex = /href="(https:\/\/ai\.meta\.com\/blog\/([a-zA-Z0-9][a-zA-Z0-9-]+)\/)"/g;
+    let um;
+
+    while ((um = urlRegex.exec(html)) !== null) {
+        const [, url, slug] = um;
+        if (slug.startsWith('?') || slug === 'page') continue;
+        if (urlDateMap.has(url)) continue;
+
+        // Look for date: check AFTER the URL (grid cards), then BEFORE (hero/impact stories)
+        const afterBlock = html.substring(um.index, Math.min(html.length, um.index + 2000));
+        const afterMatch = afterBlock.match(new RegExp(datePattern));
+
+        const beforeBlock = html.substring(Math.max(0, um.index - 500), um.index);
+        const beforeMatches = beforeBlock.match(new RegExp(datePattern, 'g'));
+        const beforeMatch = beforeMatches ? beforeMatches[beforeMatches.length - 1] : null;
+
+        let date = '';
+        if (afterMatch) {
+            const afterDist = afterBlock.indexOf(afterMatch[0]);
+            const beforeDist = beforeMatch ? (500 - beforeBlock.lastIndexOf(beforeMatch)) : Infinity;
+            date = afterDist < beforeDist ? afterMatch[0] : (beforeMatch || afterMatch[0]);
+        } else if (beforeMatch) {
+            date = beforeMatch;
+        }
+
+        // Extract title from aria-label or direct anchor text
+        let title = '';
+        const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const ariaMatch = afterBlock.match(new RegExp(`aria-label="(?:Read\\s+)?([^"]+)"[^>]*href="${escapedUrl}"`))
+            || beforeBlock.match(new RegExp(`aria-label="(?:Read\\s+)?([^"]+)"[^>]*href="${escapedUrl}"`));
+        if (ariaMatch) {
+            title = ariaMatch[1];
+        } else {
+            const textMatch = afterBlock.match(new RegExp(`href="${escapedUrl}"[^>]*>([^<]{10,})</a>`));
+            if (textMatch) title = textMatch[1];
+        }
+
+        title = title
+            .replace(/&amp;/g, '&')
+            .replace(/&#x27;/g, "'")
+            .replace(/&#039;/g, "'")
+            .replace(/&quot;/g, '"')
+            .trim();
+
+        urlDateMap.set(url, { date, title });
+    }
+
+    // Build articles array
+    const allArticles: NewsArticle[] = [];
+    for (const [url, { date, title }] of urlDateMap) {
+        const slug = new URL(url).pathname.replace('/blog/', '').replace(/\/$/, '');
+        const parsedDate = new Date(date);
+
+        const escapedUrl = url.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const imgPat = new RegExp(`href="${escapedUrl}"[\\s\\S]{0,500}?<img[^>]*src="([^"]+)"`, 'i');
+        const imgMatch = html.match(imgPat);
+
+        allArticles.push({
+            id: slug,
+            title: title || `Meta AI: ${slug.replace(/-/g, ' ')}`,
+            url,
+            source: 'Meta AI',
+            published_at: isNaN(parsedDate.getTime()) ? new Date().toISOString() : parsedDate.toISOString(),
+            image_url: imgMatch ? imgMatch[1].replace(/&amp;/g, '&') : '',
+            news_site: 'Meta AI',
+        });
+    }
+
+    // Sort by date descending and return top N
+    allArticles.sort((a, b) => new Date(b.published_at).getTime() - new Date(a.published_at).getTime());
+    return allArticles.slice(0, MAX_NEWS_ARTICLES);
+}
+
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  REGISTRY
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -497,12 +588,12 @@ export const COMPANY_REGISTRY: CompanyFeedConfig[] = [
     {
         id: 'meta',
         name: 'Meta AI',
-        strategy: 'google-news',
+        strategy: 'custom',
         view: 'ai',
         category: 'AI Model Developers',
-        googleNewsQuery: 'Meta AI research',
-        // Meta's blog is a React SPA — no server-rendered dates or OG metadata.
-        // Google News gives us real publish dates from third-party coverage.
+        customFetcher: fetchMetaAI,
+        // Custom fetcher scrapes ai.meta.com/blog/ listing page for dates, titles, and images.
+        // Individual posts lack OG date metadata, so dates are extracted from the listing.
     },
     {
         id: 'microsoft',
@@ -510,7 +601,9 @@ export const COMPANY_REGISTRY: CompanyFeedConfig[] = [
         strategy: 'rss',
         view: 'ai',
         category: 'AI Model Developers',
-        rssUrl: 'https://blogs.microsoft.com/ai/feed/',
+        rssUrl: 'https://www.microsoft.com/en-us/research/feed/',
+        // Old feed (blogs.microsoft.com/ai/feed/) was abandoned in 2022.
+        // This is the active Microsoft Research blog RSS with fresh AI content.
     },
     {
         id: 'xai',
