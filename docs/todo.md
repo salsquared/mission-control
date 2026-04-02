@@ -36,6 +36,22 @@
   - Notes: Openclaw cannot use Antigravity as i thought. instead it runs its own server that communicates to cli and other low-level apps/ai-agents but not high-level apps like antigravity with UI. Have to develop or use custom tool. https://github.com/krishnakanthb13/antigravity_phone_chat is a good start. 
   - [ ] Create a new discord app to manage convos and tasks.
 
+### Space View
+- [ ] 🔵 **Medium** - Create Artemis mission section that tracks items specifically about the Artemis missions:
+  - [ ] Add a visual diagram of where the craft is based on the mission current stage. 
+    - [ ] Launch & Earth Orbit
+    - [ ] Trans Lunar Voyage
+      - [ ] Distance to Moon
+    - [ ] Lunar Orbit
+    - [ ] Landing
+    - [ ] Trans Lunar Return Voyage
+      - [ ] Distance to Earth
+    - [ ] Earth Orbit & Recovery
+  - [ ] Create a countdown to different stages
+    - [ ] Create a countdown for between missions to next rocket launch as well.
+- [ ] Get mission itinerary
+- Add Livestream view (BLOCKED by YouTube features not yet added) 
+
 ### Notification Service
 - [ ] 🔵 **Medium** - Create a notification service that can be used to send notifications to the user.
   - [ ] Allow application to send in-browser notifications.
