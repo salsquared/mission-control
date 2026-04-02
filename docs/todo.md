@@ -1,8 +1,16 @@
-# Feature Fixes
+# Mission Control TODO
+### Priority Legend (Copy & Paste)
+- [ ] 🔴 **Blocker** / Critical
+- [ ] 🟡 **High** Priority / First Order
+- [ ] 🔵 **Medium** Priority
+- [ ] 🟢 **Low** Priority / Backlog
+
+
+## Feature Fixes
 ### Company News API
-- [ ] Fix issue where meta ai news is not showing up at all.
-- [ ] Fix issue where deepmind, meta, microsoft and nvidia images arent showing.
-- [ ] Get rid of Hackernews in the AI company feed. 
+- [x] 🔵 **Medium** - Fix issue where meta ai news is not showing up at all.
+- [ ] 🔵 **Medium** - Fix issue where deepmind, meta, microsoft and nvidia images arent showing.
+- [ ] 🔵 **Medium** - Get rid of Hackernews in the AI company feed. 
   - [ ] Create a new section for general AI news. 
     - [ ] 404media
     - [ ] YC Forums (?)
@@ -11,23 +19,25 @@
     - [ ] WIRED
     - [ ] TechCrunch
     - [ ] MIT Technology Review
+- [ ] 🟡 **High** - Fix issue where middleware.js is no longer supported and needs to be updated to fit new pattern.
+
 <br>
 
 ## New Feature List:
 ### General Features
-- [ ] Experiment with standard col width of having either p/3, p/4 or p/5 where p is the width of the page or available space for items
-- [ ] Set the "npm run start" script to setup startup logs in the first 1m after the app starts up to better diagnose prod issues
+- [ ] 🟢 **Low** - Experiment with standard col width of having either p/3, p/4 or p/5 where p is the width of the page or available space for items
+- [ ] 🟢 **Low** - Set the "npm run start" script to setup startup logs in the first 1m after the app starts up to better diagnose prod issues
   - [ ] Use UNIX time to name logs that save to a new log folder; these are not build logs but startup logs. (Would this be written in bash or node process?)
-- [ ] Create cards for research papers that filter through view sub-subjects. eg: Physics View - Quantum Physics, Particle Physics, Astrophysics, etc.
-- [ ] Once prod server is fixed, broadcase the server on the local network and make it mobile-compatible so I can access it on my phone
-- [ ] Integrate local LLM calls w/ Gemma 3.
+- [ ] 🟢 **Low** - Create cards for research papers that filter through view sub-subjects. eg: Physics View - Quantum Physics, Particle Physics, Astrophysics, etc.
+- [ ] 🟢 **Low** - Once prod server is fixed, broadcase the server on the local network and make it mobile-compatible so I can access it on my phone
 
-### Remote Access
-- [ ] Setup Openclaw
+### Mobile Remote Access
+- [ ] 🔴 **Blocker** - Setup Openclaw
+  - Notes: Openclaw cannot use Antigravity as i thought. instead it runs its own server that communicates to cli and other low-level apps/ai-agents but not high-level apps like antigravity with UI. Have to develop or use custom tool. https://github.com/krishnakanthb13/antigravity_phone_chat is a good start. 
   - [ ] Create a new discord app to manage convos and tasks.
 
 ### Notification Service
-- [ ] Create a notification service that can be used to send notifications to the user.
+- [ ] 🔵 **Medium** - Create a notification service that can be used to send notifications to the user.
   - [ ] Allow application to send in-browser notifications.
   - [ ] Allow application to send notifications to the user's phone through:
     - [ ] Phone Number
@@ -43,24 +53,25 @@
     - [ ] Application Updates
 
 ### Project Tracking
-- [ ] Add a new card/widget for monitoring Github project progress.
-- [ ] Create todo list utility that shows the todo list from the project files.
+- [ ] 🟢 **Low** - Add a new card/widget for monitoring Github project progress.
+- [ ] 🟡 **High** - Create todo list utility that shows the todo list from the project files.
   - [ ] Should be able to edit, add, delete todo items from a markdown file in the repo itself
+
 ### Youtube Features
-- [ ] Add youtube features
+- [ ] 🟢 **Low** - Add youtube features
   - [ ] Make youtube card
   - [ ] Filter through new suggested videos and subscription videos into one auto-scrolling carousel based on subject/view
     - [ ] Create whitelist of channels for each view to make sure that their new videos are always shown. eg: Physics View/ Sabine Hossenfelder, PBS Space Time, Veritasium, etc.
 
 ### Service Monitoring
-- [ ] Create card that shows the background services running on the mac-mini using pm2 or some other service monitoring utility. Not the internal services that are for MS but the ones that it connects to like pulsar, personal website, etc.
+- [ ] 🔵 **Medium** - Create card that shows the background services running on the mac-mini using pm2 or some other service monitoring utility. Not the internal services that are for MS but the ones that it connects to like pulsar, personal website, etc.
   - [ ] Show the stats like:
     - [ ] CPU Usage
     - [ ] Memory Usage
     - [ ] Uptime
 
 ### Node Relationship Graph (Research Papers, etc.)
-- [ ] Create a new widget that allows relationships between nodes to be shown. (eg: family tree, company org chart, research paper/idea relationships, etc.)
+- [ ] 🟢 **Low** - Create a new widget that allows relationships between nodes to be shown. (eg: family tree, company org chart, research paper/idea relationships, etc.)
   - [ ] Create a specific kind of graph that details the relationships between research papers. 
     - [ ] Decide how to visually represent higher dimensional relationships between papers in 2D.
       - [ ] Idea 1: Use columns to represent different topics and rows to represent the date relative to each other. This would make the whole thing 2D.
@@ -72,7 +83,7 @@
   - [ ] Create a way to add new relationships to the graph. 
 
 ### Company Blog Feeds
-- [ ] Add feeds for these companies blogs in their respective views. 
+- [ ] 🟢 **Low** - Add feeds for these companies blogs in their respective views. 
   - [ ] Space View
     - [ ] Prime Contractors/Launch Providers
       - [x] SpaceX
@@ -149,12 +160,12 @@
       - [ ] Bytedance
       - [x] OpenAI blogs
       - [x] Anthropic blogs
-- [ ] Add feeds for news sources for computation and AI. 
+- [ ] 🟢 **Low** - Add feeds for news sources for computation and AI. 
   - [ ] Tech Tech Potato
   - [ ] Semi Analysis
 
 ### New View: Applications
-- [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
+- [ ] 🟡 **High** - Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
   - [ ] Connect to Gmail and Gcal to get updates when new emails come in
     - [ ] **Integration Plan:**
       - **OAuth 2.0:** Set up a Google Cloud Project with Gmail API and Google Calendar API scopes. Use `next-auth` to easily authenticate and store the refresh token securely in Prisma without a custom dashboard.
@@ -167,12 +178,9 @@
     - [ ] **Automation Plan:**
       - Expose a Next.js API route that the background worker or UI can hit to construct and push a Google Calendar event.
       - Auto-fill event details (title, description with email link, start/end time) based on the parsed email contents.
-
 <br>
 
----
-
-### Completed Items:
+## Completed Items:
 - **Mission Control App**:
   - **Internal Systems View**:
     - [x] Add feature that changes the display of ram allocated to the service based on the input variable we give in @package.json
@@ -230,7 +238,7 @@
     - [x] Enhance generic caching layers to attach TTL (Time-To-Live) and expiration details to the log payload.
     - [x] Build a dashboard View or terminal output that visuals cache hit rates and remaining TTLs for cached data.
 
-### API Integrations (Completed):
+### API Integrations:
 - **Arxiv API**: add the ability for any of the views or cards to fetch papers
 - **Hugging face & Semantic Scholar Integration**:
   - [x] Research HF Daily Papers API (`https://huggingface.co/api/daily_papers`) & Semantic Scholar Graph API (`https://api.semanticscholar.org/graph/v1/paper/batch`).
