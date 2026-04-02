@@ -1,5 +1,5 @@
-### Feature Fixes
-#### Company News API
+# Feature Fixes
+### Company News API
 - [ ] Fix issue where meta ai news is not showing up at all.
 - [ ] Fix issue where deepmind, meta, microsoft and nvidia images arent showing.
 - [ ] Get rid of Hackernews in the AI company feed. 
@@ -13,29 +13,53 @@
     - [ ] MIT Technology Review
 <br>
 
----
-
-### New Feature List:
+## New Feature List:
+### General Features
 - [ ] Experiment with standard col width of having either p/3, p/4 or p/5 where p is the width of the page or available space for items
-- [ ] Add youtube features
-  - [ ] Make youtube card
-  - [ ] Filter through new suggested videos and subscription videos into one auto-scrolling carousel based on subject/view
-    - [ ] Create whitelist of channels for each view to make sure that their new videos are always shown. eg: Physics View/ Sabine Hossenfelder, PBS Space Time, Veritasium, etc.
 - [ ] Set the "npm run start" script to setup startup logs in the first 1m after the app starts up to better diagnose prod issues
   - [ ] Use UNIX time to name logs that save to a new log folder; these are not build logs but startup logs. (Would this be written in bash or node process?)
 - [ ] Create cards for research papers that filter through view sub-subjects. eg: Physics View - Quantum Physics, Particle Physics, Astrophysics, etc.
 - [ ] Once prod server is fixed, broadcase the server on the local network and make it mobile-compatible so I can access it on my phone
 - [ ] Integrate local LLM calls w/ Gemma 3.
-- [ ] Add a new view for monitoring Github project progress.
-  - [ ] Create todo list utility that shows the todo list from the project files.
-    - [ ] Should be able to edit, add, delete todo items from a markdown file in the repo itself
 
+### Remote Access
+- [ ] Setup Openclaw
+  - [ ] Create a new discord app to manage convos and tasks.
+
+### Notification Service
+- [ ] Create a notification service that can be used to send notifications to the user.
+  - [ ] Allow application to send in-browser notifications.
+  - [ ] Allow application to send notifications to the user's phone through:
+    - [ ] Phone Number
+    - [ ] Email
+    - [ ] Push Notifications
+  - Create list of notification types and what they are for.
+    - [ ] Rocket Launches
+    - [ ] Company Blog Updates
+    - [ ] Research Paper Updates
+      - [ ] New Papers based on specific:
+        - [ ] New Papers based on specific authors
+        - [ ] New Papers based on specific sub-topics
+    - [ ] Application Updates
+
+### Project Tracking
+- [ ] Add a new card/widget for monitoring Github project progress.
+- [ ] Create todo list utility that shows the todo list from the project files.
+  - [ ] Should be able to edit, add, delete todo items from a markdown file in the repo itself
+### Youtube Features
+- [ ] Add youtube features
+  - [ ] Make youtube card
+  - [ ] Filter through new suggested videos and subscription videos into one auto-scrolling carousel based on subject/view
+    - [ ] Create whitelist of channels for each view to make sure that their new videos are always shown. eg: Physics View/ Sabine Hossenfelder, PBS Space Time, Veritasium, etc.
+
+### Service Monitoring
 - [ ] Create card that shows the background services running on the mac-mini using pm2 or some other service monitoring utility. Not the internal services that are for MS but the ones that it connects to like pulsar, personal website, etc.
   - [ ] Show the stats like:
     - [ ] CPU Usage
     - [ ] Memory Usage
     - [ ] Uptime
 
+### Node Relationship Graph (Research Papers, etc.)
 - [ ] Create a new widget that allows relationships between nodes to be shown. (eg: family tree, company org chart, research paper/idea relationships, etc.)
   - [ ] Create a specific kind of graph that details the relationships between research papers. 
     - [ ] Decide how to visually represent higher dimensional relationships between papers in 2D.
@@ -47,6 +71,7 @@
   - [ ] Choose a readable text file format to store the relationships in. (csv, .md, mermaid?)
   - [ ] Create a way to add new relationships to the graph. 
 
+### Company Blog Feeds
 - [ ] Add feeds for these companies blogs in their respective views. 
   - [ ] Space View
     - [ ] Prime Contractors/Launch Providers
@@ -115,6 +140,7 @@
         - [x] Notes: Old RSS feed (blogs.microsoft.com/ai/feed/) was abandoned in 2022. Swapped to active Microsoft Research blog feed (microsoft.com/en-us/research/feed/).
       - [ ] xAI
       - [ ] Mistral
+        - [ ] Appears to only get the blog on the hero card not a list of the 10 most recent. https://mistral.ai/news.
       - [ ] Hugging Face
       - [ ] Deepseek
         - [ ] Notes: Same issue as with Meta AI, we are getting stories about deepseek not the actual deepseek release blogs
@@ -126,7 +152,8 @@
 - [ ] Add feeds for news sources for computation and AI. 
   - [ ] Tech Tech Potato
   - [ ] Semi Analysis
-  
+
+### New View: Applications
 - [ ] Create a new view that shows and keeps track of job/internship/citizenship/school and other kinds of applications and their status.
   - [ ] Connect to Gmail and Gcal to get updates when new emails come in
     - [ ] **Integration Plan:**
