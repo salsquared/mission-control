@@ -50,7 +50,7 @@
   - [ ] Create a countdown to different stages
     - [ ] Create a countdown for between missions to next rocket launch as well.
   - [ ] Get mission itinerary
-- [ ] Add Livestream view (BLOCKED by YouTube features not yet added) 
+  - [ ] Add Livestream card to section to always have the stream running during missions. (BLOCKED by YouTube features not yet added) 
 
 ### Notification Service
 - [ ] 🔵 **Medium** - Create a notification service that can be used to send notifications to the user.
