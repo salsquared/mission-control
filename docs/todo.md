@@ -33,7 +33,11 @@
 
 ### Mobile Remote Access
 - [ ] 🔴 **Blocker** - Setup Openclaw
-  - Notes: Openclaw cannot use Antigravity as i thought. instead it runs its own server that communicates to cli and other low-level apps/ai-agents but not high-level apps like antigravity with UI. Have to develop or use custom tool. https://github.com/krishnakanthb13/antigravity_phone_chat is a good start. 
+  - Notes: Openclaw cannot use Antigravity as i thought. instead it runs its own server that communicates to cli and other low-level apps/ai-agents but not high-level apps like antigravity with UI. Have to develop or use custom tool. 
+    - [ ] Options:
+      - [ ] https://github.com/krishnakanthb13/antigravity_phone_chat
+      - [ ] https://github.com/L1M80/porta
+      - [ ] 
   - [ ] Create a new discord app to manage convos and tasks.
 
 ### Space View
