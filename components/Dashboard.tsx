@@ -7,6 +7,7 @@ import { FinanceView } from "./views/FinanceView";
 import { AIView } from "./views/AIView";
 import { PhysicsView } from "./views/PhysicsView";
 import { ApplicationsView } from "./views/ApplicationsView";
+import { PlanningView } from "./views/PlanningView";
 import { AICompanion } from "./AICompanion";
 import { SavedPapersOverlay } from "./overlays/SavedPapersOverlay";
 import { cn } from "@/lib/utils";
@@ -27,6 +28,7 @@ const getTopic = (id: string) => {
     if (id === 'crypto') return 'Crypto';
     if (id === 'ai-news') return 'AI';
     if (id === 'physics') return 'Physics';
+    if (id === 'planning') return 'Planning';
     return 'General';
 };
 
@@ -60,6 +62,11 @@ const BASE_DASHES: DashConfig[] = [
         id: "applications",
         title: "Applications",
         component: <ApplicationsView />,
+    },
+    {
+        id: "planning",
+        title: "Planning & Strategy",
+        component: <PlanningView />,
     },
 ];
 

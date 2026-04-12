@@ -7,9 +7,10 @@ interface CalendarEvent {
   summary: string;
   start: { dateTime: string; timeZone?: string };
   end: { dateTime: string; timeZone?: string };
+  readonly?: boolean;
 }
 
-export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boolean) => void}> = ({isAdding, setIsAdding}) => {
+export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boolean) => void, injectedTasks?: CalendarEvent[]}> = ({isAdding, setIsAdding, injectedTasks = []}) => {
     const { data: session } = useSession();
     const [events, setEvents] = useState<CalendarEvent[]>([]);
     const [loading, setLoading] = useState(false);
@@ -87,6 +88,11 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
         }
     };
 
+    const displayEvents = React.useMemo(() => {
+        const combined = [...events, ...injectedTasks.map(t => ({ ...t, readonly: true }))];
+        return combined.sort((a, b) => new Date(a.start.dateTime || 0).getTime() - new Date(b.start.dateTime || 0).getTime());
+    }, [events, injectedTasks]);
+
     return (
         <div className="flex flex-col h-full w-full">
             <div className="overflow-y-auto flex-1 custom-scrollbar pr-2 space-y-3">
@@ -111,14 +117,14 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
                     </div>
                 )}
 
-                {loading && events.length === 0 ? (
+                {loading && displayEvents.length === 0 ? (
                     <div className="flex justify-center items-center py-10">
                         <Loader2 className="w-6 h-6 animate-spin text-blue-500/50" />
                     </div>
-                ) : events.length === 0 ? (
+                ) : displayEvents.length === 0 ? (
                     <div className="text-center text-sm text-slate-500 py-10">No upcoming pipeline events.</div>
                 ) : (
-                    events.map((ev) => {
+                    displayEvents.map((ev) => {
                         const sd = ev.start?.dateTime ? new Date(ev.start.dateTime) : null;
                         return (
                             <div key={ev.id} className="group relative bg-slate-800 border border-slate-700/50 rounded-xl p-3 hover:border-blue-500/30 transition-all flex justify-between items-start">
@@ -131,13 +137,15 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
                                         </div>
                                     )}
                                 </div>
-                                <button
-                                    onClick={() => handleDelete(ev.id)}
-                                    className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-md transition-all shrink-0 cursor-pointer"
-                                    title="Delete event"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
+                                {!ev.readonly && (
+                                    <button
+                                        onClick={() => handleDelete(ev.id)}
+                                        className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-md transition-all shrink-0 cursor-pointer"
+                                        title="Delete event"
+                                    >
+                                        <Trash2 className="w-4 h-4" />
+                                    </button>
+                                )}
                             </div>
                         );
                     })

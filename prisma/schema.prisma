@@ -125,3 +125,32 @@ model Application {
   @@index([userId, status])
 }
 
+
+model Task {
+  id          String    @id @default(cuid())
+  text        String
+  status      String    // "TODO", "IN_PROGRESS", "DONE"
+  priority    String?   // "BLOCKER", "HIGH", "MEDIUM", "LOW"
+  project     String?
+  dueDate     DateTime?
+  filePath    String
+  lineNumber  Int
+  notes       String?   // Markdown notes extracted under this task
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  parentId    String?
+  parent      Task?     @relation("TaskToTask", fields: [parentId], references: [id])
+  children    Task[]    @relation("TaskToTask")
+
+  @@index([status])
+  @@index([filePath])
+}
+
+model LifeGoal {
+  id        String   @id @default(cuid())
+  text      String
+  completed Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
