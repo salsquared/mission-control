@@ -101,7 +101,8 @@ export const Dashboard: React.FC = () => {
         const store = useThemeStore.getState();
         store.syncAvailableDashes(BASE_DASHES.map(d => ({ id: d.id, title: d.title })));
         
-        const storedId = store.activeViewId;
+        // Read last page from localStorage (device-local, not shared DB)
+        const storedId = localStorage.getItem('mc-active-view') || store.activeViewId;
         const index = orderedDashes.findIndex((d) => d.id === storedId);
         if (index !== -1) {
             setCurrentIndex(index);
@@ -115,6 +116,8 @@ export const Dashboard: React.FC = () => {
     useEffect(() => {
         if (isMounted && currentDashId) {
             setActiveViewId(currentDashId);
+            // Persist per-device in localStorage
+            localStorage.setItem('mc-active-view', currentDashId);
         }
     }, [currentDashId, setActiveViewId, isMounted]);
 

@@ -32,6 +32,19 @@ export default function RootLayout({
         className={`${geistSans.variable} ${geistMono.variable} antialiased custom-scrollbar`}
         suppressHydrationWarning
       >
+        {/* In dev mode, unregister any previously-cached service worker to prevent cross-device reload issues */}
+        {process.env.NODE_ENV !== 'production' && (
+          <script dangerouslySetInnerHTML={{ __html: `
+            if ('serviceWorker' in navigator) {
+              navigator.serviceWorker.getRegistrations().then(function(registrations) {
+                registrations.forEach(function(registration) {
+                  registration.unregister();
+                  console.log('[SW] Unregistered service worker in dev mode');
+                });
+              });
+            }
+          `}} />
+        )}
         <NextAuthProvider>
           <ThemeProvider>
             {children}

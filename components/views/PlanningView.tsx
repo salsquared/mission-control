@@ -4,6 +4,7 @@ import { TaskItem } from "../ui/TaskItem";
 import { Section } from "../Section";
 import { GoalCard, LifeGoal } from "../cards/GoalCard";
 import { ToDoCard } from "../cards/ToDoCard";
+import { Scrollbar } from "../ui/Scrollbar";
 
 
 
@@ -207,7 +208,7 @@ export const PlanningView: React.FC = () => {
     };
 
     return (
-        <div className="flex flex-col h-full w-full overflow-y-auto custom-scrollbar pb-6 pt-6 gap-2">
+        <Scrollbar className="flex flex-col h-full w-full pb-6 pt-6 gap-2">
             <Section title="Goals">
                 <GoalCard 
                     lifeGoals={lifeGoals}
@@ -235,6 +236,6 @@ export const PlanningView: React.FC = () => {
                     kanbanColumns={KANBAN_COLUMNS}
                 />
             </Section>
-        </div>
+        </Scrollbar>
     );
 };

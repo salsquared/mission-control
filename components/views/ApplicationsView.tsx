@@ -6,6 +6,7 @@ import { CalendarWidget } from "../widgets/CalendarWidget";
 import { KanbanWidget, KanbanColumnDef } from "../widgets/KanbanWidget";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Card } from "../ui/Card";
+import { Scrollbar } from "../ui/Scrollbar";
 
 interface AppRecord {
     id: string;
@@ -16,12 +17,14 @@ interface AppRecord {
     lastUpdateAt: string;
 }
 
-const pipelineColumns: KanbanColumnDef[] = [
-    { id: "applied", title: "Applied", statuses: ["APPLIED", "UPDATED"], colorClass: "bg-blue-500/20 text-blue-400 border border-blue-500/20" },
-    { id: "assessment", title: "Assessment", statuses: ["ASSESSMENT"], colorClass: "bg-purple-500/20 text-purple-400 border border-purple-500/20" },
-    { id: "interviewing", title: "Interviewing", statuses: ["INTERVIEW_REQUESTED", "INTERVIEW"], colorClass: "bg-amber-500/20 text-amber-500 border border-amber-500/20" },
-    { id: "offer", title: "Offer", statuses: ["OFFER"], colorClass: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20" },
-    { id: "archive", title: "Archive", statuses: ["REJECTED"], colorClass: "bg-slate-500/20 text-slate-400 border border-slate-500/20" }
+type AppKanbanColumnDef = KanbanColumnDef<AppRecord> & { statuses: string[] };
+
+const pipelineColumns: AppKanbanColumnDef[] = [
+    { id: "applied", title: "Applied", statuses: ["APPLIED", "UPDATED"], filterFn: (app) => ["APPLIED", "UPDATED"].includes(app.status), defaultTargetStatus: "APPLIED", colorClass: "bg-blue-500/20 text-blue-400 border border-blue-500/20" },
+    { id: "assessment", title: "Assessment", statuses: ["ASSESSMENT"], filterFn: (app) => ["ASSESSMENT"].includes(app.status), defaultTargetStatus: "ASSESSMENT", colorClass: "bg-purple-500/20 text-purple-400 border border-purple-500/20" },
+    { id: "interviewing", title: "Interviewing", statuses: ["INTERVIEW_REQUESTED", "INTERVIEW"], filterFn: (app) => ["INTERVIEW_REQUESTED", "INTERVIEW"].includes(app.status), defaultTargetStatus: "INTERVIEW", colorClass: "bg-amber-500/20 text-amber-500 border border-amber-500/20" },
+    { id: "offer", title: "Offer", statuses: ["OFFER"], filterFn: (app) => ["OFFER"].includes(app.status), defaultTargetStatus: "OFFER", colorClass: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20" },
+    { id: "archive", title: "Archive", statuses: ["REJECTED"], filterFn: (app) => ["REJECTED"].includes(app.status), defaultTargetStatus: "REJECTED", colorClass: "bg-slate-500/20 text-slate-400 border border-slate-500/20" }
 ];
 
 export const ApplicationsView: React.FC = () => {
@@ -165,7 +168,7 @@ export const ApplicationsView: React.FC = () => {
     ];
 
     return (
-        <div className="w-full h-full overflow-y-auto pb-8">
+        <Scrollbar className="w-full h-full pb-8">
             <Section title="Applications Pipeline" description="Auto-syncs via Gmail & Pub/Sub API">
                 {!session ? (
                     <div className="mt-8 flex flex-col items-center justify-center h-80 gap-5 p-12 bg-black/20 border border-white/5 rounded-3xl max-w-xl mx-auto text-center backdrop-blur-md">
@@ -189,6 +192,6 @@ export const ApplicationsView: React.FC = () => {
                     </div>
                 )}
             </Section>
-        </div>
+        </Scrollbar>
     );
 };

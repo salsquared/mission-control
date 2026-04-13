@@ -8,14 +8,12 @@ interface CacheEntry {
 // Boot stamp — changes on every server restart, invalidating stale entries
 const BOOT_STAMP = Date.now();
 
-const globalCache: Map<string, CacheEntry> = new Map<string, CacheEntry>();
-const cacheStats: { hits: number, misses: number } = { hits: 0, misses: 0 };
+const globalCache: Map<string, CacheEntry> = (globalThis as any).apiCache || new Map<string, CacheEntry>();
+const cacheStats: { hits: number, misses: number } = (globalThis as any).apiCacheStats || { hits: 0, misses: 0 };
 
-// In dev, attach to globalThis for HMR persistence, but clear if boot stamp changed
+// In dev, attach to globalThis for HMR persistence
 if (process.env.NODE_ENV !== 'production') {
-    const prev = (globalThis as any).apiCacheBootStamp;
-    if (prev !== BOOT_STAMP) {
-        // New process or restart — start fresh
+    if (!(globalThis as any).apiCache) {
         (globalThis as any).apiCache = globalCache;
         (globalThis as any).apiCacheStats = cacheStats;
         (globalThis as any).apiCacheBootStamp = BOOT_STAMP;
@@ -51,9 +49,9 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
 
         let staleEntry: CacheEntry | null = null;
 
-        if (!isRefresh && globalCache.has(cacheKey)) {
+        if (globalCache.has(cacheKey)) {
             const entry = globalCache.get(cacheKey)!;
-            if (Date.now() < entry.expiry) {
+            if (!isRefresh && Date.now() < entry.expiry) {
                 cacheStats.hits++;
                 const remaining = Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000));
                 console.info(`[CACHE HIT] ${cacheKey} (TTL: ${remaining}s remaining)`);

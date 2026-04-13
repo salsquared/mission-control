@@ -34,7 +34,7 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
     kanbanColumns
 }) => {
     return (
-        <div className="px-6 flex flex-col h-[65vh]">
+        <div className="px-2 flex flex-col h-[65vh]">
             <Card
                 title="Task Board"
                 icon={CheckSquare}

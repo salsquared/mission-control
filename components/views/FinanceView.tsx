@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { AssetPriceCard } from "../cards/AssetPriceCard";
 import { MarketTop100Card } from "../cards/MarketTop100Card";
 import { Section } from "../Section";
+import { Scrollbar } from "../ui/Scrollbar";
 
 const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ timestamp, intervalMins }) => {
     const [now, setNow] = useState(Date.now());
@@ -187,10 +188,10 @@ export const FinanceView: React.FC = () => {
     ];
 
     return (
-        <div className="w-full h-full overflow-y-auto pb-8">
+        <Scrollbar className="w-full h-full pb-8">
             <Section title="Market Overview" description="Real-time cryptocurrency statistics">
                 <CardGrid items={staticCards} />
             </Section>
-        </div>
+        </Scrollbar>
     );
 };

@@ -9,6 +9,7 @@ import { NextLaunchCard } from "../cards/NextLaunchCard";
 import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
 import { Calendar } from "lucide-react";
 import { Section } from "../Section";
+import { Scrollbar } from "../ui/Scrollbar";
 import { COMPANY_REGISTRY } from "../../lib/company-registry";
 
 // All space-view companies from the registry (used for dynamic fetching)
@@ -410,7 +411,7 @@ export const SpaceView: React.FC = () => {
     const outletCards = buildOutletCards();
 
     return (
-        <div className="w-full h-full overflow-y-auto pb-8 space-y-6">
+        <Scrollbar className="w-full h-full pb-8 space-y-6">
             <Section title="Space Data" description="Real-time metrics and tracking">
                 <CardGrid items={staticCards} layout="grid" className="grid-flow-row-dense" />
             </Section>
@@ -424,6 +425,6 @@ export const SpaceView: React.FC = () => {
             <Section title="Space News" description="Latest headlines from orbit and beyond">
                 <CardGrid items={outletCards} layout="masonry" />
             </Section>
-        </div>
+        </Scrollbar>
     );
 };

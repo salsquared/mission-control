@@ -13,7 +13,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
             .then(res => res.json())
             .then(res => {
                 if (res.data) {
-                    useThemeStore.setState(res.data);
+                    const { activeViewId, ...globalData } = res.data;
+                    useThemeStore.setState(globalData);
                 }
                 setMounted(true);
             })
@@ -27,21 +28,25 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     useEffect(() => {
         if (!mounted) return;
 
-        const unsubscribe = useThemeStore.subscribe((state) => {
-            const dataToSave = {
-                isDarkMode: state.isDarkMode,
-                viewHues: state.viewHues,
-                viewHuesEnabled: state.viewHuesEnabled,
-                activeViewId: state.activeViewId,
-                dashOrder: state.dashOrder,
-                dashTitles: state.dashTitles
-            };
+        const unsubscribe = useThemeStore.subscribe((state, prevState) => {
+            const getSyncableState = (s: any) => ({
+                isDarkMode: s.isDarkMode,
+                viewHues: s.viewHues,
+                viewHuesEnabled: s.viewHuesEnabled,
+                dashOrder: s.dashOrder,
+                dashTitles: s.dashTitles
+            });
 
-            fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(dataToSave)
-            }).catch(err => console.error("Failed to default save settings:", err));
+            const currentData = getSyncableState(state);
+            const prevData = getSyncableState(prevState || state);
+
+            if (prevState && JSON.stringify(currentData) !== JSON.stringify(prevData)) {
+                fetch('/api/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(currentData)
+                }).catch(err => console.error("Failed to save settings:", err));
+            }
         });
 
         return () => unsubscribe();

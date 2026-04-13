@@ -29,7 +29,7 @@ export const GoalCard: React.FC<GoalCardProps> = ({
     handleDeleteGoal
 }) => {
     return (
-        <div className="px-6">
+        <div className="px-2">
             <Card
                 title="Tracked Milestones"
                 icon={Target}

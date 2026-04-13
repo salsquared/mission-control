@@ -58,9 +58,25 @@ export const useThemeStore = create<ThemeState>()(
         })),
         syncAvailableDashes: (dashes) => set((state) => {
             let orderChanged = false;
-            const newOrder = [...state.dashOrder];
+            let newOrder = [...state.dashOrder];
             const newTitles = { ...state.defaultDashTitles };
             
+            const validIds = dashes.map(d => d.id);
+            
+            // Purge stale IDs
+            const filteredOrder = newOrder.filter(id => validIds.includes(id));
+            if (filteredOrder.length !== newOrder.length) {
+                newOrder = filteredOrder;
+                orderChanged = true;
+            }
+
+            Object.keys(newTitles).forEach(id => {
+                if (!validIds.includes(id)) {
+                    delete newTitles[id];
+                    orderChanged = true;
+                }
+            });
+
             dashes.forEach(dash => {
                 if (!newOrder.includes(dash.id)) {
                     newOrder.push(dash.id);

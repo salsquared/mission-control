@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn } from "lucide-react";
 import { Section } from "../Section";
+import { Scrollbar } from "../ui/Scrollbar";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
@@ -416,10 +417,10 @@ export const InternalView: React.FC = () => {
     ];
 
     return (
-        <div className="w-full h-full overflow-y-auto pb-8">
+        <Scrollbar className="w-full h-full pb-8">
             <Section title="System Diagnostics" description="Internal system vitals and status logs">
                 <CardGrid items={staticCards} />
             </Section>
-        </div>
+        </Scrollbar>
     );
 };

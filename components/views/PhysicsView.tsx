@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
+import { Scrollbar } from "../ui/Scrollbar";
 import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 
 export const PhysicsView: React.FC = () => {
@@ -123,13 +124,13 @@ export const PhysicsView: React.FC = () => {
     ];
 
     return (
-        <div className="w-full h-full overflow-y-auto pb-8 relative">
+        <Scrollbar className="w-full h-full pb-8 relative">
             <Section
                 title="Physics Literature"
                 description="Latest publications and preprints in Physics"
             >
                 <CardGrid items={researchCards} layout="grid" />
             </Section>
-        </div>
+        </Scrollbar>
     );
 };

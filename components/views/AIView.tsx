@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
+import { Scrollbar } from "../ui/Scrollbar";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 import { LLMLeaderboardCard, LLMModelInfo } from "../cards/LLMLeaderboardCard";
@@ -281,7 +282,7 @@ export const AIView: React.FC = () => {
     ];
 
     return (
-        <div className="w-full h-full overflow-y-auto pb-8 relative">
+        <Scrollbar className="w-full h-full pb-8 relative">
             <Section title="AI News" description="Latest autonomous developments">
                 <CardGrid items={hnCards} layout="masonry" />
             </Section>
@@ -290,7 +291,19 @@ export const AIView: React.FC = () => {
                 title="Company News"
                 description="Direct feeds from AI companies"
                 groups={companyGroups}
-            />
+            >
+                {loading && (
+                    <CardGrid items={[{
+                        id: "loading-company-news",
+                        colSpan: 3,
+                        content: (
+                            <div className="flex items-center justify-center py-8 text-blue-500">
+                                <Loader2 className="w-8 h-8 animate-spin" />
+                            </div>
+                        )
+                    }]} layout="grid" />
+                )}
+            </Section>
 
             <Section title="Chatbot Arena Leaderboard" description="Top models by Arena Elo rating">
                 <CardGrid items={leaderboardCards} layout="grid" />
@@ -302,6 +315,6 @@ export const AIView: React.FC = () => {
             >
                 <CardGrid items={researchCards} layout="grid" />
             </Section>
-        </div>
+        </Scrollbar>
     );
 };
