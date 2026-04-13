@@ -114,10 +114,13 @@ export const InternalView: React.FC = () => {
 
     const currentOrder = Array.from(new Set([...dashOrder, ...Object.keys(defaultDashTitles)]));
 
-    const views = currentOrder.map(id => ({
-        id,
-        name: dashTitles[id] || defaultDashTitles[id] || id
-    }));
+    const views = currentOrder.map(id => {
+        const fallbackName = id.charAt(0).toUpperCase() + id.slice(1);
+        return {
+            id,
+            name: dashTitles[id] || defaultDashTitles[id] || fallbackName
+        };
+    });
 
     const toggleTheme = (checked: boolean) => {
         setIsDarkMode(!checked); // because the UI assumes toggle is "Light Mode On" when checked

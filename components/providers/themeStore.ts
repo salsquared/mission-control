@@ -17,6 +17,7 @@ export interface ThemeState {
     setDashOrder: (order: string[]) => void;
     setDashTitle: (viewId: string, title: string) => void;
     setViewScreenshot: (viewId: string, dataUrl: string) => void;
+    syncAvailableDashes: (dashes: { id: string, title: string }[]) => void;
 }
 
 export const useThemeStore = create<ThemeState>()(
@@ -26,18 +27,20 @@ export const useThemeStore = create<ThemeState>()(
             "rocketry": 250,
             "crypto": 150,
             "ai-news": 200,
-            "ai-partner": 320,
+            "internal-systems": 320,
         },
         viewHuesEnabled: true,
         activeViewId: "rocketry",
-        dashOrder: ["rocketry", "crypto", "ai-news", "ai-partner", "physics"],
+        dashOrder: ["rocketry", "crypto", "ai-news", "physics", "applications", "planning", "internal-systems"],
         dashTitles: {},
         defaultDashTitles: {
             "rocketry": "Space",
             "crypto": "Market Analysis",
             "ai-news": "AI News",
-            "ai-partner": "Internal Systems",
+            "internal-systems": "Internal Systems",
             "physics": "Physics",
+            "applications": "Applications",
+            "planning": "Planning & Strategy",
         },
         viewScreenshots: {},
         setViewHuesEnabled: (viewHuesEnabled) => set({ viewHuesEnabled }),
@@ -53,5 +56,33 @@ export const useThemeStore = create<ThemeState>()(
         setViewScreenshot: (viewId, dataUrl) => set((state) => ({
             viewScreenshots: { ...state.viewScreenshots, [viewId]: dataUrl }
         })),
+        syncAvailableDashes: (dashes) => set((state) => {
+            let orderChanged = false;
+            const newOrder = [...state.dashOrder];
+            const newTitles = { ...state.defaultDashTitles };
+            
+            dashes.forEach(dash => {
+                if (!newOrder.includes(dash.id)) {
+                    newOrder.push(dash.id);
+                    orderChanged = true;
+                }
+                if (newTitles[dash.id] !== dash.title) {
+                    newTitles[dash.id] = dash.title;
+                    orderChanged = true;
+                }
+            });
+
+            const aiPartnerIndex = newOrder.indexOf("internal-systems");
+            if (aiPartnerIndex !== -1 && aiPartnerIndex !== newOrder.length - 1) {
+                newOrder.splice(aiPartnerIndex, 1);
+                newOrder.push("internal-systems");
+                orderChanged = true;
+            }
+
+            if (orderChanged) {
+                return { dashOrder: newOrder, defaultDashTitles: newTitles };
+            }
+            return state;
+        }),
     })
 );

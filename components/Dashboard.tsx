@@ -49,7 +49,7 @@ const BASE_DASHES: DashConfig[] = [
         component: <AIView />,
     },
     {
-        id: "ai-partner",
+        id: "internal-systems",
         title: "Internal Systems",
         component: <InternalView />,
     },
@@ -98,7 +98,10 @@ export const Dashboard: React.FC = () => {
     }, [dashOrder, dashTitles, isMounted]);
 
     useEffect(() => {
-        const storedId = useThemeStore.getState().activeViewId;
+        const store = useThemeStore.getState();
+        store.syncAvailableDashes(BASE_DASHES.map(d => ({ id: d.id, title: d.title })));
+        
+        const storedId = store.activeViewId;
         const index = orderedDashes.findIndex((d) => d.id === storedId);
         if (index !== -1) {
             setCurrentIndex(index);

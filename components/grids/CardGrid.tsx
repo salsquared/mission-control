@@ -3,6 +3,7 @@
 import React from "react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { Card } from "../ui/Card";
 
 export interface CardItem {
     id: string;
@@ -31,13 +32,9 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
                 <motion.div
                     key={item.id}
                     layoutId={item.id}
-                    drag
-                    dragConstraints={{ left: 0, right: 0, top: 0, bottom: 0 }}
-                    dragElastic={0.2}
                     className={cn(
-                        "relative bg-black/40 border border-white/5 rounded-lg overflow-hidden backdrop-blur-sm break-inside-avoid",
+                        "relative rounded-lg overflow-hidden backdrop-blur-sm break-inside-avoid group z-0 hover:z-10",
                         layout === "masonry" ? "mb-4 inline-block w-full" : "",
-                        "hover:border-cyan-500/30 transition-colors group z-0 hover:z-10 cursor-grab active:cursor-grabbing",
                         layout === "grid" && item.colSpan === 2 ? "md:col-span-2 lg:col-span-2" : "",
                         layout === "grid" && item.colSpan === 3 ? "md:col-span-2 lg:col-span-3" : "",
                         layout === "grid" && item.rowSpan === 2 ? "md:row-span-2 lg:row-span-2" : "",
@@ -47,14 +44,12 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
                         item.className
                     )}
                 >
-                    {/* Drag Handle (Optional, or make whole thing draggable if desired) */}
-                    <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity cursor-grab text-white/20 hover:text-white">
-                        {/* Icon placeholder if needed */}
-                    </div>
-
-                    <div className={cn("w-full p-4 flex flex-col", item.hFit ? "" : "h-full")}>
+                    <Card
+                        wrapperClassName="bg-black/40 rounded-lg border border-white/5 hover:border-cyan-500/30 transition-colors h-full"
+                        contentClassName={cn("w-full p-4 flex flex-col", item.hFit ? "" : "h-full")}
+                    >
                         {item.content}
-                    </div>
+                    </Card>
                 </motion.div>
             ))}
         </div>

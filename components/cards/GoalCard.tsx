@@ -34,7 +34,7 @@ export const GoalCard: React.FC<GoalCardProps> = ({
                 title="Tracked Milestones"
                 icon={Target}
                 iconColorClass="text-emerald-400"
-                wrapperClassName="bg-black/20 border border-white/5 rounded-2xl p-5 shrink-0 max-h-[35vh] min-h-0"
+                wrapperClassName="bg-black/40 border border-white/5 hover:border-cyan-500/30 transition-colors rounded-2xl p-5 shrink-0 max-h-[35vh] min-h-0"
                 action={
                     <div className="flex items-center gap-2">
                         <input 
