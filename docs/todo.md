@@ -287,3 +287,5 @@
   - [x] 🔵 Implement robust caching in the endpoint to avoid strict rate limits. <!-- id: 010053b9-fc3d-4e82-b8fc-da3ca0673630 -->
   - [x] 🔵 Update `ResearchPaperCard.tsx` to display `citationCount` and `upvotes` visually. <!-- id: 30563d3c-79af-477b-806b-c9b99acfd565 -->
   - [x] 🔵 Update `AIView.tsx` to query new endpoints for "Top Yesterday" and "Top Last Week". <!-- id: aa895f42-8650-4b3c-b05f-f42fa9c32165 -->
+
+- [ ] 🟡 Fix issue where two different frontend sessions interfere with each other <!-- id: 3b5d8d11-3b99-4291-b322-53601ef1bb1a -->
