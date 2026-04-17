@@ -3,6 +3,7 @@ import { COMPANY_REGISTRY } from '../../lib/company-registry';
 
 async function main() {
     const mistral = COMPANY_REGISTRY.find(c => c.id === 'mistral');
+    if (!mistral || !mistral.scrapeConfig) return;
     
     // Testing the current config
     console.log("Testing Mistral...");
