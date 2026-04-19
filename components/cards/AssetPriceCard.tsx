@@ -3,6 +3,7 @@
 import React, { ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import { GraphWidget } from "../widgets/GraphWidget";
+import { Card } from "../ui/Card";
 
 export interface AssetPriceCardProps {
     title: string;
@@ -52,29 +53,25 @@ export const AssetPriceCard: React.FC<AssetPriceCardProps> = ({
     CustomTooltip
 }) => {
     return (
-        <div className="flex flex-col h-[300px] sm:h-[400px]">
-            <div className="flex items-center justify-between mb-2">
-                <div className={cn("flex items-center gap-2", colorClass)}>
-                    {icon}
-                    <h3 className="font-bold tracking-wider uppercase text-lg">{title}</h3>
-                </div>
-                <div className="flex flex-col items-end gap-1">
-                    <LastUpdatedComponent timestamp={lastUpdated} intervalMins={5} />
-                </div>
-            </div>
-
+        <Card
+            title={title}
+            icon={icon}
+            iconColorClass={colorClass}
+            loading={loading}
+            wrapperClassName="h-[300px] sm:h-[400px]"
+            action={<LastUpdatedComponent timestamp={lastUpdated} intervalMins={5} />}
+        >
             <div className="flex items-center gap-4 mb-2">
                 <div className="text-4xl font-mono font-bold text-white">
-                    {loading && (price === null || price === undefined) ? "..." : `$${price?.toLocaleString()}`}
+                    {price === null || price === undefined ? "—" : `$${price?.toLocaleString()}`}
                 </div>
                 <div className={cn("text-sm font-bold", (priceChange24h ?? 0) >= 0 ? "text-green-400" : "text-red-400")}>
-                    {loading && (priceChange24h === null || priceChange24h === undefined) ? "..." : `${(priceChange24h ?? 0) >= 0 ? "+" : ""}${priceChange24h?.toFixed(2)}% (24h)`}
+                    {priceChange24h === null || priceChange24h === undefined ? "—" : `${(priceChange24h ?? 0) >= 0 ? "+" : ""}${priceChange24h?.toFixed(2)}% (24h)`}
                 </div>
             </div>
 
             <GraphWidget
                 data={historyData}
-                loading={loading}
                 xKey="time"
                 yKey="price"
                 xFormatter={formatXAxisDate}
@@ -105,6 +102,6 @@ export const AssetPriceCard: React.FC<AssetPriceCardProps> = ({
                     </button>
                 ))}
             </div>
-        </div>
+        </Card>
     );
 };

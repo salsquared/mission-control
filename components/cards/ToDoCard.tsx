@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutList, Calendar as CalendarIcon, Loader2, Plus, CheckSquare } from "lucide-react";
+import { LayoutList, Calendar as CalendarIcon, Loader2, Plus, CheckSquare, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { KanbanWidget, KanbanColumnDef } from "../widgets/KanbanWidget";
 import { CalendarWidget } from "../widgets/CalendarWidget";
@@ -18,6 +18,7 @@ export interface ToDoCardProps {
     handleStatusChange: (taskId: string, newStatus: string) => void;
     calendarEvents: any[];
     kanbanColumns: KanbanColumnDef<TaskItem>[];
+    handleReload?: () => void;
 }
 
 export const ToDoCard: React.FC<ToDoCardProps> = ({
@@ -31,7 +32,8 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
     handleCreateTask,
     handleStatusChange,
     calendarEvents,
-    kanbanColumns
+    kanbanColumns,
+    handleReload
 }) => {
     return (
         <div className="px-2 flex flex-col h-[65vh]">
@@ -41,6 +43,7 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
                 iconColorClass="text-emerald-400"
                 wrapperClassName="bg-black/40 rounded-2xl border border-white/5 hover:border-cyan-500/30 transition-colors p-5 h-full overflow-hidden"
                 contentClassName="pt-2 overflow-hidden"
+                loading={loading}
                 action={
                     <div className="flex items-center gap-4">
                         <div className="flex items-center gap-3 w-64">
@@ -83,6 +86,17 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
                                 Calendar
                             </button>
                         </div>
+                        
+                        {handleReload && (
+                            <button
+                                onClick={handleReload}
+                                disabled={loading}
+                                className="flex items-center justify-center p-1.5 rounded-md border border-white/5 bg-black/40 text-slate-500 hover:text-white hover:bg-white/10 transition-all cursor-pointer disabled:opacity-50 h-[30px]"
+                                title="Force sync tasks from file"
+                            >
+                                <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+                            </button>
+                        )}
                     </div>
                 }
             >
@@ -94,7 +108,6 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
                             getStatus={(t) => t.status}
                             getItemId={(t) => t.id}
                             onStatusChange={handleStatusChange}
-                            loading={loading}
                             renderItem={(task) => <TaskItemComponent task={task} />}
                         />
                     ) : (

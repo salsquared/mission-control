@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Rocket } from "lucide-react";
 import { ReloadButton } from "../ui/ReloadButton";
 import { Launch } from "../views/SpaceView";
+import { Card } from "../ui/Card";
 
 const NextLaunchTimer: React.FC<{ launch: Launch | null; onExpire: () => void }> = ({ launch, onExpire }) => {
     const [timeUntilLaunch, setTimeUntilLaunch] = useState<string>("Calculating...");
@@ -75,16 +76,14 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
     ];
 
     return (
-        <div className="flex flex-col pr-1 h-full">
-            <div className="flex items-center justify-between mb-2 text-cyan-400">
-                <div className="flex items-center gap-2">
-                    <Rocket className="w-5 h-5 shrink-0" />
-                    <h3 className="font-bold tracking-wider uppercase text-sm">Next Launch</h3>
-                </div>
-                {onReload && (
-                    <ReloadButton onReload={onReload} title="Reload Next Launch" />
-                )}
-            </div>
+        <Card
+            title="Next Launch"
+            icon={Rocket}
+            iconColorClass="text-cyan-400"
+            wrapperClassName="h-full pr-1"
+            loading={loading}
+            action={onReload && <ReloadButton onReload={onReload} title="Reload Next Launch" />}
+        >
             {nextLaunch ? (
                 <div className="flex flex-row w-full">
                     <div className="w-4/7 flex flex-col justify-center py-4 pr-4">
@@ -138,9 +137,9 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
                 </div>
             ) : (
                 <div className="flex-1 flex flex-col justify-center py-4 text-muted-foreground text-sm">
-                    {loading ? "Loading..." : "No upcoming launches found"}
+                    No upcoming launches found
                 </div>
             )}
-        </div>
+        </Card>
     );
 };

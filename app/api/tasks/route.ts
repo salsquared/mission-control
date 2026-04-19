@@ -21,14 +21,15 @@ const DEFAULT_MD_FILE = path.join(process.cwd(), 'docs', 'todo.md');
 
 export async function GET(req: Request) {
     try {
+        const url = new URL(req.url);
+        const force = url.searchParams.get('force') === 'true';
+
         const stats = await fs.stat(DEFAULT_MD_FILE).catch(() => null);
         if (stats) {
-            if (stats.mtimeMs > lastSyncedMtime) {
-                console.log(`[Tasks API] File modification detected. Syncing...`);
+            if (force || stats.mtimeMs > lastSyncedMtime) {
+                console.log(`[Tasks API] Sync triggered. Force: ${force}, new changes: ${stats.mtimeMs > lastSyncedMtime}`);
                 await syncTasksFromFile(DEFAULT_MD_FILE);
-                lastSyncedMtime = stats.mtimeMs;
-                // Add a small buffer so subsequent reads triggered by our own writes aren't immediately re-synced if they finish in the same ms
-                lastSyncedMtime += 100;
+                lastSyncedMtime = stats.mtimeMs + 100;
             }
         }
         

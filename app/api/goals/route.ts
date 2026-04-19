@@ -14,11 +14,11 @@ export async function GET() {
 
 export async function POST(req: Request) {
     try {
-        const { text } = await req.json();
+        const { text, estimatedTime } = await req.json();
         if (!text) return NextResponse.json({ error: "Missing text" }, { status: 400 });
         
         const goal = await prisma.lifeGoal.create({
-            data: { text }
+            data: { text, estimatedTime }
         });
         
         return NextResponse.json({ goal });

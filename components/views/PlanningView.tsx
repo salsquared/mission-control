@@ -19,11 +19,13 @@ export const PlanningView: React.FC = () => {
     const [lifeGoals, setLifeGoals] = useState<LifeGoal[]>([]);
     const [isCreatingGoal, setIsCreatingGoal] = useState(false);
     const [newGoalText, setNewGoalText] = useState("");
+    const [newEstimatedTime, setNewEstimatedTime] = useState("");
 
-    const fetchTasks = async () => {
+    const fetchTasks = async (force = false) => {
         try {
+            setLoading(true);
             const [tasksRes, goalsRes] = await Promise.all([
-                fetch("/api/tasks"),
+                fetch(`/api/tasks${force ? '?force=true' : ''}`),
                 fetch("/api/goals")
             ]);
             
@@ -145,11 +147,12 @@ export const PlanningView: React.FC = () => {
         try {
             setIsCreatingTask(true);
             
-            await fetch('/api/tasks', {
+            const res = await fetch('/api/tasks', {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ text, isGoal: false })
             });
+            if (!res.ok) throw new Error("Server returned " + res.status);
             await fetchTasks();
             setNewTaskText("");
         } catch (e) {
@@ -159,17 +162,19 @@ export const PlanningView: React.FC = () => {
         }
     };
 
-    const handleCreateGoal = async (text: string) => {
+    const handleCreateGoal = async (text: string, estimatedTime?: string) => {
         if (!text.trim()) return;
         try {
             setIsCreatingGoal(true);
-            await fetch('/api/goals', {
+            const res = await fetch('/api/goals', {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text })
+                body: JSON.stringify({ text, estimatedTime })
             });
+            if (!res.ok) throw new Error("Server returned " + res.status);
             await fetchTasks();
             setNewGoalText("");
+            setNewEstimatedTime("");
         } catch (e) {
             console.error("Failed to create goal", e);
         } finally {
@@ -214,10 +219,13 @@ export const PlanningView: React.FC = () => {
                     lifeGoals={lifeGoals}
                     newGoalText={newGoalText}
                     setNewGoalText={setNewGoalText}
+                    newEstimatedTime={newEstimatedTime}
+                    setNewEstimatedTime={setNewEstimatedTime}
                     isCreatingGoal={isCreatingGoal}
-                    handleCreateGoal={handleCreateGoal}
+                    handleCreateGoal={(text) => handleCreateGoal(text, newEstimatedTime)}
                     handleToggleGoal={handleToggleGoal}
                     handleDeleteGoal={handleDeleteGoal}
+                    loading={loading}
                 />
             </Section>
 
@@ -234,6 +242,7 @@ export const PlanningView: React.FC = () => {
                     handleStatusChange={handleStatusChange}
                     calendarEvents={calendarEvents}
                     kanbanColumns={KANBAN_COLUMNS}
+                    handleReload={() => fetchTasks(true)}
                 />
             </Section>
         </Scrollbar>

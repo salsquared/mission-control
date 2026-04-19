@@ -36,14 +36,14 @@
   - [ ] 🔵 **Architecture Note**: Prioritize reusing existing components, cards, ui elements, and widgets from `mission-control/components`. <!-- id: baff7fec-eb0d-410a-be87-a08b5114b8fa -->
   - [ ] 🔵 Todo Section <!-- id: 8afe96cb-9e1e-4a48-978a-a0e2ead3e1e4 -->
     - [ ] 🔵 Create a section that handles todo lists for the user. <!-- id: 16502cb3-7c40-4868-a60a-fed7a5e8a0c8 -->
-- [ ] 🔵 Create todo list component that can be reuesd. <!--. <!-- id: 91923ba9-0b60-457f-9041-f113f618ba43 -->
-        - [ ] 🔵 Create system to add, edit, delete, and reorder todo list items. <!-- id: e29352e8-7421-48db-a162-f9dec8f092ee -->
-      - [ ] 🔵 Create system to parse todo list items and priority + other potential metadata from markdown files. <!-- id: 3893710e-ef68-4c98-8166-7b336fa90e1d -->
-      - [ ] 🔵 Implement todo list for all projects and general todos. <!-- id: 4558af6b-4186-4b38-a180-f10057e90d85 -->
-      - [ ] 🔵 Implement todo list for each project that handles project specific things. <!-- id: a061aae3-c0e0-459b-97fb-bf53641ef601 -->
-    - [ ] 🔵 Create set of procedures for how to handle todo lists. <!-- id: f200e149-1144-40d6-b69b-9758e52edc50 -->
-      - [ ] 🔵 Priority System <!-- id: d8d994a6-2078-4085-a082-34463bdc5efa -->
-        - [ ] 🔵 Copy priority system from mission control to here. <!-- id: 5264dc7c-a3b1-4da3-9a28-a587f2170868 -->
+- [ ] 🔵 Create todo list component that can be reuesd. <!-- id: 91923ba9-0b60-457f-9041-f113f618ba43 -->
+  - [ ] 🔵 Create system to add, edit, delete, and reorder todo list items. <!-- id: e29352e8-7421-48db-a162-f9dec8f092ee -->
+  - [ ] 🔵 Create system to parse todo list items and priority + other potential metadata from markdown files. <!-- id: 3893710e-ef68-4c98-8166-7b336fa90e1d -->
+  - [ ] 🔵 Implement todo list for all projects and general todos. <!-- id: 4558af6b-4186-4b38-a180-f10057e90d85 -->
+  - [ ] 🔵 Implement todo list for each project that handles project specific things. <!-- id: a061aae3-c0e0-459b-97fb-bf53641ef601 -->
+    - [x] 🔵 Create set of procedures for how to handle todo lists. <!-- id: f200e149-1144-40d6-b69b-9758e52edc50 -->
+      - [x] 🔵 Priority System <!-- id: d8d994a6-2078-4085-a082-34463bdc5efa -->
+        - [x] 🔵 Copy priority system from mission control to here. <!-- id: 5264dc7c-a3b1-4da3-9a28-a587f2170868 -->
   - [ ] 🔵 Visual Board Layouts <!-- id: 4fa145ca-8dd8-46f8-8fab-ac801479db56 -->
     - [ ] 🔵 Implement a Kanban board layout (To Do, In Progress, Done) as an alternative to the flat list. <!-- id: db8980a8-dfae-4236-8188-067dede85845 -->
     - [ ] 🔵 Add drag-and-drop functionality for moving tasks between lists, statuses, or priorities. <!-- id: c877cfd6-461b-4d08-8950-4cd7be07d87d -->
@@ -100,14 +100,13 @@
 
 ### Service Monitoring
 - [ ] 🔵 **Medium** - Create card that shows the background services running on the mac-mini using pm2 or some other service monitoring utility. Not the internal services that are for MS but the ones that it connects to like pulsar, personal website, etc. <!-- id: 604f9e31-d46a-445a-a666-3c4be752386d -->
-  - [ ] 🔵 Show the stats like: <!-- id: bf813d68-1222-4696-a5d2-e3688aaea2ff -->
+  - [ ] 🔵 Show process stats like: <!-- id: bf813d68-1222-4696-a5d2-e3688aaea2ff -->
     - [ ] 🔵 CPU Usage <!-- id: 05e65fab-c558-4559-b03b-7da54ac73469 -->
     - [ ] 🔵 Memory Usage <!-- id: ad589326-13b5-4e10-ae4b-536c8e8091b2 -->
     - [ ] 🔵 Uptime <!-- id: 12b208da-380d-4591-84a8-c48928a63147 -->
     - [ ] 🔵 PID <!-- id: 1fee8be7-3c85-43d3-ae07-8a75c1f6e5be -->
     - [ ] 🔵 Port <!-- id: ccc6f9e3-851f-4e8a-809c-4373ab76cf64 -->
     - [ ] 🔵 Status (Running, Stopped, etc.) <!-- id: 5b7a0528-15ce-4b9b-bb75-4ff01bdc63a1 -->
-    - [ ]  🔵 <!-- id: 67b4ac99-bdbc-460c-95ae-7c78f3e05ff3 -->
 
 ### Node Relationship Graph (Research Papers, etc.)
 - [ ] 🟢 **Low** - Create a new widget that allows relationships between nodes to be shown. (eg: family tree, company org chart, research paper/idea relationships, etc.) <!-- id: a663751e-d102-4419-b9e4-2d976a469b2b -->
@@ -154,51 +153,50 @@
       - [ ] 🔵 Roscosmos <!-- id: de6271c2-e6a6-4fd4-9dd9-1d236f51a4f2 -->
       - [ ] 🔵 ISRO <!-- id: 160e5d02-6306-4ae1-ae0c-882d868a167b -->
       - [ ] 🔵 CSA <!-- id: bf00563c-54df-4742-9fcb-3c75deac6c44 -->
-    - [ ]  🔵 <!-- id: 365b8bec-1893-41f9-bad4-8a2072ccc916 -->
-  - [ ] 🔵 AI View <!-- id: 29d6a2a1-a7a3-495e-80eb-d88f3a32556a -->
-- [ ] 🔵 Computation <!--<!-- id: 85352766-574b-4834-a937-09da3adfb325 -->
-- [ ] 🔵 Fabless <!--s <!-- id: 94cf2255-af42-4877-9f2e-a59a5480415b -->
-        - [x] 🔵 Nvidia <!-- id: 65187b22-0d31-41b9-bc8b-9352aecc9e17 -->
-        - [ ] 🔵 AMD <!-- id: a13fc7a4-ca1f-437c-bfbe-8d3849750063 -->
-          - [ ] 🔵 Notes: Internal server error. <!-- id: ac98ccd8-23d6-4d59-8b19-fc6bd78f938e -->
-        - [ ] 🔵 Intel  <!-- id: 69471fba-feb2-4f7b-b12a-3358b96246b9 -->
-        - [ ] 🔵 Qualcomm <!-- id: 26a3a8da-5927-4322-8c6c-464090b75eab -->
-        - [ ] 🔵 Broadcom <!-- id: 896cc208-5965-46c0-bffe-6153a868f985 -->
-          - [ ] 🔵 Notes: Getting stories about but not from the actual blog/news site.  <!-- id: ff643752-2b79-473a-a848-afeae3e6f6f2 -->
-        - [ ] 🔵 Apple <!-- id: f0879e49-bde8-408d-9023-9b23f2c03169 -->
-        - [ ] 🔵 Google <!-- id: 60d80959-ec1a-49a4-b50b-bc5f5a716254 -->
-      - [ ] 🔵 AI Accelerators <!-- id: 49c32947-cf82-4fd5-8f2c-3ff4a85e71f0 -->
-        - [x] 🔵 Groq <!-- id: 8e8d7821-6009-42e8-baa2-318a72afd983 -->
-          - [x] 🔵 Notes: Seems to be getting blog posts but only retrieved 2 from 2025 when there are much more recent ones. https://groq.com/blog.  <!-- id: b92e1c81-f5e3-488f-9a05-d5bd829b8bf0 -->
-        - [x] 🔵 Cerebras <!-- id: 8f322fba-597f-4049-8875-5a110739f5b6 -->
-          - [x] 🔵 Notes: Same problem as with Meta AI blog where they do have a dedicated blog page, the blog includes a date for each post but it is not being picked up.  <!-- id: 47bf6494-0842-4f49-8c52-eeb0e6bc90ef -->
-      - [ ] 🔵 IP/Architecture <!-- id: b0ab6b98-8933-4f1b-af16-2363d05674e5 -->
-        - [ ] 🔵 arm <!-- id: 7dd594c3-acb9-4ba7-a096-949bc6ff2ded -->
-- [ ] 🔵 Foundries <!--s <!-- id: 6432ade4-c8a3-40c6-bb5e-21387eadcd22 -->
-        - [ ] 🔵 Samsung Foundries <!-- id: 001fb324-09f0-4d7f-9f75-f585247599bf -->
-        - [ ] 🔵 TSMC <!-- id: 2b8f57c3-27d8-48fc-b283-7c0fbec4ac30 -->
-        - [ ] 🔵 Global Foundries <!-- id: 6a32b084-8d75-406d-aa13-a248fc827103 -->
-        - [ ] 🔵 UMC <!-- id: 91020178-475a-4a4c-a4fd-f0fd654cacab -->
-        - [ ] 🔵 SMIC <!-- id: e458dd01-21df-42db-99ce-7759ba767e7c -->
-        - [ ] 🔵 Intel Foundry <!-- id: 46aeab0e-edf5-4dda-9213-cbe285c010a5 -->
-        - [ ] 🔵 Micron <!-- id: 1194ca6a-710f-4c90-a121-b1fa3aab31c3 -->
-    - [ ] 🔵 AI Software/Model Developers <!-- id: 7677d118-da37-4ed6-9123-93f990f84a24 -->
-      - [x] 🔵 Google DeepMind/AI <!-- id: 6b7e46c2-6141-4801-8dc3-9a2aa1264a36 -->
-      - [x] 🔵 Meta AI <!-- id: 2e660cb3-8645-4000-b3b7-a4fb05bff5e4 -->
-        - [x] 🔵 Notes: Custom fetcher scrapes ai.meta.com/blog/ listing page. Dates extracted from positional proximity to blog URLs. Titles from aria-label/anchor text with OGS fallback for impact story cards. <!-- id: 1bfd8062-4763-4900-95d3-b4c91edb296c -->
-      - [x] 🔵 Microsoft AI <!-- id: 9c0906c0-3c03-4ab2-84f4-e46cc31266a4 -->
-        - [x] 🔵 Notes: Old RSS feed (blogs.microsoft.com/ai/feed/) was abandoned in 2022. Swapped to active Microsoft Research blog feed (microsoft.com/en-us/research/feed/). <!-- id: a0fd96a2-67e2-49c1-acb5-77b6fbcd8e52 -->
-      - [ ] 🔵 xAI <!-- id: ce5f0ced-2b4c-4f11-b65a-82eb3cb29016 -->
-      - [ ] 🔵 Mistral <!-- id: 24f45422-19c4-4867-8105-38c0bb9c9d3f -->
-        - [ ] 🔵 Appears to only get the blog on the hero card not a list of the 10 most recent. https://mistral.ai/news. <!-- id: 520158a5-739a-4c8c-9810-9dfc7213015c -->
-      - [ ] 🔵 Hugging Face <!-- id: d4af0222-2930-437b-b4d3-d671c5ec7432 -->
-      - [ ] 🔵 Deepseek <!-- id: 946a3650-3569-4574-8a7a-5a3f51ee1c1f -->
-        - [ ] 🔵 Notes: Same issue as with Meta AI, we are getting stories about deepseek not the actual deepseek release blogs <!-- id: f0a10946-731f-414c-867c-8b577183d006 -->
-- [ ] 🟢 Baidu <!--u <!-- id: 8afb320b-07db-42e5-83e7-f191dea70bdf -->
-        - [ ] 🔵 Notes: Same issue as with Deepseek. Seems like chinese companies are harder to get info from.  <!-- id: 22e1bcfb-3c65-474b-a062-702a26967a7b -->
-- [ ] 🟢 Bytedance <!--e <!-- id: 335af835-18d7-441b-9e3e-c9546777859a -->
-      - [x] 🔵 OpenAI blogs <!-- id: bf3ddf06-995f-4ee4-bb45-1a0650b9ec5f -->
-      - [x] 🔵 Anthropic blogs <!-- id: ffdd3fb9-08b4-42cf-b76d-fde5915e9cc9 -->
+- [ ] 🔵 AI View <!-- id: 29d6a2a1-a7a3-495e-80eb-d88f3a32556a -->
+  - [ ] 🔵 Computation <!-- id: 85352766-574b-4834-a937-09da3adfb325 -->
+    - [ ] 🔵 Fabless <!-- id: 94cf2255-af42-4877-9f2e-a59a5480415b -->
+      - [x] 🔵 Nvidia <!-- id: 10f2cef5-03d8-42a3-ba35-422c6c730391 -->
+      - [ ] 🔵 AMD <!-- id: 6422152c-e47c-4b49-a8ce-890907421b00 -->
+        - [ ] 🔵 Notes: Internserver error. <!-- id: 21a2c174-96b8-405b-92bd-1e466b73c73d -->
+      - [ ] 🔵 Intel  <!-- id: 23fd422f-4458-48c0-b95d-19b63a12584c -->
+      - [ ] 🔵 Qualcomm <!-- id: d737c40a-cdc4-448b-99a6-521ffc83f8a6 -->
+      - [ ] 🔵 Broadcom <!-- id: b2a7ae77-ec62-4f98-862f-37d4083ddf58 -->
+        - [ ] 🔵 Notes: Getting stories about but not from the actual blog/news site <!-- id: c1a2f2d9-890b-4f23-887a-c05aaa4573ac -->
+      - [ ] 🔵 Apple <!-- id: b9ccf14c-d009-49bb-b642-d39c28e30cec -->
+      - [ ] 🔵 Google <!-- id: 60d80959-ec1a-49a4-b50b-bc5f5a716254 -->
+    - [ ] 🔵 AI Accelerators <!-- id: 49c32947-cf82-4fd5-8f2c-3ff4a85e71f0 -->
+      - [x] 🔵 Groq <!-- id: 8e8d7821-6009-42e8-baa2-318a72afd983 -->
+        - [x] 🔵 Notes: Seems to be getting blog posts but only retrieved 2 from 2025 when there are much more recent ones. https://groq.com/blog.  <!-- id: b92e1c81-f5e3-488f-9a05-d5bd829b8bf0 -->
+      - [x] 🔵 Cerebras <!-- id: 8f322fba-597f-4049-8875-5a110739f5b6 -->
+        - [x] 🔵 Notes: Same problem as with Meta AI blog where they do have a dedicated blog page, the blog includes a date for each post but it is not being picked up.  <!-- id: 47bf6494-0842-4f49-8c52-eeb0e6bc90ef -->
+  - [ ] 🔵 IP/Architecture <!-- id: b0ab6b98-8933-4f1b-af16-2363d05674e5 -->
+    - [ ] 🔵 arm <!-- id: 7dd594c3-acb9-4ba7-a096-949bc6ff2ded -->
+  - [ ] 🔵 Foundries <!-- id: 6432ade4-c8a3-40c6-bb5e-21387eadcd22 -->
+    - [ ] 🔵 Samsung Foundries <!-- id: 001fb324-09f0-4d7f-9f75-f585247599bf -->
+    - [ ] 🔵 TSMC <!-- id: 2b8f57c3-27d8-48fc-b283-7c0fbec4ac30 -->
+    - [ ] 🔵 Global Foundries <!-- id: 6a32b084-8d75-406d-aa13-a248fc827103 -->
+    - [ ] 🔵 UMC <!-- id: 91020178-475a-4a4c-a4fd-f0fd654cacab -->
+    - [ ] 🔵 SMIC <!-- id: e458dd01-21df-42db-99ce-7759ba767e7c -->
+    - [ ] 🔵 Intel Foundry <!-- id: 46aeab0e-edf5-4dda-9213-cbe285c010a5 -->
+    - [ ] 🔵 Micron <!-- id: 1194ca6a-710f-4c90-a121-b1fa3aab31c3 -->
+  - [ ] 🔵 AI Software/Model Developers <!-- id: 7677d118-da37-4ed6-9123-93f990f84a24 -->
+    - [x] 🔵 Google DeepMind/AI <!-- id: 6b7e46c2-6141-4801-8dc3-9a2aa1264a36 -->
+    - [x] 🔵 Meta AI <!-- id: 2e660cb3-8645-4000-b3b7-a4fb05bff5e4 -->
+      - [x] 🔵 Notes: Custom fetcher scrapes ai.meta.com/blog/ listing page. Dates extracted from positional proximity to blog URLs. Titles from aria-label/anchor text with OGS fallback for impact story cards. <!-- id: 1bfd8062-4763-4900-95d3-b4c91edb296c -->
+    - [x] 🔵 Microsoft AI <!-- id: 9c0906c0-3c03-4ab2-84f4-e46cc31266a4 -->
+      - [x] 🔵 Notes: Old RSS feed (blogs.microsoft.com/ai/feed/) was abandoned in 2022. Swapped to active Microsoft Research blog feed (microsoft.com/en-us/research/feed/). <!-- id: a0fd96a2-67e2-49c1-acb5-77b6fbcd8e52 -->
+    - [ ] 🔵 xAI <!-- id: ce5f0ced-2b4c-4f11-b65a-82eb3cb29016 -->
+    - [ ] 🔵 Mistral <!-- id: 24f45422-19c4-4867-8105-38c0bb9c9d3f -->
+      - [ ] 🔵 Appears to only get the blog on the hero card not a list of the 10 most recent. https://mistral.ai/news. <!-- id: 520158a5-739a-4c8c-9810-9dfc7213015c -->
+    - [ ] 🔵 Hugging Face <!-- id: d4af0222-2930-437b-b4d3-d671c5ec7432 -->
+    - [ ] 🔵 Deepseek <!-- id: 946a3650-3569-4574-8a7a-5a3f51ee1c1f -->
+      - [ ] 🔵 Notes: Same issue as with Meta AI, we are getting stories about deepseek not the actual deepseek release blogs <!-- id: f0a10946-731f-414c-867c-8b577183d006 -->
+    - [ ] 🟢 Baidu <!-- id: 8afb320b-07db-42e5-83e7-f191dea70bdf -->
+      - [ ] 🔵 Notes: Same issue as with Deepseek. Seems like chinese companies are harder to get info from.  <!-- id: 22e1bcfb-3c65-474b-a062-702a26967a7b -->
+    - [ ] 🟢 Bytedance <!-- id: 335af835-18d7-441b-9e3e-c9546777859a -->
+    - [x] 🔵 OpenAI blogs <!-- id: bf3ddf06-995f-4ee4-bb45-1a0650b9ec5f -->
+    - [x] 🔵 Anthropic blogs <!-- id: ffdd3fb9-08b4-42cf-b76d-fde5915e9cc9 -->
 - [ ] 🟢 **Low** - Add feeds for news sources for computation and AI.  <!-- id: 68663f55-5fe6-4c62-8dc4-dea5e0bf6e1b -->
   - [ ] 🔵 Tech Tech Potato <!-- id: a0f82abe-2938-4cc1-8177-9aa8e9bb4137 -->
   - [ ] 🔵 Semi Analysis <!-- id: 908e9c89-7b33-4611-942b-a9d553238299 -->
@@ -213,7 +211,7 @@
       - **Dashboard DB:** Store parsed application instances (Company/Institution, Status, Next Steps, Dates) in our internal db.
     - [ ] 🔵 Create front-end component that shows gcal events from personal gmail account.  <!-- id: a6c825c5-8936-4d1d-b9fb-07719964fe81 -->
       - [ ] 🔵 Allow the editing of events, adding new events, deleting events, etc. <!-- id: c3069d41-efb4-43e3-ab08-ab677b948279 -->
-  - [ ] 🔵 Create events in Gcal from emails for appointments,interviews, etc. <!-- id: 66e432b7-b57c-4c30-987a-e82a50da1800 -->
+- [/] 🔵 Create events in Gcal from emails for appointments,interviews, etc. <!---- id: 66e432b7-b57c-4c30-987a-e82a50da1800 -->
     - [ ] 🔵 **Automation Plan:** <!-- id: a2554018-152e-47d9-894c-14f44337d4b3 -->
       - Expose a Next.js API route that the background worker or UI can hit to construct and push a Google Calendar event.
       - Auto-fill event details (title, description with email link, start/end time) based on the parsed email contents.

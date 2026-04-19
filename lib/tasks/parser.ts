@@ -110,8 +110,9 @@ export async function syncTasksFromFile(filePath: string) {
                 
                 // Clean Text
                 let cleanText = contentWithoutId;
-                cleanText = cleanText.replace(defaultPriorityTextRegex, '').trim();
-                cleanText = cleanText.replace(dueDateRegex, '').trim();
+                cleanText = cleanText.replace(defaultPriorityTextRegex, '');
+                cleanText = cleanText.replace(dueDateRegex, '');
+                cleanText = cleanText.replace(/<!--.*?-->/g, '').trim();
                 
                 const newTask: ParsedTask = {
                     id: taskId,

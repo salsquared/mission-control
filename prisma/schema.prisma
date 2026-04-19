@@ -148,9 +148,10 @@ model Task {
 }
 
 model LifeGoal {
-  id        String   @id @default(cuid())
-  text      String
-  completed Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id            String   @id @default(cuid())
+  text          String
+  estimatedTime String?
+  completed     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 }
