@@ -28,6 +28,9 @@
 .idea/
 *.code-workspace
 
+# Claude Code local settings (machine-specific permissions)
+.claude/
+
 # debug
 npm-debug.log*
 yarn-debug.log*
