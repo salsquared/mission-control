@@ -6,6 +6,7 @@
 
 import ogs from 'open-graph-scraper';
 import { MAX_NEWS_ARTICLES } from '../constants';
+import { ScraperBrokenError } from './errors';
 import type { NewsArticle, CompanyFeedConfig } from './types';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
@@ -87,6 +88,10 @@ export async function fetchScrape(config: CompanyFeedConfig): Promise<NewsArticl
             image_url: "",
             news_site: name
         });
+    }
+
+    if (articles.length === 0 && html.length > 0) {
+        throw new ScraperBrokenError(name, html.length);
     }
 
     // Limit to MAX_NEWS_ARTICLES and enrich with OGS metadata

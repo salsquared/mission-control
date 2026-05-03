@@ -44,6 +44,11 @@ export const AICompanion: React.FC<AICompanionProps> = ({ activeContext }) => {
 
     return (
         <div className="flex flex-col h-full bg-black/40 backdrop-blur-md rounded-xl border border-white/10 overflow-hidden">
+            {/* Preview banner */}
+            <div className="flex items-center justify-center gap-1.5 px-3 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-amber-400 text-xs font-semibold tracking-wide">
+                <Sparkles className="w-3 h-3" />
+                PREVIEW — not connected to a real model yet
+            </div>
             {/* Header */}
             <div className="flex items-center gap-2 p-3 border-b border-white/10 bg-white/5">
                 <div className="relative">

@@ -1,0 +1,123 @@
+/**
+ * Unified application state store.
+ *
+ * Three slices with distinct persistence policies:
+ *   theme       — synced to /api/settings (cross-device)
+ *   devicePrefs — localStorage only (per-device)
+ *   ui          — ephemeral in-memory, never persisted
+ */
+
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+// ---------- Theme slice (mirrors GlobalSetting columns) ----------
+interface ThemeSlice {
+    isDarkMode: boolean;
+    viewHues: Record<string, number>;
+    viewHuesEnabled: boolean;
+    activeViewId: string;
+    dashOrder: string[];
+    dashTitles: Record<string, string>;
+    defaultDashTitles: Record<string, string>;
+    viewScreenshots: Record<string, string>;
+
+    setViewHuesEnabled: (enabled: boolean) => void;
+    setIsDarkMode: (isDark: boolean) => void;
+    setViewHue: (viewId: string, hue: number) => void;
+    setActiveViewId: (viewId: string) => void;
+    setDashOrder: (order: string[]) => void;
+    setDashTitle: (viewId: string, title: string) => void;
+    setViewScreenshot: (viewId: string, dataUrl: string) => void;
+    syncAvailableDashes: (dashes: { id: string; title: string }[]) => void;
+}
+
+// ---------- DevicePrefs slice (localStorage) ----------
+interface DevicePrefsSlice {
+    autoResearch: boolean;
+    aiCompanionEnabled: boolean;
+
+    setAutoResearch: (v: boolean) => void;
+    setAiCompanionEnabled: (v: boolean) => void;
+}
+
+// ---------- Combined store ----------
+export interface AppState extends ThemeSlice, DevicePrefsSlice {}
+
+const DEFAULT_DASH_TITLES: Record<string, string> = {
+    'rocketry': 'Space',
+    'crypto': 'Market Analysis',
+    'ai-news': 'AI News',
+    'internal-systems': 'Internal Systems',
+    'physics': 'Physics',
+    'applications': 'Applications',
+    'planning': 'Planning & Strategy',
+};
+
+export const useAppStore = create<AppState>()(
+    persist(
+        (set, get) => ({
+            // ---------- ThemeSlice defaults ----------
+            isDarkMode: true,
+            viewHues: { rocketry: 250, crypto: 150, 'ai-news': 200, 'internal-systems': 320 },
+            viewHuesEnabled: true,
+            activeViewId: 'rocketry',
+            dashOrder: ['rocketry', 'crypto', 'ai-news', 'physics', 'applications', 'planning', 'internal-systems'],
+            dashTitles: {},
+            defaultDashTitles: DEFAULT_DASH_TITLES,
+            viewScreenshots: {},
+
+            setViewHuesEnabled: (viewHuesEnabled) => set({ viewHuesEnabled }),
+            setIsDarkMode: (isDarkMode) => set({ isDarkMode }),
+            setViewHue: (viewId, hue) => set((s) => ({ viewHues: { ...s.viewHues, [viewId]: hue } })),
+            setActiveViewId: (activeViewId) => set({ activeViewId }),
+            setDashOrder: (dashOrder) => set({ dashOrder }),
+            setDashTitle: (viewId, title) => set((s) => ({ dashTitles: { ...s.dashTitles, [viewId]: title } })),
+            setViewScreenshot: (viewId, dataUrl) => set((s) => ({ viewScreenshots: { ...s.viewScreenshots, [viewId]: dataUrl } })),
+            syncAvailableDashes: (dashes) => set((state) => {
+                const validIds = dashes.map(d => d.id);
+                let newOrder = state.dashOrder.filter(id => validIds.includes(id));
+                const newTitles = { ...state.defaultDashTitles };
+                Object.keys(newTitles).forEach(id => { if (!validIds.includes(id)) delete newTitles[id]; });
+                dashes.forEach(dash => {
+                    if (!newOrder.includes(dash.id)) newOrder.push(dash.id);
+                    newTitles[dash.id] = dash.title;
+                });
+                const idx = newOrder.indexOf('internal-systems');
+                if (idx !== -1 && idx !== newOrder.length - 1) {
+                    newOrder.splice(idx, 1);
+                    newOrder.push('internal-systems');
+                }
+                return { dashOrder: newOrder, defaultDashTitles: newTitles };
+            }),
+
+            // ---------- DevicePrefsSlice defaults ----------
+            autoResearch: false,
+            aiCompanionEnabled: false,
+            setAutoResearch: (autoResearch) => set({ autoResearch }),
+            setAiCompanionEnabled: (aiCompanionEnabled) => set({ aiCompanionEnabled }),
+        }),
+        {
+            name: 'app-state',
+            // Persist only device-local fields; theme fields are loaded from the API.
+            partialize: (state) => ({
+                autoResearch: state.autoResearch,
+                aiCompanionEnabled: state.aiCompanionEnabled,
+                activeViewId: state.activeViewId,
+                viewScreenshots: state.viewScreenshots,
+            }),
+            version: 1,
+            migrate: (persisted: any) => ({
+                autoResearch: persisted.autoResearch ?? false,
+                aiCompanionEnabled: persisted.aiCompanionEnabled ?? persisted.backgroundTasks ?? false,
+                activeViewId: persisted.activeViewId ?? 'rocketry',
+                viewScreenshots: persisted.viewScreenshots ?? {},
+            }),
+        }
+    )
+);
+
+// ---------- Backward-compat re-exports ----------
+// These let existing consumers of useThemeStore / useSettingsStore continue
+// to work with zero changes. Remove after all callsites are updated.
+export const useThemeStore = useAppStore;
+export const useSettingsStore = useAppStore;

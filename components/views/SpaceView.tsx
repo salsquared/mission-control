@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useRef } from "react";
+import useSWR from "swr";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
 import { ReloadButton } from "../ui/ReloadButton";
@@ -11,6 +12,7 @@ import { Calendar } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { COMPANY_REGISTRY } from "../../lib/company-registry";
+import { fetcher } from "@/lib/fetcher-client";
 
 // All space-view companies from the registry (used for dynamic fetching)
 const SPACE_COMPANIES = COMPANY_REGISTRY.filter(c => c.view === 'space');
@@ -67,19 +69,53 @@ export interface Launch {
     image: string;
 }
 
+function useSpaceCompanyNews(companies: typeof SPACE_COMPANIES) {
+    const results = companies.map(c => {
+        // eslint-disable-next-line react-hooks/rules-of-hooks
+        return useSWR<SpaceArticle[]>(`/api/company-news?company=${c.id}`, fetcher);
+    });
+    const newsMap: Record<string, SpaceArticle[]> = {};
+    companies.forEach((c, i) => {
+        const data = results[i].data;
+        if (Array.isArray(data) && data.length > 0) newsMap[c.name] = data;
+    });
+    return { newsMap, mutates: results.map(r => r.mutate) };
+}
+
 export const SpaceView: React.FC = () => {
-    const [newsBySource, setNewsBySource] = useState<Record<string, SpaceArticle[]>>({});
-    const [launches, setLaunches] = useState<Launch[]>([]);
-    const [satellitesData, setSatellitesData] = useState<any>(null);
-    const [solarData, setSolarData] = useState<any>(null);
-    const [moonData, setMoonData] = useState<any>(null);
-    const [loading, setLoading] = useState(true);
+    const { data: spaceNewsRaw, mutate: mutateSpace } = useSWR<SpaceArticle[]>('/api/space', fetcher);
+    const { data: launchData, mutate: mutateLaunches } = useSWR<Launch[]>('/api/space/launches', fetcher);
+    const { data: satellitesData, mutate: mutateSats } = useSWR<any>('/api/space/satellites', fetcher);
+    const { data: solarData, mutate: mutateSolar } = useSWR<any>('/api/space/solar', fetcher);
+    const { data: moonData, mutate: mutateMoon } = useSWR<any>('/api/space/moon', fetcher);
+    const { newsMap: companyNewsMap } = useSpaceCompanyNews(SPACE_COMPANIES);
+
+    const launches: Launch[] = Array.isArray(launchData) ? launchData : [];
+    const loading = !spaceNewsRaw && !launchData;
+
+    // Build newsBySource: general space news + company news
+    const newsBySource: Record<string, SpaceArticle[]> = {};
+    if (Array.isArray(spaceNewsRaw)) {
+        spaceNewsRaw.forEach((article) => {
+            const site = article.news_site;
+            if (!newsBySource[site]) newsBySource[site] = [];
+            newsBySource[site].push(article);
+        });
+    }
+    Object.assign(newsBySource, companyNewsMap);
+
+    const reloadNews = () => { mutateSpace(); };
+    const reloadLaunches = () => { mutateLaunches(); };
+    const reloadSats = () => { mutateSats(); };
+    const reloadSolar = () => { mutateSolar(); };
+    const reloadMoon = () => { mutateMoon(); };
 
     const moonScrollRef = useRef<HTMLDivElement>(null);
     const todayRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
         if (moonData && moonScrollRef.current && todayRef.current) {
+            // scroll to today in the lunar calendar
             const container = moonScrollRef.current;
             const todayItem = todayRef.current;
 
@@ -99,84 +135,6 @@ export const SpaceView: React.FC = () => {
         }
     }, [moonData]);
 
-    const reloadNews = () => {
-        const companyFetches = SPACE_COMPANIES.map(c =>
-            fetch(`/api/company-news?company=${c.id}&v=${Date.now()}`)
-                .then(res => res.json())
-                .catch(() => [])
-        );
-
-        Promise.all([
-            fetch(`/api/space?v=${Date.now()}`).then(res => res.json()).catch(() => []),
-            ...companyFetches
-        ]).then(([spaceData, ...companyResults]) => {
-            const grouped: Record<string, SpaceArticle[]> = {};
-            if (Array.isArray(spaceData)) {
-                spaceData.forEach((article: SpaceArticle) => {
-                    const site = article.news_site;
-                    if (!grouped[site]) grouped[site] = [];
-                    grouped[site].push(article);
-                });
-            }
-            SPACE_COMPANIES.forEach((company, i) => {
-                const articles = companyResults[i];
-                if (Array.isArray(articles) && articles.length > 0) {
-                    grouped[company.name] = articles;
-                }
-            });
-            setNewsBySource(grouped);
-        }).catch(err => console.error(err));
-    };
-
-    const reloadLaunches = () => fetch(`/api/space/launches?v=${Date.now()}`).then(res => res.json()).then(data => { if (Array.isArray(data)) setLaunches(data); }).catch(err => console.error(err));
-    const reloadSats = () => fetch(`/api/space/satellites?v=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.total_active) setSatellitesData(data); }).catch(err => console.error(err));
-    const reloadSolar = () => fetch(`/api/space/solar?v=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.status) setSolarData(data); }).catch(err => console.error(err));
-    const reloadMoon = () => fetch(`/api/space/moon?v=${Date.now()}`).then(res => res.json()).then(data => { if (data && data.weekly_cycles) setMoonData(data); }).catch(err => console.error(err));
-
-    useEffect(() => {
-        const companyFetches = SPACE_COMPANIES.map(c =>
-            fetch(`/api/company-news?company=${c.id}`)
-                .then(res => res.json())
-                .catch(() => [])
-        );
-
-        Promise.all([
-            fetch(`/api/space`).then(res => res.json()).catch(() => []),
-            fetch(`/api/space/launches`).then(res => res.json()).catch(() => []),
-            fetch(`/api/space/satellites`).then(res => res.json()).catch(() => []),
-            fetch(`/api/space/solar`).then(res => res.json()).catch(() => []),
-            fetch(`/api/space/moon`).then(res => res.json()).catch(() => []),
-            ...companyFetches
-        ])
-            .then(([spaceData, launchData, satsData, solar, moon, ...companyResults]) => {
-                const grouped: Record<string, SpaceArticle[]> = {};
-                if (Array.isArray(spaceData)) {
-                    spaceData.forEach((article: SpaceArticle) => {
-                        const site = article.news_site;
-                        if (!grouped[site]) grouped[site] = [];
-                        grouped[site].push(article);
-                    });
-                }
-                SPACE_COMPANIES.forEach((company, i) => {
-                    const articles = companyResults[i] as SpaceArticle[];
-                    if (Array.isArray(articles) && articles.length > 0) {
-                        grouped[company.name] = articles;
-                    }
-                });
-                setNewsBySource(grouped);
-
-                if (Array.isArray(launchData)) setLaunches(launchData);
-                if (satsData && satsData.total_active) setSatellitesData(satsData);
-                if (solar && solar.status) setSolarData(solar);
-                if (moon && moon.weekly_cycles) setMoonData(moon);
-
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Error fetching space dashboard data", err);
-                setLoading(false);
-            });
-    }, []);
 
     const staticCards: CardItem[] = [
         {
@@ -357,7 +315,6 @@ export const SpaceView: React.FC = () => {
         },
     ];
 
-    // Build grouped company news for the Section groups prop
     const buildCompanyGroups = () => {
         if (loading) return [];
 

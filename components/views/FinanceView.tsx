@@ -1,13 +1,14 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
+import useSWR from "swr";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Bitcoin, TrendingUp, Wallet, Flame, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Bitcoin, Wallet } from "lucide-react";
 import { AssetPriceCard } from "../cards/AssetPriceCard";
 import { MarketTop100Card } from "../cards/MarketTop100Card";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
+import { fetcher } from "@/lib/fetcher-client";
 
 const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ timestamp, intervalMins }) => {
     const [now, setNow] = useState(Date.now());
@@ -27,41 +28,29 @@ const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ ti
 };
 
 export const FinanceView: React.FC = () => {
+    const [range, setRange] = useState("1");
 
-    const [top100, setTop100] = useState<any[]>([]);
+    const { data: financeData, isLoading: loadingFinance } = useSWR<any>('/api/finance', fetcher, { refreshInterval: 300_000 });
+    const { data: historyRaw } = useSWR<any>(`/api/finance/history?range=${range}&coin=bitcoin`, fetcher, { refreshInterval: 300_000 });
 
-    const [prices, setPrices] = useState<any>({
-        bitcoin: { usd: 0, usd_24h_change: 0 },
-        ethereum: { usd: 0 },
-        solana: { usd: 0 }
-    });
-
-    const [fees, setFees] = useState<any>({});
-    const [lastUpdated, setLastUpdated] = useState<number>(0);
-
-    const [historyData, setHistoryData] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
-    const [range, setRange] = useState("1"); // days: '1', '7', '30'
+    const top100 = financeData?.top100 ?? [];
+    const prices = financeData?.prices ?? { bitcoin: { usd: 0, usd_24h_change: 0 }, ethereum: { usd: 0 }, solana: { usd: 0 } };
+    const fees = financeData?.fees ?? {};
+    const lastUpdated = financeData?.timestamp ?? 0;
+    const history = historyRaw?.history ?? financeData?.prices?.bitcoin?.history ?? [];
+    const loading = loadingFinance;
 
     const formatXAxisDate = (tickItem: number) => {
         const d = new Date(tickItem);
-
         if (range === "1") return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-
         const getOrdinalNum = (n: number) => {
             const s = ["th", "st", "nd", "rd"];
             const v = n % 100;
             return n + (s[(v - 20) % 10] || s[v] || s[0]);
         };
-
         const monthStr = d.toLocaleDateString([], { month: "short" });
-
-        if (range === "7" || range === "30") {
-            return `${monthStr} ${getOrdinalNum(d.getDate())}`;
-        }
-
-        const shortYear = d.getFullYear().toString().slice(-2);
-        return `${monthStr} '${shortYear}`;
+        if (range === "7" || range === "30") return `${monthStr} ${getOrdinalNum(d.getDate())}`;
+        return `${monthStr} '${d.getFullYear().toString().slice(-2)}`;
     };
 
     const CustomTooltip = ({ active, payload, label }: any) => {
@@ -76,59 +65,6 @@ export const FinanceView: React.FC = () => {
         return null;
     };
 
-    const fetchFinance = async () => {
-        try {
-            const res = await fetch("/api/finance");
-            const data = await res.json();
-            if (data?.top100) setTop100(data.top100);
-            if (data?.prices) {
-                setPrices(data.prices);
-                // initial history load if returned from finance
-                if (data.prices.bitcoin?.history && historyData.length === 0) {
-                    setHistoryData(data.prices.bitcoin.history);
-                }
-            }
-            if (data?.fees) {
-                setFees(data.fees);
-            }
-            if (data?.timestamp) {
-                setLastUpdated(data.timestamp);
-            }
-        } catch (err) {
-            console.error("Error fetching finance data", err);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const fetchHistory = async (days: string) => {
-        try {
-            const res = await fetch(`/api/finance/history?range=${days}&coin=bitcoin`, { cache: 'no-store' });
-            const data = await res.json();
-            if (data?.history) {
-                setHistoryData(data.history);
-            }
-        } catch (err) {
-            console.error("Error fetching history", err);
-        }
-    };
-
-    useEffect(() => {
-        fetchFinance();
-        const interval = setInterval(() => {
-            fetchFinance();
-        }, 300000); // 5 min polling
-        return () => clearInterval(interval);
-    }, []);
-
-    useEffect(() => {
-        fetchHistory(range);
-        const interval = setInterval(() => {
-            fetchHistory(range);
-        }, 300000); // 5 min polling
-        return () => clearInterval(interval);
-    }, [range]);
-
     const staticCards: CardItem[] = [
         {
             id: "fin-1",
@@ -142,7 +78,7 @@ export const FinanceView: React.FC = () => {
                     priceChange24h={prices.bitcoin?.usd_24h_change ?? null}
                     lastUpdated={lastUpdated}
                     loading={loading}
-                    historyData={historyData}
+                    historyData={history}
                     range={range}
                     onRangeChange={setRange}
                     LastUpdatedComponent={LastUpdated}
@@ -154,7 +90,7 @@ export const FinanceView: React.FC = () => {
         {
             id: "fin-2",
             colSpan: 1,
-            rowSpan: 2, // Take up more vertical space for the list
+            rowSpan: 2,
             content: (
                 <MarketTop100Card
                     top100={top100}

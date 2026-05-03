@@ -1,19 +1,18 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import { prisma } from "@/lib/prisma";
+import { requireSession } from "@/lib/auth-guards";
+import { parseGlobalSetting, serializeGlobalSetting } from "@/lib/repositories/settings";
 
 export async function GET() {
-    try {
-        const setting = await prisma.globalSetting.findUnique({
-            where: { id: "global" }
-        });
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
 
-        if (!setting) {
+    try {
+        const row = await prisma.globalSetting.findUnique({ where: { id: 'global' } });
+        if (!row) {
             return NextResponse.json({ data: null });
         }
-
-        return NextResponse.json({ data: JSON.parse(setting.data) });
+        return NextResponse.json({ data: parseGlobalSetting(row) });
     } catch (error) {
         console.error("Failed to fetch settings", error);
         return NextResponse.json({ error: "Failed to fetch settings" }, { status: 500 });
@@ -21,13 +20,17 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     try {
         const body = await req.json();
+        const serialized = serializeGlobalSetting(body);
 
-        const setting = await prisma.globalSetting.upsert({
-            where: { id: "global" },
-            update: { data: JSON.stringify(body) },
-            create: { id: "global", data: JSON.stringify(body) }
+        await prisma.globalSetting.upsert({
+            where: { id: 'global' },
+            update: serialized,
+            create: { id: 'global', ...serialized },
         });
 
         return NextResponse.json({ success: true });

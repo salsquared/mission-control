@@ -1,109 +1,75 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
 import { withCache } from '../../../lib/cache';
 
-// CoinGecko markets API for top 100
-const COINGECKO_TOP100_URL = 'https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=100&page=1&sparkline=false&price_change_percentage=24h';
-const COINGECKO_PRICES_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true';
-const MEMPOOL_FEES_URL = 'https://mempool.space/api/v1/fees/recommended';
-
 const SPAM_COIN_IDS = new Set([
-    'figure-heloc',
-    'whitebit',
-    'whitebit-coin',
-    'eutbl',
-    'canton-network',
-    'blackrock-usd-institutional-digital-liquidity-fund',
-    'hashnote-usyc',
-    'falcon-finance',
-    'superstate-short-duration-us-government-securities-fund-ustb',
-    'usdtb',
-    'ousg',
-    'janus-henderson-anemoy-aaa-clo-fund',
-    'janus-henderson-anemoy-treasury-fund'
+    'figure-heloc', 'whitebit', 'whitebit-coin', 'eutbl', 'canton-network',
+    'blackrock-usd-institutional-digital-liquidity-fund', 'hashnote-usyc',
+    'falcon-finance', 'superstate-short-duration-us-government-securities-fund-ustb',
+    'usdtb', 'ousg', 'janus-henderson-anemoy-aaa-clo-fund', 'janus-henderson-anemoy-treasury-fund',
 ]);
 
-async function getHandler() {
-    try {
-        console.info('[EXTERNAL API] Fetching from CoinGecko & Mempool Space...');
-        const [top100Res, pricesRes, feesRes] = await Promise.all([
-            fetch(COINGECKO_TOP100_URL, {
-                next: { revalidate: 300 }, // Cache for 5 mins
-            }),
-            fetch(COINGECKO_PRICES_URL, {
-                next: { revalidate: 300 }, // Cache for 5 mins
-            }),
-            fetch(MEMPOOL_FEES_URL, {
-                next: { revalidate: 300 }, // Cache for 5 mins
-            })
-        ]);
-
-        if (!top100Res.ok || !pricesRes.ok || !feesRes.ok) {
-            throw new Error(`Failed to fetch crypto data`);
-        }
-
-        const top100Data = await top100Res.json();
-        const pricesData = await pricesRes.json();
-        const feesData = await feesRes.json();
-
-        // Log the prices to our database (acts like our job runner since it runs on request)
-        if (pricesData.bitcoin?.usd) {
-            await prisma.cryptoPrice.create({
-                data: {
-                    coinId: "bitcoin",
-                    price: pricesData.bitcoin.usd
-                }
-            });
-        }
-
-        // Fetch historical data for chart (last 24 hours)
-        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-        const btcHistory = await prisma.cryptoPrice.findMany({
-            where: {
-                coinId: "bitcoin",
-                timestamp: { gte: twentyFourHoursAgo }
-            },
-            orderBy: { timestamp: "asc" }
-        });
-
-        // Extract top 100 coins
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const top100Coins = top100Data
-            .filter((item: any) => !SPAM_COIN_IDS.has(item.id))
-            .map((item: any) => ({
-                id: item.id,
-                name: item.name,
-                symbol: item.symbol,
-                marketCapRank: item.market_cap_rank,
-                image: item.image,
-                currentPrice: item.current_price,
-                priceChange24h: item.price_change_percentage_24h,
-                marketCap: item.market_cap
-            }));
-
-        return NextResponse.json({
-            top100: top100Coins,
-            prices: {
-                bitcoin: {
-                    usd: pricesData.bitcoin.usd,
-                    usd_24h_change: pricesData.bitcoin.usd_24h_change,
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    history: btcHistory.map((h: any) => ({ time: h.timestamp, price: h.price }))
-                },
-                ethereum: {
-                    usd: pricesData.ethereum.usd,
-                },
-                solana: {
-                    usd: pricesData.solana.usd,
-                }
-            },
-            fees: feesData,
-            timestamp: Date.now()
-        });
-    } catch (error) {
-        console.error('Error fetching finance/crypto data:', error);
-        return NextResponse.json({ error: 'Failed to fetch finance data' }, { status: 500 });
-    }
+function getPulsarUrl() {
+    const url = process.env.PULSAR_URL;
+    if (!url) throw new Error('PULSAR_URL env var is not set. Add it to .env.development / .env.production.');
+    return url;
 }
 
-export const GET = withCache(getHandler, 300); // 5 minutes TTL
+function adaptPulsarToFinanceShape(ticks: any[]) {
+    const top100 = ticks
+        .filter((t: any) => !SPAM_COIN_IDS.has(t.assetId))
+        .map((t: any) => ({
+            id: t.assetId,
+            name: t.name ?? t.assetId,
+            symbol: t.symbol ?? t.assetId,
+            marketCapRank: t.marketCapRank ?? null,
+            image: t.image ?? '',
+            currentPrice: t.close,
+            priceChange24h: t.change24h ?? 0,
+            marketCap: t.marketCap ?? 0,
+        }));
+
+    const find = (id: string) => ticks.find((t: any) => t.assetId === id) ?? {};
+    const btc = find('bitcoin');
+    const eth = find('ethereum');
+    const sol = find('solana');
+
+    const prices = {
+        bitcoin: { usd: btc.close ?? 0, usd_24h_change: btc.change24h ?? 0 },
+        ethereum: { usd: eth.close ?? 0 },
+        solana: { usd: sol.close ?? 0 },
+    };
+
+    // Fees are served by a separate Pulsar endpoint; include as empty object here.
+    // The Mempool fees route is swapped in the same task below.
+    const fees = btc.fees ?? {};
+
+    return { top100, prices, fees, timestamp: Date.now() };
+}
+
+async function getHandler() {
+    const pulsarUrl = getPulsarUrl();
+    console.info(`[EXTERNAL API] Fetching from Pulsar: ${pulsarUrl}/api/prices/latest?class=crypto`);
+
+    const [pricesRes, feesRes] = await Promise.all([
+        fetch(`${pulsarUrl}/api/prices/latest?class=crypto`),
+        fetch(`${pulsarUrl}/api/prices/latest?class=mempool`).catch(() => null),
+    ]);
+
+    if (!pricesRes.ok) {
+        throw new Error(`Pulsar /api/prices/latest returned ${pricesRes.status}`);
+    }
+
+    const ticks = await pricesRes.json();
+    const feesData = feesRes?.ok ? await feesRes.json() : {};
+
+    const shape = adaptPulsarToFinanceShape(Array.isArray(ticks) ? ticks : []);
+
+    // If Pulsar has a dedicated mempool/fees tick, surface it
+    if (feesData && Object.keys(feesData).length > 0) {
+        shape.fees = feesData;
+    }
+
+    return NextResponse.json(shape);
+}
+
+export const GET = withCache(getHandler, 300); // 5-minute TTL

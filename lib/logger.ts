@@ -5,7 +5,9 @@ export type LogEntry = {
     message: string;
 };
 
-const LOG_LIMIT = 500;
+// In-memory ring buffer for newly-connecting SSE clients (recent burst window only).
+// Historical logs are read from the PM2 log file via /api/system/logs/historical.
+const LOG_LIMIT = 50;
 
 type LogListener = (log: LogEntry) => void;
 
@@ -39,8 +41,13 @@ export function initLogger() {
     const originalConsoleError = console.error;
     const originalConsoleInfo = console.info;
 
+    // Capture original stdout/stderr writes BEFORE patching so JSON-line
+    // emissions from addLog bypass the patched write and don't double-log.
+    const rawStdout = process.stdout.write.bind(process.stdout);
+    const rawStderr = process.stderr.write.bind(process.stderr);
+
     const stripAnsi = (str: string) => {
-        return str.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
+        return str.replace(/[][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '');
     };
 
     const addLog = (level: LogEntry['level'], args: any[]) => {
@@ -54,7 +61,7 @@ export function initLogger() {
                 try {
                     return stripAnsi(JSON.stringify(arg));
                 } catch {
-                    return stripAnsi(String(arg)); // Handle circular references safely
+                    return stripAnsi(String(arg));
                 }
             }
             return stripAnsi(String(arg));
@@ -68,12 +75,13 @@ export function initLogger() {
         };
 
         globalForLogs.__SYSTEM_LOGS.push(newLog);
-
         if (globalForLogs.__SYSTEM_LOGS.length > LOG_LIMIT) {
             globalForLogs.__SYSTEM_LOGS.shift();
         }
 
-        // Notify subscribers
+        // Emit structured JSON-line for PM2 log capture (bypass the patched write).
+        rawStdout(JSON.stringify({ ts: newLog.timestamp, level, msg: message }) + '\n');
+
         globalForLogs.__LOG_LISTENERS.forEach(listener => listener(newLog));
     };
 
@@ -109,7 +117,7 @@ export function initLogger() {
 
     const addRawLog = (level: LogEntry['level'], rawMessage: string) => {
         const message = stripAnsi(rawMessage).trim();
-        if (!message) return; // ignore empty strings or just newlines
+        if (!message) return;
 
         const newLog = {
             id: Math.random().toString(36).substring(2, 11),
@@ -119,7 +127,6 @@ export function initLogger() {
         };
 
         globalForLogs.__SYSTEM_LOGS.push(newLog);
-
         if (globalForLogs.__SYSTEM_LOGS.length > LOG_LIMIT) {
             globalForLogs.__SYSTEM_LOGS.shift();
         }
@@ -127,22 +134,20 @@ export function initLogger() {
         globalForLogs.__LOG_LISTENERS.forEach(listener => listener(newLog));
     };
 
-    const originalStdoutWrite = process.stdout.write.bind(process.stdout);
     process.stdout.write = function (chunk: Uint8Array | string, encodingOrCb?: any, cb?: any) {
         if (!inConsoleCall) {
             const rawMessage = Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
             addRawLog('info', rawMessage);
         }
-        return originalStdoutWrite(chunk, encodingOrCb, cb);
+        return rawStdout(chunk, encodingOrCb, cb);
     } as any;
 
-    const originalStderrWrite = process.stderr.write.bind(process.stderr);
     process.stderr.write = function (chunk: Uint8Array | string, encodingOrCb?: any, cb?: any) {
         if (!inConsoleCall) {
             const rawMessage = Buffer.isBuffer(chunk) ? chunk.toString() : String(chunk);
             addRawLog('error', rawMessage);
         }
-        return originalStderrWrite(chunk, encodingOrCb, cb);
+        return rawStderr(chunk, encodingOrCb, cb);
     } as any;
 }
 

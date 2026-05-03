@@ -38,10 +38,18 @@ if nc -z localhost $PORT || nc -z 127.0.0.1 $PORT || nc -z ::1 $PORT; then
   # Use http://localhost:$PORT to let Chrome handle IPv4/IPv6 resolution dynamically
   open -n -W -a "Google Chrome" --args --app="http://localhost:$PORT"
 else
+  # Ensure PM2 log rotation is configured (idempotent)
+  pm2 install pm2-logrotate 2>/dev/null || true
+  pm2 set pm2-logrotate:max_size 10M 2>/dev/null || true
+  pm2 set pm2-logrotate:retain 30 2>/dev/null || true
+
+  echo "Running production DB migrations..."
+  npm run migrate:prod
+
   echo "Starting the Next.js server via PM2..."
   # Start the Next.js server persistently in the background using PM2 directly to the binary.
   # This prevents NPM wrapper from leaving an orphaned node process running on port 3101 when deleted!
-  NODE_OPTIONS='--max-old-space-size=1024' pm2 start node_modules/next/dist/bin/next --name "mission-control" -- start -p $PORT
+  NODE_OPTIONS='--max-old-space-size=1024' pm2 start node_modules/next/dist/bin/next --kill-timeout 10000 --name "mission-control" -- start -p $PORT
 
   # Wait for the server to bind to our custom port 3101 using localhost checks
   echo "Waiting for Mission Control server to start on port $PORT..."

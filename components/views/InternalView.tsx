@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import useSWR from "swr";
 import { CardGrid, CardItem } from "../grids/CardGrid";
-import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn } from "lucide-react";
+import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, ShieldAlert } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useSession, signIn, signOut } from "next-auth/react";
@@ -35,34 +36,66 @@ const formatLogMessage = (message: string) => {
     });
 };
 
+type HealthEntry = { ok: number; fallback: number; broken: number };
+type HealthMap = Record<string, HealthEntry>;
+
+function parseHostFromLog(message: string): string | null {
+    const m = message.match(/\[EXTERNAL API\].*?(\S+\.\S+)/);
+    if (m) {
+        try { return new URL(m[1].startsWith('http') ? m[1] : 'https://' + m[1]).hostname; } catch { return m[1]; }
+    }
+    const fallback = message.match(/\[CACHE FALLBACK\] ([^\s]+)/);
+    if (fallback) return fallback[1];
+    return null;
+}
+
 export const InternalView: React.FC = () => {
     const { data: session } = useSession();
-    const [sysMetrics, setSysMetrics] = useState<{
-        cpuUsagePercent: number;
-        memoryUsageFormatted: string;
-        maxAllocatedRamGB?: number;
-        uptimeFormatted: string;
-        dbConnected: boolean;
-        cache?: { hits: number, misses: number, activeEntries: { key: string, remainingTtl: number }[] };
-    } | null>(null);
+    const { data: sysMetrics } = useSWR('/api/system', async (url: string) => {
+        const res = await fetch(url);
+        return res.ok ? res.json() : null;
+    }, { refreshInterval: 5000 });
     const [sysLogs, setSysLogs] = useState<{ id: string; timestamp: string; level: string; message: string; }[]>([]);
+    const [historicalLogs, setHistoricalLogs] = useState<{ ts: string; level: string; msg: string }[]>([]);
+    const [loadingOlder, setLoadingOlder] = useState(false);
+    const [fetcherHealth, setFetcherHealth] = useState<HealthMap>({});
+    const logsRef = useRef(sysLogs);
+
+    const computeHealth = (logs: { level: string; message: string; timestamp: string }[]) => {
+        const cutoff = Date.now() - 60 * 60 * 1000;
+        const map: HealthMap = {};
+        for (const log of logs) {
+            if (new Date(log.timestamp).getTime() < cutoff) continue;
+            const msg = log.message;
+            const isFallback = msg.startsWith('[CACHE FALLBACK]');
+            const isBroken = msg.startsWith('[SCRAPER BROKEN]');
+            const isOk = msg.startsWith('[EXTERNAL API]') || msg.startsWith('[CACHE HIT]') || msg.startsWith('[CACHE MISS]');
+            if (!isFallback && !isBroken && !isOk) continue;
+            const host = parseHostFromLog(msg) ?? '(unknown)';
+            if (!map[host]) map[host] = { ok: 0, fallback: 0, broken: 0 };
+            if (isFallback) map[host].fallback++;
+            else if (isBroken) map[host].broken++;
+            else map[host].ok++;
+        }
+        return map;
+    };
+
+    const loadOlderLogs = async () => {
+        setLoadingOlder(true);
+        try {
+            const res = await fetch('/api/system/logs/historical');
+            if (res.ok) {
+                const data = await res.json();
+                setHistoricalLogs(data.logs || []);
+            }
+        } catch (e) {
+            console.error('Failed to load historical logs', e);
+        } finally {
+            setLoadingOlder(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchMetrics = async () => {
-            try {
-                const res = await fetch('/api/system');
-                if (res.ok) {
-                    const data = await res.json();
-                    setSysMetrics(data);
-                }
-            } catch (error) {
-                console.error("Failed to fetch system metrics", error);
-            }
-        };
-
-        fetchMetrics();
-        const intervalMetrics = setInterval(fetchMetrics, 5000);
-
         // Set up SSE for logs
         const eventSource = new EventSource('/api/system/logs');
 
@@ -71,12 +104,13 @@ export const InternalView: React.FC = () => {
                 const data = JSON.parse(event.data);
                 if (data.type === 'initial') {
                     setSysLogs(data.logs || []);
+                    setFetcherHealth(computeHealth(data.logs || []));
                 } else if (data.type === 'new') {
                     setSysLogs((prevLogs) => {
                         const nextLogs = [...prevLogs, data.log];
-                        if (nextLogs.length > 500) {
-                            nextLogs.shift();
-                        }
+                        if (nextLogs.length > 500) nextLogs.shift();
+                        logsRef.current = nextLogs;
+                        setFetcherHealth(computeHealth(nextLogs));
                         return nextLogs;
                     });
                 }
@@ -91,13 +125,12 @@ export const InternalView: React.FC = () => {
         };
 
         return () => {
-            clearInterval(intervalMetrics);
             eventSource.close();
         };
     }, []);
 
     // Persisted settings store
-    const { autoResearch, setAutoResearch, backgroundTasks, setBackgroundTasks } = useSettingsStore();
+    const { autoResearch, setAutoResearch, aiCompanionEnabled, setAiCompanionEnabled } = useSettingsStore();
 
     // Global Theme State
     const { isDarkMode, setIsDarkMode, viewHues, setViewHue, dashOrder, dashTitles, defaultDashTitles } = useThemeStore();
@@ -193,12 +226,21 @@ export const InternalView: React.FC = () => {
             colSpan: 3,
             content: (
                 <div className="flex flex-col h-[400px]">
-                    <div className="flex items-center gap-2 mb-4 text-cyan-400 shrink-0">
-                        <Server className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Background Event Log</h3>
+                    <div className="flex items-center justify-between gap-2 mb-4 shrink-0">
+                        <div className="flex items-center gap-2 text-cyan-400">
+                            <Server className="w-5 h-5" />
+                            <h3 className="font-bold tracking-wider uppercase text-sm">Background Event Log</h3>
+                        </div>
+                        <button
+                            onClick={loadOlderLogs}
+                            disabled={loadingOlder}
+                            className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 border border-white/10 rounded-lg disabled:opacity-50 transition-colors"
+                        >
+                            {loadingOlder ? 'Loading…' : 'Load older'}
+                        </button>
                     </div>
                     <div className="flex-1 flex flex-col p-4 border border-dashed border-white/10 rounded-xl bg-black/40 overflow-hidden relative">
-                        {sysLogs.length === 0 ? (
+                        {sysLogs.length === 0 && historicalLogs.length === 0 ? (
                             <div className="flex-1 flex items-center justify-center">
                                 <p className="text-muted-foreground text-sm font-medium">Event logging currently offline or no logs yet</p>
                             </div>
@@ -213,6 +255,20 @@ export const InternalView: React.FC = () => {
                                         <span className={`break-words whitespace-pre-wrap ${log.level === 'error' ? 'text-red-300' : 'text-white'}`}>{formatLogMessage(log.message)}</span>
                                     </div>
                                 ))}
+                                {historicalLogs.length > 0 && (
+                                    <>
+                                        <div className="text-center text-xs text-white/20 py-1 border-b border-white/5">— older logs —</div>
+                                        {[...historicalLogs].reverse().map((log, i) => (
+                                            <div key={`h-${i}`} className="flex gap-3 w-full border-b border-white/5 pb-1.5 opacity-60">
+                                                <div className="flex gap-2 shrink-0">
+                                                    <span className="text-white/40">[{new Date(log.ts).toLocaleTimeString()}]</span>
+                                                    <span className={`w-[60px] text-center ${log.level === 'error' ? 'text-red-400 font-bold' : log.level === 'warn' ? 'text-amber-400 font-bold' : 'text-cyan-400'}`}>[{log.level.toUpperCase()}]</span>
+                                                </div>
+                                                <span className={`break-words whitespace-pre-wrap ${log.level === 'error' ? 'text-red-300' : 'text-white'}`}>{formatLogMessage(log.msg)}</span>
+                                            </div>
+                                        ))}
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
@@ -272,6 +328,61 @@ export const InternalView: React.FC = () => {
             ),
         },
         {
+            id: "fetcher-health",
+            colSpan: 3,
+            content: (
+                <div className="flex flex-col h-[280px]">
+                    <div className="flex items-center gap-2 mb-4 text-amber-400 shrink-0">
+                        <ShieldAlert className="w-5 h-5" />
+                        <h3 className="font-bold tracking-wider uppercase text-sm">Fetcher Health (Last Hour)</h3>
+                    </div>
+                    <div className="flex-1 overflow-y-auto pr-2">
+                        {Object.keys(fetcherHealth).length === 0 ? (
+                            <div className="flex items-center justify-center h-full">
+                                <p className="text-muted-foreground text-sm">No fetcher activity in the last hour</p>
+                            </div>
+                        ) : (
+                            <table className="w-full text-xs font-mono">
+                                <thead>
+                                    <tr className="text-white/40 border-b border-white/10">
+                                        <th className="text-left pb-2 font-normal">Host</th>
+                                        <th className="text-right pb-2 font-normal w-16">OK</th>
+                                        <th className="text-right pb-2 font-normal w-20">Fallback</th>
+                                        <th className="text-right pb-2 font-normal w-16">Broken</th>
+                                        <th className="text-right pb-2 font-normal w-16">Health</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {Object.entries(fetcherHealth)
+                                        .sort(([, a], [, b]) => b.broken - a.broken || b.fallback - a.fallback)
+                                        .map(([host, h]) => {
+                                            const total = h.ok + h.fallback + h.broken;
+                                            const pct = total === 0 ? 100 : Math.round((h.ok / total) * 100);
+                                            const pill = pct >= 95
+                                                ? 'bg-emerald-500/20 text-emerald-400'
+                                                : pct >= 70
+                                                    ? 'bg-amber-500/20 text-amber-400'
+                                                    : 'bg-red-500/20 text-red-400';
+                                            return (
+                                                <tr key={host} className="border-b border-white/5 last:border-0">
+                                                    <td className="py-2 text-slate-300 truncate max-w-[180px]" title={host}>{host}</td>
+                                                    <td className="py-2 text-right text-emerald-400">{h.ok}</td>
+                                                    <td className="py-2 text-right text-amber-400">{h.fallback}</td>
+                                                    <td className="py-2 text-right text-red-400">{h.broken}</td>
+                                                    <td className="py-2 text-right">
+                                                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${pill}`}>{pct}%</span>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                </tbody>
+                            </table>
+                        )}
+                    </div>
+                </div>
+            ),
+        },
+        {
             id: "internal-3",
             colSpan: 1,
             content: (
@@ -296,14 +407,14 @@ export const InternalView: React.FC = () => {
 
                         <label className="flex items-center justify-between p-3 rounded-xl bg-black/20 border border-white/5 cursor-pointer hover:bg-white/5 transition-colors">
                             <div className="flex flex-col">
-                                <span className="text-sm font-medium text-white">Background Execution</span>
-                                <span className="text-xs text-muted-foreground">Let system jobs queue and run silently</span>
+                                <span className="text-sm font-medium text-white">AI Companion <span className="text-amber-400 text-xs font-bold ml-1">PREVIEW</span></span>
+                                <span className="text-xs text-muted-foreground">Enable the AI Companion overlay (not yet connected)</span>
                             </div>
                             <input
                                 type="checkbox"
                                 className="toggle"
-                                checked={backgroundTasks}
-                                onChange={(e) => setBackgroundTasks(e.target.checked)}
+                                checked={aiCompanionEnabled}
+                                onChange={(e) => setAiCompanionEnabled(e.target.checked)}
                             />
                         </label>
 

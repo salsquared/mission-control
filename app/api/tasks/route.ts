@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import fs from 'fs/promises';
-import fsSync from 'fs';
-import path from 'path';
+import { requireSession } from '@/lib/auth-guards';
+import { broadcastEvent } from '@/lib/events';
+import { regenerateMarkdownFromDB } from '@/lib/tasks/regenerator';
 import { syncTasksFromFile } from '@/lib/tasks/parser';
+import { TaskPatchSchema, TaskPostSchema } from '@/lib/schemas/tasks';
+import path from 'path';
 
-// In-memory mutex for file writing
 class Mutex {
     private mutex = Promise.resolve();
     lock(): Promise<() => void> {
@@ -16,27 +17,22 @@ class Mutex {
 }
 const writeMutex = new Mutex();
 
-let lastSyncedMtime = 0;
 const DEFAULT_MD_FILE = path.join(process.cwd(), 'docs', 'todo.md');
 
 export async function GET(req: Request) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     try {
         const url = new URL(req.url);
-        const force = url.searchParams.get('force') === 'true';
-
-        const stats = await fs.stat(DEFAULT_MD_FILE).catch(() => null);
-        if (stats) {
-            if (force || stats.mtimeMs > lastSyncedMtime) {
-                console.log(`[Tasks API] Sync triggered. Force: ${force}, new changes: ${stats.mtimeMs > lastSyncedMtime}`);
-                await syncTasksFromFile(DEFAULT_MD_FILE);
-                lastSyncedMtime = stats.mtimeMs + 100;
-            }
+        if (url.searchParams.get('force') === 'true') {
+            await syncTasksFromFile(DEFAULT_MD_FILE);
         }
-        
+
         const tasks = await prisma.task.findMany({
             orderBy: [{ lineNumber: 'asc' }]
         });
-        
+
         return NextResponse.json({ tasks });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
@@ -44,112 +40,37 @@ export async function GET(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     const unlock = await writeMutex.lock();
     try {
-        const body = await req.json();
-        const { id, status, text, dueDate, priority } = body;
-        
-        if (!id || (!status && text === undefined && dueDate === undefined && priority === undefined)) {
-            return NextResponse.json({ error: "Missing id, status, text, dueDate, or priority" }, { status: 400 });
+        const parsed = TaskPatchSchema.safeParse(await req.json());
+        if (!parsed.success) {
+            return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
         }
+        const { id, status, text, dueDate, priority } = parsed.data;
 
         const task = await prisma.task.findUnique({ where: { id } });
         if (!task) {
-            return NextResponse.json({ error: "Task not found" }, { status: 404 });
+            return NextResponse.json({ error: 'Task not found' }, { status: 404 });
         }
 
-        // 1. Rewrite in File
-        const fileContent = await fs.readFile(task.filePath, 'utf8');
-        const lines = fileContent.split('\n');
-        
-        let targetIndex = -1;
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].includes(`<!-- id: ${id} -->`)) {
-                targetIndex = i;
-                break;
-            }
-        }
-
-        if (targetIndex !== -1) {
-            let line = lines[targetIndex];
-            
-            // Extract old priority and dueDate to preserve them
-            let oldPriority = '';
-            let oldDueDate = '';
-            let oldCleanText = '';
-            
-            const contentMatch = line.match(/(-\s+\[[ \/xX]\])(.*?)(<!--|$)/);
-            if (contentMatch) {
-                const prefix = contentMatch[1];
-                const innerContent = contentMatch[2];
-                const suffix = contentMatch[3] + line.substring(contentMatch[0].length);
-                
-                const prioMatch = innerContent.match(/(🔴|🟡|🔵|🟢)(\s*\*\*[^*]+\*\*\s*-\s*)?/);
-                if (prioMatch) {
-                    oldPriority = prioMatch[0].trim() + ' ';
-                }
-                
-                const dueMatch = innerContent.match(/@due\(([^)]+)\)/);
-                if (dueMatch) {
-                    oldDueDate = `@due(${dueMatch[1]}) `;
-                }
-                
-                oldCleanText = innerContent
-                    .replace(/(🔴|🟡|🔵|🟢)(\s*\*\*[^*]+\*\*\s*-\s*)?/, '')
-                    .replace(/@due\([^)]+\)/, '')
-                    .trim();
-                
-                // Determine new parts
-                let statusChar = contentMatch[1].match(/\[(.)\]/)?.[1] || ' ';
-                if (status) {
-                    if (status === 'IN_PROGRESS') statusChar = '/';
-                    else if (status === 'DONE') statusChar = 'x';
-                    else if (status === 'TODO') statusChar = ' ';
-                }
-                
-                if (priority !== undefined) {
-                    if (priority !== null) {
-                        const iconMap: Record<string, string> = {
-                            'BLOCKER': '🔴',
-                            'HIGH': '🟡',
-                            'MEDIUM': '🔵',
-                            'LOW': '🟢'
-                        };
-                        oldPriority = `${iconMap[priority] || ''} `;
-                    } else {
-                        oldPriority = '';
-                    }
-                }
-                
-                const newPrefix = contentMatch[1].replace(/\[.\]/, `[${statusChar}]`);
-                const newText = text !== undefined ? text.trim() : oldCleanText;
-                const newDueDate = dueDate !== undefined ? (dueDate ? `@due(${dueDate}) ` : '') : oldDueDate;
-                
-                lines[targetIndex] = `${newPrefix} ${oldPriority}${newText} ${newDueDate}${suffix}`;
-            }
-            
-            await fs.writeFile(task.filePath, lines.join('\n'));
-            
-            // Update the local tracker so the GET route doesn't redundantly re-sync from our write
-            const updatedStats = await fs.stat(task.filePath);
-            lastSyncedMtime = updatedStats.mtimeMs + 100;
-        }
-
-        // 2. Update DB manually for faster UI sync
         const updateData: any = {};
-        if (status) updateData.status = status;
+        if (status !== undefined) updateData.status = status;
         if (text !== undefined) updateData.text = text;
         if (dueDate !== undefined) updateData.dueDate = dueDate ? new Date(dueDate) : null;
         if (priority !== undefined) updateData.priority = priority;
 
-        const updatedTask = await prisma.task.update({
-            where: { id },
-            data: updateData
-        });
+        const updatedTask = await prisma.task.update({ where: { id }, data: updateData });
+
+        broadcastEvent({ model: 'Task', action: 'upsert', id, timestamp: Date.now() });
+
+        regenerateMarkdownFromDB().catch(console.error);
 
         return NextResponse.json({ task: updatedTask });
     } catch (e: any) {
-        console.error("PATCH error:", e);
+        console.error('PATCH error:', e);
         return NextResponse.json({ error: e.message }, { status: 500 });
     } finally {
         unlock();
@@ -157,53 +78,52 @@ export async function PATCH(req: Request) {
 }
 
 export async function POST(req: Request) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     const unlock = await writeMutex.lock();
     try {
-        const body = await req.json();
-        const { text, parentId, isGoal } = body;
-        
-        if (!text) {
-            return NextResponse.json({ error: "Missing text" }, { status: 400 });
+        const parsed = TaskPostSchema.safeParse(await req.json());
+        if (!parsed.success) {
+            return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
         }
+        const { text, parentId, isGoal } = parsed.data;
 
-        const fileContent = await fs.readFile(DEFAULT_MD_FILE, 'utf8');
-        const lines = fileContent.split('\n');
-        
-        let targetLine = lines.length;
-        let indent = "";
-        
-        if (parentId) {
-             const parent = await prisma.task.findUnique({ where: { id: parentId } });
-             if (parent) {
-                 const pIndex = lines.findIndex(l => l.includes(`<!-- id: ${parent.id} -->`));
-                 if (pIndex !== -1) {
-                     targetLine = pIndex + 1;
-                     const match = /^(\s*)/.exec(lines[pIndex]);
-                     indent = (match ? match[1] : "") + "  ";
-                 }
-             }
-        }
-        
         const newId = crypto.randomUUID();
-        const newTaskLine = `${indent}- [ ] ${text} <!-- id: ${newId} -->`;
-        lines.splice(targetLine, 0, newTaskLine);
-        
+        const parentTask = parentId ? await prisma.task.findUnique({ where: { id: parentId } }) : null;
+        const lineNumber = parentTask ? parentTask.lineNumber + 1 : 999999;
+
+        await prisma.task.create({
+            data: {
+                id: newId,
+                text,
+                status: 'TODO',
+                filePath: DEFAULT_MD_FILE,
+                lineNumber,
+                parentId: parentTask?.id ?? null,
+            }
+        });
+
         if (isGoal) {
-            // Add a default placeholder subtask to instantly classify it as a goal in the tracker
-            const subId = crypto.randomUUID();
-            lines.splice(targetLine + 1, 0, `  - [ ] Define action items for this goal <!-- id: ${subId} -->`);
+            await prisma.task.create({
+                data: {
+                    id: crypto.randomUUID(),
+                    text: 'Define action items for this goal',
+                    status: 'TODO',
+                    filePath: DEFAULT_MD_FILE,
+                    lineNumber: lineNumber + 1,
+                    parentId: newId,
+                }
+            });
         }
 
-        await fs.writeFile(DEFAULT_MD_FILE, lines.join('\n'));
-        const updatedStats = await fs.stat(DEFAULT_MD_FILE);
-        lastSyncedMtime = updatedStats.mtimeMs + 100;
-        
-        // Sync the DB passively by triggering our parser or directly making the entry
-        await syncTasksFromFile(DEFAULT_MD_FILE);
+        broadcastEvent({ model: 'Task', action: 'upsert', id: newId, timestamp: Date.now() });
 
-        return NextResponse.json({ success: true });
+        regenerateMarkdownFromDB().catch(console.error);
+
+        return NextResponse.json({ success: true, id: newId });
     } catch (e: any) {
-        console.error("POST error:", e);
+        console.error('POST error:', e);
         return NextResponse.json({ error: e.message }, { status: 500 });
     } finally {
         unlock();

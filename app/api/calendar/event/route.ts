@@ -1,17 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import { google } from "googleapis";
+import { requireSession } from "@/lib/auth-guards";
+import { broadcastEvent } from "@/lib/events";
+import { CalendarEventPostSchema } from "@/lib/schemas/calendar";
 
-// GET handler to check for existing events
 export async function GET(req: NextRequest) {
+  const guard = await requireSession();
+  if ('error' in guard) return guard.error;
+  const userId = (guard.session.user as any).id as string;
+
   try {
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
-    const query = searchParams.get("query"); // search term like company name
-
-    if (!userId) {
-      return NextResponse.json({ error: "Missing userId" }, { status: 400 });
-    }
+    const query = searchParams.get("query");
 
     const authClient = await getGoogleAuthClient(userId);
     const calendar = google.calendar({ version: "v3", auth: authClient });
@@ -32,15 +33,17 @@ export async function GET(req: NextRequest) {
   }
 }
 
-// POST handler to create or update an event
 export async function POST(req: NextRequest) {
-  try {
-    const body = await req.json();
-    const { userId, eventId, summary, description, start, end } = body;
+  const guard = await requireSession();
+  if ('error' in guard) return guard.error;
+  const userId = (guard.session.user as any).id as string;
 
-    if (!userId || !summary || !start || !end) {
-      return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  try {
+    const parsed = CalendarEventPostSchema.safeParse(await req.json());
+    if (!parsed.success) {
+      return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
+    const { eventId, summary, description, start, end } = parsed.data;
 
     const authClient = await getGoogleAuthClient(userId);
     const calendar = google.calendar({ version: "v3", auth: authClient });
@@ -48,22 +51,25 @@ export async function POST(req: NextRequest) {
     const event = {
       summary,
       description,
-      start: { dateTime: start, timeZone: "UTC" }, // Adjust depending on parse result timezone
+      start: { dateTime: start, timeZone: "UTC" },
       end: { dateTime: end, timeZone: "UTC" },
     };
 
     if (eventId) {
       const response = await calendar.events.update({
         calendarId: "primary",
-        eventId: eventId,
+        eventId,
         requestBody: event,
       });
+      broadcastEvent({ model: 'CalendarEvent', action: 'upsert', id: eventId, timestamp: Date.now() });
       return NextResponse.json({ event: response.data }, { status: 200 });
     } else {
       const response = await calendar.events.insert({
         calendarId: "primary",
         requestBody: event,
       });
+      const newId = response.data.id ?? undefined;
+      broadcastEvent({ model: 'CalendarEvent', action: 'upsert', id: newId, timestamp: Date.now() });
       return NextResponse.json({ event: response.data }, { status: 200 });
     }
   } catch (error: any) {
@@ -72,15 +78,17 @@ export async function POST(req: NextRequest) {
   }
 }
 
-// DELETE handler to delete an event
 export async function DELETE(req: NextRequest) {
+  const guard = await requireSession();
+  if ('error' in guard) return guard.error;
+  const userId = (guard.session.user as any).id as string;
+
   try {
     const { searchParams } = new URL(req.url);
-    const userId = searchParams.get("userId");
     const eventId = searchParams.get("eventId");
 
-    if (!userId || !eventId) {
-      return NextResponse.json({ error: "Missing userId or eventId" }, { status: 400 });
+    if (!eventId) {
+      return NextResponse.json({ error: "Missing eventId" }, { status: 400 });
     }
 
     const authClient = await getGoogleAuthClient(userId);
@@ -88,9 +96,10 @@ export async function DELETE(req: NextRequest) {
 
     await calendar.events.delete({
       calendarId: "primary",
-      eventId: eventId,
+      eventId,
     });
 
+    broadcastEvent({ model: 'CalendarEvent', action: 'delete', id: eventId, timestamp: Date.now() });
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error: any) {
     console.error("Error deleting calendar event:", error);

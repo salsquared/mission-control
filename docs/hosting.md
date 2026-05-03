@@ -39,7 +39,17 @@ Finally, save the current PM2 list so it remembers to start `mission-control`:
 pm2 save
 ```
 
-## 5. Accessing the App (Windows & Mac)
+## 5. Google Pub/Sub Webhook Auth
+
+The Gmail push-notification webhook at `/api/gmail/webhook` requires a shared secret.
+
+1. Generate a secret: `openssl rand -hex 32`
+2. Add it to your `.env`: `PUBSUB_WEBHOOK_SECRET=<value>`
+3. In the Google Cloud Console → Pub/Sub → your push subscription, set the **Authentication** header to: `Authorization: Bearer <value>`
+
+Without this, the endpoint returns 401 and no application emails are processed.
+
+## 6. Accessing the App (Windows & Mac)
 Your server is now running on port `3101` (by default).
 1. On your Mac mini, open `System Settings` -> `Network` to find its local IP address (e.g., `192.168.1.10`).
 2. On your Windows PC (or any device on your Wi-Fi), open Chrome or Edge and navigate to:

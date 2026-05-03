@@ -14,20 +14,17 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
     const { data: session } = useSession();
     const [events, setEvents] = useState<CalendarEvent[]>([]);
     const [loading, setLoading] = useState(false);
-    
+
     const [newEvent, setNewEvent] = useState({
       summary: "",
       start: "",
       end: ""
     });
 
-    const userId = (session?.user as any)?.id;
-
     const fetchEvents = async () => {
-        if (!userId) return;
         setLoading(true);
         try {
-            const res = await fetch(`/api/calendar/event?userId=${userId}`);
+            const res = await fetch(`/api/calendar/event`);
             const data = await res.json();
             if (data.events) {
                 setEvents(data.events);
@@ -40,23 +37,22 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
     };
 
     useEffect(() => {
-        if (userId) {
+        if (session) {
             fetchEvents();
         }
-    }, [userId]);
+    }, [session]);
 
     const handleCreate = async () => {
-        if (!userId || !newEvent.summary || !newEvent.start || !newEvent.end) return;
+        if (!newEvent.summary || !newEvent.start || !newEvent.end) return;
         setLoading(true);
         try {
             const startISO = new Date(newEvent.start).toISOString();
             const endISO = new Date(newEvent.end).toISOString();
-            
+
             await fetch("/api/calendar/event", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                    userId,
                     summary: newEvent.summary,
                     start: startISO,
                     end: endISO,
@@ -74,10 +70,9 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
     };
 
     const handleDelete = async (eventId: string) => {
-        if (!userId) return;
         setLoading(true);
         try {
-            await fetch(`/api/calendar/event?userId=${userId}&eventId=${eventId}`, {
+            await fetch(`/api/calendar/event?eventId=${eventId}`, {
                 method: "DELETE",
             });
             await fetchEvents();
@@ -98,9 +93,9 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
             <div className="overflow-y-auto flex-1 custom-scrollbar pr-2 space-y-3">
                 {isAdding && (
                     <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700 space-y-3 mb-4">
-                        <input 
-                            placeholder="Event summary..." 
-                            className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200" 
+                        <input
+                            placeholder="Event summary..."
+                            className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200"
                             value={newEvent.summary}
                             onChange={(e) => setNewEvent({...newEvent, summary: e.target.value})}
                         />

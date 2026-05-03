@@ -1,4 +1,7 @@
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
+import useSWR from "swr";
+import { fetcher } from "@/lib/fetcher-client";
+import { useServerEvents } from "@/hooks/useServerEvents";
 import { X, Bookmark, Heart, Check, Trash2, ExternalLink, PlusCircle, Loader2, Search } from "lucide-react";
 
 interface SavedPaper {
@@ -20,14 +23,8 @@ interface SavedPapersOverlayProps {
 }
 
 export const SavedPapersOverlay: React.FC<SavedPapersOverlayProps> = ({ topic, onClose }) => {
-    const [papers, setPapers] = useState<SavedPaper[]>([]);
-    const [loading, setLoading] = useState(true);
     const [activeTab, setActiveTab] = useState<'READ_LATER' | 'FAVORITE' | 'READ' | 'IMPORT'>('READ_LATER');
-    const [viewTopic, setViewTopic] = useState<string>(
-        topic === 'General' ? 'All' : topic
-    );
-
-    // Import State
+    const [viewTopic, setViewTopic] = useState<string>(topic === 'General' ? 'All' : topic);
     const [importInput, setImportInput] = useState("");
     const [isSearching, setIsSearching] = useState(false);
     const [importError, setImportError] = useState("");
@@ -36,41 +33,26 @@ export const SavedPapersOverlay: React.FC<SavedPapersOverlayProps> = ({ topic, o
         topic === 'General' ? 'AI' : (topic as any)
     );
 
-    const fetchPapers = async () => {
-        if (activeTab === 'IMPORT') return; // Don't fetch when on import tab
-        setLoading(true);
-        try {
-            const url = viewTopic === 'All' ? '/api/research/saved' : `/api/research/saved?topic=${viewTopic}`;
-            const res = await fetch(url);
-            if (res.ok) {
-                const data = await res.json();
-                setPapers(data);
-            }
-        } catch (err) {
-            console.error(err);
-        } finally {
-            setLoading(false);
-        }
-    };
+    const swrKey = activeTab !== 'IMPORT'
+        ? (viewTopic === 'All' ? '/api/research/saved' : `/api/research/saved?topic=${viewTopic}`)
+        : null;
 
-    useEffect(() => {
-        fetchPapers();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [viewTopic, activeTab]);
+    const { data: papersRaw, mutate: mutatePapers, isLoading: loading } = useSWR<SavedPaper[]>(swrKey, fetcher);
+    const papers = papersRaw ?? [];
 
-    useEffect(() => {
-        if (viewTopic !== 'All') {
-            setSelectedTopic(viewTopic as any);
-        }
+    useServerEvents('SavedPaper', () => { mutatePapers(); });
+
+    React.useEffect(() => {
+        if (viewTopic !== 'All') setSelectedTopic(viewTopic as any);
     }, [viewTopic]);
 
     const handleDelete = async (paperId: string) => {
-        setPapers(prev => prev.filter(p => p.paperId !== paperId));
+        mutatePapers(papers.filter(p => p.paperId !== paperId), { revalidate: false });
         try {
             await fetch(`/api/research/saved?paperId=${paperId}`, { method: 'DELETE' });
         } catch (err) {
             console.error(err);
-            fetchPapers(); // revert
+            mutatePapers();
         }
     };
 

@@ -6,6 +6,7 @@
 import Parser from 'rss-parser';
 import ogs from 'open-graph-scraper';
 import { MAX_NEWS_ARTICLES } from '../constants';
+import { ScraperBrokenError } from './errors';
 import type { NewsArticle } from './types';
 
 const parser = new Parser();
@@ -17,6 +18,10 @@ const parser = new Parser();
 export async function fetchRSS(name: string, rssUrl: string): Promise<NewsArticle[]> {
     console.info(`[EXTERNAL API] Fetching RSS from ${name}: ${rssUrl}`);
     const feed = await parser.parseURL(rssUrl);
+
+    if (feed.items.length === 0) {
+        throw new ScraperBrokenError(name, 0);
+    }
 
     let items: NewsArticle[] = feed.items.slice(0, MAX_NEWS_ARTICLES).map(item => ({
         id: item.guid || item.link || Math.random().toString(),

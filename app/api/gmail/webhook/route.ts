@@ -3,25 +3,28 @@ import { getGoogleAuthClient } from "@/lib/googleapis";
 import { google } from "googleapis";
 import { prisma } from "@/lib/prisma";
 import { parseApplicationEmail } from "@/lib/email-parser";
+import { broadcastEvent } from "@/lib/events";
+import { PubSubEnvelopeSchema, PubSubPayloadSchema } from "@/lib/schemas/gmail-webhook";
 
 export async function POST(req: NextRequest) {
+  const secret = process.env.PUBSUB_WEBHOOK_SECRET;
+  if (!secret || req.headers.get('authorization') !== `Bearer ${secret}`) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
   try {
-    const body = await req.json();
-    
-    // Google Cloud Pub/Sub push notification format
-    if (!body.message || !body.message.data) {
-      return NextResponse.json({ error: "Invalid payload" }, { status: 400 });
+    const envelope = PubSubEnvelopeSchema.safeParse(await req.json());
+    if (!envelope.success) {
+      return NextResponse.json({ error: envelope.error.issues }, { status: 400 });
     }
 
-    // Decode message string from base64
-    const decodedStr = Buffer.from(body.message.data, 'base64').toString('utf-8');
-    const data = JSON.parse(decodedStr);
-    const emailAddress = data.emailAddress;
-    const historyId = data.historyId;
-
-    if (!emailAddress) {
-      return NextResponse.json({ error: "No email address found" }, { status: 400 });
+    const decodedStr = Buffer.from(envelope.data.message.data, 'base64').toString('utf-8');
+    const payloadParsed = PubSubPayloadSchema.safeParse(JSON.parse(decodedStr));
+    if (!payloadParsed.success) {
+      return NextResponse.json({ error: payloadParsed.error.issues }, { status: 400 });
     }
+
+    const { emailAddress, historyId } = payloadParsed.data;
 
     // Lookup user by email in NextAuth account
     const user = await prisma.user.findUnique({
@@ -82,18 +85,20 @@ export async function POST(req: NextRequest) {
            where: { userId: user.id, company: { contains: parsed.company } }
          });
 
+         let appId: string;
          if (existingApp) {
            await prisma.application.update({
              where: { id: existingApp.id },
              data: {
                status: parsed.status,
                nextSteps: parsed.nextSteps,
-               role: parsed.role || existingApp.role, // only override if LLM specifies
+               role: parsed.role || existingApp.role,
                lastUpdateAt: new Date()
              }
            });
+           appId = existingApp.id;
          } else {
-           await prisma.application.create({
+           const newApp = await prisma.application.create({
              data: {
                userId: user.id,
                company: parsed.company,
@@ -104,7 +109,9 @@ export async function POST(req: NextRequest) {
                lastUpdateAt: new Date()
              }
            });
+           appId = newApp.id;
          }
+         broadcastEvent({ model: 'Application', action: 'upsert', id: appId, timestamp: Date.now() });
       }
     }
 

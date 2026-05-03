@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
+import { ResearchImportSchema } from '@/lib/schemas/research-import';
 
 const parser = new Parser({
     customFields: {
@@ -40,12 +41,11 @@ function parseInput(input: string): { type: 'arxiv' | 'doi' | 'url' | 'unknown',
 
 export async function POST(request: Request) {
     try {
-        const body = await request.json();
-        const { input } = body;
-
-        if (!input) {
-            return NextResponse.json({ error: "Missing input field" }, { status: 400 });
+        const bodyParsed = ResearchImportSchema.safeParse(await request.json());
+        if (!bodyParsed.success) {
+            return NextResponse.json({ error: bodyParsed.error.issues }, { status: 400 });
         }
+        const { input } = bodyParsed.data;
 
         const parsed = parseInput(input);
 

@@ -1,11 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useThemeStore } from "./themeStore";
+import { useEffect, useRef, useState } from "react";
+import { useAppStore } from "./state";
+
+function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    return ((...args: any[]) => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), ms);
+    }) as T;
+}
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
     const [mounted, setMounted] = useState(false);
-    const { isDarkMode, viewHues, viewHuesEnabled, activeViewId } = useThemeStore();
+    const { isDarkMode, viewHues, viewHuesEnabled, activeViewId } = useAppStore();
 
     // Pull from API on mount
     useEffect(() => {
@@ -13,8 +21,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
             .then(res => res.json())
             .then(res => {
                 if (res.data) {
-                    const { activeViewId, ...globalData } = res.data;
-                    useThemeStore.setState(globalData);
+                    const { activeViewId: _av, ...globalData } = res.data;
+                    useAppStore.setState(globalData);
                 }
                 setMounted(true);
             })
@@ -24,33 +32,40 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
             });
     }, []);
 
-    // Push to API on state change
+    // Push to API on state change — debounced 500 ms so rapid edits (e.g. title
+    // typing) fire one request after the user stops, not one per keystroke.
+    const debouncedSave = useRef(
+        debounce((data: object) => {
+            fetch('/api/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(data),
+            }).catch(err => console.error("Failed to save settings:", err));
+        }, 500)
+    ).current;
+
     useEffect(() => {
         if (!mounted) return;
 
-        const unsubscribe = useThemeStore.subscribe((state, prevState) => {
+        const unsubscribe = useAppStore.subscribe((state, prevState) => {
             const getSyncableState = (s: any) => ({
                 isDarkMode: s.isDarkMode,
                 viewHues: s.viewHues,
                 viewHuesEnabled: s.viewHuesEnabled,
                 dashOrder: s.dashOrder,
-                dashTitles: s.dashTitles
+                dashTitles: s.dashTitles,
             });
 
             const currentData = getSyncableState(state);
             const prevData = getSyncableState(prevState || state);
 
             if (prevState && JSON.stringify(currentData) !== JSON.stringify(prevData)) {
-                fetch('/api/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(currentData)
-                }).catch(err => console.error("Failed to save settings:", err));
+                debouncedSave(currentData);
             }
         });
 
-        return () => unsubscribe();
-    }, [mounted]);
+        return () => { unsubscribe(); };
+    }, [mounted, debouncedSave]);
 
     useEffect(() => {
         if (mounted) {
@@ -69,7 +84,6 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     }, [mounted, isDarkMode, viewHues, viewHuesEnabled, activeViewId]);
 
     if (!mounted) {
-        // Avoid hydration mismatch by rendering without theme changes first
         return <>{children}</>;
     }
 

@@ -56,9 +56,13 @@ model SelectedReviewPaper {
 }
 
 model GlobalSetting {
-  id        String   @id @default("global")
-  data      String   // JSON payload of settings
-  updatedAt DateTime @updatedAt
+  id              String   @id @default("global")
+  isDarkMode      Boolean  @default(true)
+  viewHuesEnabled Boolean  @default(true)
+  viewHues        String   @default("{}")  // JSON: Record<string, number>
+  dashOrder       String   @default("[]") // JSON: string[]
+  dashTitles      String   @default("{}") // JSON: Record<string, string>
+  updatedAt       DateTime @updatedAt
 }
 
 // --- NextAuth Models --- //
@@ -154,4 +158,13 @@ model LifeGoal {
   completed     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+}
+
+model CacheEntry {
+  key       String   @id
+  data      String   // JSON-serialized response body
+  expiry    DateTime
+  updatedAt DateTime @updatedAt
+
+  @@index([expiry])
 }

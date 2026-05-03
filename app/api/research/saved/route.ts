@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '../../../../lib/prisma';
+import { prisma } from '@/lib/prisma';
+import { requireSession } from '@/lib/auth-guards';
+import { broadcastEvent } from '@/lib/events';
 
 export async function GET(request: Request) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     try {
         const { searchParams } = new URL(request.url);
         const topic = searchParams.get('topic');
@@ -27,6 +32,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     try {
         const body = await request.json();
         const { paperId, title, summary, url, authors, publishedAt, topic, status } = body;
@@ -54,6 +62,7 @@ export async function POST(request: Request) {
             }
         });
 
+        broadcastEvent({ model: 'SavedPaper', action: 'upsert', id: paper.paperId, timestamp: Date.now() });
         return NextResponse.json(paper);
     } catch (error) {
         console.error("Error saving paper:", error);
@@ -62,6 +71,9 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     try {
         const { searchParams } = new URL(request.url);
         const paperId = searchParams.get('paperId');
@@ -74,6 +86,7 @@ export async function DELETE(request: Request) {
             where: { paperId }
         });
 
+        broadcastEvent({ model: 'SavedPaper', action: 'delete', id: paperId, timestamp: Date.now() });
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error("Error deleting saved paper:", error);

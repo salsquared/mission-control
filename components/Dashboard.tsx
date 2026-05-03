@@ -14,6 +14,7 @@ import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare, Library } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useThemeStore } from "@/components/providers/themeStore";
+import { useSettingsStore } from "@/components/providers/settingsStore";
 import { LaunchpadOverlay } from "./overlays/LaunchpadOverlay";
 import { useEffect } from "react";
 
@@ -78,6 +79,7 @@ export const Dashboard: React.FC = () => {
     const [isLibraryOpen, setIsLibraryOpen] = useState(false);
 
     const { setActiveViewId, dashOrder, dashTitles } = useThemeStore();
+    const { aiCompanionEnabled } = useSettingsStore();
 
     const orderedDashes = React.useMemo(() => {
         if (!isMounted) return [...BASE_DASHES];
@@ -221,20 +223,23 @@ export const Dashboard: React.FC = () => {
                     <Library className="w-6 h-6" />
                 </button>
 
-                <div className="w-px h-8 bg-white/10" />
-
-                <button
-                    onClick={() => setIsAIChatOpen(!isAIChatOpen)}
-                    className={cn(
-                        "p-3 rounded-xl transition-all",
-                        isAIChatOpen
-                            ? "bg-white/20 text-white border border-white/30"
-                            : "hover:bg-white/10 text-white/70 hover:text-white"
-                    )}
-                    title="Toggle AI Assistant"
-                >
-                    <MessageSquare className="w-6 h-6" />
-                </button>
+                {aiCompanionEnabled && (
+                    <>
+                        <div className="w-px h-8 bg-white/10" />
+                        <button
+                            onClick={() => setIsAIChatOpen(!isAIChatOpen)}
+                            className={cn(
+                                "p-3 rounded-xl transition-all",
+                                isAIChatOpen
+                                    ? "bg-white/20 text-white border border-white/30"
+                                    : "hover:bg-white/10 text-white/70 hover:text-white"
+                            )}
+                            title="Toggle AI Assistant"
+                        >
+                            <MessageSquare className="w-6 h-6" />
+                        </button>
+                    </>
+                )}
             </div>
 
             {/* Saved Papers Overlay */}
@@ -246,9 +251,9 @@ export const Dashboard: React.FC = () => {
                 )}
             </AnimatePresence>
 
-            {/* AI Companion Overlay */}
+            {/* AI Companion Overlay (gated on aiCompanionEnabled feature flag) */}
             <AnimatePresence>
-                {isAIChatOpen && orderedDashes[currentIndex] && (
+                {aiCompanionEnabled && isAIChatOpen && orderedDashes[currentIndex] && (
                     <motion.div
                         initial={{ opacity: 0, x: 20, scale: 0.95 }}
                         animate={{ opacity: 1, x: 0, scale: 1 }}
