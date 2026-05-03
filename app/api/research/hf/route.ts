@@ -42,4 +42,4 @@ async function getHandler(request: Request) {
 }
 
 // Cache HF responses for an hour
-export const GET = withCache(getHandler, 3600);
+export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'huggingface.co' });

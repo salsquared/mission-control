@@ -13,6 +13,7 @@ export const authOptions: NextAuthOptions = {
                 params: {
                     access_type: "offline",
                     response_type: "code",
+                    prompt: "select_account",
                     // Request scopes for Gmail API and Calendar API
                     scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events"
                 }

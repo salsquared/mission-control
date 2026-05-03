@@ -8,27 +8,55 @@ const SPAM_COIN_IDS = new Set([
     'usdtb', 'ousg', 'janus-henderson-anemoy-aaa-clo-fund', 'janus-henderson-anemoy-treasury-fund',
 ]);
 
+// Bitcoin fee tier asset IDs auto-registered by Pulsar's mempool source.
+// They appear in /prices/latest?class=CRYPTO but are not coins — exclude from top100.
+const BTC_FEE_IDS = new Set(['btc-fee-fast', 'btc-fee-30min', 'btc-fee-eco']);
+
 function getPulsarUrl() {
     const url = process.env.PULSAR_URL;
     if (!url) throw new Error('PULSAR_URL env var is not set. Add it to .env.development / .env.production.');
     return url;
 }
 
-function adaptPulsarToFinanceShape(ticks: any[]) {
+async function extractFeeClose(res: Response | null): Promise<number | null> {
+    if (!res?.ok) return null;
+    const env = await res.json().catch(() => null);
+    return env?.data?.close ?? null;
+}
+
+async function getHandler() {
+    const pulsarUrl = getPulsarUrl();
+
+    // Pulsar's mempool source uses three CRYPTO assetIds. Fees fetched per asset.
+    const [pricesRes, btcFastRes, btc30Res, btcEcoRes] = await Promise.all([
+        fetch(`${pulsarUrl}/api/prices/latest?class=CRYPTO`),
+        fetch(`${pulsarUrl}/api/prices/btc-fee-fast`).catch(() => null),
+        fetch(`${pulsarUrl}/api/prices/btc-fee-30min`).catch(() => null),
+        fetch(`${pulsarUrl}/api/prices/btc-fee-eco`).catch(() => null),
+    ]);
+
+    if (!pricesRes.ok) {
+        throw new Error(`Pulsar /api/prices/latest returned ${pricesRes.status}`);
+    }
+
+    // Pulsar wraps responses in { meta, data: PricePoint[] }
+    const pricesEnv = await pricesRes.json();
+    const ticks: any[] = Array.isArray(pricesEnv?.data) ? pricesEnv.data : [];
+
     const top100 = ticks
-        .filter((t: any) => !SPAM_COIN_IDS.has(t.assetId))
-        .map((t: any) => ({
+        .filter((t) => !SPAM_COIN_IDS.has(t.assetId) && !BTC_FEE_IDS.has(t.assetId))
+        .map((t, i) => ({
             id: t.assetId,
             name: t.name ?? t.assetId,
             symbol: t.symbol ?? t.assetId,
-            marketCapRank: t.marketCapRank ?? null,
-            image: t.image ?? '',
+            marketCapRank: i + 1,                  // ordered by Pulsar's market_cap_desc fetch
+            image: '',                              // Pulsar doesn't store image URLs (yet)
             currentPrice: t.close,
             priceChange24h: t.change24h ?? 0,
-            marketCap: t.marketCap ?? 0,
+            marketCap: 0,                           // Pulsar doesn't store market cap (yet)
         }));
 
-    const find = (id: string) => ticks.find((t: any) => t.assetId === id) ?? {};
+    const find = (id: string) => ticks.find((t) => t.assetId === id) ?? {};
     const btc = find('bitcoin');
     const eth = find('ethereum');
     const sol = find('solana');
@@ -39,37 +67,22 @@ function adaptPulsarToFinanceShape(ticks: any[]) {
         solana: { usd: sol.close ?? 0 },
     };
 
-    // Fees are served by a separate Pulsar endpoint; include as empty object here.
-    // The Mempool fees route is swapped in the same task below.
-    const fees = btc.fees ?? {};
-
-    return { top100, prices, fees, timestamp: Date.now() };
-}
-
-async function getHandler() {
-    const pulsarUrl = getPulsarUrl();
-    console.info(`[EXTERNAL API] Fetching from Pulsar: ${pulsarUrl}/api/prices/latest?class=crypto`);
-
-    const [pricesRes, feesRes] = await Promise.all([
-        fetch(`${pulsarUrl}/api/prices/latest?class=crypto`),
-        fetch(`${pulsarUrl}/api/prices/latest?class=mempool`).catch(() => null),
+    const [fastestFee, halfHourFee, economyFee] = await Promise.all([
+        extractFeeClose(btcFastRes),
+        extractFeeClose(btc30Res),
+        extractFeeClose(btcEcoRes),
     ]);
 
-    if (!pricesRes.ok) {
-        throw new Error(`Pulsar /api/prices/latest returned ${pricesRes.status}`);
-    }
+    const fees: Record<string, number> = {};
+    if (fastestFee !== null) fees.fastestFee = fastestFee;
+    if (halfHourFee !== null) fees.halfHourFee = halfHourFee;
+    if (economyFee !== null) fees.economyFee = economyFee;
 
-    const ticks = await pricesRes.json();
-    const feesData = feesRes?.ok ? await feesRes.json() : {};
-
-    const shape = adaptPulsarToFinanceShape(Array.isArray(ticks) ? ticks : []);
-
-    // If Pulsar has a dedicated mempool/fees tick, surface it
-    if (feesData && Object.keys(feesData).length > 0) {
-        shape.fees = feesData;
-    }
-
-    return NextResponse.json(shape);
+    return NextResponse.json({ top100, prices, fees, timestamp: Date.now() });
 }
 
-export const GET = withCache(getHandler, 300); // 5-minute TTL
+function pulsarHost(): string | null {
+    try { return new URL(process.env.PULSAR_URL ?? '').hostname || null; } catch { return null; }
+}
+
+export const GET = withCache(getHandler, { ttlSeconds: 300, upstreamHost: pulsarHost }); // 5-minute TTL

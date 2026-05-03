@@ -41,4 +41,4 @@ async function getHandler(req: Request) {
     }
 }
 
-export const GET = withCache(getHandler, 1800);
+export const GET = withCache(getHandler, { ttlSeconds: 1800, upstreamHost: 'll.thespacedevs.com' });

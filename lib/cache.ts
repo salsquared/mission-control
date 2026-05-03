@@ -67,7 +67,23 @@ export async function pruneExpiredCache(): Promise<void> {
     }
 }
 
-export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlSeconds: number) {
+export type UpstreamHost = string | ((req: Request) => string | null | undefined);
+
+export interface WithCacheOptions {
+    ttlSeconds: number;
+    // Upstream host this route ultimately calls. Logged with each cache event so the
+    // Internal Systems "Fetcher Health" card can group by real host instead of by route path.
+    upstreamHost?: UpstreamHost;
+}
+
+export function withCache(
+    handler: (req: Request) => Promise<NextResponse>,
+    ttlOrOpts: number | WithCacheOptions
+) {
+    const opts: WithCacheOptions =
+        typeof ttlOrOpts === 'number' ? { ttlSeconds: ttlOrOpts } : ttlOrOpts;
+    const { ttlSeconds, upstreamHost } = opts;
+
     return async function (req: Request) {
         const url = new URL(req.url);
         const params = new URLSearchParams(url.search);
@@ -78,6 +94,10 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
         if (targetSearch) targetSearch = '?' + targetSearch;
         const cacheKey = url.pathname + targetSearch;
 
+        const host =
+            (typeof upstreamHost === 'function' ? upstreamHost(req) : upstreamHost) || null;
+        const hostTag = host ? `${host} ` : '';
+
         let staleEntry: L1Entry | null = null;
 
         // --- L1 check ---
@@ -86,7 +106,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
             if (Date.now() < entry.expiry) {
                 cacheStats.hits++;
                 const remaining = Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000));
-                console.info(`[CACHE HIT] ${cacheKey} (TTL: ${remaining}s remaining)`);
+                console.info(`[CACHE HIT] ${hostTag}${cacheKey} (TTL: ${remaining}s remaining)`);
                 return NextResponse.json(entry.data, {
                     headers: {
                         'X-Cache': 'HIT',
@@ -105,7 +125,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
                 cacheStats.hits++;
                 globalCache.set(cacheKey, l2);
                 const remaining = Math.max(0, Math.floor((l2.expiry - Date.now()) / 1000));
-                console.info(`[CACHE HIT L2] ${cacheKey} (TTL: ${remaining}s remaining)`);
+                console.info(`[CACHE HIT L2] ${hostTag}${cacheKey} (TTL: ${remaining}s remaining)`);
                 return NextResponse.json(l2.data, {
                     headers: {
                         'X-Cache': 'HIT',
@@ -116,7 +136,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
         }
 
         cacheStats.misses++;
-        console.info(`[CACHE MISS] ${cacheKey} - Fetching fresh data (TTL: ${ttlSeconds}s)`);
+        console.info(`[CACHE MISS] ${hostTag}${cacheKey} - Fetching fresh data (TTL: ${ttlSeconds}s)`);
 
         // In-flight dedup: if another request for the same key is already running, await it.
         if (inFlight.has(cacheKey)) {
@@ -129,7 +149,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
             return await handler(req);
         } catch (error) {
             if (staleEntry) {
-                return serveStale(cacheKey, staleEntry, 60);
+                return serveStale(cacheKey, staleEntry, 60, host);
             }
             throw error;
         }
@@ -154,7 +174,7 @@ export function withCache(handler: (req: Request) => Promise<NextResponse>, ttlS
             response.headers.set('X-Cache', 'MISS');
             response.headers.set('Cache-Control', buildCacheControl(ttlSeconds));
         } else if (!response.ok && staleEntry) {
-            return serveStale(cacheKey, staleEntry, 60);
+            return serveStale(cacheKey, staleEntry, 60, host);
         }
 
         return response;
@@ -168,8 +188,9 @@ function buildCacheControl(ttlSeconds: number): string {
     return 'private, no-store, max-age=0';
 }
 
-function serveStale(cacheKey: string, entry: L1Entry, retryTtl: number): NextResponse {
-    console.info(`[CACHE FALLBACK] ${cacheKey} - Returning stale data`);
+function serveStale(cacheKey: string, entry: L1Entry, retryTtl: number, host: string | null = null): NextResponse {
+    const hostTag = host ? `${host} ` : '';
+    console.info(`[CACHE FALLBACK] ${hostTag}${cacheKey} - Returning stale data`);
     const expiry = Date.now() + retryTtl * 1000;
     globalCache.set(cacheKey, { data: entry.data, expiry });
     if (useSQLite()) l2Write(cacheKey, entry.data, expiry).catch(() => {});

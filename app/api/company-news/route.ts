@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
-import { getCompanyConfig, resolveCompanyId } from '../../../lib/company-registry';
+import { getCompanyConfig, resolveCompanyId, getCompanyUpstreamHost } from '../../../lib/company-registry';
 import { fetchRSS, fetchScrape, fetchSNAPI, fetchGoogleNews } from '../../../lib/fetchers';
 import type { NewsArticle, CompanyFeedConfig } from '../../../lib/fetchers/types';
 
@@ -99,5 +99,17 @@ async function getHandler(request: Request) {
     }
 }
 
+function deriveUpstreamHost(req: Request): string | null {
+    const params = new URL(req.url).searchParams;
+    const rssParam = params.get('rss');
+    if (rssParam) {
+        try { return new URL(rssParam).hostname; } catch { return null; }
+    }
+    const raw = params.get('company')?.toLowerCase();
+    if (!raw) return null;
+    const cfg = getCompanyConfig(resolveCompanyId(raw));
+    return cfg ? getCompanyUpstreamHost(cfg) : null;
+}
+
 // Cache with 1hr TTL (individual company TTLs are aspirational for a future cache-per-key system)
-export const GET = withCache(getHandler, 3600);
+export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: deriveUpstreamHost });

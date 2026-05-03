@@ -45,4 +45,4 @@ async function getHandler() {
     }
 }
 
-export const GET = withCache(getHandler, 300); // Cache for 5 mins
+export const GET = withCache(getHandler, { ttlSeconds: 300, upstreamHost: 'services.swpc.noaa.gov' }); // Cache for 5 mins

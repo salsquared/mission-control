@@ -189,5 +189,5 @@ async function getHandler(request: Request) {
     }
 }
 
-// Cache responses for an hour
-export const GET = withCache(getHandler, 3600);
+// Cache responses for an hour. Primary upstream is arXiv (Semantic Scholar is secondary enrichment).
+export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'export.arxiv.org' });

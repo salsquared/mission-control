@@ -40,12 +40,22 @@ type HealthEntry = { ok: number; fallback: number; broken: number };
 type HealthMap = Record<string, HealthEntry>;
 
 function parseHostFromLog(message: string): string | null {
-    const m = message.match(/\[EXTERNAL API\].*?(\S+\.\S+)/);
-    if (m) {
-        try { return new URL(m[1].startsWith('http') ? m[1] : 'https://' + m[1]).hostname; } catch { return m[1]; }
+    // Cache events emitted by `withCache` carry the upstream host as the first token after the
+    // prefix when the route declared `upstreamHost`. Format: "[CACHE HIT] news.google.com /api/..."
+    // The cacheKey always starts with `/`, so a non-`/` token in that slot is the host.
+    const cache = message.match(/\[CACHE (?:HIT|HIT L2|MISS|FALLBACK)\] (\S+)/);
+    if (cache) {
+        const token = cache[1];
+        // CacheKeys always start with `/` (`url.pathname + ?query`), so any non-`/` token in
+        // this slot is the upstream host. Allows bare hostnames like "localhost" or "pulsar".
+        if (!token.startsWith('/')) return token;
     }
-    const fallback = message.match(/\[CACHE FALLBACK\] ([^\s]+)/);
-    if (fallback) return fallback[1];
+    // Direct external-fetch lines (emitted by lib/fetchers/* and inline route fetches) embed the
+    // upstream URL inline; pull it out and take the hostname.
+    const ext = message.match(/\[EXTERNAL API\].*?(\S+\.\S+)/);
+    if (ext) {
+        try { return new URL(ext[1].startsWith('http') ? ext[1] : 'https://' + ext[1]).hostname; } catch { return ext[1]; }
+    }
     return null;
 }
 
@@ -71,7 +81,10 @@ export const InternalView: React.FC = () => {
             const isBroken = msg.startsWith('[SCRAPER BROKEN]');
             const isOk = msg.startsWith('[EXTERNAL API]') || msg.startsWith('[CACHE HIT]') || msg.startsWith('[CACHE MISS]');
             if (!isFallback && !isBroken && !isOk) continue;
-            const host = parseHostFromLog(msg) ?? '(unknown)';
+            const host = parseHostFromLog(msg);
+            // Cache events without a parsed host are local-only routes (e.g. moon phase
+            // computation). They aren't "fetcher activity" in the upstream-health sense, so skip.
+            if (!host) continue;
             if (!map[host]) map[host] = { ok: 0, fallback: 0, broken: 0 };
             if (isFallback) map[host].fallback++;
             else if (isBroken) map[host].broken++;

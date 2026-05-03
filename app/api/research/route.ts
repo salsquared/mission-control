@@ -215,5 +215,5 @@ async function getHandler(request: Request) {
     }
 }
 
-// Cache aggregator responses for an hour
-export const GET = withCache(getHandler, 3600);
+// Aggregates HF + arXiv + Semantic Scholar; tag with the primary upstream.
+export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'huggingface.co' });

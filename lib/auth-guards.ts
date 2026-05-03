@@ -21,3 +21,17 @@ export function requireLocalOrigin(req: Request) {
   }
   return { ok: true as const } as const;
 }
+
+// LAN traffic skips auth (trusted network); anything reaching us through a public
+// hostname (e.g. the Cloudflare tunnel) must present a valid NextAuth session.
+export async function requireLocalOrSession(req: Request) {
+  const host = (req.headers.get('host') ?? '').split(':')[0].toLowerCase();
+  if (LOCAL_HOSTS.has(host)) {
+    return { ok: true as const } as const;
+  }
+  const session = await getServerSession(authOptions);
+  if (!session?.user?.email) {
+    return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) } as const;
+  }
+  return { ok: true as const, session } as const;
+}

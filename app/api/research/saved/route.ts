@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireLocalOrigin } from '@/lib/auth-guards';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 import { broadcastEvent } from '@/lib/events';
 
 export async function GET(request: Request) {
-    const guard = requireLocalOrigin(request);
+    const guard = await requireLocalOrSession(request);
     if ('error' in guard) return guard.error;
 
     try {
@@ -32,7 +32,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-    const guard = requireLocalOrigin(request);
+    const guard = await requireLocalOrSession(request);
     if ('error' in guard) return guard.error;
 
     try {
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-    const guard = requireLocalOrigin(request);
+    const guard = await requireLocalOrSession(request);
     if ('error' in guard) return guard.error;
 
     try {

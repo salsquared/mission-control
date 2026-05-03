@@ -45,11 +45,17 @@ export const MarketTop100Card: React.FC<MarketTop100CardProps> = ({
                             <div className="text-muted-foreground font-mono text-[10px] w-4 text-left">
                                 {coin.marketCapRank}
                             </div>
-                            <img
-                                src={coin.image}
-                                alt={coin.name}
-                                className="w-6 h-6 rounded-full shrink-0"
-                            />
+                            {coin.image ? (
+                                <img
+                                    src={coin.image}
+                                    alt={coin.name}
+                                    className="w-6 h-6 rounded-full shrink-0"
+                                />
+                            ) : (
+                                <div className="w-6 h-6 rounded-full shrink-0 bg-white/10 flex items-center justify-center text-[8px] text-white/60 font-bold">
+                                    {(coin.symbol ?? coin.name ?? '?').slice(0, 3)}
+                                </div>
+                            )}
                             <div className="flex flex-col min-w-0">
                                 <span className="text-white font-bold truncate max-w-[80px] sm:max-w-[120px]">
                                     {coin.name}

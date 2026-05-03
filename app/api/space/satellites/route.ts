@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 
+const UPSTREAM_HOST = 'celestrak.org';
+
 const SATELLITE_TTL_SECONDS = 7200; // Celestrak refreshes GROUP=active every 2 hours
 export const revalidate = SATELLITE_TTL_SECONDS;
 
@@ -81,4 +83,4 @@ async function getHandler() {
     }
 }
 
-export const GET = withCache(getHandler, SATELLITE_TTL_SECONDS);
+export const GET = withCache(getHandler, { ttlSeconds: SATELLITE_TTL_SECONDS, upstreamHost: UPSTREAM_HOST });

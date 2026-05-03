@@ -38,4 +38,4 @@ async function getHandler() {
     }
 }
 
-export const GET = withCache(getHandler, 3600); // 1 hour TTL
+export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'hn.algolia.com' }); // 1 hour TTL

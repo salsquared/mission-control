@@ -40,4 +40,4 @@ async function getHandler() {
     }
 }
 
-export const GET = withCache(getHandler, 3600);
+export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'api.spaceflightnewsapi.net' });

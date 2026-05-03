@@ -631,3 +631,14 @@ export function resolveCompanyId(input: string): string {
     const lower = input.toLowerCase();
     return ALIASES[lower] || lower;
 }
+
+/**
+ * Best-effort upstream hostname for a company config — used to tag cache log lines so the
+ * Internal Systems "Fetcher Health" card can group by real upstream. Returns null when the
+ * company uses a customFetcher whose URL isn't declared on the config.
+ */
+export function getCompanyUpstreamHost(config: CompanyFeedConfig): string | null {
+    const url = config.rssUrl || config.scrapeUrl || config.apiUrl;
+    if (!url) return null;
+    try { return new URL(url).hostname; } catch { return null; }
+}

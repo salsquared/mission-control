@@ -193,5 +193,5 @@ async function getHandler(request: Request) {
     }
 }
 
-// Cache historical responses for an hour (so it doesn't query the DB endlessly per refresh)
-export const GET = withCache(getHandler, 3600);
+// Cache historical responses for an hour. Primary upstream is arXiv (Semantic Scholar enrichment is secondary).
+export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'export.arxiv.org' });
