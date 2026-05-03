@@ -24,6 +24,8 @@ export PORT=3101
 # Check for restart flag
 if [ "$1" == "--restart" ] || [ "$1" == "restart" ]; then
   echo "Force restarting Mission Control..."
+  # Set restart guard so PATCH/POST /api/tasks returns 503 during the kill window
+  touch /Users/sal/salsquared/mission-control/.restart-flag
   pm2 delete mission-control 2>/dev/null || true
   if lsof -t -i:$PORT > /dev/null; then
     echo "Killing stale process on port $PORT..."

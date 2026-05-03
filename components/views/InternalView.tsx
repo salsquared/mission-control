@@ -202,6 +202,21 @@ export const InternalView: React.FC = () => {
                                 )}
                             </div>
                         </div>
+                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                            <span className="text-xs text-muted-foreground mb-1">Pulsar Status</span>
+                            <div className="flex items-center gap-2 mt-1">
+                                {sysMetrics ? (
+                                    <>
+                                        <div className={`w-3 h-3 rounded-full shrink-0 ${sysMetrics.pulsarOnline ? 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.5)]' : 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.5)]'}`} />
+                                        <span className={`text-sm font-medium ${sysMetrics.pulsarOnline ? 'text-emerald-400' : 'text-amber-400'}`}>
+                                            {sysMetrics.pulsarOnline ? 'Online' : 'Offline'}
+                                        </span>
+                                    </>
+                                ) : (
+                                    <span className="text-2xl font-mono text-white">--</span>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
             ),

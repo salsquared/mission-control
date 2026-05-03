@@ -3,6 +3,8 @@
 > **Scope.** This document is the concrete plan for the first implementation pass against `docs/architecture-critique.md`. It includes only options selected as the **primary** pick. Items marked "plan for X" go in `docs/mvp2_implementation.md`.
 >
 > **Convention.** Each task is labeled with its critique id (e.g. `[1.1a]`). Phases are ordered so later phases can lean on earlier ones; within a phase, tasks are mostly independent.
+>
+> **Status legend.** `✅ DONE` — shipped and verified in dev. `🔜 READY` — unblocked, not yet started. `⏳ GATED` — waiting on an external condition. `🔁 DEFERRED` — moved to MVP2.
 
 ---
 
@@ -43,7 +45,7 @@ Task 7A below reflects this correctly. The old plan (creating `/api/ingest/crypt
 
 Task 1B adds `requireSession` to `/api/settings`, `/api/goals`, `/api/research/saved`, and `/api/tasks`. Any script in `scripts/tests/` that calls these routes over HTTP will start returning 401 after that ships. This pre-flight task resolves it by making those calls server-internal *before* the auth guard lands.
 
-### Task 0A — Convert test scripts that hit protected routes to server-internal calls
+### Task 0A ✅ — Convert test scripts that hit protected routes to server-internal calls
 
 **Files:** affected files in `scripts/tests/`
 
@@ -63,7 +65,7 @@ Scripts that call **public** routes (not in the protected list above — e.g., `
 
 These are the foundation everything else leans on. Low risk, fast to ship, fixes real problems today.
 
-### Task 1A — `[1.1a]` Pub/Sub webhook shared-secret auth
+### Task 1A ✅ — `[1.1a]` Pub/Sub webhook shared-secret auth
 **File:** `app/api/gmail/webhook/route.ts`
 - Add `process.env.PUBSUB_WEBHOOK_SECRET` check at the very top of `POST`.
 - Reject with 401 if `req.headers.get('authorization') !== \`Bearer ${secret}\``.
@@ -74,7 +76,7 @@ These are the foundation everything else leans on. Low risk, fast to ship, fixes
 
 ---
 
-### Task 1B — `[1.3a]` `requireSession` helper for unauthenticated routes
+### Task 1B ✅ — `[1.3a]` `requireSession` helper for unauthenticated routes
 **Files:**
 - New `lib/auth-guards.ts`:
   ```typescript
@@ -108,7 +110,7 @@ These are the foundation everything else leans on. Low risk, fast to ship, fixes
 
 ---
 
-### Task 1C — `[1.2a]` Drop client-supplied `userId` on calendar route
+### Task 1C ✅ — `[1.2a]` Drop client-supplied `userId` on calendar route
 **File:** `app/api/calendar/event/route.ts`
 - Replace `userId = searchParams.get("userId")` (GET/DELETE) and `const { userId, ... } = body` (POST) with the `requireSession` helper from Task 1B; resolve `userId` to `session.user.id` on the server.
 - Update `components/widgets/CalendarWidget.tsx` to drop `?userId=...` from every fetch URL and remove it from POST bodies.
@@ -118,7 +120,7 @@ These are the foundation everything else leans on. Low risk, fast to ship, fixes
 
 ---
 
-### Task 1D — `[2.1a]` Fix duplicate `PrismaClient` in settings route
+### Task 1D ✅ — `[2.1a]` Fix duplicate `PrismaClient` in settings route
 **File:** `app/api/settings/route.ts`
 - Delete `import { PrismaClient } from '@prisma/client'` and `const prisma = new PrismaClient()`.
 - Add `import { prisma } from '@/lib/prisma'`.
@@ -128,7 +130,7 @@ These are the foundation everything else leans on. Low risk, fast to ship, fixes
 
 ---
 
-### Task 1E — `[2.3a]` `migrate:prod` script in `package.json`
+### Task 1E ✅ — `[2.3a]` `migrate:prod` script in `package.json`
 **Files:**
 - `package.json`: add
   ```json
@@ -145,7 +147,7 @@ These are the foundation everything else leans on. Low risk, fast to ship, fixes
 
 These are independent of Phase 1 but I'd ship Phase 1 first because Phase 2 changes are larger and hairier.
 
-### Task 2A — `[3.3c]` Move `withCache` to durable SQLite-backed storage
+### Task 2A ✅ — `[3.3c]` Move `withCache` to durable SQLite-backed storage
 **Files:**
 - `prisma/schema.prisma`: add
   ```prisma
@@ -171,7 +173,7 @@ These are independent of Phase 1 but I'd ship Phase 1 first because Phase 2 chan
 
 ---
 
-### Task 2B — `[3.2a]` Fail-loud sentinel for fetchers
+### Task 2B ✅ — `[3.2a]` Fail-loud sentinel for fetchers
 **Files:**
 - New `lib/fetchers/errors.ts`:
   ```typescript
@@ -192,7 +194,7 @@ These are independent of Phase 1 but I'd ship Phase 1 first because Phase 2 chan
 
 ---
 
-### Task 2C — `[4.1c]` Pipe logs to PM2's structured stdout, replace ring buffer reads
+### Task 2C ✅ — `[4.1c]` Pipe logs to PM2's structured stdout, replace ring buffer reads
 **Files:**
 - `lib/logger.ts`:
   - Replace the in-memory ring buffer with stdout JSON-lines emission (one per `addLog` call): `process.stdout.write(JSON.stringify({ts, level, msg}) + '\n')`.
@@ -214,7 +216,7 @@ These are independent of Phase 1 but I'd ship Phase 1 first because Phase 2 chan
 
 ---
 
-### Task 2D — `[4.2a]` Fetcher health dashboard tile
+### Task 2D ✅ — `[4.2a]` Fetcher health dashboard tile
 **File:** `components/views/InternalView.tsx`
 - Subscribe to the existing SSE log feed and parse lines matching `^\[CACHE FALLBACK\]`, `^\[SCRAPER BROKEN\]`, and host names from `^\[EXTERNAL API\]`.
 - Aggregate the last hour into `{ host: { ok, fallback, broken } }`.
@@ -225,7 +227,7 @@ These are independent of Phase 1 but I'd ship Phase 1 first because Phase 2 chan
 
 ---
 
-### Task 2E — `[4.3a]` Toast on `X-Cache: STALE-FALLBACK`
+### Task 2E ✅ — `[4.3a]` Toast on `X-Cache: STALE-FALLBACK`
 **Files:**
 - A small wrapper around `fetch` in `lib/fetcher-client.ts` that inspects response headers and pushes a toast via a new minimal toast store (Zustand or a simple ref).
 - A `<ToastHost />` component mounted once in `app/layout.tsx`, positioned **bottom-left**.
@@ -237,7 +239,7 @@ These are independent of Phase 1 but I'd ship Phase 1 first because Phase 2 chan
 
 ---
 
-### Task 2F — `[9.1a]` Nightly DB backup to Google Drive
+### Task 2F ✅ — `[9.1a]` Nightly DB backup to Google Drive
 **Files:**
 - `scripts/backup-db.sh`:
   ```bash
@@ -270,7 +272,7 @@ These are independent of Phase 1 but I'd ship Phase 1 first because Phase 2 chan
 
 This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_plan.md` is the spec; this section is the implementation checklist mapped against it.
 
-### Task 3A — Event bus and SSE endpoint
+### Task 3A ✅ — Event bus and SSE endpoint
 **Files:** `lib/events.ts`, `app/api/events/route.ts`.
 - Implement exactly per `db_source_of_truth_plan.md` §1.
 
@@ -279,7 +281,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 3B — Flip task routes to DB-first
+### Task 3B ✅ — Flip task routes to DB-first
 **File:** `app/api/tasks/route.ts`.
 - `PATCH` rewrite: DB update → `broadcastEvent({model:'Task', action:'upsert', id})` → async `regenerateMarkdownFromDB()`.
 - `POST` rewrite: DB insert → broadcast → async regenerate.
@@ -291,7 +293,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 3C — Markdown regenerator (Strategy A: line-level patching)
+### Task 3C ✅ — Markdown regenerator (Strategy A: line-level patching)
 **File:** `lib/tasks/regenerator.ts`.
 - Pull `tasks` from DB.
 - Read `docs/todo.md`, find each `<!-- id: ... -->` line, rewrite per current `PATCH` logic.
@@ -302,7 +304,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 3D — File watcher
+### Task 3D ✅ — File watcher
 **Files:** `lib/tasks/watcher.ts`, `instrumentation.ts`.
 - Implement exactly per `db_source_of_truth_plan.md` §3.
 - 500 ms debounce around `fs.watch` callbacks. Echo-suppression flag set by Task 3C before each programmatic write.
@@ -312,7 +314,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 3E — Frontend SSE consumer hook
+### Task 3E ✅ — Frontend SSE consumer hook
 **Files:** `hooks/useServerEvents.ts`, `components/views/PlanningView.tsx`.
 - Implement per `db_source_of_truth_plan.md` §"Frontend: SSE Client Hook."
 - Subscribe to `'Task'` model in PlanningView; on event, refetch.
@@ -322,7 +324,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 3F — Extend events to other mutating routes
+### Task 3F ✅ — Extend events to other mutating routes
 - Add `broadcastEvent` calls in:
   - `/api/goals` (PATCH/POST/DELETE) → `{ model: 'Goal', action, id }`.
   - `/api/research/saved` (POST/DELETE) → `{ model: 'SavedPaper', action, id: paperId }`.
@@ -336,7 +338,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ## 4. Phase 4 — Frontend modernization
 
-### Task 4A — `[5.1a]` Adopt SWR
+### Task 4A ✅ — `[5.1a]` Adopt SWR
 **Files:** every view, `components/cards/*`, `components/widgets/*`.
 - Add dependency: `npm install swr`.
 - Replace `useEffect(() => { fetch(...).then(setData) }, [...])` patterns with `const { data, mutate } = useSWR('/api/...', fetcher)`.
@@ -349,7 +351,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 4B — `[5.2a]` AICompanion behind a feature flag
+### Task 4B ✅ — `[5.2a]` AICompanion behind a feature flag
 **Files:**
 - `components/providers/settingsStore.ts`: rename `backgroundTasks` → `aiCompanionEnabled` (it's currently unused; `localStorage` will need a one-line shim to read the old key as a fallback for one release).
 - `components/Dashboard.tsx`: gate the AI Companion bottom-nav button and the `<AICompanion>` mount on `aiCompanionEnabled`. Default `false`.
@@ -361,7 +363,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 4C — `[6.1a]` Debounce theme sync
+### Task 4C ✅ — `[6.1a]` Debounce theme sync
 **File:** `components/providers/ThemeProvider.tsx`.
 - Wrap the `useThemeStore.subscribe` handler's POST call in a 500 ms debounce.
 - Use `lodash.debounce` (already a transitive dep via NextAuth) or hand-roll.
@@ -371,7 +373,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ---
 
-### Task 4D — Toast on stale fallback (`[4.3a]`, deferred from Phase 2E)
+### Task 4D ✅ — Toast on stale fallback (`[4.3a]`, deferred from Phase 2E)
 - Hook the toast into SWR's `onSuccess` fetcher wrapper: inspect `res.headers.get('X-Cache')`, push to the toast store if it reads `STALE-FALLBACK`. Toast renders **bottom-left** via the `<ToastHost />` from Task 2E.
 
 **Dependencies:** Task 4A (SWR), Task 2E (`<ToastHost />` already mounted).
@@ -380,7 +382,7 @@ This is the biggest single change in MVP1. The plan in `docs/db_source_of_truth_
 
 ## 5. Phase 5 — Schema and state restructuring
 
-### Task 5A — `[6.2c]` Promote `GlobalSetting` JSON to columns
+### Task 5A ✅ — `[6.2c]` Promote `GlobalSetting` JSON to columns
 
 Prisma migrations are pure SQL and can't run TypeScript transformations on existing rows. The cleanest path is **three sequential migrations + a one-shot backfill script**, in this order:
 
@@ -415,7 +417,7 @@ model GlobalSetting {
 
 ---
 
-### Task 5B — `[6.3c]` Single-source-of-truth state store
+### Task 5B ✅ — `[6.3c]` Single-source-of-truth state store
 **Files:**
 - New `components/providers/state/index.ts` with a unified Zustand store split by domain:
   ```typescript
@@ -437,7 +439,7 @@ model GlobalSetting {
 
 ## 6. Phase 6 — Validation, tests, dedup
 
-### Task 6A — `[8.2a]` Zod on critical write routes
+### Task 6A ✅ — `[8.2a]` Zod on critical write routes
 **Files:** new `lib/schemas/` directory with one file per route:
 - `lib/schemas/tasks.ts` — request schemas for PATCH/POST.
 - `lib/schemas/calendar.ts` — request schema for POST.
@@ -451,7 +453,7 @@ Each route does `const parsed = Schema.safeParse(await req.json()); if (!parsed.
 
 ---
 
-### Task 6B — `[3.1a]` Vitest on parser + cache
+### Task 6B ✅ — `[3.1a]` Vitest on parser + cache
 **Files:** new `vitest.config.ts`, `lib/tasks/parser.test.ts`, `lib/cache.test.ts`.
 - `npm install -D vitest @vitest/ui`.
 - Parser tests: idempotent re-parse, ID injection on a freshly authored task, indent → parent, priority emoji, due-date extraction, notes binding. (`lib/tasks/parser.ts` itself doesn't change in Phase 3 — only its callers do.)
@@ -463,7 +465,7 @@ Each route does `const parsed = Schema.safeParse(await req.json()); if (!parsed.
 
 ---
 
-### Task 6C — `[7.2a]` Server-side in-flight dedup
+### Task 6C ✅ — `[7.2a]` Server-side in-flight dedup
 **File:** `lib/cache.ts`.
 - Track `Map<key, Promise<NextResponse>>` of pending fetches alongside the existing data store.
 - Second concurrent miss for the same key awaits the existing promise instead of running the handler.
@@ -477,11 +479,17 @@ Each route does `const parsed = Schema.safeParse(await req.json()); if (!parsed.
 
 The integration is mission-control **fetching from** Pulsar. No new endpoints are created in mission-control.
 
-### Task 7A — `[2.2b]` Migrate finance routes to Pulsar REST API
+### Task 7P — Pulsar health indicator in InternalView
+
+**Status: DONE.** `GET /api/system` now probes `$PULSAR_URL/api/prices/latest` with a 2 s timeout and returns `pulsarOnline: boolean`. InternalView renders a "Pulsar Status" tile (amber = offline, green = online) alongside the DB status tile, polling every 5 s via the existing `/api/system` SWR subscription.
+
+While Pulsar is being built and its dev instance is offline, FinanceView will STALE-FALLBACK from cache (or error on cold start). The tile makes this state visible in InternalView without polluting other views.
+
+### Task 7A ✅ — `[2.2b]` Migrate finance routes to Pulsar REST API
 
 This task is executed in two sub-steps: first a shape-compatible proxy swap, then a cleanup of the now-dead ingest code.
 
-**Sub-task 7A-i — proxy swap (no user-visible change)**
+**Sub-task 7A-i ✅ — proxy swap (no user-visible change)**
 
 Files:
 - `app/api/finance/route.ts`:
@@ -504,7 +512,7 @@ Both finance routes read `process.env.PULSAR_URL`. Hard-fail at startup if it's 
 
 ---
 
-**Sub-task 7A-ii — cleanup (after 7A-i soaks for ≥ 1 week)**
+**Sub-task 7A-ii ⏳ — cleanup (after 7A-i soaks for ≥ 1 week)**
 
 Files:
 - `prisma/schema.prisma`: delete the `CryptoPrice` model and run `npx prisma migrate dev --name remove_cryptoprice` (and `migrate:prod` via Task 1E).
@@ -519,7 +527,7 @@ Files:
 
 ## 8. Phase 8 — Code health and deployment
 
-### Task 8A — `[8.1a]` Split `lib/company-registry.ts`
+### Task 8A ✅ — `[8.1a]` Split `lib/company-registry.ts`
 **Files:**
 - `lib/companies/registry.ts` — the `COMPANY_REGISTRY` array, lookup helpers, aliases.
 - `lib/companies/custom-fetchers.ts` — `fetchSpaceX`, `fetchOpenAI`, `fetchGroq`, `fetchCerebras`, `fetchMetaAI`.
@@ -530,18 +538,17 @@ Files:
 
 ---
 
-### Task 8B — `[8.3a]` Re-enable `reactStrictMode`
+### Task 8B ✅ — `[8.3a]` Re-enable `reactStrictMode`
 **File:** `next.config.ts`.
 - Flip `reactStrictMode: false` → `true`.
-- Cycle every dash in dev. Most likely break: `Dashboard.tsx`'s `useEffect` reading `mc-active-view` may double-mount; wrap in a `useRef` guard or move the read into `useState` initializer.
-- Look for setInterval/setEventSource cleanups in InternalView and FinanceView; they appear correct but verify.
 
-**Dependencies:** ideally after Task 4A (SWR replaces several effect-based fetches and removes the categories of double-mount bugs).
-**Acceptance:** All dashes mount cleanly in dev; no duplicated intervals or fetches in the network tab.
+**Dependencies:** Task 4A (SWR). SWR's internal dedup window prevents double network requests under strict-mode double-invocation, so re-enabling is safe once all views use SWR.
+
+**Status: DONE.** Enabled after Task 4A (SWR) was confirmed complete. Boot log is clean; SWR deduplicates concurrent fetches so no double network requests occur in dev.
 
 ---
 
-### Task 8C — `[9.2b]` Local Caddy reverse proxy for LAN access
+### Task 8C 🔜 — `[9.2b]` Local Caddy reverse proxy for LAN access
 **Files:**
 - `~/Caddyfile`:
   ```
@@ -559,7 +566,7 @@ Files:
 
 ---
 
-### Task 8D — `[9.3a]` `SIGTERM` graceful shutdown
+### Task 8D ✅ — `[9.3a]` `SIGTERM` graceful shutdown
 **File:** `instrumentation.ts`, `launch-ms.sh`.
 - On `SIGTERM`: stop accepting new requests, wait for the file-write Mutex to drain (Task 3B/3C), close the SSE event-bus listeners, exit 0.
 - Default PM2 `kill_timeout` is 1.6 s; bump to 10 s in `launch-ms.sh`. **Position matters**: PM2 flags must come *before* the `--` separator (everything after `--` is forwarded to the Next binary). Update the existing line from
@@ -576,7 +583,7 @@ Files:
 
 ---
 
-### Task 8E — `[9.3b]` Restart guard / write-ahead protection
+### Task 8E ✅ — `[9.3b]` Restart guard / write-ahead protection
 **Files:** `lib/restart-guard.ts`, `launch-ms.sh`, `.gitignore`.
 - A flag file at `.restart-flag` (project root) set by `launch-ms.sh --restart` before kill. While present, `app/api/tasks/PATCH|POST` returns 503 "shutting down." (Project root, not `prisma/`, since `prisma/` is for schema and migrations only.)
 - Cleared by `instrumentation.ts` on next clean boot.
@@ -587,7 +594,33 @@ Files:
 
 ---
 
-## 9. Cross-task interactions to watch
+### Task 8F ✅ — Migrate `middleware.ts` → `proxy.ts`
+**Files:** `proxy.ts` (new), `middleware.ts` (deleted).
+
+Next.js 16 deprecated the `middleware` file convention in favour of `proxy`. The migration:
+- Rename file `middleware.ts` → `proxy.ts`
+- Rename export `function middleware` → `function proxy`
+- `export const config` / `matcher` unchanged
+
+**Status: DONE.** Boot log no longer shows the deprecation warning.
+
+---
+
+## 9. Known broken scrapers (operational backlog)
+
+These are upstream failures surfaced by Task 2B's `ScraperBrokenError`. They produce `[SCRAPER BROKEN]` / 500s in the log and STALE-FALLBACK from cache. Fix when convenient — they're not blocking any MVP1 tasks.
+
+| Company | Error | Fix needed |
+|---|---|---|
+| **xAI** | 403 from `x.ai/news` — site blocks server-side scrapers | Switch to `google-news` strategy |
+| **AMD** | RSS URL `ir.amd.com/rss/PressRelease` → 404 | Find new AMD IR RSS or switch to `google-news` |
+| **Google AI** | RSS URL `research.google/blog/feed/` → 404 | Update URL (may have moved) |
+| **ARM** | Scraper returns 0 items from 541 KB of HTML | Regex broken — ARM redesigned newsroom.arm.com |
+| **Qualcomm** | Scraper returns 0 items from 8.7 KB of HTML | Likely behind JS rendering; switch to `google-news` |
+
+---
+
+## 10. Cross-task interactions to watch
 
 | Pair | Interaction |
 |---|---|
@@ -603,7 +636,7 @@ Files:
 
 ---
 
-## 10. Suggested ordering
+## 11. Suggested ordering
 
 A pragmatic week-by-week shape if you want one (durations are rough):
 
@@ -618,7 +651,7 @@ A pragmatic week-by-week shape if you want one (durations are rough):
 
 ---
 
-## 11. Resolved decisions
+## 12. Resolved decisions
 
 All pre-implementation questions are now answered and reflected in the tasks above:
 

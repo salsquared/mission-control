@@ -42,10 +42,10 @@ export async function POST(req: NextRequest) {
     // Fetch the new messages based on the history log
     const historyRes = await gmail.users.history.list({
       userId: "me",
-      startHistoryId: historyId,
+      startHistoryId: String(historyId),
     });
 
-    const messagesAdded = historyRes.data.history?.flatMap(h => h.messagesAdded || []) || [];
+    const messagesAdded = historyRes.data.history?.flatMap((h: any) => h.messagesAdded || []) || [];
     
     for (const msgAdded of messagesAdded) {
       if (!msgAdded.message || !msgAdded.message.id) continue;

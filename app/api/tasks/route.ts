@@ -5,6 +5,7 @@ import { broadcastEvent } from '@/lib/events';
 import { regenerateMarkdownFromDB } from '@/lib/tasks/regenerator';
 import { syncTasksFromFile } from '@/lib/tasks/parser';
 import { TaskPatchSchema, TaskPostSchema } from '@/lib/schemas/tasks';
+import { isRestartFlagSet } from '@/lib/restart-guard';
 import path from 'path';
 
 class Mutex {
@@ -40,6 +41,9 @@ export async function GET(req: Request) {
 }
 
 export async function PATCH(req: Request) {
+    if (isRestartFlagSet()) {
+        return NextResponse.json({ error: 'Server is restarting, please retry in a moment.' }, { status: 503 });
+    }
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
 
@@ -78,6 +82,9 @@ export async function PATCH(req: Request) {
 }
 
 export async function POST(req: Request) {
+    if (isRestartFlagSet()) {
+        return NextResponse.json({ error: 'Server is restarting, please retry in a moment.' }, { status: 503 });
+    }
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
 

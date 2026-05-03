@@ -10,7 +10,7 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
-  reactStrictMode: false,
+  reactStrictMode: true,
   webpack: (config, { dev, isServer }) => {
     if (dev && !isServer) {
       let ignored = [];

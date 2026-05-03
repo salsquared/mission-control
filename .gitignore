@@ -56,3 +56,4 @@ public/swe-worker-*.js
 /prisma/*.db-journal
 *.db
 *.db-journal
+.restart-flag

@@ -81,6 +81,19 @@ export async function GET() {
             console.warn("DB connection check failed:", e);
         }
 
+        let pulsarOnline = false;
+        const pulsarUrl = process.env.PULSAR_URL;
+        if (pulsarUrl) {
+            try {
+                const res = await fetch(`${pulsarUrl}/api/prices/latest`, {
+                    signal: AbortSignal.timeout(2000),
+                });
+                pulsarOnline = res.status < 500;
+            } catch {
+                pulsarOnline = false;
+            }
+        }
+
         const cache = getCacheStats();
 
         return NextResponse.json({
@@ -89,6 +102,7 @@ export async function GET() {
             maxAllocatedRamGB: cachedMaxMemSysLimitGB,
             uptimeFormatted,
             dbConnected,
+            pulsarOnline,
             cache
         });
     } catch (error) {
