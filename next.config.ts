@@ -11,6 +11,7 @@ const withSerwist = withSerwistInit({
 
 const nextConfig: NextConfig = {
   reactStrictMode: true,
+  distDir: isDev ? '.next-dev' : '.next',
   webpack: (config, { dev, isServer }) => {
     if (dev && !isServer) {
       let ignored = [];
@@ -26,6 +27,7 @@ const nextConfig: NextConfig = {
         ...config.watchOptions,
         ignored: [
           ...ignored,
+          '**/.next-dev/**',
           '**/prisma/*.db',
           '**/prisma/*.db-journal',
           '**/public/sw.js',
