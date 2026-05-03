@@ -1,14 +1,29 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 
-export const revalidate = 3600; // Cache for 1 hour
+const SATELLITE_TTL_SECONDS = 7200; // Celestrak refreshes GROUP=active every 2 hours
+export const revalidate = SATELLITE_TTL_SECONDS;
 
 async function getHandler() {
     try {
         console.info('[EXTERNAL API] Fetching from Celestrak (Active Satellites)...');
-        const res = await fetch("https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json");
+        const res = await fetch(
+            "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json",
+            {
+                headers: {
+                    'User-Agent': 'mission-control/1.0 (salsalcedo4321@gmail.com)',
+                },
+            }
+        );
 
         if (!res.ok) {
+            // Celestrak returns 403 with body "GP data has not updated since your last successful
+            // download..." when we re-request unchanged data. Throw so withCache serves the stale
+            // entry (the data really is unchanged) instead of returning a 500.
+            const body = await res.text().catch(() => '');
+            if (res.status === 403 && body.includes('has not updated')) {
+                console.info('[EXTERNAL API] Celestrak: data unchanged since last download, falling back to cache');
+            }
             throw new Error(`Failed to fetch active satellites: ${res.status} ${res.statusText}`);
         }
 
@@ -66,4 +81,4 @@ async function getHandler() {
     }
 }
 
-export const GET = withCache(getHandler, 3600);
+export const GET = withCache(getHandler, SATELLITE_TTL_SECONDS);

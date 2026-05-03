@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { requireSession } from '@/lib/auth-guards';
+import { requireLocalOrigin } from '@/lib/auth-guards';
 import { broadcastEvent } from '@/lib/events';
 import { regenerateMarkdownFromDB } from '@/lib/tasks/regenerator';
 import { syncTasksFromFile } from '@/lib/tasks/parser';
@@ -21,7 +21,7 @@ const writeMutex = new Mutex();
 const DEFAULT_MD_FILE = path.join(process.cwd(), 'docs', 'todo.md');
 
 export async function GET(req: Request) {
-    const guard = await requireSession();
+    const guard = requireLocalOrigin(req);
     if ('error' in guard) return guard.error;
 
     try {
@@ -44,7 +44,7 @@ export async function PATCH(req: Request) {
     if (isRestartFlagSet()) {
         return NextResponse.json({ error: 'Server is restarting, please retry in a moment.' }, { status: 503 });
     }
-    const guard = await requireSession();
+    const guard = requireLocalOrigin(req);
     if ('error' in guard) return guard.error;
 
     const unlock = await writeMutex.lock();
@@ -85,7 +85,7 @@ export async function POST(req: Request) {
     if (isRestartFlagSet()) {
         return NextResponse.json({ error: 'Server is restarting, please retry in a moment.' }, { status: 503 });
     }
-    const guard = await requireSession();
+    const guard = requireLocalOrigin(req);
     if ('error' in guard) return guard.error;
 
     const unlock = await writeMutex.lock();
