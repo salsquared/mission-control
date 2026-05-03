@@ -7,7 +7,7 @@
     "build": "next build --webpack",
     "start": "NODE_OPTIONS='--max-old-space-size=1024' next start -p 3101",
     "lint": "eslint",
-    "migrate:prod": "NODE_ENV=production npx prisma migrate deploy",
+    "migrate:prod": "DATABASE_URL=file:./prod.db npx prisma migrate deploy",
     "test": "vitest run",
     "test:watch": "vitest"
   },

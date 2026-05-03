@@ -10,6 +10,40 @@
 
 ## 0. Carry-overs and assumptions from MVP1
 
+**MVP1 is complete.** All 34 task-units shipped. The two items below were deferred from MVP1 and are the first things to close in MVP2.
+
+### Task 0A 🔜 — Drop `CryptoPrice` schema (MVP1 Task 7A-ii)
+
+`app/api/finance/route.ts` has zero references to `prisma` or `CryptoPrice` — the proxy swap (7A-i) was clean. This is pure housekeeping.
+
+**Files:**
+- `prisma/schema.prisma`: delete the `CryptoPrice` model.
+- Run `npx prisma migrate dev --name remove_cryptoprice` then `npm run migrate:prod`.
+- Delete `scripts/seed-crypto.ts` and `scripts/ingest-btc-history.ts`.
+
+**Gate:** Pulsar's dev instance must be serving real data (CoinGecko + Mempool sources active) so you can verify FinanceView renders correctly before dropping the fallback table.
+
+**Acceptance:** `npx prisma studio` shows no `CryptoPrice` table. `grep -r "cryptoPrice" app/ lib/ scripts/` returns zero matches.
+
+---
+
+### Task 0B 🔜 — Fix broken scrapers
+
+Surfaced by MVP1 Task 2B's `ScraperBrokenError`. All produce `[SCRAPER BROKEN]` in the log and STALE-FALLBACK from cache. Fix by switching to `google-news` strategy in `lib/companies/registry.ts`.
+
+| Company | Error | Fix |
+|---|---|---|
+| **xAI** | 403 from `x.ai/news` | Switch to `google-news` strategy |
+| **AMD** | RSS `ir.amd.com/rss/PressRelease` → 404 | Switch to `google-news` strategy |
+| **Google AI** | RSS `research.google/blog/feed/` → 404 | Update URL or switch to `google-news` |
+| **ARM** | 541 KB HTML, regex matches nothing | Regex update or `google-news` |
+| **Qualcomm** | 8.7 KB HTML (likely JS-rendered), 0 articles | Switch to `google-news` strategy |
+
+**Acceptance:** Zero `[SCRAPER BROKEN]` lines in InternalView for these five companies after a cache bust.
+
+---
+
+**MVP1 scaffolding assumptions:**
 - Shared-secret auth (`1.1a`) is in place on `/api/gmail/webhook`. MVP2 upgrades it to OIDC.
 - `requireSession` helper (`1.3a`) is centralized in `lib/auth-guards.ts` — extends naturally for service tokens.
 - The durable SQLite-backed cache from `[3.3c]` is live. MVP2 unifies it with the client.

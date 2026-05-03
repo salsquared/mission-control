@@ -132,14 +132,17 @@ These are the foundation everything else leans on. Low risk, fast to ship, fixes
 
 ### Task 1E ✅ — `[2.3a]` `migrate:prod` script in `package.json`
 **Files:**
-- `package.json`: add
+- `package.json`:
   ```json
-  "migrate:prod": "DATABASE_URL=file:./prisma/prod.db prisma migrate deploy"
+  "migrate:prod": "DATABASE_URL=file:./prod.db npx prisma migrate deploy"
   ```
-- `launch-ms.sh`: insert `npm run migrate:prod` **inside the cold-start branch only** — i.e., inside the `else` branch where `pm2 start` runs, just before `pm2 start`. Don't run migrations on the warm-path (port already bound, just opening Chrome) since the server already migrated when it booted.
+  > **Path note:** Prisma resolves SQLite `file:./` paths relative to `prisma/schema.prisma`, not the project root. `file:./prod.db` → `prisma/prod.db`. The earlier draft said `file:./prisma/prod.db` which resolves to `prisma/prisma/prod.db` (double directory) and fails with `P1003`. The `.env.production` value `DATABASE_URL="file:./prod.db"` is the reference: always match that exact form.
+- `launch-ms.sh`: `npm run migrate:prod` runs inside the cold-start branch (inside the `else` block before `pm2 start`). Warm-path (port already bound) skips migrations.
+
+**Prod.db baseline (one-time, already done):** `prod.db` was originally bootstrapped via `prisma db push`, so it had tables but no `_prisma_migrations` history. Applied the three pending migrations manually via `sqlite3`, then registered them with `prisma migrate resolve --applied <name>` for each. After this, `npm run migrate:prod` runs cleanly and `prisma migrate status` reports "Database schema is up to date."
 
 **Dependencies:** none.
-**Acceptance:** Running `./launch-ms.sh` (cold start) after a schema change applies the migration to `prod.db` automatically. Running `./launch-ms.sh` against an already-up server (warm path) does NOT re-run migrations. `./launch-ms.sh --restart` re-runs migrations because the restart branch deletes the PM2 process first, falling into the cold-start branch.
+**Acceptance:** `./launch-ms.sh` cold start applies pending migrations automatically; warm path skips them.
 
 ---
 
@@ -512,15 +515,9 @@ Both finance routes read `process.env.PULSAR_URL`. Hard-fail at startup if it's 
 
 ---
 
-**Sub-task 7A-ii ⏳ — cleanup (after 7A-i soaks for ≥ 1 week)**
+**Sub-task 7A-ii 🔁 — cleanup (moved to MVP2)**
 
-Files:
-- `prisma/schema.prisma`: delete the `CryptoPrice` model and run `npx prisma migrate dev --name remove_cryptoprice` (and `migrate:prod` via Task 1E).
-- `scripts/seed-crypto.ts`, `scripts/ingest-btc-history.ts`: delete. Pulsar's own `scripts/` directory and `POST /api/ingest/:sourceId` handle any future backfills.
-- `app/api/finance/route.ts`: remove the now-dead `import { prisma }` if no other Prisma calls remain.
-- `lib/prisma.ts`: no changes needed — other models are unaffected.
-
-**Acceptance:** `npx prisma studio` shows no `CryptoPrice` table. `grep -r "cryptoPrice" app/ lib/ scripts/` returns zero matches.
+The `app/api/finance/route.ts` has zero references to `prisma` or `CryptoPrice` — the proxy swap was clean. The cleanup (drop the `CryptoPrice` model, delete seed scripts) is deferred to MVP2 Phase 0 alongside the broken-scraper fixes. No code risk; just housekeeping that makes sense to bundle with the Pulsar stabilisation work.
 
 ---
 
@@ -548,21 +545,27 @@ Files:
 
 ---
 
-### Task 8C 🔜 — `[9.2b]` Local Caddy reverse proxy for LAN access
+### Task 8C ✅ — `[9.2b]` Local Caddy reverse proxy for LAN access
 **Files:**
-- `~/Caddyfile`:
+- `~/.config/caddy/Caddyfile` (already in place):
   ```
   mc.local:443 {
     tls internal
     reverse_proxy 127.0.0.1:3101
   }
   ```
-- Add a `mc.local` entry in `/etc/hosts` on every device that should reach it (Mac mini, phone via local DNS or manual entry).
-- Update `launch-ms.sh` Chrome launch URL to `https://mc.local`.
-- `NEXTAUTH_URL` must match `https://mc.local` for cookies to work; document in `.env`.
+- `launch-ms.sh` — Caddy is started automatically if installed and not running; `APP_URL` is set to `https://mc.local` when Caddy is available, falling back to `http://localhost:$PORT` if not.
 
-**Dependencies:** none, but Task 1A through 1C should ship first so the LAN-exposed app isn't openly editable.
-**Acceptance:** Phone on the same Wi-Fi resolves `mc.local`, accepts the locally-issued cert (after a one-time profile install), and loads the dashboard.
+**One-time setup (run once per machine, requires sudo):**
+```bash
+brew install caddy
+sudo caddy trust           # installs Caddy's local CA into the macOS keychain
+sudo sh -c 'echo "127.0.0.1 mc.local" >> /etc/hosts'
+# Add to .env:  NEXTAUTH_URL=https://mc.local
+```
+On LAN devices (phone, other Macs): add `<mac-mini-ip> mc.local` to their hosts file or local DNS resolver, then install the Caddy root cert (exported from macOS Keychain → transfer to device).
+
+**Status: DONE (code).** Pending one-time `brew install caddy` + `sudo caddy trust` + hosts entry on the Mac mini. `launch-ms.sh` is self-contained — it falls back gracefully to `http://localhost:3101` until Caddy is installed.
 
 ---
 
@@ -606,17 +609,12 @@ Next.js 16 deprecated the `middleware` file convention in favour of `proxy`. The
 
 ---
 
-## 9. Known broken scrapers (operational backlog)
+## 9. Deferred to MVP2
 
-These are upstream failures surfaced by Task 2B's `ScraperBrokenError`. They produce `[SCRAPER BROKEN]` / 500s in the log and STALE-FALLBACK from cache. Fix when convenient — they're not blocking any MVP1 tasks.
+The following items were identified during MVP1 but are not blocking. They are tracked in `docs/mvp2_implementation.md` Phase 0:
 
-| Company | Error | Fix needed |
-|---|---|---|
-| **xAI** | 403 from `x.ai/news` — site blocks server-side scrapers | Switch to `google-news` strategy |
-| **AMD** | RSS URL `ir.amd.com/rss/PressRelease` → 404 | Find new AMD IR RSS or switch to `google-news` |
-| **Google AI** | RSS URL `research.google/blog/feed/` → 404 | Update URL (may have moved) |
-| **ARM** | Scraper returns 0 items from 541 KB of HTML | Regex broken — ARM redesigned newsroom.arm.com |
-| **Qualcomm** | Scraper returns 0 items from 8.7 KB of HTML | Likely behind JS rendering; switch to `google-news` |
+- **Task 7A-ii** — drop `CryptoPrice` schema model and delete seed/ingest scripts (housekeeping after Pulsar stabilises).
+- **Broken scrapers** — xAI (403), AMD RSS (404), Google AI RSS (404), ARM regex rot, Qualcomm JS-rendered page. All produce `[SCRAPER BROKEN]` errors surfaced by Task 2B; fix by switching to `google-news` strategy.
 
 ---
 

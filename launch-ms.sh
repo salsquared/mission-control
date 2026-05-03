@@ -21,6 +21,21 @@ fi
 # Set the port to 3101 to avoid conflicting with active development on port 4101
 export PORT=3101
 
+# ---------------------------------------------------------------------------
+# Caddy reverse proxy — managed as a brew service (auto-starts at login).
+# One-time setup (do once on the Mac mini):
+#   ln -sf ~/.config/caddy/Caddyfile /opt/homebrew/etc/Caddyfile
+#   brew services start caddy
+#   sudo caddy trust        # installs local CA into macOS Keychain
+#   sudo sh -c 'echo "127.0.0.1 mc.local" >> /etc/hosts'
+#   Add to .env:  NEXTAUTH_URL=https://mc.local
+# ---------------------------------------------------------------------------
+if pgrep -x caddy > /dev/null; then
+  APP_URL="https://mc.local"
+else
+  APP_URL="http://localhost:$PORT"
+fi
+
 # Check for restart flag
 if [ "$1" == "--restart" ] || [ "$1" == "restart" ]; then
   echo "Force restarting Mission Control..."
@@ -37,8 +52,7 @@ fi
 if nc -z localhost $PORT || nc -z 127.0.0.1 $PORT || nc -z ::1 $PORT; then
   echo "Mission Control server is already running on port $PORT."
   echo "Opening Chrome App..."
-  # Use http://localhost:$PORT to let Chrome handle IPv4/IPv6 resolution dynamically
-  open -n -W -a "Google Chrome" --args --app="http://localhost:$PORT"
+  open -n -W -a "Google Chrome" --args --app="$APP_URL"
 else
   # Ensure PM2 log rotation is configured (idempotent)
   pm2 install pm2-logrotate 2>/dev/null || true
@@ -62,9 +76,9 @@ else
   # Wait an extra few seconds to make sure the server is ready to accept HTTP traffic
   sleep 3
 
-  # Launch Google Chrome in "App" mode pointing to localhost instead of IP string
+  # Launch Google Chrome in "App" mode.
   # -W makes the script wait until this specific Chrome instance is closed!
-  open -n -W -a "Google Chrome" --args --app="http://localhost:$PORT"
+  open -n -W -a "Google Chrome" --args --app="$APP_URL"
 
   # Note: 
   # We NO LONGER kill the PM2 server when the Chrome App window closes.
