@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useRef } from "react";
 import useSWR from "swr";
 import { Section } from "../Section";
 import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus } from "lucide-react";
@@ -34,6 +34,12 @@ export const ApplicationsView: React.FC = () => {
     const { data: session, status } = useSession();
     const [isCalendarAdding, setIsCalendarAdding] = useState(false);
 
+    // Track first-time authentication so background session revalidations
+    // (window focus, periodic refetch, cross-device signin) don't unmount
+    // the whole subtree when status briefly flips back through "loading".
+    const hasEverAuthedRef = useRef(false);
+    if (status === "authenticated") hasEverAuthedRef.current = true;
+
     const { data: appsData, mutate: mutateApps, isLoading: loading } = useSWR<any>(
         session ? '/api/applications' : null,
         fetcher
@@ -43,7 +49,7 @@ export const ApplicationsView: React.FC = () => {
     useServerEvents('Application', useCallback(() => { mutateApps(); }, [mutateApps]));
     useServerEvents('CalendarEvent', useCallback(() => { mutateApps(); }, [mutateApps]));
 
-    if (status === "loading") {
+    if (status === "loading" && !hasEverAuthedRef.current) {
         return (
             <div className="w-full h-full flex items-center justify-center">
                 <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />

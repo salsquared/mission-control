@@ -15,8 +15,11 @@ const isDev = process.env.NODE_ENV !== 'production';
 
 const serwist = new Serwist({
     precacheEntries: self.__SW_MANIFEST,
-    skipWaiting: !isDev,
-    clientsClaim: !isDev,
+    // Don't take over open clients on activation — the new SW becomes
+    // active on the user's next deliberate refresh, which avoids the
+    // "page reloaded itself" UX hit on multi-device sessions.
+    skipWaiting: false,
+    clientsClaim: false,
     navigationPreload: !isDev,
     runtimeCaching: isDev ? [] : defaultCache,
 });

@@ -12,6 +12,7 @@ interface CalendarEvent {
 
 export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boolean) => void, injectedTasks?: CalendarEvent[]}> = ({isAdding, setIsAdding, injectedTasks = []}) => {
     const { data: session } = useSession();
+    const userId = (session?.user as any)?.id ?? null;
     const [events, setEvents] = useState<CalendarEvent[]>([]);
     const [loading, setLoading] = useState(false);
 
@@ -36,11 +37,13 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
         }
     };
 
+    // Key on the stable user id, not the session object reference, so
+    // background revalidations don't re-fire fetchEvents.
     useEffect(() => {
-        if (session) {
+        if (userId) {
             fetchEvents();
         }
-    }, [session]);
+    }, [userId]);
 
     const handleCreate = async () => {
         if (!newEvent.summary || !newEvent.start || !newEvent.end) return;
