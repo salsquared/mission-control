@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
-import { prisma } from '@/lib/prisma';
 import crypto from 'crypto';
+import { replaceTasksFromFile } from '@/lib/repositories/tasks';
 
 interface ParsedTask {
     id: string;
@@ -155,43 +155,8 @@ export async function syncTasksFromFile(filePath: string) {
             await fs.writeFile(filePath, lines.join('\n'));
         }
         
-        const taskIds = tasks.map(t => t.id);
-        
-        // Batch database update
-        await prisma.$transaction([
-            // 1. Delete tasks that no longer exist in this file
-            prisma.task.deleteMany({
-                where: {
-                    filePath,
-                    id: { notIn: taskIds }
-                }
-            }),
-            // 2. Upsert each parsed task
-            ...tasks.map(t => prisma.task.upsert({
-                where: { id: t.id },
-                create: {
-                    id: t.id,
-                    text: t.text,
-                    status: t.status,
-                    priority: t.priority,
-                    dueDate: t.dueDate,
-                    filePath: t.filePath,
-                    lineNumber: t.lineNumber,
-                    parentId: t.parentId,
-                    notes: t.notes || null
-                },
-                update: {
-                    text: t.text,
-                    status: t.status,
-                    priority: t.priority,
-                    dueDate: t.dueDate,
-                    lineNumber: t.lineNumber,
-                    parentId: t.parentId,
-                    notes: t.notes || null
-                }
-            }))
-        ]);
-        
+        await replaceTasksFromFile(filePath, tasks);
+
         return tasks;
         
     } catch (e) {

@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { prisma } from '@/lib/prisma';
+import { findAllTasks } from '@/lib/repositories/tasks';
 
 const TODO_FILE = path.join(process.cwd(), 'docs', 'todo.md');
 
@@ -51,7 +51,7 @@ function renderTaskLine(task: {
 export async function regenerateMarkdownFromDB(filePath = TODO_FILE): Promise<void> {
     suppressNextFileChange();
 
-    const tasks = await prisma.task.findMany();
+    const tasks = await findAllTasks();
     const content = await fs.readFile(filePath, 'utf8');
     const lines = content.split('\n');
 
