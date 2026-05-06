@@ -10,15 +10,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model CryptoPrice {
-  id        String   @id @default(cuid())
-  coinId    String   // e.g. "bitcoin"
-  price     Float
-  timestamp DateTime @default(now())
-
-  @@index([coinId, timestamp])
-}
-
 model SavedPaper {
   id          String   @id @default(cuid())
   paperId     String   @unique

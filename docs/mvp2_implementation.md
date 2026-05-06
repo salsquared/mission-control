@@ -10,36 +10,28 @@
 
 ## 0. Carry-overs and assumptions from MVP1
 
-**MVP1 is complete.** All 34 task-units shipped. The two items below were deferred from MVP1 and are the first things to close in MVP2.
+**MVP1 is complete.** All 34 task-units shipped. Task 0A (the MVP1 7A-ii cleanup) is now also done. Task 0B (broken scrapers) was reclassified as backlog rather than an MVP2 blocker — see below.
 
-### Task 0A 🔜 — Drop `CryptoPrice` schema (MVP1 Task 7A-ii)
+### Task 0A ✅ — Drop `CryptoPrice` schema (MVP1 Task 7A-ii)
 
-`app/api/finance/route.ts` has zero references to `prisma` or `CryptoPrice` — the proxy swap (7A-i) was clean. This is pure housekeeping.
+`app/api/finance/route.ts` had zero references to `prisma` or `CryptoPrice` — the MVP1 7A-i proxy swap was clean. This was pure housekeeping.
 
 **Files:**
-- `prisma/schema.prisma`: delete the `CryptoPrice` model.
-- Run `npx prisma migrate dev --name remove_cryptoprice` then `npm run migrate:prod`.
-- Delete `scripts/seed-crypto.ts` and `scripts/ingest-btc-history.ts`.
+- `prisma/schema.prisma`: deleted the `CryptoPrice` model.
+- Migration: `prisma/migrations/<ts>_remove_cryptoprice/migration.sql` (`DROP TABLE "CryptoPrice"`). Generated via `prisma migrate diff` and applied with `migrate deploy` to both `dev.db` and `prod.db` because `migrate dev` blocks non-interactively on destructive changes.
+- Deleted `scripts/seed-crypto.ts` and `scripts/ingest-btc-history.ts`.
 
-**Gate:** Pulsar's dev instance must be serving real data (CoinGecko + Mempool sources active) so you can verify FinanceView renders correctly before dropping the fallback table.
-
-**Acceptance:** `npx prisma studio` shows no `CryptoPrice` table. `grep -r "cryptoPrice" app/ lib/ scripts/` returns zero matches.
+**Status:** Done. Both dev and prod DBs verified clean (`sqlite3 ... .tables` shows no `CryptoPrice`); `grep` of `app/`, `lib/`, `scripts/`, `components/`, `prisma/schema.prisma` returns zero `cryptoPrice`/`CryptoPrice` matches; `prisma generate` ran cleanly.
 
 ---
 
-### Task 0B 🔜 — Fix broken scrapers
+### Task 0B 🔁 — Broken scrapers (moved to backlog)
 
-Surfaced by MVP1 Task 2B's `ScraperBrokenError`. All produce `[SCRAPER BROKEN]` in the log and STALE-FALLBACK from cache. Fix by switching to `google-news` strategy in `lib/companies/registry.ts`.
+Five fetchers surface `[SCRAPER BROKEN]` via MVP1 Task 2B's sentinel and STALE-FALLBACK from cache: xAI (403), AMD (RSS 404), Google AI (RSS 404), ARM (regex rot), Qualcomm (JS-rendered).
 
-| Company | Error | Fix |
-|---|---|---|
-| **xAI** | 403 from `x.ai/news` | Switch to `google-news` strategy |
-| **AMD** | RSS `ir.amd.com/rss/PressRelease` → 404 | Switch to `google-news` strategy |
-| **Google AI** | RSS `research.google/blog/feed/` → 404 | Update URL or switch to `google-news` |
-| **ARM** | 541 KB HTML, regex matches nothing | Regex update or `google-news` |
-| **Qualcomm** | 8.7 KB HTML (likely JS-rendered), 0 articles | Switch to `google-news` strategy |
+**Decision:** Not in scope for MVP2. Switching these to `google-news` was the original suggestion, but Google News surfaces *third-party stories about* the companies rather than the companies' own posts, which defeats the purpose of these tiles (canonical first-party announcements). These five companies are scrape-resistant by design (Cloudflare on x.ai, JS-only listings on Qualcomm/ARM, removed feeds on AMD/Google AI) — the right answer is per-company investigation (working URL, ToS-friendly scrape, or accept the gap), not a blanket fallback.
 
-**Acceptance:** Zero `[SCRAPER BROKEN]` lines in InternalView for these five companies after a cache bust.
+**Status:** Backlog item, not a Phase-0 architectural change. Track in `docs/todo.md` if the gaps become user-visible enough to address.
 
 ---
 
@@ -316,6 +308,6 @@ These don't block MVP1 — pick them when MVP2 is about to start.
    - Future notification digests (`docs/todo.md` lines 80–93) — implemented in scheduler.
    - Crypto ingest stays in Pulsar — leave it there.
 
-2. **Phase F (unified cache):** custom abstraction vs. adopting TanStack Query everywhere and accepting the bundle cost? TanStack is more battle-tested; the custom path is lighter. **Decide this before Phase C ships** — TanStack would replace the bespoke `api-client.ts`, so the typed-client work changes shape depending on the call.
+2. **Phase F (unified cache): RESOLVED — adopt TanStack Query.** Decided 2026-05-06. Phase C's typed-client work is shaped around TanStack from the start: SWR (introduced in MVP1 Task 4A) is replaced incrementally as Phase C lands, queries are keyed as TanStack tuples (`['tasks']`, `['research', topic]`), and the SSE event-bus integration moves from `useSWR().mutate()` to `queryClient.invalidateQueries({ queryKey: [model] })`. Phase F unifies server `withCache` + TanStack rather than building a bespoke abstraction.
 
 3. **Phase G (adapter plugin):** compile-time discovery (explicit `import` index) vs. runtime glob (`fs.readdir + dynamic import`)? Recommend compile-time — harder to mis-wire, easier to type-check, no surprises in prod.
