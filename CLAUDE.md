@@ -84,6 +84,7 @@ Article count is capped by `MAX_NEWS_ARTICLES` in `lib/constants.ts`.
 ## Documentation conventions
 
 - Node-based graphs (architecture diagrams, flowcharts, dependency graphs, etc.) must use Mermaid syntax — never ASCII art.
+- Inside Mermaid node/edge labels, use `<br/>` for line breaks — **not** `\n`. The renderer used to preview these docs does not interpret `\n` inside labels and will render them literally. Parens inside edge labels (`|...|`) must be quoted (`|"text()"|`); parens inside quoted node labels (`["text()"]`) are fine.
 
 ## Conventions and gotchas
 

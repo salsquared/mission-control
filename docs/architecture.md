@@ -406,3 +406,421 @@ The key invariants that make it work:
 - **A registry, not a switch statement**: company news is a config table, not a tree of `if (company === ...)`. New sources are config; new shapes are code.
 
 The most material open work is the **Gmail webhook auth gap**, the **stub AICompanion**, and the absence of any **automated tests**. Most other items in §14 are improvements rather than risks; together they describe a system that is comfortably correct for its current single-user, localhost deployment but would need meaningful hardening to face a wider blast radius.
+
+---
+
+## 17. Event State and Lifecycle Management
+
+This section documents the real-time event system and state lifecycle introduced during MVP1. It covers the server-side event bus, the SSE transport, the file-watcher echo loop, the unified client state store, and the stale-data toast pipeline.
+
+---
+
+### 17.1 Overview
+
+The system has **two independent event-driven pipelines** that together keep the UI consistent without polling:
+
+1. **Server event bus → SSE → SWR invalidation** — mutations from any route (or an external Pub/Sub push) are broadcast to all connected SSE clients, which trigger SWR's `mutate()` to refetch from the server.
+2. **File watcher → DB sync → broadcast** — edits to `docs/todo.md` in an external editor are detected by a Node `fs.watch`, synced to the DB, and broadcast as a `Task` invalidation event.
+
+```mermaid
+graph LR
+    subgraph Server
+        A["Route PATCH/POST/DELETE"] -->|broadcastEvent| B["lib/events.ts<br/>(globalThis fan-out)"]
+        W["fs.watch<br/>(docs/todo.md)"] -->|debounce 500ms| P["syncTasksFromFile<br/>(parser → DB)"]
+        P -->|broadcastEvent Task.invalidate| B
+        B -->|fan-out to all listeners| SSE["/api/events<br/>SSE stream"]
+    end
+    subgraph Browser
+        SSE -->|EventSource| H["useServerEvents(model)"]
+        H -->|"onInvalidate()"| M["SWR mutate()"]
+        M -->|refetch| API["/api/..."]
+    end
+```
+
+---
+
+### 17.2 Server event bus (`lib/events.ts`)
+
+The event bus is a **`globalThis`-backed `Set<EventListener>`**. Using `globalThis` is the same pattern as the logger ring buffer and in-process cache — it means the listener set survives Next.js HMR across hot reloads without losing connected SSE clients.
+
+```typescript
+// Shape of every event
+interface ServerEvent {
+    model: 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting';
+    action: 'upsert' | 'delete' | 'invalidate';
+    id?: string;        // omitted for 'invalidate' (whole model refresh)
+    timestamp: number;
+}
+```
+
+`broadcastEvent(event)` iterates the set synchronously — it's fire-and-forget. Subscribers that throw will surface as uncaught exceptions; the set is not cleared on error. This is fine given a single-user load.
+
+`subscribeToEvents(listener)` returns an unsubscribe function used by the SSE route to clean up when the client disconnects.
+
+---
+
+### 17.3 SSE endpoint (`/api/events`)
+
+`app/api/events/route.ts` opens a `ReadableStream` and:
+
+1. Immediately enqueues a `: connected` SSE comment so the browser `EventSource` doesn't time out waiting for the first byte.
+2. Calls `subscribeToEvents` and enqueues every `ServerEvent` as a `data:` frame carrying the JSON-serialized event.
+3. Sets a 30-second `: heartbeat` interval to prevent proxy/load-balancer idle-timeouts from closing the connection.
+4. Listens on `req.signal` (AbortSignal) to clear the heartbeat and unsubscribe when the connection closes.
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant SSE as /api/events
+    participant Bus as lib/events
+
+    Browser->>SSE: GET /api/events
+    SSE->>Bus: subscribeToEvents(listener)
+    SSE-->>Browser: ": connected"
+    loop every 30s
+        SSE-->>Browser: ": heartbeat"
+    end
+    Bus->>SSE: listener(event) [on broadcastEvent]
+    SSE-->>Browser: "data: {model,action,id,timestamp}"
+    Browser->>SSE: connection close (tab close / nav)
+    SSE->>Bus: unsubscribe()
+    SSE->>SSE: clearInterval(heartbeat)
+```
+
+There is **no reconnection logic on the server** — `EventSource` reconnects automatically (browser default back-off). On reconnect, the `useServerEvents` hook re-opens `EventSource('/api/events')` and the server sends `: connected` again; any mutations that occurred during the gap are not replayed, but SWR's `onFocus` revalidation and the next mutation event will close the gap.
+
+---
+
+### 17.4 Frontend hook (`hooks/useServerEvents.ts`)
+
+```typescript
+useServerEvents(model: ServerEventModel, onInvalidate: () => void)
+```
+
+The hook opens one `EventSource('/api/events')` per mount, filtered by `model`. It uses a `ref` to hold the latest `onInvalidate` callback so the effect closure never goes stale — the `EventSource` is opened once and the callback can change freely without reopening the stream.
+
+```mermaid
+flowchart TD
+    Mount["Component mounts"] --> Open["new EventSource('/api/events')"]
+    Open --> Listen["es.onmessage → parse JSON"]
+    Listen --> Check{event.model<br/>=== model?}
+    Check -->|yes| Call["onInvalidateRef.current()"]
+    Check -->|no| Discard["ignore"]
+    Call --> Mutate["SWR mutate() → refetch"]
+    Unmount["Component unmounts"] --> Close["es.close()"]
+```
+
+**Current subscribers:**
+
+| View / Component | model | SWR key invalidated |
+|---|---|---|
+| `PlanningView` | `Task` | `/api/tasks` |
+| `PlanningView` | `Goal` | `/api/goals` |
+| `ApplicationsView` | `Application` | `/api/applications` |
+| `ApplicationsView` | `CalendarEvent` | `/api/applications` (re-fetches both) |
+| `SavedPapersOverlay` | `SavedPaper` | papers SWR key |
+
+---
+
+### 17.5 Broadcast sites
+
+Every mutating route calls `broadcastEvent` after a successful DB write:
+
+| Route | Method(s) | Model | Action |
+|---|---|---|---|
+| `app/api/tasks/route.ts` | PATCH, POST | `Task` | `upsert` |
+| `app/api/goals/route.ts` | POST, PATCH, DELETE | `Goal` | `upsert` / `delete` |
+| `app/api/research/saved/route.ts` | POST, DELETE | `SavedPaper` | `upsert` / `delete` |
+| `app/api/calendar/event/route.ts` | POST, DELETE | `CalendarEvent` | `upsert` / `delete` |
+| `app/api/gmail/webhook/route.ts` | POST (Pub/Sub push) | `Application` | `upsert` |
+| `lib/tasks/watcher.ts` | fs.watch callback | `Task` | `invalidate` |
+
+`invalidate` (used only by the file watcher) means "something about this model changed — refetch everything." `upsert`/`delete` carry an `id` but the frontend currently treats all three the same way (calls `mutate()`).
+
+---
+
+### 17.6 Task file watcher and echo suppression
+
+The file watcher introduces a **potential write loop**: when the UI mutates a task, the route writes `docs/todo.md`, the watcher fires, and without suppression the watcher would re-sync the file back to the DB and broadcast again.
+
+The echo-suppression flag in `lib/tasks/regenerator.ts` breaks this loop:
+
+```mermaid
+sequenceDiagram
+    participant UI
+    participant Route as /api/tasks PATCH
+    participant Regen as regenerator.ts
+    participant Watcher as watcher.ts
+    participant DB
+
+    UI->>Route: PATCH {id, status}
+    Route->>DB: task.update(...)
+    Route->>Route: broadcastEvent(Task.upsert)
+    Route->>Regen: regenerateMarkdownFromDB()
+    Regen->>Regen: suppressNextFileChange() → _suppressNext=true
+    Regen->>Regen: fs.writeFile(todo.md, ...)
+    Regen-->>Route: done
+    Note over Watcher: fs.watch fires (500ms debounce)
+    Watcher->>Regen: consumeSuppressFlag()
+    Regen-->>Watcher: true (was suppressed)
+    Watcher->>Watcher: return early — no DB sync, no broadcast
+```
+
+Conversely, when the user edits `docs/todo.md` directly in their editor:
+
+```mermaid
+sequenceDiagram
+    participant Editor
+    participant Watcher as watcher.ts
+    participant Parser as tasks/parser
+    participant DB
+    participant Bus as lib/events
+
+    Editor->>Editor: save todo.md
+    Note over Watcher: fs.watch fires (500ms debounce)
+    Watcher->>Watcher: consumeSuppressFlag() → false (external edit)
+    Watcher->>Parser: syncTasksFromFile(filePath)
+    Parser->>DB: upsert tasks
+    Watcher->>Bus: broadcastEvent(Task.invalidate)
+    Bus->>SSE: fan-out to all listeners
+    SSE->>Browser: data: {model:"Task", action:"invalidate"}
+    Browser->>Browser: SWR mutate() → refetch /api/tasks
+```
+
+The 500 ms debounce in the watcher absorbs rapid successive saves (e.g. a formatter or auto-save bouncing the mtime) and collapses them into a single sync.
+
+---
+
+### 17.7 Unified client state store
+
+The consolidated `useAppStore` (at `components/providers/state/index.ts`) has **three logical slices with different persistence policies**:
+
+```mermaid
+graph TD
+    subgraph useAppStore["useAppStore (Zustand)"]
+        T["theme slice<br/>isDarkMode, viewHues,<br/>viewHuesEnabled, dashOrder,<br/>dashTitles"]
+        D["devicePrefs slice<br/>autoResearch,<br/>aiCompanionEnabled"]
+        A["activeViewId<br/>viewScreenshots"]
+    end
+
+    T -->|"POST /api/settings<br/>(debounced 500ms)"| DB[("GlobalSetting<br/>in SQLite")]
+    DB -->|"GET /api/settings<br/>on mount"| T
+
+    D -->|"localStorage<br/>'app-state'"| LS[("localStorage")]
+    A -->|"localStorage<br/>'app-state'"| LS
+
+    DB -.->|"cross-device sync<br/>via LAN"| OtherDevice["Other LAN device"]
+```
+
+**Persistence policy per field:**
+
+| Field | Persisted where | Rationale |
+|---|---|---|
+| `isDarkMode`, `viewHues`, `viewHuesEnabled`, `dashOrder`, `dashTitles` | `/api/settings` → SQLite | Cross-device: customizations follow the user across LAN devices |
+| `autoResearch`, `aiCompanionEnabled` | `localStorage` under `app-state` | Per-device: background behaviors should only be active on one device at a time |
+| `activeViewId`, `viewScreenshots` | `localStorage` under `app-state` | Per-device: each device remembers its own last-viewed dash and its own screenshot cache |
+| `defaultDashTitles`, `activeViewId` (in-memory read) | not persisted via Zustand | Derived from `BASE_DASHES`; re-computed on every `syncAvailableDashes` call |
+
+The two legacy files (`themeStore.ts`, `settingsStore.ts`) are now thin re-exports: `export { useThemeStore, useAppStore } from './state'`. They exist only for backward compatibility with existing consumers and will be removed once all callsites are updated to import from `@/components/providers/state`.
+
+---
+
+### 17.8 Settings sync lifecycle (`ThemeProvider`)
+
+`ThemeProvider` owns the **hydration and persistence** of the `theme` slice. It mounts once at the app root (inside `app/layout.tsx`).
+
+```mermaid
+sequenceDiagram
+    participant Browser
+    participant TP as ThemeProvider
+    participant Store as useAppStore
+    participant API as /api/settings
+
+    Browser->>TP: mount
+    TP->>API: GET /api/settings
+    API-->>TP: {isDarkMode, viewHues, dashOrder, ...}
+    TP->>Store: setState(globalData)
+    TP->>TP: setMounted(true)
+    Note over TP: Now subscribes to store changes
+    Store->>TP: subscribe callback fires on any change
+    TP->>TP: diff getSyncableState(prev, next)
+    alt changed
+        TP->>API: POST /api/settings (debounced 500ms)
+    end
+    Browser->>Browser: CSS: --theme-hue = viewHues[activeViewId]
+```
+
+Key details:
+- The subscription only starts **after** `mounted = true` — this prevents the initial `setState(globalData)` hydration call from immediately firing a POST back to the server with the just-loaded data.
+- Only the five "cross-device" fields are diffed and synced: `isDarkMode`, `viewHues`, `viewHuesEnabled`, `dashOrder`, `dashTitles`. `activeViewId` and `viewScreenshots` are kept in `localStorage` only and are deliberately excluded from the sync payload.
+- The 500 ms debounce collapses rapid bursts (e.g. the user dragging a hue slider) into one network request.
+
+---
+
+### 17.9 Stale-data toast pipeline
+
+When `withCache` serves a cached response after an upstream failure, it sets `X-Cache: STALE-FALLBACK` on the response. The `fetcher` wrapper in `lib/fetcher-client.ts` inspects this header and pushes a warning toast:
+
+```mermaid
+graph LR
+    SWR["useSWR('/api/...', fetcher)"] --> F["fetcher(url)"]
+    F --> Fetch["fetch(url)"]
+    Fetch --> Cache["withCache handler"]
+    Cache -->|upstream error| SF["X-Cache: STALE-FALLBACK"]
+    SF --> F
+    F -->|header detected| TS["toastStore.push({type:'warning'})"]
+    TS --> TH["ToastHost (bottom-left)"]
+    TH --> User["amber toast: 'Stale data: /api/...'"]
+    TH -->|5s auto-dismiss| Gone["toast removed"]
+```
+
+`toastStore` is a plain class singleton (not Zustand) with a minimal pub/sub pattern. `ToastHost` is mounted once in `app/layout.tsx` and subscribes to it. Toasts auto-dismiss after 5 seconds and can be dismissed early via the × button.
+
+---
+
+### 17.10 Complete event lifecycle: end-to-end example
+
+A user checks off a task in `PlanningView`:
+
+```mermaid
+sequenceDiagram
+    participant UI as PlanningView
+    participant SWR as useSWR (tasks)
+    participant Route as PATCH /api/tasks
+    participant DB as SQLite
+    participant Regen as regenerator.ts
+    participant File as docs/todo.md
+    participant Watcher as watcher.ts
+    participant Bus as lib/events
+    participant SSE as /api/events SSE
+    participant Hook as useServerEvents('Task')
+
+    UI->>Route: PATCH {id, status: 'DONE'} (optimistic update in UI)
+    Route->>DB: task.update({status:'DONE'})
+    Route->>Bus: broadcastEvent(Task.upsert, id)
+    Route->>Regen: regenerateMarkdownFromDB()
+    Regen->>Regen: _suppressNext = true
+    Regen->>File: fs.writeFile (line patched: [x])
+    Route-->>UI: 200 OK
+    Bus->>SSE: fan-out event
+    SSE-->>Hook: data: {model:'Task', action:'upsert'}
+    Hook->>SWR: mutate() → refetch /api/tasks
+    SWR-->>UI: updated task list (now authoritative from DB)
+    Note over Watcher: fs.watch fires (500ms later)
+    Watcher->>Regen: consumeSuppressFlag() → true
+    Watcher->>Watcher: suppressed — exits early
+```
+
+The optimistic update in the UI provides instant feedback. The SWR `mutate()` triggered by the SSE event then replaces it with the authoritative DB value, typically within 100–200 ms of the PATCH completing. The file update is a side effect of the DB mutation, not a cause — and the suppress flag ensures the watcher doesn't create a second round-trip.
+
+---
+
+## 18. Glossary
+
+Web-dev and systems terminology used throughout this document. Alphabetical.
+
+- **AbortSignal** — Standard `AbortController.signal` that fires when a request or operation is cancelled. The SSE endpoint listens on `req.signal` to clean up the heartbeat and unsubscribe when the browser closes the connection.
+
+- **Backfill** — Populating a data store with historical records that weren't captured live (e.g., `scripts/seed-crypto.ts`).
+
+- **Broadcast** — Sending one event to multiple subscribers at once. `broadcastEvent` iterates a `Set` of registered listeners and calls each with the event.
+
+- **Debounce** — Collapsing a burst of repeated calls into a single trailing call. Used by the file watcher (500 ms — coalesces rapid editor saves) and by `ThemeProvider`'s settings sync (500 ms — collapses keystroke-rate state changes into one POST).
+
+- **Echo suppression** — A flag set before a programmatic file write so a subsequent file-watch event doesn't loop the change back into the DB. `suppressNextFileChange()` raises it; `consumeSuppressFlag()` reads-and-clears it.
+
+- **EventSource** — Browser API for consuming Server-Sent Events. Auto-reconnects on disconnect; one-way (server → client).
+
+- **Fan-out** — Distributing one input to many outputs. The event bus fans one `broadcastEvent` call out to every connected SSE client.
+
+- **Fetcher** — In SWR, the function that turns a cache key (URL) into data. `lib/fetcher-client.ts` exports the project's standard fetcher, which inspects `X-Cache` headers and surfaces stale-fallback toasts.
+
+- **globalThis** — Standard global-object reference shared across Node, browsers, and workers. Used here to attach state (cache, logger, event bus) that must survive Hot Module Replacement.
+
+- **Heartbeat** — A periodic no-op message on a long-lived connection to defeat idle-timeouts. The SSE endpoint sends `: heartbeat` every 30 s.
+
+- **HMR (Hot Module Replacement)** — Next.js's dev-mode mechanism that swaps individual modules without a full page reload. Module-level state is recreated on each swap, so anything that needs persistence in dev attaches to `globalThis`.
+
+- **Hydration** — Initial syncing of client state from a server source. `ThemeProvider` hydrates the `theme` slice by GET-ing `/api/settings` on mount, then sets `mounted=true` and starts subscribing to changes.
+
+- **In-flight dedup** — Server-side de-duplication of concurrent identical requests. Two callers that miss the same cache key share one upstream fetch instead of stampeding the source (Task 6C).
+
+- **Invalidate** — Mark cached or derived state as stale so it gets refetched. The `Task.invalidate` event from the file watcher tells SWR to refetch `/api/tasks` wholesale rather than carrying a specific id.
+
+- **Listener** — A callback registered with a pub/sub bus. `subscribeToEvents(fn)` adds `fn` to the `__EVENT_LISTENERS` set on `globalThis`.
+
+- **LL2 (Launch Library 2)** — The Space Devs' rocket-launch metadata API consumed by `/api/space/launches`.
+
+- **LRU (Least Recently Used)** — A common cache-eviction policy. `withCache` does *not* implement LRU — it has no eviction at all (see §14).
+
+- **Middleware** — Next.js's request interceptor running before route handlers. Mission Control's only does request logging, scoped by the `matcher` to `/api/*`. (In Next 16 the file is `proxy.ts`.)
+
+- **Migration** — A versioned schema change. Prisma migrations are SQL files under `prisma/migrations/`, applied with `prisma migrate dev` (writes) or `prisma migrate deploy` (prod).
+
+- **Model** — In the event bus, an enum tag (`Task` | `Goal` | `SavedPaper` | `Application` | `CalendarEvent` | `Setting`) identifying which Prisma table the event pertains to. Subscribers filter by model so each view only refetches when its data changed.
+
+- **Monkey-patching** — Replacing a method on an object at runtime to add behavior. `lib/logger.ts` monkey-patches `console.log/info/warn/error` so every log line lands in the in-app log buffer for free.
+
+- **Mutate / Mutation** — A write operation (POST/PATCH/DELETE) that changes server state. In SWR, `mutate()` is also the client-side function that invalidates a cache key and triggers a refetch.
+
+- **Mutex** — A lock that serializes access to a shared resource. The `docs/todo.md` writer uses an in-memory `Mutex` so concurrent PATCHes don't interleave their writes.
+
+- **NextAuth** — Authentication library for Next.js. Handles OAuth flows, session cookies, and DB persistence via the Prisma adapter.
+
+- **OAuth2 / OIDC** — Delegated-authorization protocol (OAuth2) plus an identity layer on top (OpenID Connect). The user authorizes Google on Google's site; Google issues tokens that mission-control uses on the user's behalf.
+
+- **Offline access** — `access_type=offline` in the OAuth request. Asks Google for a long-lived **refresh token** so the server can mint new short-lived access tokens without the user being present.
+
+- **OGS (open-graph-scraper)** — npm package that fetches a URL and parses its `<meta property="og:*">` tags. Used to enrich news/research items with hero images and titles.
+
+- **Optimistic UI / optimistic update** — Updating the UI before the server confirms a mutation, on the assumption it will succeed. Reverted on error. PlanningView's task checkboxes do this; the SSE-triggered `mutate()` then replaces the optimistic value with the authoritative one.
+
+- **Pub/Sub** — Publish/subscribe pattern: publishers emit events without knowing who consumes them; subscribers register interest. Both `lib/events.ts` (in-process) and Google Cloud Pub/Sub (Gmail webhook) follow this pattern.
+
+- **PM2** — Node.js process manager. Keeps the production server alive across crashes and reboots; logs accessed via `pm2 logs mission-control`.
+
+- **Prisma** — TypeScript ORM. Generates a typed client from `schema.prisma` that mission-control uses for all DB access.
+
+- **Projection** — A read model derived from another source of truth. The `Task` table is a projection of `docs/todo.md`; the markdown is canonical and the table is rebuildable from it.
+
+- **PWA (Progressive Web App)** — A web app installable to the home screen with offline support via a service worker. Configured here via `@serwist/next`.
+
+- **ReadableStream** — Web standard for incremental response bodies. The SSE endpoint constructs one whose `start(controller)` enqueues bytes as events arrive.
+
+- **Ref (React)** — A mutable container that doesn't cause re-renders when its `.current` changes. `useServerEvents` uses a ref to hold the latest `onInvalidate` callback so the EventSource effect doesn't reopen on every render.
+
+- **Refresh token** — Long-lived OAuth credential used to mint new short-lived **access tokens**. Stored on the `Account` row by NextAuth's Prisma adapter.
+
+- **Ring buffer** — A fixed-size circular buffer; new entries push out the oldest. The logger keeps the most recent 500 lines this way.
+
+- **Scope (OAuth)** — A capability requested at consent time (e.g., `gmail.readonly`). Adding a new scope requires re-consenting.
+
+- **Service worker** — A browser-managed background script that intercepts network requests for offline support and caching. Disabled in dev to avoid stale-cache reload loops.
+
+- **Slice (state)** — A logical grouping of fields and actions inside a single store. `useAppStore` has three slices: `theme` (synced to API), `devicePrefs` (localStorage), and ephemeral UI fields.
+
+- **SNAPI (Spaceflight News API)** — Third-party feed of space-industry press. Used as a fallback for prime contractors and agencies that don't publish their own RSS.
+
+- **SSE (Server-Sent Events)** — A simple server→client streaming protocol over HTTP. The server keeps the connection open and pushes `data:` frames and `:` comment frames separated by blank lines. One-way and lighter than WebSockets; the browser surfaces it as `EventSource`.
+
+- **Stale-fallback** — Mission Control's term for serving the last successful cached response when an upstream fetch fails. Marked on the response by `X-Cache: STALE-FALLBACK`.
+
+- **Stale-while-revalidate** — Cache directive (and pattern) that serves stale data immediately while triggering an async refresh in the background. The library `SWR` is named after it.
+
+- **Subscribe / Subscription** — Registering interest in events. On the server, `subscribeToEvents(fn)` adds a listener to the in-process bus. On the client, `useServerEvents(model, cb)` subscribes to the SSE stream and filters by model.
+
+- **SWR** — Frontend data-fetching library named after the stale-while-revalidate cache directive. `useSWR(key, fetcher)` returns `{data, mutate}` and dedupes concurrent requests for the same key across components.
+
+- **Thundering herd** — Many concurrent callers all missing the same cache key and stampeding the upstream simultaneously. Mitigated by in-flight dedup.
+
+- **Transaction** — An atomic group of DB writes that succeed or fail together. The task sync uses `prisma.$transaction` to make "delete missing + upsert all" atomic.
+
+- **TTL (Time To Live)** — How long a cache entry is considered fresh before it's treated as expired. `withCache` accepts a TTL in seconds.
+
+- **Webhook** — An HTTP endpoint that accepts pushes from an external service. `/api/gmail/webhook` is the Pub/Sub push target.
+
+- **WebSocket** — Bidirectional persistent connection over HTTP. Pulsar uses one for `/ws/prices`; mission-control currently does not.
+
+- **Zod** — Runtime schema-validation library. `lib/schemas/*` defines Zod schemas that route handlers use to reject malformed payloads (Task 6A).
+
+- **Zustand** — Minimal React state-management library. `useAppStore` is a Zustand store; consumers subscribe to specific slices and only re-render when those slices change.
