@@ -729,6 +729,10 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Echo suppression** — A flag set before a programmatic file write so a subsequent file-watch event doesn't loop the change back into the DB. `suppressNextFileChange()` raises it; `consumeSuppressFlag()` reads-and-clears it.
 
+- **Event** — A small, structured payload describing that *something happened*. In mission-control every `ServerEvent` carries `{model, action, id?, timestamp}`. Events are passive notifications: zero or more listeners can react to the same one, and the publisher doesn't know or care who consumes it. Distinct from a **request**, which is a directed call awaiting a response.
+
+- **Event bus** — The pub/sub mechanism that holds the set of listeners and dispatches each published event to all of them. `lib/events.ts` is the in-process event bus: `broadcastEvent` publishes, `subscribeToEvents` registers a listener, and the listener set is hung off `globalThis` so it survives HMR.
+
 - **EventSource** — Browser API for consuming Server-Sent Events. Auto-reconnects on disconnect; one-way (server → client).
 
 - **Fan-out** — Distributing one input to many outputs. The event bus fans one `broadcastEvent` call out to every connected SSE client.
@@ -759,6 +763,10 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Model** — In the event bus, an enum tag (`Task` | `Goal` | `SavedPaper` | `Application` | `CalendarEvent` | `Setting`) identifying which Prisma table the event pertains to. Subscribers filter by model so each view only refetches when its data changed.
 
+- **Module** — A single source file with its own `import` / `export` graph. Webpack bundles modules into the running app; under HMR, an edited module is re-evaluated in place rather than triggering a full restart of the Node process.
+
+- **Module-level state** — Variables declared at the top of a module file (outside any function or class). They live for the lifetime of *that module instance* — which under HMR means until the next time the module is hot-replaced, at which point the new copy starts with fresh values. Anything that must outlive an HMR swap (cache, logger ring buffer, event-bus listener set) is therefore attached to `globalThis` instead of held as module-level state.
+
 - **Monkey-patching** — Replacing a method on an object at runtime to add behavior. `lib/logger.ts` monkey-patches `console.log/info/warn/error` so every log line lands in the in-app log buffer for free.
 
 - **Mutate / Mutation** — A write operation (POST/PATCH/DELETE) that changes server state. In SWR, `mutate()` is also the client-side function that invalidates a cache key and triggers a refetch.
@@ -772,6 +780,8 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 - **Offline access** — `access_type=offline` in the OAuth request. Asks Google for a long-lived **refresh token** so the server can mint new short-lived access tokens without the user being present.
 
 - **OGS (open-graph-scraper)** — npm package that fetches a URL and parses its `<meta property="og:*">` tags. Used to enrich news/research items with hero images and titles.
+
+- **Operation** — In the context of Prisma's `$allOperations` extension, the verb being executed against a table: `findMany`, `findUnique`, `create`, `update`, `upsert`, `delete`, `$transaction`, etc. Every operation produces a `[DATABASE] Executing <op> on <model>` log line, which is how DB activity surfaces in the in-app log viewer.
 
 - **Optimistic UI / optimistic update** — Updating the UI before the server confirms a mutation, on the assumption it will succeed. Reverted on error. PlanningView's task checkboxes do this; the SSE-triggered `mutate()` then replaces the optimistic value with the authoritative one.
 
@@ -790,6 +800,8 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 - **Ref (React)** — A mutable container that doesn't cause re-renders when its `.current` changes. `useServerEvents` uses a ref to hold the latest `onInvalidate` callback so the EventSource effect doesn't reopen on every render.
 
 - **Refresh token** — Long-lived OAuth credential used to mint new short-lived **access tokens**. Stored on the `Account` row by NextAuth's Prisma adapter.
+
+- **Request** — An inbound HTTP call to a Next.js route handler under `app/api/*`. Each request is logged once by `middleware.ts` (now `proxy.ts` in Next 16), keyed by `pathname + sorted query` inside `withCache`, and — on protected routes — gated by `requireSession` before reaching the handler. Distinct from an **event**, which is a passive notification with no caller awaiting a response.
 
 - **Ring buffer** — A fixed-size circular buffer; new entries push out the oldest. The logger keeps the most recent 500 lines this way.
 
