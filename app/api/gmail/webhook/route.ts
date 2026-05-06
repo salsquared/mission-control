@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import { google } from "googleapis";
-import { prisma } from "@/lib/prisma";
 import { parseApplicationEmail } from "@/lib/email-parser";
 import { broadcastEvent } from "@/lib/events";
 import { PubSubEnvelopeSchema, PubSubPayloadSchema } from "@/lib/schemas/gmail-webhook";
+import { findUserByEmailWithAccounts } from "@/lib/repositories/users";
+import {
+  findApplicationByCompany,
+  createApplication,
+  updateApplication,
+} from "@/lib/repositories/applications";
 
 export async function POST(req: NextRequest) {
   const secret = process.env.PUBSUB_WEBHOOK_SECRET;
@@ -27,10 +32,7 @@ export async function POST(req: NextRequest) {
     const { emailAddress, historyId } = payloadParsed.data;
 
     // Lookup user by email in NextAuth account
-    const user = await prisma.user.findUnique({
-      where: { email: emailAddress },
-      include: { accounts: true }
-    });
+    const user = await findUserByEmailWithAccounts(emailAddress);
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
@@ -81,33 +83,26 @@ export async function POST(req: NextRequest) {
          const parsed = await parseApplicationEmail(bodyText, subject);
 
          // Upsert application based on Company matching (heuristic)
-         const existingApp = await prisma.application.findFirst({
-           where: { userId: user.id, company: { contains: parsed.company } }
-         });
+         const existingApp = await findApplicationByCompany(user.id, parsed.company);
 
          let appId: string;
          if (existingApp) {
-           await prisma.application.update({
-             where: { id: existingApp.id },
-             data: {
-               status: parsed.status,
-               nextSteps: parsed.nextSteps,
-               role: parsed.role || existingApp.role,
-               lastUpdateAt: new Date()
-             }
+           await updateApplication(existingApp.id, {
+             status: parsed.status,
+             nextSteps: parsed.nextSteps,
+             role: parsed.role || existingApp.role,
+             lastUpdateAt: new Date(),
            });
            appId = existingApp.id;
          } else {
-           const newApp = await prisma.application.create({
-             data: {
-               userId: user.id,
-               company: parsed.company,
-               role: parsed.role || "Unknown",
-               status: parsed.status,
-               nextSteps: parsed.nextSteps,
-               dateApplied: new Date(),
-               lastUpdateAt: new Date()
-             }
+           const newApp = await createApplication({
+             userId: user.id,
+             company: parsed.company,
+             role: parsed.role || "Unknown",
+             status: parsed.status,
+             nextSteps: parsed.nextSteps,
+             dateApplied: new Date(),
+             lastUpdateAt: new Date(),
            });
            appId = newApp.id;
          }
