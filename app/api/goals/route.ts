@@ -1,16 +1,14 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '@/lib/prisma';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { broadcastEvent } from '@/lib/events';
+import { findAllGoals, createGoal, updateGoal, deleteGoal } from '@/lib/repositories/goals';
 
 export async function GET(req: Request) {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;
 
     try {
-        const goals = await prisma.lifeGoal.findMany({
-            orderBy: [{ createdAt: 'asc' }]
-        });
+        const goals = await findAllGoals();
         return NextResponse.json({ goals });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
@@ -25,9 +23,7 @@ export async function POST(req: Request) {
         const { text, estimatedTime } = await req.json();
         if (!text) return NextResponse.json({ error: "Missing text" }, { status: 400 });
 
-        const goal = await prisma.lifeGoal.create({
-            data: { text, estimatedTime }
-        });
+        const goal = await createGoal({ text, estimatedTime });
 
         broadcastEvent({ model: 'Goal', action: 'upsert', id: goal.id, timestamp: Date.now() });
         return NextResponse.json({ goal });
@@ -44,10 +40,7 @@ export async function PATCH(req: Request) {
         const { id, completed } = await req.json();
         if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-        const goal = await prisma.lifeGoal.update({
-            where: { id },
-            data: { completed }
-        });
+        const goal = await updateGoal(id, { completed });
 
         broadcastEvent({ model: 'Goal', action: 'upsert', id: goal.id, timestamp: Date.now() });
         return NextResponse.json({ goal });
@@ -64,9 +57,7 @@ export async function DELETE(req: Request) {
         const { id } = await req.json();
         if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-        await prisma.lifeGoal.delete({
-            where: { id }
-        });
+        await deleteGoal(id);
 
         broadcastEvent({ model: 'Goal', action: 'delete', id, timestamp: Date.now() });
         return NextResponse.json({ success: true });
