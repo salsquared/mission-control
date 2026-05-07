@@ -10,6 +10,11 @@ const PULSAR_SERVICE_CONFIG: ServiceTokenConfig = {
   userIdEnv: 'SERVICE_TOKEN_PULSAR_USER_ID',
 };
 
+// Pin to Node runtime — googleapis pulls in undici which uses `node:*` imports
+// the edge runtime can't handle. Belt-and-suspenders alongside
+// serverExternalPackages in next.config.ts.
+export const runtime = 'nodejs';
+
 export async function GET(req: NextRequest) {
   const guard = await requireSessionOrService(req, PULSAR_SERVICE_CONFIG);
   if ('error' in guard) return guard.error;

@@ -12,6 +12,12 @@ const withSerwist = withSerwistInit({
 const nextConfig: NextConfig = {
   reactStrictMode: true,
   distDir: isDev ? '.next-dev' : '.next',
+  // Server-only packages that should not be webpack-bundled. Without this,
+  // webpack tries to resolve their `node:*` scheme imports (e.g. `node:assert`
+  // pulled in transitively via undici) and fails the build. These are loaded
+  // via Node's runtime require instead. `jose` was the most recent addition
+  // (Phase A1 OIDC); `googleapis` was already pulling undici in.
+  serverExternalPackages: ['jose', 'googleapis', 'googleapis-common'],
   webpack: (config, { dev, isServer }) => {
     if (dev && !isServer) {
       let ignored = [];

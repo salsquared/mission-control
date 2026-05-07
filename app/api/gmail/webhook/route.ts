@@ -12,6 +12,12 @@ import {
 } from "@/lib/repositories/applications";
 import { verifyPubSubOIDC } from "@/lib/google-oidc";
 
+// Pin to Node runtime — this route uses googleapis + jose, both of which pull
+// in `node:*` imports (notably undici → node:assert) that the edge runtime
+// can't handle. serverExternalPackages in next.config also keeps them out of
+// the webpack bundle; this export is belt-and-suspenders.
+export const runtime = 'nodejs';
+
 export async function POST(req: NextRequest) {
   const audience = process.env.PUBSUB_AUDIENCE;
   if (!audience) {
