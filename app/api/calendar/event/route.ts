@@ -1,14 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import { google } from "googleapis";
-import { requireSession } from "@/lib/auth-guards";
+import { requireSessionOrService, type ServiceTokenConfig } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { CalendarEventPostSchema } from "@/lib/schemas/calendar";
 
+const PULSAR_SERVICE_CONFIG: ServiceTokenConfig = {
+  tokenEnv: 'SERVICE_TOKEN_PULSAR',
+  userIdEnv: 'SERVICE_TOKEN_PULSAR_USER_ID',
+};
+
 export async function GET(req: NextRequest) {
-  const guard = await requireSession();
+  const guard = await requireSessionOrService(req, PULSAR_SERVICE_CONFIG);
   if ('error' in guard) return guard.error;
-  const userId = (guard.session.user as any).id as string;
+  const { userId } = guard;
 
   try {
     const { searchParams } = new URL(req.url);
@@ -34,9 +39,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireSession();
+  const guard = await requireSessionOrService(req, PULSAR_SERVICE_CONFIG);
   if ('error' in guard) return guard.error;
-  const userId = (guard.session.user as any).id as string;
+  const { userId } = guard;
 
   try {
     const parsed = CalendarEventPostSchema.safeParse(await req.json());
@@ -79,9 +84,9 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const guard = await requireSession();
+  const guard = await requireSessionOrService(req, PULSAR_SERVICE_CONFIG);
   if ('error' in guard) return guard.error;
-  const userId = (guard.session.user as any).id as string;
+  const { userId } = guard;
 
   try {
     const { searchParams } = new URL(req.url);
