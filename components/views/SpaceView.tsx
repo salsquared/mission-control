@@ -11,7 +11,7 @@ import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
 import { Calendar } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
-import { ADAPTERS as COMPANY_REGISTRY } from "../../lib/companies";
+import { COMPANIES as COMPANY_REGISTRY } from "../../lib/companies/manifest";
 import { fetcher } from "@/lib/fetcher-client";
 
 // All space-view companies from the registry (used for dynamic fetching)
