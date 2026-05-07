@@ -102,13 +102,38 @@ export const Dashboard: React.FC = () => {
     useEffect(() => {
         const store = useThemeStore.getState();
         store.syncAvailableDashes(BASE_DASHES.map(d => ({ id: d.id, title: d.title })));
-        
-        // Read last page from localStorage (device-local, not shared DB)
-        const storedId = localStorage.getItem('mc-active-view') || store.activeViewId;
-        const index = orderedDashes.findIndex((d) => d.id === storedId);
+
+        // Source of truth for the last-viewed dash is `useAppStore.activeViewId`
+        // (persisted by Zustand under `app-state` in localStorage). The legacy
+        // `mc-active-view` localStorage key is read here as a one-time migration
+        // for users coming from before MVP1 5B unified the store; if both
+        // exist, the unified store wins.
+        const post = useThemeStore.getState();
+        const legacyId = typeof window !== 'undefined' ? localStorage.getItem('mc-active-view') : null;
+        const storedId = post.activeViewId || legacyId || BASE_DASHES[0].id;
+
+        // Resolve the index against the **post-sync** user order, not against
+        // `orderedDashes` (which is still memoized as BASE_DASHES because
+        // isMounted is false here). Using orderedDashes would resolve indices
+        // against the default order, then flip on the next render and surface
+        // a different dash — the "reload drops me a couple views back" bug.
+        const dashesById = new Map(BASE_DASHES.map(d => [d.id, d]));
+        const userOrderedIds = [
+            ...post.dashOrder.filter(id => dashesById.has(id)),
+            ...BASE_DASHES.filter(d => !post.dashOrder.includes(d.id)).map(d => d.id),
+        ];
+
+        const index = userOrderedIds.findIndex(id => id === storedId);
         if (index !== -1) {
             setCurrentIndex(index);
         }
+
+        // One-time migration: clear the legacy key once the unified store has
+        // a value, so future reads only consult the canonical source.
+        if (typeof window !== 'undefined' && legacyId && post.activeViewId) {
+            localStorage.removeItem('mc-active-view');
+        }
+
         setIsMounted(true);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
@@ -117,9 +142,9 @@ export const Dashboard: React.FC = () => {
 
     useEffect(() => {
         if (isMounted && currentDashId) {
+            // Single source of truth: the unified store. Zustand's persist
+            // middleware writes activeViewId to localStorage under `app-state`.
             setActiveViewId(currentDashId);
-            // Persist per-device in localStorage
-            localStorage.setItem('mc-active-view', currentDashId);
         }
     }, [currentDashId, setActiveViewId, isMounted]);
 

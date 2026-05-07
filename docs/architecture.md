@@ -672,8 +672,8 @@ graph TD
 | `isDarkMode`, `viewHues`, `viewHuesEnabled`, `dashOrder`, `dashTitles` | `/api/settings` → SQLite | Cross-device: customizations follow the user across LAN devices |
 | `version` | hydrated from `/api/settings` GET; sent as `If-Match` on POST | Optimistic-concurrency counter — deliberately excluded from the synced-state diff so updating it (after a successful save) doesn't trigger a re-save |
 | `autoResearch`, `aiCompanionEnabled` | `localStorage` under `app-state` | Per-device: background behaviors should only be active on one device at a time |
-| `activeViewId`, `viewScreenshots` | `localStorage` under `app-state` | Per-device: each device remembers its own last-viewed dash and its own screenshot cache |
-| `defaultDashTitles`, `activeViewId` (in-memory read) | not persisted via Zustand | Derived from `BASE_DASHES`; re-computed on every `syncAvailableDashes` call |
+| `activeViewId`, `viewScreenshots` | `localStorage` under `app-state` | Per-device: each device remembers its own last-viewed dash and its own screenshot cache. `Dashboard` mount also reads a legacy `'mc-active-view'` localStorage key once for migration, then clears it. |
+| `defaultDashTitles` | not persisted | Derived from `BASE_DASHES`; recomputed on every `syncAvailableDashes` call |
 
 The two legacy files (`themeStore.ts`, `settingsStore.ts`) are now thin re-exports: `export { useThemeStore, useAppStore } from './state'`. They exist only for backward compatibility with existing consumers and will be removed once all callsites are updated to import from `@/components/providers/state`.
 
