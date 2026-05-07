@@ -1,17 +1,12 @@
 import { google } from "googleapis";
-import { prisma } from "./prisma";
+import { findGoogleAccountByUser } from "@/lib/repositories/accounts";
 
 /**
  * Retrieves a properly authenticated Google OAuth2 client for a given user.
  * Expects the caller to provide a valid user ID who has authenticated with Google via NextAuth.
  */
 export async function getGoogleAuthClient(userId: string) {
-  const account = await prisma.account.findFirst({
-    where: {
-      userId: userId,
-      provider: "google",
-    },
-  });
+  const account = await findGoogleAccountByUser(userId);
 
   if (!account || !account.refresh_token) {
     throw new Error("User Google account not linked or missing refresh token.");
