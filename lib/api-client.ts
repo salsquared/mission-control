@@ -23,6 +23,10 @@ import {
 } from './schemas/settings';
 import { SystemTelemetryResponseSchema } from './schemas/system';
 import {
+    CacheInvalidatePostSchema,
+    CacheInvalidateResponseSchema,
+} from './schemas/cache';
+import {
     SavedPapersListResponseSchema,
     SavedPaperMutationResponseSchema,
     SavedPaperDeleteResponseSchema,
@@ -149,6 +153,8 @@ export const api = {
 
     system: {
         get: () => jsonFetch('/api/system', SystemTelemetryResponseSchema),
+        invalidateCache: (input: z.infer<typeof CacheInvalidatePostSchema>) =>
+            jsonFetch('/api/system/cache/invalidate', CacheInvalidateResponseSchema, jsonBody('POST', input)),
     },
 
     calendarEvents: {

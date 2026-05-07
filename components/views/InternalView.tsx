@@ -4,7 +4,7 @@ import React, { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { api, queryKeys } from "@/lib/api-client";
-import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, ShieldAlert } from "lucide-react";
+import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, ShieldAlert, RefreshCw } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useSession, signIn, signOut } from "next-auth/react";
@@ -339,9 +339,16 @@ export const InternalView: React.FC = () => {
                             {sysMetrics?.cache?.activeEntries && sysMetrics.cache.activeEntries.length > 0 ? (
                                 <div className="flex flex-col overflow-y-auto gap-2 font-mono text-xs w-full h-full pr-2">
                                     {[...sysMetrics.cache.activeEntries].sort((a, b) => a.remainingTtl - b.remainingTtl).map((entry, idx) => (
-                                        <div key={idx} className="flex justify-between items-center w-full border-b border-white/5 pb-1.5 last:border-0 last:pb-0 shrink-0">
-                                            <span className="text-cyan-400 truncate w-3/4 pr-4" title={entry.key}>{entry.key}</span>
-                                            <span className={`w-1/4 text-right ${entry.remainingTtl < 60 ? 'text-red-400 font-bold' : 'text-emerald-400'}`}>
+                                        <div key={idx} className="flex justify-between items-center w-full border-b border-white/5 pb-1.5 last:border-0 last:pb-0 shrink-0 group">
+                                            <span className="text-cyan-400 truncate flex-1 pr-4" title={entry.key}>{entry.key}</span>
+                                            <button
+                                                onClick={() => api.system.invalidateCache({ key: entry.key }).catch(console.error)}
+                                                className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-white/10 text-slate-400 hover:text-emerald-400 mr-2"
+                                                title="Invalidate this cache entry"
+                                            >
+                                                <RefreshCw className="w-3 h-3" />
+                                            </button>
+                                            <span className={`w-20 text-right ${entry.remainingTtl < 60 ? 'text-red-400 font-bold' : 'text-emerald-400'}`}>
                                                 {entry.remainingTtl}s TTL
                                             </span>
                                         </div>
