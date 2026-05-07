@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '../../../../lib/prisma';
 import { withCache } from '../../../../lib/cache';
+import {
+    findCurrentHistoricalPick,
+    listPickedHistoricalIds,
+    recordHistoricalPick,
+} from '@/lib/repositories/selected-papers';
 
 function getStartOfWeek(date: Date) {
     const d = new Date(date);
@@ -21,12 +25,7 @@ async function getHandler(request: Request) {
         const weekStart = getStartOfWeek(now);
 
         // Check if we already picked one for this week
-        const existingSelection = await prisma.selectedHistoricalPaper.findFirst({
-            where: {
-                topic: topic.toLowerCase(),
-                weekStart: weekStart,
-            }
-        });
+        const existingSelection = await findCurrentHistoricalPick(topic.toLowerCase(), weekStart);
 
         if (existingSelection) {
             // Fetch that specific paper's details from arxiv
@@ -105,11 +104,7 @@ async function getHandler(request: Request) {
             const entries = xml.split('<entry>');
             entries.shift(); // Remove the feed header part
 
-            const dbPicked = await prisma.selectedHistoricalPaper.findMany({
-                where: { topic: topic.toLowerCase() },
-                select: { paperId: true }
-            });
-            const pickedIds = new Set(dbPicked.map((p: any) => p.paperId));
+            const pickedIds = new Set(await listPickedHistoricalIds(topic.toLowerCase()));
 
             // Extract IDs from all entries
             const entryRecords: { entry: string, id: string, citations: number }[] = [];
@@ -155,13 +150,7 @@ async function getHandler(request: Request) {
                 const selectedId = topRecord.id;
 
                 // Save it to DB
-                await prisma.selectedHistoricalPaper.create({
-                    data: {
-                        paperId: selectedId,
-                        topic: topic.toLowerCase(),
-                        weekStart: weekStart
-                    }
-                });
+                await recordHistoricalPick(selectedId, topic.toLowerCase(), weekStart);
 
                 // Parse it
                 const titleMatch = selectedEntry.match(/<title>([\s\S]*?)<\/title>/);

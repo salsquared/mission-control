@@ -1,6 +1,10 @@
 import { NextResponse } from 'next/server';
-import { prisma } from '../../../../lib/prisma';
 import { withCache } from '../../../../lib/cache';
+import {
+    findCurrentReviewPick,
+    listPickedReviewIds,
+    recordReviewPick,
+} from '@/lib/repositories/selected-papers';
 
 function getStartOfWeek(date: Date) {
     const d = new Date(date);
@@ -21,12 +25,7 @@ async function getHandler(request: Request) {
         const weekStart = getStartOfWeek(now);
 
         // Check if we already picked one for this week
-        const existingSelection = await prisma.selectedReviewPaper.findFirst({
-            where: {
-                topic: topic.toLowerCase(),
-                weekStart: weekStart,
-            }
-        });
+        const existingSelection = await findCurrentReviewPick(topic.toLowerCase(), weekStart);
 
         if (existingSelection) {
             console.info(`[EXTERNAL API] Fetching existing review paper from arXiv: ${existingSelection.paperId}`);
@@ -101,11 +100,7 @@ async function getHandler(request: Request) {
             const entries = xml.split('<entry>');
             entries.shift(); // Remove the feed header part
 
-            const dbPicked = await prisma.selectedReviewPaper.findMany({
-                where: { topic: topic.toLowerCase() },
-                select: { paperId: true }
-            });
-            const pickedIds = new Set(dbPicked.map((p: any) => p.paperId));
+            const pickedIds = new Set(await listPickedReviewIds(topic.toLowerCase()));
 
             // Extract IDs from all entries
             const entryRecords: { entry: string, id: string, citations: number }[] = [];
@@ -151,13 +146,7 @@ async function getHandler(request: Request) {
                 const selectedId = topRecord.id;
 
                 // Save it to DB
-                await prisma.selectedReviewPaper.create({
-                    data: {
-                        paperId: selectedId,
-                        topic: topic.toLowerCase(),
-                        weekStart: weekStart
-                    }
-                });
+                await recordReviewPick(selectedId, topic.toLowerCase(), weekStart);
 
                 // Parse it
                 const titleMatch = selectedEntry.match(/<title>([\s\S]*?)<\/title>/);
