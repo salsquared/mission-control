@@ -167,7 +167,7 @@ Calendar is now in the typed client. Two raw `fetch('/api/...')` sites remain by
 
 ---
 
-## 4. Phase D — Optimistic concurrency on settings (`[6.1c]`)
+## 4. Phase D ✅ — Optimistic concurrency on settings (`[6.1c]`)
 
 Two browser tabs editing the dash order race today; the SSE event bus from MVP1 reduces but doesn't eliminate the race window. Optimistic concurrency makes it provably safe.
 
@@ -179,6 +179,10 @@ Two browser tabs editing the dash order race today; the SSE event bus from MVP1 
 **Dependencies:** MVP1 Task 5A and 5B.
 
 **Acceptance:** Two tabs reorder dashes simultaneously; one wins, the other refetches and reflects the winning state without losing local edits in flight.
+
+**Status:** Shipped. `version Int @default(0)` added to `GlobalSetting` (migration applied to both DBs via `migrate deploy` since `migrate dev` blocks non-interactively on table-redefining changes — same pattern as Phase 0). Repository helper `upsertGlobalSettingWithVersion` does an atomic conditional `updateMany` keyed on the version. Route requires the `If-Match` header (428 if absent or non-numeric, 409 + currentVersion on mismatch). `api.settings.update(input, expectedVersion)` returns a discriminated union so callers branch on `{ ok: true, version }` vs `{ ok: false, currentVersion }`. Theme slice gained a `version` field (excluded from the synced-state diff so writing it doesn't trigger a re-save). ThemeProvider on conflict refetches via `api.settings.get()`, calls `useAppStore.setState(fresh.data)`, and pushes a warning toast.
+
+Conflict resolution policy: simple "last writer wins" — the losing tab's in-flight edit is dropped in favor of the winning state. Not CRDT-style merge.
 
 ---
 
@@ -327,7 +331,7 @@ After MVP1 Task 8A splits the registry into files, MVP2 promotes "a company" fro
 | 2 | Phase C (`[3.1c]` + `[8.2b]` Zod everywhere + typed client) | ✅ shipped (TanStack-shaped per §10.2) | Pays off in every subsequent refactor. Catches regressions during the harder phases. |
 | 3 | Phase A (`[1.1b]` OIDC + service tokens) | ✅ shipped | Hardens the LAN-exposed surface before more callers (Pulsar's expanded job set) exist. |
 | 4 | Phase E (`[7.1b]` scheduler + Task E4 Pulsar WS relay) | ✅ shipped | Scheduler owns non-financial recurring work; WS relay replaces FinanceView polling. Note: Pulsar stays financial-only. |
-| 5 | Phase D (`[6.1c]` optimistic concurrency) | 🔜 next | Small, contained. Could ship anywhere after MVP1 5A/5B but pairs well with Phase E because that's when "another caller might be writing" stops being hypothetical. |
+| 5 | Phase D (`[6.1c]` optimistic concurrency) | ✅ shipped | Small, contained. Could ship anywhere after MVP1 5A/5B but pairs well with Phase E because that's when "another caller might be writing" stops being hypothetical. |
 | 6 | Phase F (`[7.2c]` unified cache) | 🔜 pending | Highest risk; do last so you have the testing scaffolding from Phase C and the repository abstraction from Phase B. |
 | 7 | Phase G (`[8.1c]` adapter plugin) | 🔜 pending | Independent; can be done at any point after MVP1 Task 8A. Sequenced last only because it's the lowest-priority structural change. |
 
