@@ -55,9 +55,16 @@ public/swe-worker-*.js
 
 /lib/generated/prisma
 
-# prisma
+# prisma — DB files + sidecars from rollback-journal mode (.db-journal) and
+# WAL mode (.db-shm shared memory + .db-wal write-ahead log; created since
+# MVP2 Phase E1 enabled `PRAGMA journal_mode = WAL` for the multi-writer
+# web-tier + scheduler topology).
 /prisma/*.db
 /prisma/*.db-journal
+/prisma/*.db-shm
+/prisma/*.db-wal
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 .restart-flag
