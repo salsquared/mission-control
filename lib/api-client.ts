@@ -1,0 +1,136 @@
+import { z } from 'zod';
+import { toastStore } from './toast-store';
+import {
+    TasksListResponseSchema,
+    TaskMutationResponseSchema,
+    TaskCreateResponseSchema,
+    TaskPatchSchema,
+    TaskPostSchema,
+} from './schemas/tasks';
+import {
+    GoalsListResponseSchema,
+    GoalMutationResponseSchema,
+    GoalDeleteResponseSchema,
+    GoalPostSchema,
+    GoalPatchSchema,
+} from './schemas/goals';
+import { ApplicationsListResponseSchema } from './schemas/applications';
+import {
+    SettingsGetResponseSchema,
+    SettingsPostResponseSchema,
+    SettingsPostSchema,
+} from './schemas/settings';
+import { SystemTelemetryResponseSchema } from './schemas/system';
+import {
+    SavedPapersListResponseSchema,
+    SavedPaperMutationResponseSchema,
+    SavedPaperDeleteResponseSchema,
+    SavedPaperPostSchema,
+} from './schemas/saved-papers';
+
+// ─── Internals ─────────────────────────────────────────────────────────────
+
+async function jsonFetch<T extends z.ZodTypeAny>(
+    url: string,
+    schema: T,
+    init?: RequestInit
+): Promise<z.infer<T>> {
+    const res = await fetch(url, init);
+
+    if (res.headers.get('X-Cache') === 'STALE-FALLBACK') {
+        const route = new URL(url, 'http://localhost').pathname;
+        toastStore.push({ message: `Stale data: ${route}`, type: 'warning' });
+    }
+
+    if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: res.statusText }));
+        throw new Error(err.error || 'Fetch failed');
+    }
+
+    const data = await res.json();
+
+    // Dev-only contract check. Mismatches log loudly but don't throw — drift
+    // surfaces in the in-app log viewer without breaking the UI.
+    if (process.env.NODE_ENV !== 'production') {
+        const parsed = schema.safeParse(data);
+        if (!parsed.success) {
+            console.warn(`[api-client] Response shape mismatch for ${url}:`, parsed.error.issues);
+        }
+    }
+
+    return data as z.infer<T>;
+}
+
+function jsonBody(method: string, body: unknown): RequestInit {
+    return {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+    };
+}
+
+// ─── Query keys (TanStack tuples) ──────────────────────────────────────────
+// Keep these stable — useServerEvents callbacks invalidate by these keys.
+export const queryKeys = {
+    tasks: ['tasks'] as const,
+    goals: ['goals'] as const,
+    applications: ['applications'] as const,
+    settings: ['settings'] as const,
+    system: ['system'] as const,
+    savedPapers: (filter?: { topic?: string | null; status?: string | null }) =>
+        ['saved-papers', filter ?? {}] as const,
+};
+
+// ─── API surface ───────────────────────────────────────────────────────────
+
+export const api = {
+    tasks: {
+        list: () => jsonFetch('/api/tasks', TasksListResponseSchema),
+        update: (input: z.infer<typeof TaskPatchSchema>) =>
+            jsonFetch('/api/tasks', TaskMutationResponseSchema, jsonBody('PATCH', input)),
+        create: (input: z.infer<typeof TaskPostSchema>) =>
+            jsonFetch('/api/tasks', TaskCreateResponseSchema, jsonBody('POST', input)),
+    },
+
+    goals: {
+        list: () => jsonFetch('/api/goals', GoalsListResponseSchema),
+        create: (input: z.infer<typeof GoalPostSchema>) =>
+            jsonFetch('/api/goals', GoalMutationResponseSchema, jsonBody('POST', input)),
+        update: (input: z.infer<typeof GoalPatchSchema>) =>
+            jsonFetch('/api/goals', GoalMutationResponseSchema, jsonBody('PATCH', input)),
+        delete: (id: string) =>
+            jsonFetch('/api/goals', GoalDeleteResponseSchema, jsonBody('DELETE', { id })),
+    },
+
+    applications: {
+        list: () => jsonFetch('/api/applications', ApplicationsListResponseSchema),
+    },
+
+    settings: {
+        get: () => jsonFetch('/api/settings', SettingsGetResponseSchema),
+        update: (input: z.infer<typeof SettingsPostSchema>) =>
+            jsonFetch('/api/settings', SettingsPostResponseSchema, jsonBody('POST', input)),
+    },
+
+    system: {
+        get: () => jsonFetch('/api/system', SystemTelemetryResponseSchema),
+    },
+
+    savedPapers: {
+        list: (filter?: { topic?: string | null; status?: string | null }) => {
+            const params = new URLSearchParams();
+            if (filter?.topic) params.set('topic', filter.topic);
+            if (filter?.status) params.set('status', filter.status);
+            const qs = params.toString();
+            return jsonFetch(`/api/research/saved${qs ? '?' + qs : ''}`, SavedPapersListResponseSchema);
+        },
+        upsert: (input: z.infer<typeof SavedPaperPostSchema>) =>
+            jsonFetch('/api/research/saved', SavedPaperMutationResponseSchema, jsonBody('POST', input)),
+        delete: (paperId: string) =>
+            jsonFetch(
+                `/api/research/saved?paperId=${encodeURIComponent(paperId)}`,
+                SavedPaperDeleteResponseSchema,
+                { method: 'DELETE' }
+            ),
+    },
+};
