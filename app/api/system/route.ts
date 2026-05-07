@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import os from 'os';
-import { prisma } from '@/lib/prisma';
 import fs from 'fs';
 import path from 'path';
 import { getCacheStats } from '@/lib/cache';
+import { pingDatabase } from '@/lib/repositories/system';
 
 let cachedMaxMemSysLimitGB: number | null = null;
 
@@ -73,13 +73,7 @@ export async function GET() {
         if (hours > 0) uptimeFormatted += `${hours}h `;
         uptimeFormatted += `${minutes}m`;
 
-        let dbConnected = false;
-        try {
-            await prisma.$queryRaw`SELECT 1`;
-            dbConnected = true;
-        } catch (e) {
-            console.warn("DB connection check failed:", e);
-        }
+        const dbConnected = await pingDatabase();
 
         let pulsarOnline = false;
         const pulsarUrl = process.env.PULSAR_URL;
