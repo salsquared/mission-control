@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "./state";
 import { api } from "@/lib/api-client";
+import { toastStore } from "@/lib/toast-store";
 
 function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -10,6 +11,21 @@ function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => fn(...args), ms);
     }) as T;
+}
+
+async function refetchAndReconcile() {
+    try {
+        const fresh = await api.settings.get();
+        if (fresh.data) {
+            useAppStore.setState(fresh.data);
+            toastStore.push({
+                message: 'Settings updated elsewhere — reloaded',
+                type: 'warning',
+            });
+        }
+    } catch (e) {
+        console.error('[settings] Failed to refetch on conflict:', e);
+    }
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
@@ -33,9 +49,22 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     // Push to API on state change — debounced 500 ms so rapid edits (e.g. title
     // typing) fire one request after the user stops, not one per keystroke.
+    // Reads the current `version` at fire time and includes it as If-Match.
+    // On 409 conflict, refetches and toasts; the user's in-flight edit is
+    // dropped in favor of the winning state.
     const debouncedSave = useRef(
-        debounce((data: any) => {
-            api.settings.update(data).catch(err => console.error("Failed to save settings:", err));
+        debounce(async (data: any) => {
+            const expectedVersion = useAppStore.getState().version;
+            try {
+                const result = await api.settings.update(data, expectedVersion);
+                if (result.ok) {
+                    useAppStore.setState({ version: result.version });
+                } else {
+                    await refetchAndReconcile();
+                }
+            } catch (err) {
+                console.error("Failed to save settings:", err);
+            }
         }, 500)
     ).current;
 

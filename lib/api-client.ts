@@ -18,6 +18,7 @@ import { ApplicationsListResponseSchema } from './schemas/applications';
 import {
     SettingsGetResponseSchema,
     SettingsPostResponseSchema,
+    SettingsPostConflictSchema,
     SettingsPostSchema,
 } from './schemas/settings';
 import { SystemTelemetryResponseSchema } from './schemas/system';
@@ -115,8 +116,35 @@ export const api = {
 
     settings: {
         get: () => jsonFetch('/api/settings', SettingsGetResponseSchema),
-        update: (input: z.infer<typeof SettingsPostSchema>) =>
-            jsonFetch('/api/settings', SettingsPostResponseSchema, jsonBody('POST', input)),
+        // Optimistic-concurrency update. Caller passes the version it last saw;
+        // server bumps it on success, returns 409 + currentVersion on mismatch.
+        // Returns a discriminated union so the caller can branch on conflict.
+        update: async (
+            input: z.infer<typeof SettingsPostSchema>,
+            expectedVersion: number
+        ): Promise<
+            | { ok: true; version: number }
+            | { ok: false; currentVersion: number }
+        > => {
+            const res = await fetch('/api/settings', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'If-Match': String(expectedVersion),
+                },
+                body: JSON.stringify(input),
+            });
+            if (res.status === 409) {
+                const body = SettingsPostConflictSchema.parse(await res.json());
+                return { ok: false, currentVersion: body.currentVersion };
+            }
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: res.statusText }));
+                throw new Error(err.error || 'Settings update failed');
+            }
+            const body = SettingsPostResponseSchema.parse(await res.json());
+            return { ok: true, version: body.version };
+        },
     },
 
     system: {

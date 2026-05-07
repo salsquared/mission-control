@@ -20,6 +20,11 @@ interface ThemeSlice {
     dashTitles: Record<string, string>;
     defaultDashTitles: Record<string, string>;
     viewScreenshots: Record<string, string>;
+    // Optimistic-concurrency counter. Hydrated from /api/settings GET, sent
+    // back as If-Match on POST, bumped on successful save. Deliberately
+    // excluded from the synced-state diff so updating it doesn't trigger a
+    // re-save.
+    version: number;
 
     setViewHuesEnabled: (enabled: boolean) => void;
     setIsDarkMode: (isDark: boolean) => void;
@@ -65,6 +70,7 @@ export const useAppStore = create<AppState>()(
             dashTitles: {},
             defaultDashTitles: DEFAULT_DASH_TITLES,
             viewScreenshots: {},
+            version: 0,
 
             setViewHuesEnabled: (viewHuesEnabled) => set({ viewHuesEnabled }),
             setIsDarkMode: (isDarkMode) => set({ isDarkMode }),
