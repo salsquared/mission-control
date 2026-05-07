@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
-import { getCompanyConfig, resolveCompanyId, getCompanyUpstreamHost } from '../../../lib/company-registry';
-import { fetchRSS, fetchScrape, fetchSNAPI, fetchGoogleNews } from '../../../lib/fetchers';
-import type { NewsArticle, CompanyFeedConfig } from '../../../lib/fetchers/types';
+import { getAdapter, resolveCompanyId, getUpstreamHost } from '../../../lib/companies';
+import { fetchRSS } from '../../../lib/fetchers';
+import type { NewsArticle } from '../../../lib/fetchers/types';
 
 // Opt out of Next.js built-in fetch cache — we handle caching ourselves via withCache
 export const dynamic = 'force-dynamic';
@@ -25,43 +25,6 @@ function sortByDate(articles: NewsArticle[]): NewsArticle[] {
     });
 }
 
-/**
- * Dispatch to the appropriate fetcher based on the company's configured strategy.
- */
-async function fetchForCompany(config: CompanyFeedConfig): Promise<NewsArticle[]> {
-    switch (config.strategy) {
-        case 'rss':
-            if (!config.rssUrl) throw new Error(`Missing rssUrl for ${config.name}`);
-            return fetchRSS(config.name, config.rssUrl);
-
-        case 'scrape':
-            return fetchScrape(config);
-
-        case 'snapi':
-            if (!config.snapiQuery) throw new Error(`Missing snapiQuery for ${config.name}`);
-            return fetchSNAPI(config.name, config.snapiQuery);
-
-        case 'google-news':
-            if (!config.googleNewsQuery) throw new Error(`Missing googleNewsQuery for ${config.name}`);
-            return fetchGoogleNews(config.name, config.googleNewsQuery);
-
-        case 'custom':
-            if (!config.customFetcher) throw new Error(`Missing customFetcher for ${config.name}`);
-            return config.customFetcher();
-
-        case 'json-api':
-            if (!config.apiUrl) throw new Error(`Missing apiUrl for ${config.name}`);
-            // Generic JSON fetch — not used yet but ready for future
-            const res = await fetch(config.apiUrl);
-            if (!res.ok) throw new Error(`Failed to fetch ${config.name}: ${res.status}`);
-            const data = await res.json();
-            return config.apiTransform ? config.apiTransform(data) : data;
-
-        default:
-            throw new Error(`Unsupported strategy '${config.strategy}' for ${config.name}`);
-    }
-}
-
 async function getHandler(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
@@ -79,18 +42,15 @@ async function getHandler(request: Request) {
             return NextResponse.json({ error: 'Missing company parameter' }, { status: 400 });
         }
 
-        // Resolve aliases and look up in registry
-        const companyId = resolveCompanyId(rawCompany);
-        const config = getCompanyConfig(companyId);
-
-        if (!config) {
+        const adapter = getAdapter(resolveCompanyId(rawCompany));
+        if (!adapter) {
             return NextResponse.json(
                 { error: `Unknown company: '${rawCompany}'. Check /api/company-news?list=true for available companies.` },
                 { status: 400 }
             );
         }
 
-        const articles = await fetchForCompany(config);
+        const articles = await adapter.fetch();
         return NextResponse.json(sortByDate(articles).slice(0, MAX_NEWS_ARTICLES));
 
     } catch (error) {
@@ -107,8 +67,8 @@ function deriveUpstreamHost(req: Request): string | null {
     }
     const raw = params.get('company')?.toLowerCase();
     if (!raw) return null;
-    const cfg = getCompanyConfig(resolveCompanyId(raw));
-    return cfg ? getCompanyUpstreamHost(cfg) : null;
+    const adapter = getAdapter(resolveCompanyId(raw));
+    return adapter ? getUpstreamHost(adapter) : null;
 }
 
 // Cache with 1hr TTL (individual company TTLs are aspirational for a future cache-per-key system)

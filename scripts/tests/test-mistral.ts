@@ -1,18 +1,14 @@
-import { fetchScrape } from '../../lib/fetchers/scrape-fetcher';
-import { COMPANY_REGISTRY } from '../../lib/company-registry';
+/**
+ * Integration test: verify the Mistral adapter is reachable and parses articles.
+ * Uses the adapter as-is — to experiment with regex variants, edit
+ * lib/companies/mistral.ts and re-run.
+ */
+import mistral from '../../lib/companies/mistral';
 
 async function main() {
-    const mistral = COMPANY_REGISTRY.find(c => c.id === 'mistral');
-    if (!mistral || !mistral.scrapeConfig) return;
-    
-    // Testing the current config
-    console.log("Testing Mistral...");
-    
-    // override the regex to test extracting all the next_f links
-    mistral.scrapeConfig.articleRegex = /"(\/news\/[a-zA-Z0-9-]+)[\\"]/g;
-    
+    console.log(`Fetching from ${mistral.name}...`);
     try {
-        const results = await fetchScrape(mistral);
+        const results = await mistral.fetch();
         console.log(`Found ${results.length} articles!`);
         for (const item of results) {
             console.log(`- [${item.published_at}] ${item.title}`);

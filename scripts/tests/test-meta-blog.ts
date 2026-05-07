@@ -1,19 +1,12 @@
 /**
- * Integration test: verify the Meta AI custom fetcher from the registry
+ * Integration test: verify the Meta AI adapter resolves and produces valid articles.
  */
-import { COMPANY_REGISTRY } from '../../lib/company-registry';
+import meta from '../../lib/companies/meta';
 
 async function main() {
-    const meta = COMPANY_REGISTRY.find(c => c.id === 'meta');
-    if (!meta?.customFetcher) {
-        console.error('Meta AI custom fetcher not found in registry');
-        process.exit(1);
-    }
+    console.log(`Fetching from ${meta.name}...`);
 
-    console.log(`Strategy: ${meta.strategy}`);
-    console.log(`Fetching...`);
-
-    const articles = await meta.customFetcher();
+    const articles = await meta.fetch();
     console.log(`\nTotal: ${articles.length} articles\n`);
     articles.forEach((a, i) => {
         const date = new Date(a.published_at);

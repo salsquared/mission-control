@@ -7,7 +7,7 @@ import { Scrollbar } from "../ui/Scrollbar";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 import { LLMLeaderboardCard, LLMModelInfo } from "../cards/LLMLeaderboardCard";
-import { COMPANY_REGISTRY } from "../../lib/company-registry";
+import { ADAPTERS as COMPANY_REGISTRY } from "../../lib/companies";
 import { fetcher } from "@/lib/fetcher-client";
 
 const AI_COMPANIES = COMPANY_REGISTRY.filter(c => c.view === 'ai');
