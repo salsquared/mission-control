@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useEffect, useState, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
+import { useServerEvents } from "@/hooks/useServerEvents";
 import { Bitcoin, Wallet } from "lucide-react";
 import { AssetPriceCard } from "../cards/AssetPriceCard";
 import { MarketTop100Card } from "../cards/MarketTop100Card";
@@ -30,9 +31,12 @@ const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ ti
 export const FinanceView: React.FC = () => {
     const [range, setRange] = useState("1");
 
+    const queryClient = useQueryClient();
     const { data: financeData, isLoading: loadingFinance } = useQuery<any>({
         queryKey: ['finance'],
         queryFn: () => fetcher('/api/finance'),
+        // Safety-net poll in case the Pulsar WS relay is down. Live updates
+        // arrive via 'FinanceTick' SSE events below.
         refetchInterval: 300_000,
     });
     const { data: historyRaw } = useQuery<any>({
@@ -40,6 +44,14 @@ export const FinanceView: React.FC = () => {
         queryFn: () => fetcher(`/api/finance/history?range=${range}&coin=bitcoin`),
         refetchInterval: 300_000,
     });
+
+    // Pulsar WS relay broadcasts a FinanceTick event for each PriceTick insert.
+    // Invalidate the price queries on tick — TanStack dedupes, so a burst of
+    // ticks doesn't cascade fetches.
+    const invalidateFinance = useCallback(() => {
+        queryClient.invalidateQueries({ queryKey: ['finance'] });
+    }, [queryClient]);
+    useServerEvents('FinanceTick', invalidateFinance);
 
     const top100 = financeData?.top100 ?? [];
     const prices = financeData?.prices ?? { bitcoin: { usd: 0, usd_24h_change: 0 }, ethereum: { usd: 0 }, solana: { usd: 0 } };

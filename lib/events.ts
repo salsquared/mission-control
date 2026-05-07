@@ -1,4 +1,4 @@
-export type ModelName = 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting';
+export type ModelName = 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick';
 
 export interface ServerEvent {
     model: ModelName;

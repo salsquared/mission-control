@@ -10,6 +10,9 @@ export async function register() {
         const { startFileWatcher } = await import('./lib/tasks/watcher');
         startFileWatcher(join(process.cwd(), 'docs', 'todo.md'));
 
+        const { startPulsarRelay, stopPulsarRelay } = await import('./lib/pulsar-ws-relay');
+        startPulsarRelay();
+
         const { clearRestartFlag } = await import('./lib/restart-guard');
         clearRestartFlag();
 
@@ -17,7 +20,9 @@ export async function register() {
         const { subscribeToEvents } = await import('./lib/events');
         process.on('SIGTERM', () => {
             console.info('[SHUTDOWN] SIGTERM received — draining writes...');
-            // Close all SSE event-bus listeners
+            // Close the Pulsar WS so the next process boot doesn't see a dangling
+            // connection, and close all SSE event-bus listeners.
+            stopPulsarRelay();
             const unsub = subscribeToEvents(() => {});
             unsub();
             setTimeout(() => {
