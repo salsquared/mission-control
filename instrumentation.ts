@@ -3,8 +3,8 @@ export async function register() {
         const { initLogger } = await import('./lib/logger');
         initLogger();
 
-        const { pruneExpiredCache } = await import('./lib/cache');
-        setInterval(() => { pruneExpiredCache().catch(console.error); }, 5 * 60 * 1000);
+        // Cache pruning is owned by the mission-control-scheduler PM2 process
+        // (scheduler/jobs/cache-prune.ts) — see MVP2 Phase E3.
 
         const { join } = await import('path');
         const { startFileWatcher } = await import('./lib/tasks/watcher');

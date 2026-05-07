@@ -42,6 +42,7 @@ if [ "$1" == "--restart" ] || [ "$1" == "restart" ]; then
   # Set restart guard so PATCH/POST /api/tasks returns 503 during the kill window
   touch /Users/sal/salsquared/mission-control/.restart-flag
   pm2 delete mission-control 2>/dev/null || true
+  pm2 delete mission-control-scheduler 2>/dev/null || true
   if lsof -t -i:$PORT > /dev/null; then
     echo "Killing stale process on port $PORT..."
     kill -9 $(lsof -t -i:$PORT) 2>/dev/null || true
@@ -66,6 +67,14 @@ else
   # Start the Next.js server persistently in the background using PM2 directly to the binary.
   # This prevents NPM wrapper from leaving an orphaned node process running on port 3101 when deleted!
   NODE_OPTIONS='--max-old-space-size=1024' pm2 start node_modules/next/dist/bin/next --kill-timeout 10000 --name "mission-control" -- start -p $PORT
+
+  echo "Starting the scheduler process via PM2..."
+  # Run scheduler/index.ts directly via tsx — no build step. Scheduler owns
+  # cache pruning today; non-financial recurring jobs added later live here.
+  # If the scheduler is already running (warm path skipped this branch), do nothing.
+  if ! pm2 describe mission-control-scheduler > /dev/null 2>&1; then
+    NODE_OPTIONS='--max-old-space-size=512' pm2 start node_modules/.bin/tsx --kill-timeout 10000 --name "mission-control-scheduler" -- scheduler/index.ts
+  fi
 
   # Wait for the server to bind to our custom port 3101 using localhost checks
   echo "Waiting for Mission Control server to start on port $PORT..."
