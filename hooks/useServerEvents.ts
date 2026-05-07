@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-export type ServerEventModel = 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick';
+export type ServerEventModel = 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick' | 'Cache';
 
 export function useServerEvents(model: ServerEventModel, onInvalidate: () => void) {
     const onInvalidateRef = useRef(onInvalidate);

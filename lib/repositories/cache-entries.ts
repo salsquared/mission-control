@@ -27,3 +27,15 @@ export async function deleteExpiredCacheEntries(): Promise<number> {
     });
     return result.count;
 }
+
+export async function deleteCacheEntry(key: string): Promise<number> {
+    const result = await prisma.cacheEntry.deleteMany({ where: { key } });
+    return result.count;
+}
+
+export async function deleteCacheEntriesByPrefix(prefix: string): Promise<number> {
+    const result = await prisma.cacheEntry.deleteMany({
+        where: { key: { startsWith: prefix } },
+    });
+    return result.count;
+}

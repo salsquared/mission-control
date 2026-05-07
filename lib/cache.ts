@@ -1,5 +1,12 @@
 import { NextResponse } from 'next/server';
-import { findCacheEntry, upsertCacheEntry, deleteExpiredCacheEntries } from '@/lib/repositories/cache-entries';
+import {
+    findCacheEntry,
+    upsertCacheEntry,
+    deleteExpiredCacheEntries,
+    deleteCacheEntry,
+    deleteCacheEntriesByPrefix,
+} from '@/lib/repositories/cache-entries';
+import { broadcastEvent } from '@/lib/events';
 
 interface L1Entry {
     data: any;
@@ -63,6 +70,44 @@ export async function pruneExpiredCache(): Promise<void> {
     } catch (e) {
         console.warn('[CACHE] Prune failed:', e);
     }
+}
+
+// Drop a single cache key from L1 + L2 and broadcast a 'Cache' invalidation
+// event so connected clients refetch. Returns true if the key was present in
+// the L1 map (we don't await L2 to keep the call non-blocking; the broadcast
+// fires regardless because connected clients should refetch in either case).
+export function invalidateCacheKey(key: string): boolean {
+    const had = globalCache.has(key);
+    globalCache.delete(key);
+    inFlight.delete(key);
+    if (useSQLite()) {
+        deleteCacheEntry(key).catch((e) => console.warn(`[CACHE INVALIDATE] L2 delete failed for ${key}:`, e));
+    }
+    console.info(`[CACHE INVALIDATE] ${key}${had ? '' : ' (not in L1)'}`);
+    broadcastEvent({ model: 'Cache', action: 'invalidate', id: key, timestamp: Date.now() });
+    return had;
+}
+
+// Drop every cache key whose pathname-portion starts with `prefix`. Useful
+// for invalidating a whole route family (e.g., '/api/research') in one call.
+// Broadcasts a single 'Cache' event with the prefix marker.
+export function invalidateCacheByPrefix(prefix: string): number {
+    let count = 0;
+    for (const key of Array.from(globalCache.keys())) {
+        if (key.startsWith(prefix)) {
+            globalCache.delete(key);
+            inFlight.delete(key);
+            count++;
+        }
+    }
+    if (useSQLite()) {
+        deleteCacheEntriesByPrefix(prefix).catch((e) => console.warn(`[CACHE INVALIDATE] L2 prefix delete failed for ${prefix}:`, e));
+    }
+    if (count > 0 || useSQLite()) {
+        console.info(`[CACHE INVALIDATE] prefix=${prefix} (${count} L1 keys)`);
+        broadcastEvent({ model: 'Cache', action: 'invalidate', id: `${prefix}*`, timestamp: Date.now() });
+    }
+    return count;
 }
 
 export type UpstreamHost = string | ((req: Request) => string | null | undefined);
