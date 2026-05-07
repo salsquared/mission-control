@@ -1,20 +1,30 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import { Trash2, Clock, Loader2 } from "lucide-react";
 import { useSession } from "next-auth/react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, queryKeys } from "@/lib/api-client";
 
 interface CalendarEvent {
   id: string;
-  summary: string;
-  start: { dateTime: string; timeZone?: string };
-  end: { dateTime: string; timeZone?: string };
+  summary?: string;
+  start?: { dateTime?: string; timeZone?: string };
+  end?: { dateTime?: string; timeZone?: string };
   readonly?: boolean;
 }
 
 export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boolean) => void, injectedTasks?: CalendarEvent[]}> = ({isAdding, setIsAdding, injectedTasks = []}) => {
     const { data: session } = useSession();
     const userId = (session?.user as any)?.id ?? null;
-    const [events, setEvents] = useState<CalendarEvent[]>([]);
-    const [loading, setLoading] = useState(false);
+    const queryClient = useQueryClient();
+
+    const { data: eventsResponse, isLoading } = useQuery({
+        queryKey: queryKeys.calendarEvents,
+        queryFn: () => api.calendarEvents.list(),
+        enabled: Boolean(userId),
+    });
+    const events: CalendarEvent[] = (eventsResponse?.events ?? []) as CalendarEvent[];
+    const [submitting, setSubmitting] = useState(false);
+    const loading = isLoading || submitting;
 
     const [newEvent, setNewEvent] = useState({
       summary: "",
@@ -22,73 +32,43 @@ export const CalendarWidget: React.FC<{isAdding: boolean, setIsAdding: (val: boo
       end: ""
     });
 
-    const fetchEvents = async () => {
-        setLoading(true);
-        try {
-            const res = await fetch(`/api/calendar/event`);
-            const data = await res.json();
-            if (data.events) {
-                setEvents(data.events);
-            }
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    // Key on the stable user id, not the session object reference, so
-    // background revalidations don't re-fire fetchEvents.
-    useEffect(() => {
-        if (userId) {
-            fetchEvents();
-        }
-    }, [userId]);
+    const invalidateEvents = () => queryClient.invalidateQueries({ queryKey: queryKeys.calendarEvents });
 
     const handleCreate = async () => {
         if (!newEvent.summary || !newEvent.start || !newEvent.end) return;
-        setLoading(true);
+        setSubmitting(true);
         try {
-            const startISO = new Date(newEvent.start).toISOString();
-            const endISO = new Date(newEvent.end).toISOString();
-
-            await fetch("/api/calendar/event", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    summary: newEvent.summary,
-                    start: startISO,
-                    end: endISO,
-                    description: "Created from Mission Control Pipeline",
-                })
+            await api.calendarEvents.upsert({
+                summary: newEvent.summary,
+                start: new Date(newEvent.start).toISOString(),
+                end: new Date(newEvent.end).toISOString(),
+                description: "Created from Mission Control Pipeline",
             });
             setIsAdding(false);
             setNewEvent({summary: "", start: "", end: ""});
-            await fetchEvents();
+            await invalidateEvents();
         } catch (e) {
             console.error(e);
         } finally {
-            setLoading(false);
+            setSubmitting(false);
         }
     };
 
     const handleDelete = async (eventId: string) => {
-        setLoading(true);
+        setSubmitting(true);
         try {
-            await fetch(`/api/calendar/event?eventId=${eventId}`, {
-                method: "DELETE",
-            });
-            await fetchEvents();
+            await api.calendarEvents.delete(eventId);
+            await invalidateEvents();
         } catch (e) {
             console.error(e);
         } finally {
-            setLoading(false);
+            setSubmitting(false);
         }
     };
 
     const displayEvents = React.useMemo(() => {
         const combined = [...events, ...injectedTasks.map(t => ({ ...t, readonly: true }))];
-        return combined.sort((a, b) => new Date(a.start.dateTime || 0).getTime() - new Date(b.start.dateTime || 0).getTime());
+        return combined.sort((a, b) => new Date(a.start?.dateTime || 0).getTime() - new Date(b.start?.dateTime || 0).getTime());
     }, [events, injectedTasks]);
 
     return (

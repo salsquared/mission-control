@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from "react";
 import { cn } from "@/lib/utils";
 import { Clock, Loader2, Edit2, Check } from "lucide-react";
+import { api } from "@/lib/api-client";
 
 export interface TaskItem {
     id: string;
@@ -63,19 +64,11 @@ export const TaskItemComponent: React.FC<{ task: TaskItem }> = ({ task }) => {
         }
         setIsSaving(true);
         try {
-            const res = await fetch('/api/tasks', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: task.id, text: editValue.trim() })
-            });
-            if (res.ok) {
-                setLocalText(editValue.trim());
-                setIsEditing(false);
-            } else {
-                console.error("Failed to save task text");
-            }
+            await api.tasks.update({ id: task.id, text: editValue.trim() });
+            setLocalText(editValue.trim());
+            setIsEditing(false);
         } catch (e) {
-            console.error(e);
+            console.error("Failed to save task text", e);
         } finally {
             setIsSaving(false);
         }
@@ -84,11 +77,7 @@ export const TaskItemComponent: React.FC<{ task: TaskItem }> = ({ task }) => {
     const handleSetDate = async (newDate: string) => {
         setLocalDueDate(newDate);
         try {
-            await fetch('/api/tasks', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: task.id, dueDate: newDate })
-            });
+            await api.tasks.update({ id: task.id, dueDate: newDate });
         } catch (e) {
             console.error("Failed to set due date:", e);
         }
@@ -98,11 +87,7 @@ export const TaskItemComponent: React.FC<{ task: TaskItem }> = ({ task }) => {
         setShowPrioMenu(false);
         setLocalPriority(newPrio);
         try {
-            await fetch('/api/tasks', {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ id: task.id, priority: newPrio })
-            });
+            await api.tasks.update({ id: task.id, priority: newPrio as 'BLOCKER' | 'HIGH' | 'MEDIUM' | 'LOW' | null });
         } catch (e) {
             console.error("Failed to set priority:", e);
         }

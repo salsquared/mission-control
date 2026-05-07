@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { BookOpen, User, Quote, ArrowUp, RefreshCw } from "lucide-react";
 import { CarouselControls } from "../ui/CarouselControls";
 import { PaperActions } from "../ui/PaperActions";
+import { api } from "@/lib/api-client";
 
 interface Paper {
     id: string;
@@ -98,21 +99,17 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
 
         try {
             if (isRemoving) {
-                await fetch(`/api/research/saved?paperId=${idToUse}`, { method: 'DELETE' });
+                await api.savedPapers.delete(idToUse);
             } else {
-                await fetch('/api/research/saved', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        paperId: idToUse,
-                        title: paper.title,
-                        summary: paper.summary,
-                        url: paper.url,
-                        authors: paper.author,
-                        publishedAt: paper.published_at,
-                        topic: subject.toLowerCase().includes('space') ? 'Space' : subject.toLowerCase().includes('crypto') ? 'Crypto' : 'AI', // Simple topic derivation
-                        status
-                    })
+                await api.savedPapers.upsert({
+                    paperId: idToUse,
+                    title: paper.title,
+                    summary: paper.summary,
+                    url: paper.url,
+                    authors: paper.author,
+                    publishedAt: paper.published_at,
+                    topic: subject.toLowerCase().includes('space') ? 'Space' : subject.toLowerCase().includes('crypto') ? 'Crypto' : 'AI',
+                    status,
                 });
             }
         } catch (error) {

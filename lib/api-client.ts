@@ -27,6 +27,12 @@ import {
     SavedPaperDeleteResponseSchema,
     SavedPaperPostSchema,
 } from './schemas/saved-papers';
+import {
+    CalendarEventListResponseSchema,
+    CalendarEventMutationResponseSchema,
+    CalendarEventDeleteResponseSchema,
+    CalendarEventPostSchema,
+} from './schemas/calendar';
 
 // ─── Internals ─────────────────────────────────────────────────────────────
 
@@ -77,6 +83,7 @@ export const queryKeys = {
     applications: ['applications'] as const,
     settings: ['settings'] as const,
     system: ['system'] as const,
+    calendarEvents: ['calendar-events'] as const,
     savedPapers: (filter?: { topic?: string | null; status?: string | null }) =>
         ['saved-papers', filter ?? {}] as const,
 };
@@ -114,6 +121,18 @@ export const api = {
 
     system: {
         get: () => jsonFetch('/api/system', SystemTelemetryResponseSchema),
+    },
+
+    calendarEvents: {
+        list: () => jsonFetch('/api/calendar/event', CalendarEventListResponseSchema),
+        upsert: (input: z.infer<typeof CalendarEventPostSchema>) =>
+            jsonFetch('/api/calendar/event', CalendarEventMutationResponseSchema, jsonBody('POST', input)),
+        delete: (eventId: string) =>
+            jsonFetch(
+                `/api/calendar/event?eventId=${encodeURIComponent(eventId)}`,
+                CalendarEventDeleteResponseSchema,
+                { method: 'DELETE' }
+            ),
     },
 
     savedPapers: {

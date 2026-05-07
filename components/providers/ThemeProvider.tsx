@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "./state";
+import { api } from "@/lib/api-client";
 
 function debounce<T extends (...args: any[]) => void>(fn: T, ms: number): T {
     let timer: ReturnType<typeof setTimeout> | null = null;
@@ -17,12 +18,10 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
 
     // Pull from API on mount
     useEffect(() => {
-        fetch('/api/settings')
-            .then(res => res.json())
+        api.settings.get()
             .then(res => {
                 if (res.data) {
-                    const { activeViewId: _av, ...globalData } = res.data;
-                    useAppStore.setState(globalData);
+                    useAppStore.setState(res.data);
                 }
                 setMounted(true);
             })
@@ -35,12 +34,8 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
     // Push to API on state change — debounced 500 ms so rapid edits (e.g. title
     // typing) fire one request after the user stops, not one per keystroke.
     const debouncedSave = useRef(
-        debounce((data: object) => {
-            fetch('/api/settings', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data),
-            }).catch(err => console.error("Failed to save settings:", err));
+        debounce((data: any) => {
+            api.settings.update(data).catch(err => console.error("Failed to save settings:", err));
         }, 500)
     ).current;
 

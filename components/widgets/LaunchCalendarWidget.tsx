@@ -2,6 +2,7 @@ import React, { useMemo, useState, useEffect } from "react";
 import { Launch } from "../views/SpaceView";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
+import { fetcher } from "@/lib/fetcher-client";
 
 interface LaunchCalendarWidgetProps {
     launches: Launch[];
@@ -103,8 +104,9 @@ export const LaunchCalendarWidget: React.FC<LaunchCalendarWidgetProps> = ({ laun
         if (fetchedMonths.has(monthKey)) return;
 
         setIsLoading(true);
-        fetch(`/api/space/launches?year=${year}&month=${month}`)
-            .then(res => res.json())
+        // Per-month fetch with local merge — too dynamic to model as a single
+        // useQuery; using the loose fetcher to keep stale-fallback toasts.
+        fetcher<any[]>(`/api/space/launches?year=${year}&month=${month}`)
             .then(data => {
                 if (Array.isArray(data)) {
                     setAllLaunches(prev => {
