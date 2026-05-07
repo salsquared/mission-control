@@ -308,7 +308,7 @@ Lower than the original plan rated it because we avoided the contract abstractio
 
 ---
 
-## 7. Phase G — Plugin contract for company adapters (`[8.1c]`)
+## 7. Phase G ✅ — Plugin contract for company adapters (`[8.1c]`)
 
 After MVP1 Task 8A splits the registry into files, MVP2 promotes "a company" from a config row to a typed adapter.
 
@@ -328,6 +328,20 @@ After MVP1 Task 8A splits the registry into files, MVP2 promotes "a company" fro
 
 **Risk:** Medium. Plugin architectures over-engineer easily; resist the urge to make the contract too rich. Stick to `fetch + health` and let composition do the rest.
 
+**Status:** Shipped across three slices.
+
+| Slice | Subject |
+|---|---|
+| G1 | `lib/companies/adapter.ts` (CompanyAdapter interface — `id`, `name`, `view`, `category`, `ttlSeconds?`, `upstreamHost?`, `fetch()`) and `lib/companies/factories.ts` (`rssAdapter`, `scrapeAdapter`, `snapiAdapter`, `googleNewsAdapter`, `customAdapter`) |
+| G2 | 55 per-company adapter files in `lib/companies/<id>.ts` + `lib/companies/index.ts` barrel with **explicit alphabetical imports** (compile-time discovery per the §10.3 decision — no runtime fs.readdir glob) |
+| G3 | `/api/company-news` route swaps the strategy switch for `adapter.fetch()` (drops the unused `json-api` scaffold). AIView/SpaceView import `ADAPTERS as COMPANY_REGISTRY` from `lib/companies` (alias kept to minimize diff). Three `scripts/tests/test-*` scripts now import single adapters directly (`import cerebras from '../../lib/companies/cerebras'`) — demonstrates the "unit-testable in isolation" acceptance. Both `lib/company-registry.ts` and `lib/companies/registry.ts` deleted; `lib/companies/index.ts` is the single canonical home. |
+
+**Acceptance check:**
+
+- ✅ Adding a company is one new file: pick a strategy factory, fill in id/name/view/category/strategy-config, default-export. The barrel is the only file with a list — and adding a company there is one new `import` line in alphabetical order. (The barrel is a "central registry table" only in the loosest sense — it's a re-exports file, not the source of truth for any field.)
+- ⏸ **Per-company health checks in the InternalView fetcher tile** — deferred. The interface allows `healthCheck?()` (would be on the contract if added) but isn't wired today; the existing host-keyed Fetcher Health card from MVP1 Task 2D continues to do the job. Punting until a real per-company gap shows up.
+- ✅ A single adapter is unit-testable in isolation: see the three `scripts/tests/test-*-fetcher.ts` files now importing the per-company default export directly.
+
 ---
 
 ## 8. Phase summary (suggested order)
@@ -340,7 +354,9 @@ After MVP1 Task 8A splits the registry into files, MVP2 promotes "a company" fro
 | 4 | Phase E (`[7.1b]` scheduler + Task E4 Pulsar WS relay) | ✅ shipped | Scheduler owns non-financial recurring work; WS relay replaces FinanceView polling. Note: Pulsar stays financial-only. |
 | 5 | Phase D (`[6.1c]` optimistic concurrency) | ✅ shipped | Small, contained. Could ship anywhere after MVP1 5A/5B but pairs well with Phase E because that's when "another caller might be writing" stops being hypothetical. |
 | 6 | Phase F (`[7.2c]` unified cache) | ✅ shipped (scope-contracted: invalidation bridge, not full re-architecture) | Highest risk; do last so you have the testing scaffolding from Phase C and the repository abstraction from Phase B. |
-| 7 | Phase G (`[8.1c]` adapter plugin) | 🔜 pending | Independent; can be done at any point after MVP1 Task 8A. Sequenced last only because it's the lowest-priority structural change. |
+| 7 | Phase G (`[8.1c]` adapter plugin) | ✅ shipped | Independent; can be done at any point after MVP1 Task 8A. Sequenced last only because it's the lowest-priority structural change. |
+
+**MVP2 is complete.** All seven phases shipped. Carry-over Task 0A (drop `CryptoPrice`) shipped; Task 0B (broken scrapers) reclassified to backlog (rationale in §0). The deferred items below remain explicitly out of scope:
 
 ---
 
