@@ -3,8 +3,10 @@ import { withCache } from '../../../../lib/cache';
 
 const UPSTREAM_HOST = 'celestrak.org';
 
-const SATELLITE_TTL_SECONDS = 7200; // Celestrak refreshes GROUP=active every 2 hours
-export const revalidate = SATELLITE_TTL_SECONDS;
+// Celestrak refreshes GROUP=active every 2 hours. Next 16 requires literal
+// numbers for `revalidate` — can't reference a const expression.
+const SATELLITE_TTL_SECONDS = 7200;
+export const revalidate = 7200;
 
 async function getHandler() {
     try {
