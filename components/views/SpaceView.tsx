@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
-import useSWR from "swr";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
 import { ReloadButton } from "../ui/ReloadButton";
@@ -70,24 +70,26 @@ export interface Launch {
 }
 
 function useSpaceCompanyNews(companies: typeof SPACE_COMPANIES) {
-    const results = companies.map(c => {
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        return useSWR<SpaceArticle[]>(`/api/company-news?company=${c.id}`, fetcher);
+    const results = useQueries({
+        queries: companies.map(c => ({
+            queryKey: ['company-news', c.id],
+            queryFn: () => fetcher<SpaceArticle[]>(`/api/company-news?company=${c.id}`),
+        })),
     });
     const newsMap: Record<string, SpaceArticle[]> = {};
     companies.forEach((c, i) => {
         const data = results[i].data;
         if (Array.isArray(data) && data.length > 0) newsMap[c.name] = data;
     });
-    return { newsMap, mutates: results.map(r => r.mutate) };
+    return { newsMap };
 }
 
 export const SpaceView: React.FC = () => {
-    const { data: spaceNewsRaw, mutate: mutateSpace } = useSWR<SpaceArticle[]>('/api/space', fetcher);
-    const { data: launchData, mutate: mutateLaunches } = useSWR<Launch[]>('/api/space/launches', fetcher);
-    const { data: satellitesData, mutate: mutateSats } = useSWR<any>('/api/space/satellites', fetcher);
-    const { data: solarData, mutate: mutateSolar } = useSWR<any>('/api/space/solar', fetcher);
-    const { data: moonData, mutate: mutateMoon } = useSWR<any>('/api/space/moon', fetcher);
+    const { data: spaceNewsRaw, refetch: refetchSpace } = useQuery<SpaceArticle[]>({ queryKey: ['space', 'news'], queryFn: () => fetcher('/api/space') });
+    const { data: launchData, refetch: refetchLaunches } = useQuery<Launch[]>({ queryKey: ['space', 'launches'], queryFn: () => fetcher('/api/space/launches') });
+    const { data: satellitesData, refetch: refetchSats } = useQuery<any>({ queryKey: ['space', 'satellites'], queryFn: () => fetcher('/api/space/satellites') });
+    const { data: solarData, refetch: refetchSolar } = useQuery<any>({ queryKey: ['space', 'solar'], queryFn: () => fetcher('/api/space/solar') });
+    const { data: moonData, refetch: refetchMoon } = useQuery<any>({ queryKey: ['space', 'moon'], queryFn: () => fetcher('/api/space/moon') });
     const { newsMap: companyNewsMap } = useSpaceCompanyNews(SPACE_COMPANIES);
 
     const launches: Launch[] = Array.isArray(launchData) ? launchData : [];
@@ -104,11 +106,11 @@ export const SpaceView: React.FC = () => {
     }
     Object.assign(newsBySource, companyNewsMap);
 
-    const reloadNews = () => { mutateSpace(); };
-    const reloadLaunches = () => { mutateLaunches(); };
-    const reloadSats = () => { mutateSats(); };
-    const reloadSolar = () => { mutateSolar(); };
-    const reloadMoon = () => { mutateMoon(); };
+    const reloadNews = () => { refetchSpace(); };
+    const reloadLaunches = () => { refetchLaunches(); };
+    const reloadSats = () => { refetchSats(); };
+    const reloadSolar = () => { refetchSolar(); };
+    const reloadMoon = () => { refetchMoon(); };
 
     const moonScrollRef = useRef<HTMLDivElement>(null);
     const todayRef = useRef<HTMLDivElement>(null);

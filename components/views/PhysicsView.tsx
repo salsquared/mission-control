@@ -1,7 +1,7 @@
 "use client";
 
 import React from "react";
-import useSWR from "swr";
+import { useQuery } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
@@ -10,14 +10,12 @@ import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 import { fetcher } from "@/lib/fetcher-client";
 
 export const PhysicsView: React.FC = () => {
-    const { data: arxivYesterday, mutate: mutateY } = useSWR<any[]>('/api/research?topic=physics&timeframe=yesterday&limit=5', fetcher);
-    const { data: arxivLastWeek, mutate: mutateW } = useSWR<any[]>('/api/research?topic=physics&timeframe=week&limit=5', fetcher);
-    const { data: arxivReview, mutate: mutateRev } = useSWR<any[]>('/api/research/review?topic=physics', fetcher);
-    const { data: arxivHistorical, mutate: mutateHist } = useSWR<any[]>('/api/research/historical?topic=physics', fetcher);
+    const { data: arxivYesterday, refetch: refetchY } = useQuery<any[]>({ queryKey: ['research', 'physics', 'yesterday'], queryFn: () => fetcher('/api/research?topic=physics&timeframe=yesterday&limit=5') });
+    const { data: arxivLastWeek, refetch: refetchW } = useQuery<any[]>({ queryKey: ['research', 'physics', 'week'], queryFn: () => fetcher('/api/research?topic=physics&timeframe=week&limit=5') });
+    const { data: arxivReview, refetch: refetchRev } = useQuery<any[]>({ queryKey: ['research', 'physics', 'review'], queryFn: () => fetcher('/api/research/review?topic=physics') });
+    const { data: arxivHistorical, refetch: refetchHist } = useQuery<any[]>({ queryKey: ['research', 'physics', 'historical'], queryFn: () => fetcher('/api/research/historical?topic=physics') });
 
     const loading = !arxivYesterday && !arxivLastWeek && !arxivReview && !arxivHistorical;
-
-    const handleRefresh = async (mutate: () => void) => { mutate(); };
 
     const researchCards: CardItem[] = loading ? [
         { id: "loading-research", colSpan: 3, content: (
@@ -26,10 +24,10 @@ export const PhysicsView: React.FC = () => {
             </div>
         )}
     ] : [
-        { id: "physics-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => mutateY()} /> },
-        { id: "physics-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => mutateW()} /> },
-        { id: "physics-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => mutateRev()} /> },
-        { id: "physics-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Physics Paper" papers={arxivHistorical ?? []} onRefresh={() => mutateHist()} /> }
+        { id: "physics-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} /> },
+        { id: "physics-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} /> },
+        { id: "physics-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} /> },
+        { id: "physics-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Physics Paper" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} /> }
     ];
 
     return (

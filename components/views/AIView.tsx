@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import useSWR from "swr";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
@@ -13,32 +13,31 @@ import { fetcher } from "@/lib/fetcher-client";
 const AI_COMPANIES = COMPANY_REGISTRY.filter(c => c.view === 'ai');
 const AI_CATEGORIES = ['AI Model Developers', 'Fabless', 'AI Accelerators', 'IP/Architecture', 'Foundries', 'News Sources'];
 
-// Stable hook for per-company news
 function useCompanyNews(companies: typeof AI_COMPANIES) {
-    // SWR doesn't support conditional array of hooks, so we fetch all in a batch via useSWR with a null key pattern.
-    // Each company gets its own SWR key — React rules of hooks: we call them for each company in a fixed-length array.
-    const results = companies.map(c => {
-        // eslint-disable-next-line react-hooks/rules-of-hooks
-        return useSWR<any[]>(`/api/company-news?company=${c.id}`, fetcher);
+    const results = useQueries({
+        queries: companies.map(c => ({
+            queryKey: ['company-news', c.id],
+            queryFn: () => fetcher<any[]>(`/api/company-news?company=${c.id}`),
+        })),
     });
     const newsMap: Record<string, any[]> = {};
     companies.forEach((c, i) => {
         const data = results[i].data;
         if (Array.isArray(data) && data.length > 0) newsMap[c.name] = data;
     });
-    const isLoading = results.some(r => !r.data && !r.error);
+    const isLoading = results.some(r => r.isLoading);
     return { newsMap, isLoading };
 }
 
 export const AIView: React.FC = () => {
     const [llmCategory, setLlmCategory] = useState("text");
 
-    const { data: hackerNews, mutate: mutateHN } = useSWR<any[]>('/api/ai', fetcher);
-    const { data: arxivYesterday, mutate: mutateY } = useSWR<any[]>('/api/research?topic=ai&timeframe=yesterday&limit=5', fetcher);
-    const { data: arxivLastWeek, mutate: mutateW } = useSWR<any[]>('/api/research?topic=ai&timeframe=week&limit=5', fetcher);
-    const { data: arxivReview, mutate: mutateRev } = useSWR<any[]>('/api/research/review?topic=ai', fetcher);
-    const { data: arxivHistorical, mutate: mutateHist } = useSWR<any[]>('/api/research/historical?topic=ai', fetcher);
-    const { data: llmLeaderboard, mutate: mutateLLM } = useSWR<LLMModelInfo[]>(`/api/ai/llmleaderboard?category=${llmCategory}`, fetcher);
+    const { data: hackerNews } = useQuery<any[]>({ queryKey: ['ai', 'hn'], queryFn: () => fetcher('/api/ai') });
+    const { data: arxivYesterday, refetch: refetchY } = useQuery<any[]>({ queryKey: ['research', 'ai', 'yesterday'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=yesterday&limit=5') });
+    const { data: arxivLastWeek, refetch: refetchW } = useQuery<any[]>({ queryKey: ['research', 'ai', 'week'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=week&limit=5') });
+    const { data: arxivReview, refetch: refetchRev } = useQuery<any[]>({ queryKey: ['research', 'ai', 'review'], queryFn: () => fetcher('/api/research/review?topic=ai') });
+    const { data: arxivHistorical, refetch: refetchHist } = useQuery<any[]>({ queryKey: ['research', 'ai', 'historical'], queryFn: () => fetcher('/api/research/historical?topic=ai') });
+    const { data: llmLeaderboard, refetch: refetchLLM } = useQuery<LLMModelInfo[]>({ queryKey: ['ai', 'llmleaderboard', llmCategory], queryFn: () => fetcher(`/api/ai/llmleaderboard?category=${llmCategory}`) });
 
     const { newsMap: companyNews, isLoading: companyLoading } = useCompanyNews(AI_COMPANIES);
 
@@ -60,10 +59,10 @@ export const AIView: React.FC = () => {
 
     const researchCards: CardItem[] = loading ? [{ id: "loading-research", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-purple-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
         : [
-            { id: "ai-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => mutateY()} /> },
-            { id: "ai-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => mutateW()} /> },
-            { id: "ai-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => mutateRev()} /> },
-            { id: "ai-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical ?? []} onRefresh={() => mutateHist()} /> }
+            { id: "ai-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} /> },
+            { id: "ai-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} /> },
+            { id: "ai-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} /> },
+            { id: "ai-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} /> }
         ];
 
     const leaderboardCategories = [
@@ -76,7 +75,7 @@ export const AIView: React.FC = () => {
         : [{ id: "ai-llm-leaderboard", colSpan: 3, content: (
             <LLMLeaderboardCard
                 models={llmLeaderboard}
-                onRefresh={() => mutateLLM()}
+                onRefresh={() => refetchLLM()}
                 activeCategory={llmCategory}
                 categories={leaderboardCategories}
                 onCategoryChange={(cat) => { setLlmCategory(cat); }}
