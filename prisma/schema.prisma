@@ -111,14 +111,41 @@ model Application {
   role         String?
   status       String
   nextSteps    String?
+  nextStepAt   DateTime?
   dateApplied  DateTime?
   lastUpdateAt DateTime  @default(now())
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emails       ApplicationEmail[]
 
   @@index([userId, status])
+}
+
+model ApplicationEmail {
+  id            String   @id @default(cuid())
+  applicationId String
+  messageId     String   @unique
+  threadId      String?
+  subject       String
+  fromAddress   String
+  receivedAt    DateTime
+  snippet       String?
+  parsedStatus  String?
+  createdAt     DateTime @default(now())
+
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, receivedAt])
+}
+
+model GmailWatch {
+  userId      String   @id
+  historyId   String
+  expiresAt   DateTime
+  installedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 

@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { findUserByEmail } from "@/lib/repositories/users";
 import { findApplicationsByUser } from "@/lib/repositories/applications";
+import { ensureGmailWatchFresh } from "@/lib/gmail-watch";
 
 export async function GET(req: NextRequest) {
   try {
@@ -16,6 +17,10 @@ export async function GET(req: NextRequest) {
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
+
+    // Fire-and-forget watch renewal. Doesn't block the response — keeps the
+    // Gmail push subscription alive while the user has the dash open.
+    void ensureGmailWatchFresh(user.id);
 
     const applications = await findApplicationsByUser(user.id);
 

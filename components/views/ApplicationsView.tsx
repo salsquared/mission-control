@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
 import { Section } from "../Section";
-import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus } from "lucide-react";
+import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Radio } from "lucide-react";
 import { useSession, signIn } from "next-auth/react";
 import { CalendarWidget } from "../widgets/CalendarWidget";
 import { KanbanWidget, KanbanColumnDef } from "../widgets/KanbanWidget";
@@ -10,6 +10,9 @@ import { Card } from "../ui/Card";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { api, queryKeys } from "@/lib/api-client";
+import { ApplicationStepper } from "../widgets/applications/ApplicationStepper";
+import { ApplicationEmailList, ApplicationEmailItem } from "../widgets/applications/ApplicationEmailList";
+import { ApplicationNextStep } from "../widgets/applications/ApplicationNextStep";
 
 interface AppRecord {
     id: string;
@@ -17,7 +20,9 @@ interface AppRecord {
     role: string | null;
     status: string;
     nextSteps: string | null;
+    nextStepAt: string | null;
     lastUpdateAt: string;
+    emails: ApplicationEmailItem[];
 }
 
 type AppKanbanColumnDef = KanbanColumnDef<AppRecord> & { statuses: string[] };
@@ -29,6 +34,27 @@ const pipelineColumns: AppKanbanColumnDef[] = [
     { id: "offer", title: "Offer", statuses: ["OFFER"], filterFn: (app) => ["OFFER"].includes(app.status), defaultTargetStatus: "OFFER", colorClass: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20" },
     { id: "archive", title: "Archive", statuses: ["REJECTED"], filterFn: (app) => ["REJECTED"].includes(app.status), defaultTargetStatus: "REJECTED", colorClass: "bg-slate-500/20 text-slate-400 border border-slate-500/20" }
 ];
+
+function relativeShort(iso: string): string {
+    const ms = Date.now() - new Date(iso).getTime();
+    const m = Math.floor(ms / 60_000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    return `${d}d`;
+}
+
+function watchSummary(watch: { expiresAt: string } | null | undefined): string {
+    if (!watch) return "No Pub/Sub watch installed";
+    const ms = new Date(watch.expiresAt).getTime() - Date.now();
+    if (ms <= 0) return "Watch expired";
+    const days = Math.floor(ms / (24 * 60 * 60 * 1000));
+    const hours = Math.floor((ms % (24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+    if (days >= 1) return `Watch active · expires in ${days}d`;
+    return `Watch active · expires in ${hours}h`;
+}
 
 export const ApplicationsView: React.FC = () => {
     const { data: session, status } = useSession();
@@ -48,6 +74,17 @@ export const ApplicationsView: React.FC = () => {
     });
     const apps: AppRecord[] = (appsData?.applications ?? []) as unknown as AppRecord[];
 
+    const { data: watchData } = useQuery({
+        queryKey: ['gmail-watch'],
+        queryFn: () => api.gmailWatch.get(),
+        enabled: Boolean(session),
+    });
+
+    const installWatch = useMutation({
+        mutationFn: () => api.gmailWatch.install(),
+        onSuccess: () => queryClient.invalidateQueries({ queryKey: ['gmail-watch'] }),
+    });
+
     const invalidateApps = useCallback(
         () => queryClient.invalidateQueries({ queryKey: queryKeys.applications }),
         [queryClient]
@@ -66,6 +103,8 @@ export const ApplicationsView: React.FC = () => {
     const renderKanbanItem = (app: AppRecord) => {
         const colDef = pipelineColumns.find(c => c.statuses.includes(app.status));
         const colorClass = colDef?.colorClass || "bg-slate-500/20 text-slate-400 border-none";
+        const emailCount = app.emails.length;
+        const lastEmailAt = app.emails[0]?.receivedAt;
 
         return (
             <div key={app.id} className="bg-black/40 border border-white/5 rounded-xl p-4 shadow-xl hover:border-white/20 hover:bg-black/60 transition-all cursor-default relative overflow-hidden group">
@@ -74,13 +113,24 @@ export const ApplicationsView: React.FC = () => {
                     {app.company}
                 </h5>
                 <p className="text-sm text-slate-400 mt-0.5 line-clamp-1">{app.role || "Unknown Role"}</p>
+
+                <ApplicationStepper status={app.status} />
+                <ApplicationNextStep nextStepAt={app.nextStepAt} />
+
                 {app.nextSteps && (
                     <div className="mt-3 text-xs text-slate-400 leading-relaxed bg-black/20 p-2.5 rounded-lg border border-white/5 line-clamp-3">
                         {app.nextSteps}
                     </div>
                 )}
+
+                <ApplicationEmailList emails={app.emails} />
+
                 <div className="mt-3 text-[10px] text-slate-500 uppercase tracking-widest flex justify-between items-center pt-2 border-t border-white/5">
-                    <span>{new Date(app.lastUpdateAt).toLocaleDateString()}</span>
+                    <span>
+                        {emailCount > 0
+                            ? `${emailCount} email${emailCount === 1 ? "" : "s"} · ${relativeShort(lastEmailAt!)} ago`
+                            : new Date(app.lastUpdateAt).toLocaleDateString()}
+                    </span>
                     <span className={colorClass + " bg-transparent px-0 rounded-none font-bold"}>{app.status}</span>
                 </div>
             </div>
@@ -93,9 +143,9 @@ export const ApplicationsView: React.FC = () => {
             colSpan: 1,
             className: "col-span-1 md:col-span-2 lg:col-span-1",
             content: (
-                <Card 
-                    title="Pipeline Kanban" 
-                    icon={Mail} 
+                <Card
+                    title="Pipeline Kanban"
+                    icon={Mail}
                     iconColorClass="text-blue-400"
                     withInnerContainer
                 >
@@ -114,9 +164,9 @@ export const ApplicationsView: React.FC = () => {
             id: "calendar",
             colSpan: 2,
             content: (
-                <Card 
-                    title="Upcoming Interviews" 
-                    icon={CalendarIcon} 
+                <Card
+                    title="Upcoming Interviews"
+                    icon={CalendarIcon}
                     iconColorClass="text-emerald-400"
                     action={
                         <button
@@ -138,9 +188,9 @@ export const ApplicationsView: React.FC = () => {
             colSpan: 3,
             hFit: true,
             content: (
-                <Card 
-                    title="Account Status" 
-                    icon={Mail} 
+                <Card
+                    title="Account Status"
+                    icon={Mail}
                     iconColorClass="text-purple-400"
                     action={
                         <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
@@ -156,10 +206,21 @@ export const ApplicationsView: React.FC = () => {
                                 <Mail className="w-5 h-5 text-slate-400" />
                             </div>
                         )}
-                        <div className="flex flex-col">
+                        <div className="flex flex-col flex-1 min-w-0">
                             <span className="text-sm font-semibold text-slate-200 truncate">{session?.user?.name || "Connected User"}</span>
                             <span className="text-xs text-slate-500 truncate">{session?.user?.email}</span>
+                            <span className="text-[10px] text-slate-500 truncate flex items-center gap-1.5 mt-1">
+                                <Radio className={`w-3 h-3 ${watchData?.watch ? "text-emerald-400" : "text-slate-600"}`} />
+                                {watchSummary(watchData?.watch ?? null)}
+                            </span>
                         </div>
+                        <button
+                            onClick={() => installWatch.mutate()}
+                            disabled={installWatch.isPending}
+                            className="text-[10px] uppercase tracking-wider font-bold px-2.5 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-400/20 rounded-md transition-colors disabled:opacity-50"
+                        >
+                            {installWatch.isPending ? "..." : (watchData?.watch ? "Renew" : "Install")}
+                        </button>
                     </div>
                 </Card>
             )

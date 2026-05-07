@@ -14,7 +14,10 @@ import {
     GoalPostSchema,
     GoalPatchSchema,
 } from './schemas/goals';
-import { ApplicationsListResponseSchema } from './schemas/applications';
+import {
+    ApplicationsListResponseSchema,
+    GmailWatchResponseSchema,
+} from './schemas/applications';
 import {
     SettingsGetResponseSchema,
     SettingsPostResponseSchema,
@@ -116,6 +119,12 @@ export const api = {
 
     applications: {
         list: () => jsonFetch('/api/applications', ApplicationsListResponseSchema),
+    },
+
+    gmailWatch: {
+        get: () => jsonFetch('/api/gmail/watch', GmailWatchResponseSchema),
+        install: () =>
+            jsonFetch('/api/gmail/watch', GmailWatchResponseSchema, { method: 'POST' }),
     },
 
     settings: {

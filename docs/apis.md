@@ -84,10 +84,12 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 
 #### Applications (Job Tracker)
 - **Route:** `GET /api/applications`
-- **Purpose:** Returns the current user's job applications, ordered by most recently updated. Rows are inserted/updated by the Gmail webhook when an inbox message classifies as application/interview correspondence.
+- **Purpose:** Returns the current user's job applications, ordered by most recently updated, with the 5 most recent linked emails per application. Rows are inserted/updated by the Gmail webhook when an inbox message classifies as application/interview correspondence. As a side effect this route fires `ensureGmailWatchFresh()` so the user's `gmail.users.watch` subscription gets renewed if it's within 48h of expiring.
 - **Auth:** `getServerSession` inline (returns 401 if no session, 404 if no matching User row).
-- **External APIs Used:** None (Database only).
-- **Response Schema:** `{ applications: Application[] }` mapping to the `Application` Prisma model.
+- **External APIs Used:** None (Database only). The watch-renewal side effect calls Gmail when due.
+- **Response Schema:** `{ applications: (Application & { emails: ApplicationEmail[] })[] }`. `Application` adds a `nextStepAt` field (parsed deadline from emails). `ApplicationEmail` carries `{ messageId, threadId, subject, fromAddress, receivedAt, snippet, parsedStatus }`.
+
+See `docs/applications.md` for the full feature design.
 
 ### Settings
 
@@ -103,10 +105,17 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 
 #### Gmail Pub/Sub Webhook
 - **Route:** `POST /api/gmail/webhook`
-- **Purpose:** Endpoint that Google Pub/Sub pushes Gmail history notifications to. For each new message, fetches the body via Gmail API; if the subject contains "application" or "interview", runs the body through `parseApplicationEmail()` (Gemini) and upserts an `Application` row keyed by company-name fuzzy match. Broadcasts `{ model: 'Application', action: 'upsert' }`.
-- **Auth:** Shared-secret check — request must include `Authorization: Bearer <PUBSUB_WEBHOOK_SECRET>` (env var). Returns 401 otherwise. Set the same secret on the Pub/Sub push subscription's HTTP headers.
+- **Purpose:** Endpoint that Google Pub/Sub pushes Gmail history notifications to. For each new message, fetches the body via Gmail API; if the subject matches the recruiter-keyword regex (application/interview/offer/assessment/regret/etc.), runs the body through `parseApplicationEmail()` (Gemini) and upserts an `Application` row keyed by company-name fuzzy match. Also writes an `ApplicationEmail` row linking the Gmail `messageId` to the Application, populates `Application.nextStepAt` from the parser's `extractedDates`, and advances `GmailWatch.historyId`. Broadcasts `{ model: 'Application', action: 'upsert' }`.
+- **Auth:** OIDC verification via `verifyPubSubOIDC` against `PUBSUB_AUDIENCE`.
 - **External APIs Used:** Gmail API v1 (`users.history.list`, `users.messages.get`); Gemini via `lib/email-parser.ts`.
 - **Request Body:** Pub/Sub envelope, validated by `PubSubEnvelopeSchema`. The base64-decoded inner payload is validated by `PubSubPayloadSchema` and contains `{ emailAddress, historyId }`.
+
+#### Gmail Watch Lifecycle
+- **Route:** `GET|POST /api/gmail/watch`
+- **Purpose:** `POST` calls `gmail.users.watch` for the signed-in user against `GMAIL_PUBSUB_TOPIC` (label `INBOX`) and upserts a `GmailWatch` row. Idempotent — Google replaces any prior watch for the same user. `GET` returns the current `GmailWatch` (or `null`) for the Account Status card.
+- **Auth:** `getServerSession` (401/404).
+- **External APIs Used:** Gmail API v1 (`users.watch`).
+- **Response Schema:** `{ watch: GmailWatch | null }`. `GmailWatch` is `{ userId, historyId, expiresAt, installedAt, updatedAt }`.
 
 ### AI Dashboard
 

@@ -9,7 +9,9 @@ import {
   findApplicationByCompany,
   createApplication,
   updateApplication,
+  createApplicationEmailIfNew,
 } from "@/lib/repositories/applications";
+import { updateWatchHistoryId } from "@/lib/repositories/gmail-watches";
 import { verifyPubSubOIDC } from "@/lib/google-oidc";
 
 // Pin to Node runtime — this route uses googleapis + jose, both of which pull
@@ -17,6 +19,11 @@ import { verifyPubSubOIDC } from "@/lib/google-oidc";
 // can't handle. serverExternalPackages in next.config also keeps them out of
 // the webpack bundle; this export is belt-and-suspenders.
 export const runtime = 'nodejs';
+
+// Recruiter / ATS phrases that warrant LLM parsing. Kept as a single regex so
+// adding a phrase is cheap. False positives are fine — the LLM gets to discard
+// them — but every match costs an API call.
+const APPLICATION_SUBJECT_RE = /\b(application|applying|interview|offer|candidacy|next steps?|assessment|coding challenge|take[- ]home|onsite|recruit(er|ing)?|regret|unfortunately)\b/i;
 
 export async function POST(req: NextRequest) {
   const audience = process.env.PUBSUB_AUDIENCE;
@@ -45,7 +52,6 @@ export async function POST(req: NextRequest) {
 
     const { emailAddress, historyId } = payloadParsed.data;
 
-    // Lookup user by email in NextAuth account
     const user = await findUserByEmailWithAccounts(emailAddress);
 
     if (!user) {
@@ -55,17 +61,17 @@ export async function POST(req: NextRequest) {
     const authClient = await getGoogleAuthClient(user.id);
     const gmail = google.gmail({ version: "v1", auth: authClient });
 
-    // Fetch the new messages based on the history log
     const historyRes = await gmail.users.history.list({
       userId: "me",
       startHistoryId: String(historyId),
     });
 
     const messagesAdded = historyRes.data.history?.flatMap((h: any) => h.messagesAdded || []) || [];
-    
+    let touchedApp = false;
+
     for (const msgAdded of messagesAdded) {
       if (!msgAdded.message || !msgAdded.message.id) continue;
-      
+
       const msgRes = await gmail.users.messages.get({
         userId: "me",
         id: msgAdded.message.id,
@@ -73,60 +79,91 @@ export async function POST(req: NextRequest) {
       });
 
       const message = msgRes.data;
-      
       const payload = message.payload;
       const headers = payload?.headers || [];
-      const subjectHeader = headers.find(h => h.name === 'Subject');
-      const subject = subjectHeader ? subjectHeader.value || "" : "";
-      
-      // Attempt to get text body
+      const subject = headers.find(h => h.name === 'Subject')?.value || "";
+      const fromAddress = headers.find(h => h.name === 'From')?.value || "";
+
       let bodyText = "";
       if (payload?.parts) {
-        // Multi-part message
         const textPart = payload.parts.find(p => p.mimeType === "text/plain");
         if (textPart && textPart.body?.data) {
           bodyText = Buffer.from(textPart.body.data, "base64").toString("utf-8");
         }
       } else if (payload?.body?.data) {
-        // Single part
         bodyText = Buffer.from(payload.body.data, "base64").toString("utf-8");
       }
 
-      // If it looks like an application email, trigger Gemini parsing
-      if (subject.toLowerCase().includes("application") || subject.toLowerCase().includes("interview")) {
-         const parsed = await parseApplicationEmail(bodyText, subject);
+      if (!APPLICATION_SUBJECT_RE.test(subject)) continue;
 
-         // Upsert application based on Company matching (heuristic)
-         const existingApp = await findApplicationByCompany(user.id, parsed.company);
+      const parsed = await parseApplicationEmail(bodyText, subject);
+      const nextStepAt = pickFutureDate(parsed.extractedDates);
 
-         let appId: string;
-         if (existingApp) {
-           await updateApplication(existingApp.id, {
-             status: parsed.status,
-             nextSteps: parsed.nextSteps,
-             role: parsed.role || existingApp.role,
-             lastUpdateAt: new Date(),
-           });
-           appId = existingApp.id;
-         } else {
-           const newApp = await createApplication({
-             userId: user.id,
-             company: parsed.company,
-             role: parsed.role || "Unknown",
-             status: parsed.status,
-             nextSteps: parsed.nextSteps,
-             dateApplied: new Date(),
-             lastUpdateAt: new Date(),
-           });
-           appId = newApp.id;
-         }
-         broadcastEvent({ model: 'Application', action: 'upsert', id: appId, timestamp: Date.now() });
+      const existingApp = await findApplicationByCompany(user.id, parsed.company);
+
+      let appId: string;
+      if (existingApp) {
+        await updateApplication(existingApp.id, {
+          status: parsed.status,
+          nextSteps: parsed.nextSteps,
+          nextStepAt,
+          role: parsed.role || existingApp.role,
+          lastUpdateAt: new Date(),
+        });
+        appId = existingApp.id;
+      } else {
+        const newApp = await createApplication({
+          userId: user.id,
+          company: parsed.company,
+          role: parsed.role || "Unknown",
+          status: parsed.status,
+          nextSteps: parsed.nextSteps,
+          nextStepAt,
+          dateApplied: new Date(),
+          lastUpdateAt: new Date(),
+        });
+        appId = newApp.id;
       }
+
+      const receivedAt = message.internalDate
+        ? new Date(Number(message.internalDate))
+        : new Date();
+      await createApplicationEmailIfNew({
+        applicationId: appId,
+        messageId: msgAdded.message.id,
+        threadId: message.threadId ?? null,
+        subject,
+        fromAddress,
+        receivedAt,
+        snippet: message.snippet ?? null,
+        parsedStatus: parsed.status,
+      });
+
+      touchedApp = true;
+      broadcastEvent({ model: 'Application', action: 'upsert', id: appId, timestamp: Date.now() });
     }
 
-    return NextResponse.json({ success: true }, { status: 200 });
+    // Advance the stored historyId so subsequent deliveries start from here.
+    // Best-effort — no row exists if watch was never installed via our route.
+    try {
+      await updateWatchHistoryId(user.id, String(historyId));
+    } catch {
+      // No GmailWatch row yet; ignore.
+    }
+
+    return NextResponse.json({ success: true, touched: touchedApp }, { status: 200 });
   } catch (error: any) {
     console.error("Error in Gmail webhook:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
+}
+
+function pickFutureDate(extractedDates: string[] | undefined): Date | null {
+  if (!extractedDates || extractedDates.length === 0) return null;
+  const now = Date.now();
+  const candidates = extractedDates
+    .map(s => new Date(s))
+    .filter(d => !isNaN(d.getTime()) && d.getTime() > now)
+    .sort((a, b) => a.getTime() - b.getTime());
+  return candidates[0] ?? null;
 }
