@@ -67,7 +67,7 @@ The codebase is organized along the lines defined in `docs/frontend_terminology.
 | **Widgets** | `components/widgets/*` | Stand-alone data/UX components (Kanban, Calendar, Graph, LaunchCalendar) |
 | **Windows / Overlays** | `components/Window.tsx`, `components/overlays/*` | Floating/sliding UI that escapes the grid |
 | **UI primitives** | `components/ui/*` | Card, ReloadButton, Scrollbar, PaperActions, TaskItem, CarouselControls |
-| **State providers** | `components/providers/*` | NextAuth `SessionProvider`, `ThemeProvider`, Zustand stores (`themeStore`, `settingsStore`) |
+| **State providers** | `components/providers/*` | NextAuth `SessionProvider`, `QueryProvider` (TanStack), `CacheInvalidationListener`, `ThemeProvider`, unified Zustand store (`useAppStore`) |
 
 A read-through of any feature touches at least four of these layers (e.g., FinanceView → CardGrid → AssetPriceCard → `/api/finance` → `withCache` → CoinGecko + Prisma).
 
@@ -86,16 +86,16 @@ This is appropriate for the single-host use case but means **every restart of `n
 
 ### 4.2 Schema overview
 
-The Prisma schema groups into four roughly orthogonal subdomains:
+The Prisma schema groups into six roughly orthogonal subdomains:
 
 | Subdomain | Models | Purpose |
 |---|---|---|
 | **NextAuth** | `User`, `Account`, `Session`, `VerificationToken` | Standard NextAuth + Prisma adapter; stores Google refresh/access tokens on `Account` |
 | **Applications pipeline** | `Application` | Job/internship/admissions tracker; owned by user; fed by Gmail webhook + manual edits |
 | **Research library** | `SavedPaper`, `SelectedHistoricalPaper`, `SelectedReviewPaper` | User's saved papers + per-week deduplication ledgers for "paper of the week" features |
-| **Crypto** | `CryptoPrice` | Time-series of BTC prices logged on each `/api/finance` hit and from seed scripts |
-| **Tasks / Goals** | `Task`, `LifeGoal` | `Task` is a *projection* of `docs/todo.md`; `LifeGoal` is a separate, DB-native model |
-| **Settings** | `GlobalSetting` | One row keyed `"global"` containing JSON of theme/dash preferences |
+| **Tasks / Goals** | `Task`, `LifeGoal` | `Task` is the *source of truth*; `docs/todo.md` is the regenerated projection. `LifeGoal` is a separate DB-native model |
+| **Settings** | `GlobalSetting` | One row keyed `"global"` with typed columns for theme prefs + a `version` integer for optimistic concurrency |
+| **Cache** | `CacheEntry` | Durable L2 backing for `withCache` (gated by `CACHE_BACKEND=sqlite`); the scheduler prunes expired rows |
 
 Notable: the `Task` table is **not** the source of truth for tasks. `docs/todo.md` is. Stable IDs are injected as inline HTML comments (`<!-- id: ... -->`) and the DB row is rewritten from the file on every mtime change.
 
@@ -105,8 +105,8 @@ The codebase uses **five distinct data-flow patterns**, each appropriate to a di
 
 1. **External-API-only, fully cached** — most space/AI/research/news endpoints. `withCache(handler, ttl)` is the only persistence; on error, last-good is served. Examples: `/api/space/launches`, `/api/research`, `/api/ai/llmleaderboard`, `/api/company-news`.
 2. **External + DB ledger** — `selectedReviewPaper` and `selectedHistoricalPaper` deduplicate weekly picks, and the historical/review endpoints check DB first before re-querying arXiv. The DB is a *commitment log*, not a cache.
-3. **External + DB time-series** — `/api/finance` calls CoinGecko on every cache miss and inserts a `CryptoPrice` row, building a 24h history that the same response then reads back. The endpoint doubles as an opportunistic ingester. (`scripts/seed-crypto.ts` and `scripts/ingest-btc-history.ts` exist for backfill.)
-4. **File-as-source-of-truth** — `docs/todo.md` ↔ `Task` table. `app/api/tasks/route.ts` re-syncs only when the file's mtime advances; PATCH/POST mutate the file *first*, then DB. An in-memory `Mutex` serializes file writes.
+3. **Pulsar-fronted financial data** — `/api/finance` and `/api/finance/history` proxy to a sibling PM2 process (`salsquared/pulsar`) over REST; `lib/pulsar-ws-relay.ts` keeps a long-lived WebSocket open against `${PULSAR_URL}/ws/prices` and rebroadcasts each tick as a `FinanceTick` SSE event so connected clients invalidate their `'finance'` query within seconds. Pulsar owns ingestion (CoinGecko, Mempool, Yahoo, FRED, ExchangeRate); mission-control owns no crypto state itself.
+4. **DB-as-source-of-truth, markdown projection** — `Task` table is canonical. `app/api/tasks/route.ts` PATCH/POST writes the DB *first*, broadcasts a `Task` SSE event, then async-regenerates `docs/todo.md` from the DB via `lib/tasks/regenerator.ts`. External edits to the markdown are picked up by `lib/tasks/watcher.ts` (debounced `fs.watch`) and synced back to the DB; an echo-suppression flag in the regenerator prevents the write loop. An in-memory `Mutex` serializes file writes.
 5. **External event-driven** — Google Cloud Pub/Sub pushes Gmail history events to `/api/gmail/webhook`, which decodes the base64 envelope, calls `gmail.users.history.list`, fetches new messages, and runs them through `parseApplicationEmail` (Gemini 3.0 Flash via `@ai-sdk/google`) to upsert `Application` rows. This is the only inbound integration.
 
 Pattern 1 is the dominant one: **most endpoints are stateless cache-fronted external proxies.**
@@ -123,17 +123,19 @@ A complete inventory is maintained in `docs/apis.md`. The brief by-feature break
 - **System** — `/api/system` (telemetry — CPU, RSS, uptime, DB ping, cache stats), `/api/system/logs` (SSE stream).
 - **AI** — `/api/ai` (HN Algolia AI stories), `/api/ai/llmleaderboard` (LM Arena scrape).
 - **Research** — `/api/research`, `/research/hf`, `/research/historical`, `/research/review`, `/research/import`, `/research/saved`. Backed by Hugging Face Daily Papers, arXiv RSS, Semantic Scholar batch enrichment.
-- **Finance** — `/api/finance`, `/api/finance/history`. CoinGecko, Mempool.space, Yahoo Finance for long-range BTC.
+- **Finance** — `/api/finance`, `/api/finance/history`. Both proxy Pulsar (`PULSAR_URL`); mission-control no longer talks to CoinGecko/Mempool/Yahoo directly. `FinanceTick` SSE events from `lib/pulsar-ws-relay.ts` push live updates to the frontend.
 - **Space** — `/api/space` (SNAPI), `/space/launches` (Space Devs LL2), `/space/satellites` (CelesTrak), `/space/solar` (NOAA SWPC), `/space/moon` (deterministic ephemeris + hardcoded phenomena).
-- **Company news** — `/api/company-news?company=<id>`. Strategy-dispatched (see §6).
-- **Applications / Calendar / Gmail** — `/api/applications` (NextAuth-gated read), `/api/calendar/event` (Google Calendar GET/POST/DELETE), `/api/gmail/webhook` (Pub/Sub push).
-- **Tasks / Goals / Settings** — `/api/tasks` (mtime-gated md ↔ DB sync), `/api/goals` (DB CRUD on `LifeGoal`), `/api/settings` (single JSON blob upsert).
+- **Company news** — `/api/company-news?company=<id>`. Adapter-dispatched (see §6).
+- **Applications / Calendar / Gmail** — `/api/applications` (session-gated read), `/api/calendar/event` (Google Calendar; accepts session **or** `SERVICE_TOKEN_PULSAR` + `?onBehalfOf=<userId>`), `/api/gmail/webhook` (Pub/Sub push, OIDC-verified).
+- **Tasks / Goals / Settings** — `/api/tasks` (DB-first, async markdown regeneration + file watcher), `/api/goals` (DB CRUD on `LifeGoal`), `/api/settings` (typed `GlobalSetting` columns with `version`-based optimistic concurrency via `If-Match`).
+- **System / Cache** — `/api/system` (telemetry incl. Pulsar reachability), `/api/system/logs` (SSE), `/api/system/logs/historical` (PM2 log tail), `/api/system/cache/invalidate` (operator-triggered `withCache` invalidation).
+- **Events** — `/api/events` is the SSE channel for every model invalidation (`Task`, `Goal`, `SavedPaper`, `Application`, `CalendarEvent`, `Setting`, `FinanceTick`, `Cache`).
 
 ### 5.2 Cross-cutting concerns
 
-- **Middleware** (`middleware.ts`) — only logs `/api/*` requests via `console.info`. The matcher is narrow on purpose; broadening it sweeps assets and pages into the in-app log viewer.
-- **Caching** (`lib/cache.ts`) — process-memory `Map<string, {data, expiry}>` keyed by `pathname + sorted query` (the `?v=...` cache buster is stripped before keying and forces a refresh). On handler error or non-2xx response, the last good entry is served and rewritten with a 60 s retry TTL. `Cache-Control` is `no-store` in dev and `max-age + stale-while-revalidate` in prod. Stats survive HMR via `globalThis`.
-- **Auth gating** — only `/api/applications` reads the NextAuth session. `/api/calendar/event` takes `userId` as a query param and trusts it. `/api/gmail/webhook` trusts the Pub/Sub envelope's `emailAddress` to look up the user. **There is no Pub/Sub signature verification** — see §11.
+- **Middleware** (`proxy.ts` — Next 16 renamed `middleware.ts`) — only logs `/api/*` requests via `console.info`. The matcher is narrow on purpose; broadening it sweeps assets and pages into the in-app log viewer.
+- **Caching** (`lib/cache.ts`) — two-tier: an L1 process-memory `Map<string, {data, expiry}>` and an L2 `CacheEntry` SQLite table (gated by `CACHE_BACKEND=sqlite`), both keyed by `pathname + sorted query` (the `?v=...` cache buster is stripped before keying and forces a refresh). In-flight dedup: a second concurrent miss for the same key awaits the existing promise. On handler error or non-2xx response, the last good entry is served and rewritten with a 60 s retry TTL. Operator-triggered invalidation via `invalidateCacheKey`/`invalidateCacheByPrefix` clears L1+L2 and broadcasts a `Cache` SSE event so connected clients refetch. `Cache-Control` is `no-store` in dev and `max-age + stale-while-revalidate` in prod. Stats survive HMR via `globalThis`.
+- **Auth gating** — three guards in `lib/auth-guards.ts`: `requireSession()` (NextAuth session required), `requireLocalOrSession(req)` (LAN traffic skips auth, public hostnames require session), and `requireSessionOrService(req, config)` (accepts either a session or a configured service token + matching `?onBehalfOf=<userId>`, used today by `/api/calendar/event`). The Gmail webhook verifies a Google-issued OIDC JWT against `PUBSUB_AUDIENCE` via `lib/google-oidc.ts`.
 - **Logging** — every route logs `[EXTERNAL API]`, `[DATABASE]`, `[CACHE HIT|MISS|FALLBACK]` lines through the patched `console`, which the SSE log stream re-broadcasts.
 
 ### 5.3 Conventions worth preserving
@@ -146,33 +148,52 @@ A complete inventory is maintained in `docs/apis.md`. The brief by-feature break
 
 ## 6. Company News Subsystem
 
-Out of all the per-feature subsystems, the company-news pipeline is the most engineered and deserves its own section. It is the answer to "given ~40 companies that publish through wildly different channels, how do we surface a uniform `NewsArticle[]` for each?"
+Out of all the per-feature subsystems, the company-news pipeline is the most engineered and deserves its own section. It is the answer to "given ~55 companies that publish through wildly different channels, how do we surface a uniform `NewsArticle[]` for each?"
 
-### 6.1 Strategy registry
+### 6.1 Per-company adapter files
 
-`lib/company-registry.ts` defines `COMPANY_REGISTRY: CompanyFeedConfig[]`. Each entry declares a fetch `strategy` and the strategy-specific config. Strategies (defined by `lib/fetchers/types.ts`):
+Every company is one file at `lib/companies/<id>.ts` that default-exports a `CompanyAdapter` (`lib/companies/adapter.ts`):
 
-- **`rss`** — `lib/fetchers/rss-fetcher.ts`. Parses an RSS/Atom feed; enriches each item with an OG image via `open-graph-scraper`. Used for NASA, ESA, Nvidia, Hugging Face, Microsoft Research, etc.
-- **`scrape`** — `lib/fetchers/scrape-fetcher.ts`. Fetches a listing page, extracts `(slug, innerHTML)` pairs via a configurable `articleRegex`, optionally pulls title and date sub-regexes from the inner HTML, then enriches each via OGS. Used for Anthropic, xAI, Mistral, Qualcomm, Apple ML, ARM, Rocket Lab.
-- **`snapi`** — `lib/fetchers/snapi-fetcher.ts`. Spaceflight News API search by `title_contains`. Used as a "what is third-party space press saying" feed for prime contractors and agencies that don't have RSS.
-- **`google-news`** — `lib/fetchers/google-news-fetcher.ts`. Wraps Google News RSS search with a 7-day window; used as the fallback for paywalled or scrape-resistant sources (SemiAnalysis, foundries, Roscosmos, ByteDance).
-- **`custom`** — inline functions in `company-registry.ts` for sources whose shape doesn't fit any of the above:
+```typescript
+interface CompanyAdapter {
+    id: string;
+    name: string;
+    view: 'space' | 'ai' | 'both';
+    category: string;
+    ttlSeconds?: number;
+    upstreamHost?: string;          // for log tagging
+    fetch: () => Promise<NewsArticle[]>;
+}
+```
+
+`lib/companies/index.ts` is the barrel — explicit alphabetical imports of every per-company default export, assembled into `ADAPTERS: CompanyAdapter[]`. Compile-time discovery, not runtime glob: harder to mis-wire, easier to type-check.
+
+### 6.2 Strategy factories
+
+Adapter files don't write fetch logic — they call factories from `lib/companies/factories.ts` that wrap the strategy modules in `lib/fetchers/`:
+
+- **`rssAdapter({ rssUrl, ... })`** → `lib/fetchers/rss-fetcher.ts`. Parses an RSS/Atom feed; enriches each item with an OG image via `open-graph-scraper`. Used for NASA, ESA, Nvidia, Hugging Face, Microsoft Research, etc.
+- **`scrapeAdapter({ scrapeUrl, articleRegex, baseUrl, ... })`** → `lib/fetchers/scrape-fetcher.ts`. Fetches a listing page, extracts `(slug, innerHTML)` pairs via a configurable `articleRegex`, optionally pulls title and date sub-regexes from the inner HTML, then enriches each via OGS. Used for Anthropic, xAI, Mistral, Qualcomm, Apple ML, ARM, Rocket Lab.
+- **`snapiAdapter({ snapiQuery })`** → `lib/fetchers/snapi-fetcher.ts`. Spaceflight News API search by `title_contains`. Used as a "what is third-party space press saying" feed for prime contractors and agencies that don't have RSS.
+- **`googleNewsAdapter({ googleNewsQuery })`** → `lib/fetchers/google-news-fetcher.ts`. Wraps Google News RSS search with a 7-day window; used as the fallback for paywalled or scrape-resistant sources (SemiAnalysis, foundries, Roscosmos, ByteDance).
+- **`customAdapter({ fetcher, upstreamHost? })`** — for sources whose shape doesn't fit any of the above. Bespoke fetchers live in `lib/companies/custom-fetchers.ts`:
   - `fetchSpaceX` — SpaceX has its own JSON updates API.
   - `fetchOpenAI` — RSS + Microlink for images (Cloudflare blocks OGS).
   - `fetchGroq` — scrapes both `/blog` and `/newsroom` in parallel and merges by date; shifts midnight-UTC timestamps to noon-UTC to avoid timezone-rollback display bugs.
   - `fetchCerebras` — listing scrape with positional date/title pairing.
   - `fetchMetaAI` — listing scrape with proximity-based date/URL pairing because individual posts lack OG date metadata.
 
-### 6.2 TTL discipline
+### 6.3 TTL discipline
 
-Three tier presets (`TTL_STANDARD = 1h`, `TTL_LOW_VOLUME = 24h`, `TTL_VERY_LOW = 7d`) are assigned per company based on observed publishing cadence. Companies that post daily get the standard 1 h; small startups posting monthly get 7 d. This prevents the cache from constantly cycling on companies that don't change.
+Three tier presets (`TTL_STANDARD = 1h`, `TTL_LOW_VOLUME = 24h`, `TTL_VERY_LOW = 7d`) are assigned per adapter based on observed publishing cadence. Companies that post daily get the standard 1 h; small startups posting monthly get 7 d. The route's `withCache` wrapper currently uses a single per-route TTL — the per-adapter `ttlSeconds` is informational, ready for a future per-key cache layer.
 
-### 6.3 Operational implications
+### 6.4 Operational implications
 
-- **Adding a new RSS source is ~5 lines** of registry config; adding a new strategy requires a new fetcher module.
-- **Custom fetchers are deliberately *inline*** — they're so per-source that abstracting them would be premature.
-- **Failure mode is per-source.** A failing scraper doesn't break the view; the route returns whatever succeeds and the `withCache` layer keeps the last-good payload behind it.
-- The registry is also consumed by the **frontend** — `AIView` and `SpaceView` import `COMPANY_REGISTRY` directly to know what to render and how to group it. The same file is the catalog for both fetcher dispatch *and* UI grouping.
+- **Adding a new company is one new file** under `lib/companies/<id>.ts` plus one alphabetical `import` line in `index.ts`. No edits to a central registry table.
+- **Custom fetchers are deliberately *bespoke*** — they're so per-source that abstracting them would be premature; `customAdapter` just hands the fetch function through.
+- **Failure mode is per-source.** A failing scraper doesn't break the view; the route returns whatever succeeds and the `withCache` layer keeps the last-good payload behind it. `lib/fetchers/errors.ts:ScraperBrokenError` (MVP1 Task 2B) lights up the InternalView fetcher-health tile when an adapter returns 0 items from a non-empty response.
+- **Single adapters are unit-testable.** `scripts/tests/test-cerebras-fetcher.ts`, `test-meta-blog.ts`, and `test-mistral.ts` import the per-company default export directly and call `.fetch()` — no need to go through the route or the index.
+- The barrel is also consumed by the **frontend** — `AIView` and `SpaceView` import `ADAPTERS` to know what to render and how to group cards. The same file is the catalog for both fetcher dispatch *and* UI grouping.
 
 ---
 
@@ -194,32 +215,38 @@ Adding a dash requires:
 
 1. An entry in `BASE_DASHES` (id, title, component).
 2. A topic mapping in `getTopic()` if the dash has saved papers.
-3. A default title and hue in `themeStore.ts`'s `defaultDashTitles` and `viewHues`.
+3. A default title and hue in `useAppStore`'s `defaultDashTitles` and `viewHues` (in `components/providers/state/index.ts`).
 
-`syncAvailableDashes()` runs on every Dashboard mount and reconciles persisted state with current code: it purges stale ids, appends new ones, and force-pins `internal-systems` to the end of `dashOrder`. This means `themeStore` cannot accumulate dead state across code changes.
+`syncAvailableDashes()` runs on every Dashboard mount and reconciles persisted state with current code: it purges stale ids, appends new ones, and force-pins `internal-systems` to the end of `dashOrder`. This means the store cannot accumulate dead state across code changes.
 
 ### 7.3 Per-view data ownership
 
-Each view owns its own data fetching. There is no global polling daemon, no React Query, no SWR — just `useEffect` + `fetch` on mount and manual refresh handlers (with `?v=<ts>` cache busters). A handful of views set up intervals:
+Data fetching goes through **TanStack Query**, mounted via `components/providers/QueryProvider.tsx`. Typed routes go through `lib/api-client.ts` (`api.tasks.list()`, `api.goals.update(...)`, etc., each backed by a Zod response schema in `lib/schemas/`); read-only external-proxy routes without schemas (research, company-news, finance history, space data) use the loose `lib/fetcher-client.ts:fetcher` as the `queryFn`. Both paths surface stale-fallback toasts when `withCache` returns `X-Cache: STALE-FALLBACK`.
+
+`hooks/useServerEvents.ts` opens one `EventSource('/api/events')` per consumer; on each event whose model matches the subscription, the callback calls `queryClient.invalidateQueries({ queryKey: [model] })` and TanStack refetches with built-in dedup. `components/providers/CacheInvalidationListener.tsx` (mounted inside `QueryProvider`) listens for `Cache` events and invalidates **all** queries — heavy-handed but simple, and TanStack dedupes the resulting refetches.
+
+A handful of views still set up intervals on top of the SSE-driven invalidation:
 
 | View | Interval | What |
 |---|---|---|
-| `InternalView` | 5 s | `/api/system` poll + EventSource for `/api/system/logs` |
-| `FinanceView` | 30 s (display) | The display-only "X minutes ago" pill rerenders; data itself is fetched on demand and via `withCache(300)` server-side |
-| `SpaceView`, `AIView`, `PhysicsView` | none | Fetch on mount + manual refresh buttons; rely on server-side cache TTLs |
-| `ApplicationsView` | none | Fetches on session ready |
-| `PlanningView` | none | Fetches once; bumps `?force=true` on manual reload to force md re-sync |
+| `InternalView` | 5 s | `/api/system` `useQuery` + EventSource for `/api/system/logs` |
+| `FinanceView` | 5 min | `useQuery({ refetchInterval })` as a safety-net behind the live `FinanceTick` push from `lib/pulsar-ws-relay.ts` |
+| `SpaceView`, `AIView`, `PhysicsView` | none | `useQuery` per route + `useQueries` for per-company news; rely on server-side cache TTLs |
+| `ApplicationsView` | none | `useQuery({ enabled: session })`; `useServerEvents('Application' | 'CalendarEvent')` invalidates |
+| `PlanningView` | none | `useQuery` for tasks + goals; `useServerEvents('Task' | 'Goal')` invalidates |
 
-Optimistic UI is used for state that the user mutates directly: `PlanningView` task status changes, `ResearchPaperCard` save toggles, `SavedPapersOverlay` deletes, `GoalCard` toggles. All revert on error.
+Optimistic UI is used for state that the user mutates directly: `PlanningView` task status changes, `ResearchPaperCard` save toggles, `SavedPapersOverlay` deletes, `GoalCard` toggles. The pattern is `queryClient.setQueryData(...)` for the optimistic write and a captured `prev` snapshot to roll back on error before invalidating.
 
 ### 7.4 State management
 
-Two Zustand stores plus a few targeted browser primitives:
+A single unified Zustand store (`components/providers/state/index.ts:useAppStore`) with three slices distinguished by persistence policy:
 
-- **`themeStore`** (`components/providers/themeStore.ts`) — global UI preferences: `isDarkMode`, `viewHues` (per-view 0–360° hue), `viewHuesEnabled`, `dashOrder`, `dashTitles`, `defaultDashTitles`, `viewScreenshots`. **Not persisted by Zustand**: instead, `ThemeProvider` syncs the relevant subset to `/api/settings` (single-row JSON blob) on every change after first hydration. This was an explicit migration from `localStorage` to a DB-backed store so customizations follow the user across devices on the LAN (see `docs/todo.md` completed items).
-- **`settingsStore`** (`components/providers/settingsStore.ts`) — feature flags (`autoResearch`, `backgroundTasks`). Persisted with Zustand `persist` middleware to `localStorage` under key `'settings-storage'`. These are device-local on purpose — they gate behaviors like background research polling that should not be active on every device simultaneously.
-- **`localStorage` directly** — `mc-active-view` stores the last-viewed dash id, intentionally per-device.
+- **`theme` slice** — `isDarkMode`, `viewHues` (per-view 0–360° hue), `viewHuesEnabled`, `dashOrder`, `dashTitles`, `defaultDashTitles`, `version`. **Synced to `/api/settings`** (DB-backed) so customizations follow the user across LAN devices. `ThemeProvider` hydrates from the API on mount and pushes a debounced (500 ms) POST on each change, with optimistic-concurrency via the `version` field sent as `If-Match`; on 409 it refetches and toasts "Settings updated elsewhere — reloaded."
+- **`devicePrefs` slice** — `autoResearch`, `aiCompanionEnabled`. Persisted with Zustand `persist` middleware to `localStorage` under `'app-state'`. These are device-local on purpose — they gate behaviors that should not be active on every device simultaneously.
+- **Per-device fields** — `activeViewId`, `viewScreenshots` also in `localStorage` under `'app-state'`. Each device remembers its own last-viewed dash and screenshot cache.
 - **NextAuth session** — `useSession()` in views that need the logged-in user (Applications, Internal for sign-in/out controls).
+
+Backward-compat re-exports in `themeStore.ts` and `settingsStore.ts` point at `useAppStore` so older callsites keep working unchanged.
 
 The result: **nothing about the UI requires global polling, websockets, or a Redux-like store**. The most "live" view is InternalView via SSE; everything else is fetch-on-mount with cache discipline on the server.
 
@@ -245,14 +272,18 @@ This design has three notable consequences:
 
 ### 8.2 In-process cache
 
-`lib/cache.ts` is the same pattern (a `globalThis` Map) for HTTP responses. `withCache(handler, ttl)` wraps a route handler; the wrapper:
+`lib/cache.ts` wraps HTTP responses in two tiers. **L1** is a `globalThis` `Map<string, {data, expiry}>`; **L2** is a SQLite `CacheEntry` table accessed via `lib/repositories/cache-entries.ts` (gated by `CACHE_BACKEND=sqlite`). `withCache(handler, { ttlSeconds, upstreamHost? })` wraps a route handler; the wrapper:
 
 1. Computes a cache key from `pathname + sorted query`, dropping the `v` param (and treating its presence as "force refresh").
-2. On hit, returns the cached `NextResponse.json` with `X-Cache: HIT` and TTL-aware `Cache-Control`.
-3. On miss, calls the handler. If it succeeds with JSON, the response is cloned, the body is parsed, and stored.
-4. On handler **throw** *or* non-OK response: if a stale entry exists, it's served with `X-Cache: STALE-FALLBACK` and re-stored with a 60 s "retry window" so a flapping upstream doesn't get hammered.
+2. On L1 hit, returns the cached `NextResponse.json` with `X-Cache: HIT` and TTL-aware `Cache-Control`.
+3. On L1 miss, falls through to L2 (when enabled); promotes any L2 hit back into L1.
+4. On full miss, calls the handler. If a second concurrent request races for the same key, it awaits the in-flight promise (in-flight dedup — no thundering herd).
+5. If the handler succeeds with JSON, the response is cloned, the body is parsed, and stored to both tiers.
+6. On handler **throw** *or* non-OK response: if a stale entry exists, it's served with `X-Cache: STALE-FALLBACK` and re-stored with a 60 s "retry window" so a flapping upstream doesn't get hammered.
 
-This is a deliberately simple cache. There's no LRU eviction, no size cap, no per-key concurrency dedup ("thundering herd" if two clients miss simultaneously). For the single-user case those gaps are fine.
+`upstreamHost` is tagged on every cache log line so the InternalView fetcher-health card can group activity by real upstream rather than by route path. **Operator-triggered invalidation** via `invalidateCacheKey(key)` or `invalidateCacheByPrefix(prefix)` clears L1+L2, broadcasts a `Cache` SSE event so connected TanStack clients invalidate their queries, and is wired to a per-row Refresh button on InternalView's cache analytics card.
+
+There's still no LRU eviction or size cap on L1 — for the single-user case those gaps are fine. The scheduler process owns periodic L2 pruning via `scheduler/jobs/cache-prune.ts`.
 
 ### 8.3 Auth and Google integrations
 
@@ -331,15 +362,15 @@ The system has three observability surfaces, all in-process:
 
 This is a **personal, LAN-bound** system, but several integration points still warrant attention:
 
-- **Pub/Sub webhook is unauthenticated.** `/api/gmail/webhook` decodes the Pub/Sub envelope and looks up the `User` row by `emailAddress`. Anyone who can reach the endpoint and knows the user's email can synthesize a payload with a fake `historyId`. The endpoint will then call `gmail.users.history.list` against the *real* Gmail account using the stored refresh token, parse the result, and write `Application` rows. The harm is bounded (no data exfil, no token leak) but the endpoint should at minimum verify the `Authorization: Bearer` JWT that Pub/Sub attaches when push auth is enabled. **Recommendation: require Pub/Sub OIDC auth and verify the token before any side effects.**
-- **Calendar endpoint trusts client-provided `userId`.** `/api/calendar/event` reads `userId` from query/body; any caller can pass any user id. On a single-user box this is a non-issue, but if LAN access opens up (per the open todo) this becomes a real privilege boundary. **Recommendation: derive `userId` from the NextAuth session, the same as `/api/applications`.**
-- **`/api/goals`, `/api/research/saved`, `/api/settings`, `/api/tasks` are all unauthenticated.** Acceptable on `localhost`; not acceptable once exposed to LAN/tunnels.
-- **HTML scrapers send a Mac UA and parse with regex.** Scrapers can break or hang on adversarial markup. The `withCache` STALE-FALLBACK behavior insulates the user from breakage but not from latency. Timeouts on `fetch` are not consistently set; OGS calls do set a 4 s timeout.
+- **Pub/Sub webhook is OIDC-verified.** `/api/gmail/webhook` requires a Google-signed JWT (`lib/google-oidc.ts:verifyPubSubOIDC`) whose `iss` is `https://accounts.google.com`, whose audience matches `PUBSUB_AUDIENCE`, and whose RS256 signature validates against Google's JWKS. The webhook returns 500 if `PUBSUB_AUDIENCE` is unset (deliberate fail-loud) and 401 on any verification failure.
+- **Calendar endpoint accepts session OR a configured service token.** `/api/calendar/event` derives `userId` from the NextAuth session by default; service callers (e.g. Pulsar) can present `Authorization: Bearer $SERVICE_TOKEN_PULSAR` plus `?onBehalfOf=<userId>` matching the configured user. Mismatched `onBehalfOf` returns 403; missing token + missing session returns 401. The whole service-token path is a no-op when `SERVICE_TOKEN_PULSAR` / `SERVICE_TOKEN_PULSAR_USER_ID` are unset, so the route fails closed.
+- **`requireLocalOrSession` for LAN-skip.** `/api/goals`, `/api/research/saved`, `/api/settings`, `/api/tasks`, `/api/system/cache/invalidate` accept LAN traffic (host in `{localhost, 127.0.0.1, mc.local, ...}`) without a session, and require a session for any other host (e.g., a Cloudflare tunnel). The Caddy reverse proxy at `mc.local` is the LAN boundary.
+- **HTML scrapers send a Mac UA and parse with regex.** Scrapers can break or hang on adversarial markup. The `withCache` STALE-FALLBACK behavior insulates the user from breakage but not from latency. The `ScraperBrokenError` sentinel (`lib/fetchers/errors.ts`) lights up InternalView's fetcher-health card when an adapter returns 0 items from a non-empty response. Timeouts on `fetch` are not consistently set; OGS calls do set a 4 s timeout.
 - **LLM input is uncontrolled email content.** A malicious sender could attempt prompt injection inside an email subject/body to coerce `parseApplicationEmail` into emitting a status it shouldn't. The Zod schema bounds the *shape* of the output but not its semantics; worst case is a wrong DB upsert.
 - **Stored OAuth tokens.** Refresh tokens live in `prisma/prod.db` unencrypted. SQLite file permissions are the only defense. Acceptable for a personal Mac; not acceptable for any kind of multi-user deployment.
 - **Service worker + `dangerouslySetInnerHTML` in `layout.tsx`** — only runs in dev, contents are static, no user input. Not a real risk but worth noting because it's the only `dangerouslySetInnerHTML` in the codebase.
 
-The general posture is "trust the LAN, distrust nothing else." That's defensible given today's deployment but is brittle against the open todo "broadcast the server on the local network."
+The general posture is "trust the LAN, distrust nothing else." LAN traffic is gated by `requireLocalOrSession`'s host check; tunnel traffic falls through to NextAuth.
 
 ---
 
@@ -348,7 +379,7 @@ The general posture is "trust the LAN, distrust nothing else." That's defensible
 - **Memory budget is 1 GB in prod, 2 GB in dev.** RSS usage is monitored continuously by InternalView; the budget is what package.json declares, parsed at request time and cached.
 - **Prisma query logging is per-request.** Every operation logs `[DATABASE] Executing <op> on <model>`. Cheap but not free; would be the first thing to disable if log volume becomes a problem.
 - **The cache is unbounded.** A pathological caller passing arbitrary query strings could grow the in-memory map without limit. In practice the surface area is small (≈ a dozen stable cache keys at steady state).
-- **Some endpoints do heavy work on the request path.** `/api/finance` writes a `CryptoPrice` row on every cache miss; `/api/space/launches` paginates LL2 results; HTML scrapers OGS-enrich every result item. The cache is what makes this acceptable.
+- **Some endpoints do heavy work on the request path.** `/api/space/launches` paginates LL2 results; HTML scrapers OGS-enrich every result item; `/api/research` enriches via Semantic Scholar batch lookups. The cache is what makes this acceptable.
 - **OGS enrichment is sequential per article**, but `Promise.all` parallelizes within a fetch. A single failing OGS call can stall a fetch for the OGS timeout (4 s). That's bounded but visible on cold cache hits.
 - **Prisma `$transaction` is used for the task sync** to make the "delete missing + upsert all" atomic. For a few hundred tasks this is fine; for thousands it would be the first place to look for slowness.
 
@@ -362,7 +393,7 @@ The general posture is "trust the LAN, distrust nothing else." That's defensible
 | **`docs/todo.md` as task source of truth** | Editing tasks in the editor *or* the UI is supported. PATCH writes the file *first*, bumps `lastSyncedMtime`, then updates the DB. The DB is a derived projection and can be rebuilt from the file at any time. |
 | **In-process cache, not Redis** | Simpler, one fewer service. Loses cache on restart (mitigated by `globalThis` survival across HMR). No cross-process sharing — non-issue for single PM2 process. |
 | **Monkey-patched `console`** | Every log line in the universe ends up in the in-app viewer for free. Cost: third-party library noise pollutes the feed; you can't have a "raw" `console.log` without it being captured. |
-| **No React Query/SWR** | Less code, no extra dependency. Cost: every view manually wires `useEffect` + `fetch`; revalidation is ad hoc; there's no shared cache between two cards that need the same data. |
+| **TanStack Query everywhere** | Shared cache + dedup + invalidation API across all views. Cost: one extra dependency; query keys must be kept in sync with SSE event models for invalidation to land. |
 | **No tests** | Small surface, single user, fast iteration. Cost: regressions go unnoticed until the user hits them. The `scripts/tests/` directory contains *manual* test scripts (per `.agents/rules/scripts.md`), not automated ones. |
 | **Webpack instead of Turbopack** | Stable, predictable. The `--webpack` flag is explicit on `next dev`/`next build`. |
 | **`reactStrictMode: false`** | No double-mounts in dev. Cost: bugs that strict mode would catch (effect cleanup omissions, unstable identifiers) survive. |
@@ -374,20 +405,24 @@ The general posture is "trust the LAN, distrust nothing else." That's defensible
 
 ## 14. Risks and Tech Debt
 
-Roughly ordered by severity:
+Roughly ordered by severity. Items closed by MVP1 + MVP2 are listed for context but no longer constitute risks.
 
-1. **Pub/Sub webhook lacks signature verification.** See §11. Concrete code change: verify the `Authorization` JWT against the configured Pub/Sub push service account before processing.
-2. **Calendar endpoint takes `userId` from the client.** See §11. Concrete code change: use `getServerSession` like `/api/applications` does.
-3. **`/api/settings` is unauthenticated and global.** A single-row "global" config means *any* caller can rewrite the user's theme, dash order, and feature flags. Fine on localhost; problematic on LAN.
-4. **Two `PrismaClient` instances.** `app/api/settings/route.ts` constructs its own `new PrismaClient()` rather than importing `lib/prisma.ts`. This means it bypasses the query-logging extension and risks connection pool exhaustion on hot reload. Concrete fix: import `prisma` from `@/lib/prisma` and delete the local construction.
-5. **`/api/finance`'s opportunistic `CryptoPrice` insert** ties data ingestion to user traffic. If no one opens the FinanceView for a day, there is a gap in the time series. The seed scripts exist as a backstop but aren't scheduled. Concrete fix: a small cron-like ingester (or the new `/schedule` slash command) that calls the endpoint hourly.
-6. **No automated tests.** `scripts/tests/*` are exploratory tsx scripts. Critical paths — the markdown task parser, the cache wrapper, the company registry dispatch — have no regression coverage.
-7. **HTML scrapers rot silently.** When LM Arena or Anthropic redesigns its page, the regex breaks and the cache STALE-FALLBACKs forever (until restart). There is no "this fetcher is now consistently failing" alert.
-8. **AICompanion is a stub.** UI promises functionality that doesn't exist; this is the most user-visible mismatch. The Gemini infrastructure already exists (`email-parser.ts`); reusing it for the chat is a small extension.
-9. **Cache has no eviction.** A bug or attacker that keeps minting unique query strings will OOM the process before the 1 GB budget is hit.
-10. **`scope` migration in NextAuth requires re-consent.** Adding a new Google scope silently breaks the app for the user until they re-sign-in; there's no mid-session prompt.
-11. **`reactStrictMode: false`** masks effect-cleanup bugs. The interval+EventSource teardown in InternalView is correct today; nothing enforces it stays correct.
-12. **Frontend interferes between sessions** — `todo.md` line 288 records this as an open issue. Two browser tabs editing the same task can cause the optimistic update to flicker / re-fetch unexpectedly. Without tests or per-tab state isolation it will keep recurring.
+1. **No automated tests beyond a small Vitest suite.** MVP1 6B introduced Vitest with parser + cache coverage; everything else (route handlers, repositories, schemas, the company-news adapters) is uncovered. `scripts/tests/*` are exploratory tsx scripts.
+2. **HTML scrapers rot silently — but louder.** When LM Arena or Anthropic redesigns its page, the regex still breaks. MVP1 Task 2B's `ScraperBrokenError` sentinel surfaces this on the InternalView fetcher-health card within ~1 minute, but the operator still has to fix the regex. xAI, AMD, Google AI, ARM, and Qualcomm currently sit in this state (see MVP2 §0 Task 0B — moved to backlog rather than papered over with `google-news` fallbacks).
+3. **AICompanion is a stub.** UI promises functionality that doesn't exist; this is the most user-visible mismatch. The Gemini infrastructure already exists (`email-parser.ts`); reusing it for the chat is a small extension. Hidden behind the `aiCompanionEnabled` device-pref flag (default off) and a "PREVIEW — not connected to a real model yet" banner.
+4. **L1 cache still has no eviction.** A bug or attacker that keeps minting unique query strings will grow the in-memory map without limit. The L2 SQLite tier prunes expired entries via the scheduler (`scheduler/jobs/cache-prune.ts`); L1 only invalidates by TTL or explicit `invalidateCacheKey`.
+5. **`scope` migration in NextAuth requires re-consent.** Adding a new Google scope silently breaks the app for the user until they re-sign-in; there's no mid-session prompt.
+6. **`reactStrictMode: true` re-enabled in MVP1 8B**, so the worst class of effect-cleanup bugs now surfaces in dev. But the interval+EventSource teardown in InternalView is the most cleanup-sensitive area; if it regresses, only manual testing catches it.
+7. **Cross-tab state interference**, narrowed but not eliminated. The SSE event bus + TanStack invalidation closes most of the gap; settings has provably-safe optimistic concurrency via Phase D's `version` column. Two tabs editing the same `Task` field within the 500 ms debounce window can still surprise the user — the losing write wins because there's no per-row version.
+
+**Closed in MVP2** (kept for traceability):
+
+- ~~Pub/Sub webhook lacks signature verification~~ → Phase A1 (OIDC verification via `lib/google-oidc.ts`).
+- ~~Calendar endpoint takes `userId` from the client~~ → MVP1 1C dropped the param; Phase A2 added the service-token + `onBehalfOf` path.
+- ~~`/api/settings`, `/api/goals`, `/api/research/saved`, `/api/tasks` unauthenticated~~ → MVP1 1B added `requireSession`; later widened to `requireLocalOrSession` for LAN-skip.
+- ~~Two `PrismaClient` instances~~ → MVP1 1D consolidated to `@/lib/prisma`.
+- ~~`/api/finance` opportunistic `CryptoPrice` insert~~ → MVP1 7A migrated to Pulsar; MVP2 0A dropped the table.
+- ~~Cache has no invalidation API~~ → MVP2 F1 added `invalidateCacheKey` / `invalidateCacheByPrefix` + SSE bridge.
 
 ---
 
@@ -395,14 +430,15 @@ Roughly ordered by severity:
 
 Concrete extension points implied by the design — these are the seams the codebase currently exposes:
 
-- **A new dash** → `BASE_DASHES` entry + `getTopic()` mapping + `themeStore.defaultDashTitles`/`viewHues` defaults. `syncAvailableDashes` handles the rest.
-- **A new company news source (RSS)** → push a config to `COMPANY_REGISTRY`. No code.
-- **A new news strategy** → new module under `lib/fetchers/`, add to the dispatch in `app/api/company-news/route.ts`, extend the `FetchStrategy` union.
-- **A new external API endpoint** → route under `app/api/...`, wrap with `withCache` if cacheable, log via `console.info('[EXTERNAL API] ...')` so the SSE viewer picks it up.
-- **A new Prisma model** → add to `prisma/schema.prisma`, run `npx prisma migrate dev`, import `prisma` from `@/lib/prisma` (not `new PrismaClient()`).
-- **A new scheduled background job** → today there is no scheduler. The `/loop` and `/schedule` slash commands (Claude Code skills) are the de facto scheduling story. The `instrumentation.ts` register hook is also a viable home for a `setInterval`-based ingester.
-- **AICompanion productionization** → reuse `@ai-sdk/google` from `email-parser.ts`. Streaming via the AI SDK's `streamText` would integrate cleanly with the existing client-side message state; the API surface (`POST /api/ai/chat` returning a stream) is the obvious next route.
-- **Notification surface** (open todo) → there is no in-process scheduler today; the natural place for it is `instrumentation.ts` or a separate PM2 process. Push notifications would need a Web Push subscription stored alongside `User`.
+- **A new dash** → `BASE_DASHES` entry + `getTopic()` mapping + a default title and hue in `useAppStore`'s `defaultDashTitles` / `viewHues`. `syncAvailableDashes` handles the rest.
+- **A new company news source** → one new file at `lib/companies/<id>.ts` calling the appropriate strategy factory (`rssAdapter`, `scrapeAdapter`, `snapiAdapter`, `googleNewsAdapter`, or `customAdapter`) plus one alphabetical `import` line in `lib/companies/index.ts`.
+- **A new news strategy** → new module under `lib/fetchers/`, plus a new factory in `lib/companies/factories.ts` that wraps it.
+- **A new external API endpoint** → route under `app/api/...`, wrap with `withCache` if cacheable, log via `console.info('[EXTERNAL API] ...')` so the SSE viewer picks it up. If it's a write surface, define request + response Zod schemas under `lib/schemas/` and add wrappers to `lib/api-client.ts` so the frontend gets typed access.
+- **A new Prisma model** → add to `prisma/schema.prisma`, generate the migration via `prisma migrate diff` + apply with `migrate deploy` (the bash environment is non-interactive — `migrate dev` blocks on prompts), wrap access in a new `lib/repositories/<model>.ts`. Routes import the repo functions, not `prisma` directly.
+- **A new scheduled background job** → add `scheduler/jobs/<name>.ts` with an exported `async function run()` and register it in `scheduler/index.ts`'s `JOBS` array. The PM2 `mission-control-scheduler` process picks it up on next restart. Cron-based jobs need a cron library (or scheduler-side parsing) added when the first cron job lands.
+- **AICompanion productionization** → reuse `@ai-sdk/google` from `email-parser.ts`. Streaming via the AI SDK's `streamText` would integrate cleanly with the existing client-side message state; the API surface (`POST /api/ai/chat` returning a stream) is the obvious next route. Gate behind the existing `aiCompanionEnabled` device-pref flag.
+- **Notification surface** (open todo) → the scheduler process is the natural home. Push notifications would need a Web Push subscription stored alongside `User`.
+- **A new external service that needs to write to mission-control** → add a `ServiceTokenConfig` to the relevant route via `requireSessionOrService`. Operator generates a token and adds `SERVICE_TOKEN_<NAME>` + `SERVICE_TOKEN_<NAME>_USER_ID` to `.env`; the service includes `Authorization: Bearer ...` + `?onBehalfOf=<userId>` on every call.
 
 ---
 
@@ -415,7 +451,7 @@ The key invariants that make it work:
 - **Stale-while-revalidate everything**: `withCache` makes flaky upstream APIs an internal concern, not a user-facing one.
 - **Markdown ↔ DB for tasks**: the user's editor is a first-class write surface alongside the UI; the DB is a projection.
 - **Console-as-bus**: every server-side `console.*` becomes an event in the in-app log viewer, no extra plumbing.
-- **One source of truth per concern**: `themeStore`/`/api/settings` for cross-device prefs; `localStorage` for per-device prefs; `docs/todo.md` for tasks; `prisma` for everything else.
+- **One source of truth per concern**: `useAppStore.theme`/`/api/settings` for cross-device prefs; `localStorage` for per-device prefs; the `Task` table (with `docs/todo.md` as a regenerated projection) for tasks; `prisma` for everything else.
 - **A registry, not a switch statement**: company news is a config table, not a tree of `if (company === ...)`. New sources are config; new shapes are code.
 
 The most material open work is the **Gmail webhook auth gap**, the **stub AICompanion**, and the absence of any **automated tests**. Most other items in §14 are improvements rather than risks; together they describe a system that is comfortably correct for its current single-user, localhost deployment but would need meaningful hardening to face a wider blast radius.
@@ -432,7 +468,7 @@ This section documents the real-time event system and state lifecycle introduced
 
 The system has **two independent event-driven pipelines** that together keep the UI consistent without polling:
 
-1. **Server event bus → SSE → SWR invalidation** — mutations from any route (or an external Pub/Sub push) are broadcast to all connected SSE clients, which trigger SWR's `mutate()` to refetch from the server.
+1. **Server event bus → SSE → TanStack invalidation** — mutations from any route (or an external Pub/Sub push) are broadcast to all connected SSE clients, which call `queryClient.invalidateQueries({ queryKey: [model] })` to refetch from the server.
 2. **File watcher → DB sync → broadcast** — edits to `docs/todo.md` in an external editor are detected by a Node `fs.watch`, synced to the DB, and broadcast as a `Task` invalidation event.
 
 ```mermaid
@@ -445,7 +481,7 @@ graph LR
     end
     subgraph Browser
         SSE -->|EventSource| H["useServerEvents(model)"]
-        H -->|"onInvalidate()"| M["SWR mutate()"]
+        H -->|"onInvalidate()"| M["queryClient.invalidateQueries"]
         M -->|refetch| API["/api/..."]
     end
 ```
@@ -459,7 +495,7 @@ The event bus is a **`globalThis`-backed `Set<EventListener>`**. Using `globalTh
 ```typescript
 // Shape of every event
 interface ServerEvent {
-    model: 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting';
+    model: 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick' | 'Cache';
     action: 'upsert' | 'delete' | 'invalidate';
     id?: string;        // omitted for 'invalidate' (whole model refresh)
     timestamp: number;
@@ -500,7 +536,7 @@ sequenceDiagram
     SSE->>SSE: clearInterval(heartbeat)
 ```
 
-There is **no reconnection logic on the server** — `EventSource` reconnects automatically (browser default back-off). On reconnect, the `useServerEvents` hook re-opens `EventSource('/api/events')` and the server sends `: connected` again; any mutations that occurred during the gap are not replayed, but SWR's `onFocus` revalidation and the next mutation event will close the gap.
+There is **no reconnection logic on the server** — `EventSource` reconnects automatically (browser default back-off). On reconnect, the `useServerEvents` hook re-opens `EventSource('/api/events')` and the server sends `: connected` again; any mutations that occurred during the gap are not replayed, but TanStack's `refetchOnWindowFocus` and the next mutation event will close the gap.
 
 ---
 
@@ -519,19 +555,21 @@ flowchart TD
     Listen --> Check{event.model<br/>=== model?}
     Check -->|yes| Call["onInvalidateRef.current()"]
     Check -->|no| Discard["ignore"]
-    Call --> Mutate["SWR mutate() → refetch"]
+    Call --> Mutate["queryClient.invalidateQueries → refetch"]
     Unmount["Component unmounts"] --> Close["es.close()"]
 ```
 
 **Current subscribers:**
 
-| View / Component | model | SWR key invalidated |
+| View / Component | model | TanStack queryKey invalidated |
 |---|---|---|
-| `PlanningView` | `Task` | `/api/tasks` |
-| `PlanningView` | `Goal` | `/api/goals` |
-| `ApplicationsView` | `Application` | `/api/applications` |
-| `ApplicationsView` | `CalendarEvent` | `/api/applications` (re-fetches both) |
-| `SavedPapersOverlay` | `SavedPaper` | papers SWR key |
+| `PlanningView` | `Task` | `queryKeys.tasks` |
+| `PlanningView` | `Goal` | `queryKeys.goals` |
+| `ApplicationsView` | `Application` | `queryKeys.applications` |
+| `ApplicationsView` | `CalendarEvent` | `queryKeys.applications` (re-fetches both) |
+| `SavedPapersOverlay` | `SavedPaper` | `['saved-papers']` (partial-key match) |
+| `FinanceView` | `FinanceTick` | `['finance']` |
+| `CacheInvalidationListener` (mounted in `QueryProvider`) | `Cache` | **all** queries (`queryClient.invalidateQueries()` no-arg) |
 
 ---
 
@@ -539,7 +577,7 @@ flowchart TD
 
 Every mutating route calls `broadcastEvent` after a successful DB write:
 
-| Route | Method(s) | Model | Action |
+| Source | Trigger | Model | Action |
 |---|---|---|---|
 | `app/api/tasks/route.ts` | PATCH, POST | `Task` | `upsert` |
 | `app/api/goals/route.ts` | POST, PATCH, DELETE | `Goal` | `upsert` / `delete` |
@@ -547,6 +585,8 @@ Every mutating route calls `broadcastEvent` after a successful DB write:
 | `app/api/calendar/event/route.ts` | POST, DELETE | `CalendarEvent` | `upsert` / `delete` |
 | `app/api/gmail/webhook/route.ts` | POST (Pub/Sub push) | `Application` | `upsert` |
 | `lib/tasks/watcher.ts` | fs.watch callback | `Task` | `invalidate` |
+| `lib/pulsar-ws-relay.ts` | Pulsar WS `tick` message | `FinanceTick` | `upsert` (id is the assetId) |
+| `lib/cache.ts` | `invalidateCacheKey` / `invalidateCacheByPrefix` | `Cache` | `invalidate` (id is the cache key, optionally with `*` suffix for prefix) |
 
 `invalidate` (used only by the file watcher) means "something about this model changed — refetch everything." `upsert`/`delete` carry an `id` but the frontend currently treats all three the same way (calls `mutate()`).
 
@@ -597,7 +637,7 @@ sequenceDiagram
     Watcher->>Bus: broadcastEvent(Task.invalidate)
     Bus->>SSE: fan-out to all listeners
     SSE->>Browser: data: {model:"Task", action:"invalidate"}
-    Browser->>Browser: SWR mutate() → refetch /api/tasks
+    Browser->>Browser: queryClient.invalidateQueries → refetch /api/tasks
 ```
 
 The 500 ms debounce in the watcher absorbs rapid successive saves (e.g. a formatter or auto-save bouncing the mtime) and collapses them into a single sync.
@@ -611,7 +651,7 @@ The consolidated `useAppStore` (at `components/providers/state/index.ts`) has **
 ```mermaid
 graph TD
     subgraph useAppStore["useAppStore (Zustand)"]
-        T["theme slice<br/>isDarkMode, viewHues,<br/>viewHuesEnabled, dashOrder,<br/>dashTitles"]
+        T["theme slice<br/>isDarkMode, viewHues,<br/>viewHuesEnabled, dashOrder,<br/>dashTitles, version"]
         D["devicePrefs slice<br/>autoResearch,<br/>aiCompanionEnabled"]
         A["activeViewId<br/>viewScreenshots"]
     end
@@ -630,6 +670,7 @@ graph TD
 | Field | Persisted where | Rationale |
 |---|---|---|
 | `isDarkMode`, `viewHues`, `viewHuesEnabled`, `dashOrder`, `dashTitles` | `/api/settings` → SQLite | Cross-device: customizations follow the user across LAN devices |
+| `version` | hydrated from `/api/settings` GET; sent as `If-Match` on POST | Optimistic-concurrency counter — deliberately excluded from the synced-state diff so updating it (after a successful save) doesn't trigger a re-save |
 | `autoResearch`, `aiCompanionEnabled` | `localStorage` under `app-state` | Per-device: background behaviors should only be active on one device at a time |
 | `activeViewId`, `viewScreenshots` | `localStorage` under `app-state` | Per-device: each device remembers its own last-viewed dash and its own screenshot cache |
 | `defaultDashTitles`, `activeViewId` (in-memory read) | not persisted via Zustand | Derived from `BASE_DASHES`; re-computed on every `syncAvailableDashes` call |
@@ -658,15 +699,26 @@ sequenceDiagram
     Store->>TP: subscribe callback fires on any change
     TP->>TP: diff getSyncableState(prev, next)
     alt changed
-        TP->>API: POST /api/settings (debounced 500ms)
+        TP->>API: POST /api/settings (If-Match: version, debounced 500ms)
+        alt 200 ok
+            API-->>TP: {success, version: newVersion}
+            TP->>Store: setState({version: newVersion})
+        else 409 conflict
+            API-->>TP: {currentVersion}
+            TP->>API: GET /api/settings
+            API-->>TP: fresh data (incl. new version)
+            TP->>Store: setState(fresh)
+            TP->>Browser: toast "Settings updated elsewhere — reloaded"
+        end
     end
     Browser->>Browser: CSS: --theme-hue = viewHues[activeViewId]
 ```
 
 Key details:
 - The subscription only starts **after** `mounted = true` — this prevents the initial `setState(globalData)` hydration call from immediately firing a POST back to the server with the just-loaded data.
-- Only the five "cross-device" fields are diffed and synced: `isDarkMode`, `viewHues`, `viewHuesEnabled`, `dashOrder`, `dashTitles`. `activeViewId` and `viewScreenshots` are kept in `localStorage` only and are deliberately excluded from the sync payload.
+- Only the five "cross-device" fields are diffed and synced: `isDarkMode`, `viewHues`, `viewHuesEnabled`, `dashOrder`, `dashTitles`. `version` is hydrated and bumped but never appears in the diff (so updating it doesn't loop). `activeViewId` and `viewScreenshots` are kept in `localStorage` only and are deliberately excluded from the sync payload.
 - The 500 ms debounce collapses rapid bursts (e.g. the user dragging a hue slider) into one network request.
+- **Conflict policy** is last-writer-wins via refetch — the losing tab's in-flight edit is dropped in favor of the winning state. Not a CRDT-style merge.
 
 ---
 
@@ -676,7 +728,7 @@ When `withCache` serves a cached response after an upstream failure, it sets `X-
 
 ```mermaid
 graph LR
-    SWR["useSWR('/api/...', fetcher)"] --> F["fetcher(url)"]
+    Q["useQuery({queryKey,queryFn:fetcher})"] --> F["fetcher(url)"]
     F --> Fetch["fetch(url)"]
     Fetch --> Cache["withCache handler"]
     Cache -->|upstream error| SF["X-Cache: STALE-FALLBACK"]
@@ -698,7 +750,7 @@ A user checks off a task in `PlanningView`:
 ```mermaid
 sequenceDiagram
     participant UI as PlanningView
-    participant SWR as useSWR (tasks)
+    participant TS as TanStack queryClient
     participant Route as PATCH /api/tasks
     participant DB as SQLite
     participant Regen as regenerator.ts
@@ -708,7 +760,8 @@ sequenceDiagram
     participant SSE as /api/events SSE
     participant Hook as useServerEvents('Task')
 
-    UI->>Route: PATCH {id, status: 'DONE'} (optimistic update in UI)
+    UI->>TS: setQueryData(queryKeys.tasks, optimistic)
+    UI->>Route: PATCH {id, status: 'DONE'}
     Route->>DB: task.update({status:'DONE'})
     Route->>Bus: broadcastEvent(Task.upsert, id)
     Route->>Regen: regenerateMarkdownFromDB()
@@ -717,14 +770,14 @@ sequenceDiagram
     Route-->>UI: 200 OK
     Bus->>SSE: fan-out event
     SSE-->>Hook: data: {model:'Task', action:'upsert'}
-    Hook->>SWR: mutate() → refetch /api/tasks
-    SWR-->>UI: updated task list (now authoritative from DB)
+    Hook->>TS: invalidateQueries({queryKey: queryKeys.tasks})
+    TS-->>UI: updated task list (now authoritative from DB)
     Note over Watcher: fs.watch fires (500ms later)
     Watcher->>Regen: consumeSuppressFlag() → true
     Watcher->>Watcher: suppressed — exits early
 ```
 
-The optimistic update in the UI provides instant feedback. The SWR `mutate()` triggered by the SSE event then replaces it with the authoritative DB value, typically within 100–200 ms of the PATCH completing. The file update is a side effect of the DB mutation, not a cause — and the suppress flag ensures the watcher doesn't create a second round-trip.
+The optimistic `setQueryData` in the UI provides instant feedback. The SSE-triggered `invalidateQueries` then replaces it with the authoritative DB value, typically within 100–200 ms of the PATCH completing. The file update is a side effect of the DB mutation, not a cause — and the suppress flag ensures the watcher doesn't create a second round-trip.
 
 ---
 
@@ -733,6 +786,8 @@ The optimistic update in the UI provides instant feedback. The SWR `mutate()` tr
 Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **AbortSignal** — Standard `AbortController.signal` that fires when a request or operation is cancelled. The SSE endpoint listens on `req.signal` to clean up the heartbeat and unsubscribe when the browser closes the connection.
+
+- **Adapter (CompanyAdapter)** — The unit of plug-in for the company-news pipeline. Each `lib/companies/<id>.ts` default-exports a `CompanyAdapter` (id, name, view, category, optional `ttlSeconds`/`upstreamHost`, plus a `fetch()` function). Strategy factories (`rssAdapter`, `scrapeAdapter`, `snapiAdapter`, `googleNewsAdapter`, `customAdapter`) build them from per-source config. The `lib/companies/index.ts` barrel assembles all adapters via explicit imports — adding a company is one new file plus one alphabetical import line.
 
 - **Backfill** — Populating a data store with historical records that weren't captured live (e.g., `scripts/seed-crypto.ts`).
 
@@ -750,7 +805,7 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Fan-out** — Distributing one input to many outputs. The event bus fans one `broadcastEvent` call out to every connected SSE client.
 
-- **Fetcher** — In SWR, the function that turns a cache key (URL) into data. `lib/fetcher-client.ts` exports the project's standard fetcher, which inspects `X-Cache` headers and surfaces stale-fallback toasts.
+- **Fetcher** — In TanStack Query, the function that fulfills a `queryFn`. The typed routes go through `lib/api-client.ts` (per-route wrappers built from Zod schemas); read-only proxy routes without schemas use `lib/fetcher-client.ts:fetcher`, which still surfaces stale-fallback toasts by inspecting `X-Cache`.
 
 - **globalThis** — Standard global-object reference shared across Node, browsers, and workers. Used here to attach state (cache, logger, event bus) that must survive Hot Module Replacement.
 
@@ -760,21 +815,23 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Hydration** — Initial syncing of client state from a server source. `ThemeProvider` hydrates the `theme` slice by GET-ing `/api/settings` on mount, then sets `mounted=true` and starts subscribing to changes.
 
+- **If-Match** — HTTP request header carrying a version/etag the client expects to overwrite. `POST /api/settings` requires `If-Match: <version>` and returns 409 + `currentVersion` on mismatch. See **Optimistic concurrency**.
+
 - **In-flight dedup** — Server-side de-duplication of concurrent identical requests. Two callers that miss the same cache key share one upstream fetch instead of stampeding the source (Task 6C).
 
-- **Invalidate** — Mark cached or derived state as stale so it gets refetched. The `Task.invalidate` event from the file watcher tells SWR to refetch `/api/tasks` wholesale rather than carrying a specific id.
+- **Invalidate** — Mark cached or derived state as stale so it gets refetched. The `Task.invalidate` event from the file watcher tells the client to refetch `/api/tasks` wholesale rather than carrying a specific id; the `Cache.invalidate` event from `invalidateCacheKey`/`invalidateCacheByPrefix` tells the client to refetch *every* TanStack query.
 
 - **Listener** — A callback registered with a pub/sub bus. `subscribeToEvents(fn)` adds `fn` to the `__EVENT_LISTENERS` set on `globalThis`.
 
 - **LL2 (Launch Library 2)** — The Space Devs' rocket-launch metadata API consumed by `/api/space/launches`.
 
-- **LRU (Least Recently Used)** — A common cache-eviction policy. `withCache` does *not* implement LRU — it has no eviction at all (see §14).
+- **LRU (Least Recently Used)** — A common cache-eviction policy. `withCache`'s L1 does *not* implement LRU — it relies on TTL expiry and explicit `invalidateCacheKey` calls. The L2 SQLite tier is pruned by the scheduler's `cache-prune` job every 5 min.
 
 - **Middleware** — Next.js's request interceptor running before route handlers. Mission Control's only does request logging, scoped by the `matcher` to `/api/*`. (In Next 16 the file is `proxy.ts`.)
 
 - **Migration** — A versioned schema change. Prisma migrations are SQL files under `prisma/migrations/`, applied with `prisma migrate dev` (writes) or `prisma migrate deploy` (prod).
 
-- **Model** — In the event bus, an enum tag (`Task` | `Goal` | `SavedPaper` | `Application` | `CalendarEvent` | `Setting`) identifying which Prisma table the event pertains to. Subscribers filter by model so each view only refetches when its data changed.
+- **Model** — In the event bus, an enum tag (`Task` | `Goal` | `SavedPaper` | `Application` | `CalendarEvent` | `Setting` | `FinanceTick` | `Cache`) identifying what kind of state changed. Most map to a Prisma table; `FinanceTick` is the Pulsar-WS price tick; `Cache` is `withCache` invalidation. Subscribers filter by model so each view only refetches when its data changed.
 
 - **Module** — A single source file with its own `import` / `export` graph. Webpack bundles modules into the running app; under HMR, an edited module is re-evaluated in place rather than triggering a full restart of the Node process.
 
@@ -782,7 +839,7 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Monkey-patching** — Replacing a method on an object at runtime to add behavior. `lib/logger.ts` monkey-patches `console.log/info/warn/error` so every log line lands in the in-app log buffer for free.
 
-- **Mutate / Mutation** — A write operation (POST/PATCH/DELETE) that changes server state. In SWR, `mutate()` is also the client-side function that invalidates a cache key and triggers a refetch.
+- **Mutate / Mutation** — A write operation (POST/PATCH/DELETE) that changes server state. In TanStack Query, `queryClient.invalidateQueries({ queryKey })` is the client-side function that marks queries stale and triggers a refetch; `queryClient.setQueryData(key, updater)` is used for optimistic-update writes.
 
 - **Mutex** — A lock that serializes access to a shared resource. The `docs/todo.md` writer uses an in-memory `Mutex` so concurrent PATCHes don't interleave their writes.
 
@@ -794,9 +851,11 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **OGS (open-graph-scraper)** — npm package that fetches a URL and parses its `<meta property="og:*">` tags. Used to enrich news/research items with hero images and titles.
 
+- **Optimistic concurrency** — Concurrency-safe updates without locking: each row carries a `version` integer; writers send the version they last saw as `If-Match`, and the server uses it as a `WHERE` condition on the conditional update. If the version moved (because someone else wrote first), the update affects 0 rows and the server returns 409. The settings route (`/api/settings`) is the only consumer today; `lib/repositories/settings.ts:upsertGlobalSettingWithVersion` does the atomic check-and-bump.
+
 - **Operation** — In the context of Prisma's `$allOperations` extension, the verb being executed against a table: `findMany`, `findUnique`, `create`, `update`, `upsert`, `delete`, `$transaction`, etc. Every operation produces a `[DATABASE] Executing <op> on <model>` log line, which is how DB activity surfaces in the in-app log viewer.
 
-- **Optimistic UI / optimistic update** — Updating the UI before the server confirms a mutation, on the assumption it will succeed. Reverted on error. PlanningView's task checkboxes do this; the SSE-triggered `mutate()` then replaces the optimistic value with the authoritative one.
+- **Optimistic UI / optimistic update** — Updating the UI before the server confirms a mutation, on the assumption it will succeed. Reverted on error via a captured `prev` snapshot and `queryClient.setQueryData(key, prev)`. PlanningView's task checkboxes, GoalCard toggles, and SavedPapersOverlay deletes all use this pattern.
 
 - **Pub/Sub** — Publish/subscribe pattern: publishers emit events without knowing who consumes them; subscribers register interest. Both `lib/events.ts` (in-process) and Google Cloud Pub/Sub (Gmail webhook) follow this pattern.
 
@@ -834,7 +893,9 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Subscribe / Subscription** — Registering interest in events. On the server, `subscribeToEvents(fn)` adds a listener to the in-process bus. On the client, `useServerEvents(model, cb)` subscribes to the SSE stream and filters by model.
 
-- **SWR** — Frontend data-fetching library named after the stale-while-revalidate cache directive. `useSWR(key, fetcher)` returns `{data, mutate}` and dedupes concurrent requests for the same key across components.
+- **SWR** — Frontend data-fetching library named after the stale-while-revalidate cache directive. **Removed in MVP2 Phase C** in favor of TanStack Query; the term still shows up in older commit messages and archived plan docs.
+
+- **TanStack Query (`@tanstack/react-query`)** — The frontend data-fetching library used today. `useQuery({ queryKey, queryFn })` returns `{ data, isLoading, refetch }` and dedupes concurrent requests. `queryClient.invalidateQueries({ queryKey })` marks queries stale; the SSE event bus calls this on every server-side mutation. `queryKeys` tuples (`['tasks']`, `['research', topic]`) keep the keys stable so SSE invalidation always finds them.
 
 - **Thundering herd** — Many concurrent callers all missing the same cache key and stampeding the upstream simultaneously. Mitigated by in-flight dedup.
 
@@ -842,9 +903,11 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **TTL (Time To Live)** — How long a cache entry is considered fresh before it's treated as expired. `withCache` accepts a TTL in seconds.
 
+- **WAL (Write-Ahead Log)** — SQLite journaling mode that lets readers and a single writer operate concurrently without blocking. Mission-control enables it (`PRAGMA journal_mode = WAL`) in `lib/prisma.ts` because the web tier and the scheduler process both write `prisma/prod.db`; without WAL, the second writer would race on `SQLITE_BUSY`. Persistent in the file header — once set, all subsequent connections use it.
+
 - **Webhook** — An HTTP endpoint that accepts pushes from an external service. `/api/gmail/webhook` is the Pub/Sub push target.
 
-- **WebSocket** — Bidirectional persistent connection over HTTP. Pulsar uses one for `/ws/prices`; mission-control currently does not.
+- **WebSocket** — Bidirectional persistent connection over HTTP. Mission-control opens one as a *client* in `lib/pulsar-ws-relay.ts` to consume Pulsar's `/ws/prices` and rebroadcast each tick as a `FinanceTick` SSE event. Mission-control does not host any WebSocket server itself — its outbound channel to clients is SSE.
 
 - **Zod** — Runtime schema-validation library. `lib/schemas/*` defines Zod schemas that route handlers use to reject malformed payloads (Task 6A).
 
