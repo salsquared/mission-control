@@ -6,15 +6,19 @@ export interface ApplicationCreate {
     company: string;
     role: string;
     status: string;
+    kind?: string | null;
     nextSteps?: string | null;
     dateApplied?: Date;
+    lastEmailMsgId?: string | null;
     lastUpdateAt?: Date;
 }
 
 export interface ApplicationUpdate {
     status?: string;
+    kind?: string | null;
     nextSteps?: string | null;
     role?: string | null;
+    lastEmailMsgId?: string | null;
     lastUpdateAt?: Date;
 }
 

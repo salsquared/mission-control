@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Section } from "../Section";
-import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus } from "lucide-react";
+import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox } from "lucide-react";
 import { useSession, signIn } from "next-auth/react";
 import { CalendarWidget } from "../widgets/CalendarWidget";
 import { KanbanWidget, KanbanColumnDef } from "../widgets/KanbanWidget";
@@ -10,6 +10,7 @@ import { Card } from "../ui/Card";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { api, queryKeys } from "@/lib/api-client";
+import { toastStore } from "@/lib/toast-store";
 
 interface AppRecord {
     id: string;
@@ -33,6 +34,7 @@ const pipelineColumns: AppKanbanColumnDef[] = [
 export const ApplicationsView: React.FC = () => {
     const { data: session, status } = useSession();
     const [isCalendarAdding, setIsCalendarAdding] = useState(false);
+    const [isScanning, setIsScanning] = useState(false);
 
     // Track first-time authentication so background session revalidations
     // (window focus, periodic refetch, cross-device signin) don't unmount
@@ -54,6 +56,23 @@ export const ApplicationsView: React.FC = () => {
     );
     useServerEvents('Application', invalidateApps);
     useServerEvents('CalendarEvent', invalidateApps);
+
+    const scanInbox = useCallback(async () => {
+        setIsScanning(true);
+        try {
+            const result = await api.applications.backfill();
+            await invalidateApps();
+            const summary = `Scanned ${result.scanned} · ${result.created} new · ${result.updated} updated · ${result.skipped} skipped`;
+            toastStore.push({
+                message: result.truncated ? `${summary} (truncated — re-run for more)` : summary,
+                type: result.errored > 0 ? 'warning' : 'info',
+            });
+        } catch (e: any) {
+            toastStore.push({ message: `Scan failed: ${e.message}`, type: 'error' });
+        } finally {
+            setIsScanning(false);
+        }
+    }, [invalidateApps]);
 
     if (status === "loading" && !hasEverAuthedRef.current) {
         return (
@@ -143,9 +162,14 @@ export const ApplicationsView: React.FC = () => {
                     icon={Mail} 
                     iconColorClass="text-purple-400"
                     action={
-                        <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
-                            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <button onClick={scanInbox} disabled={isScanning} className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
+                                <Inbox className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} /> {isScanning ? "Scanning…" : "Scan Inbox"}
+                            </button>
+                            <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
+                                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status
+                            </button>
+                        </div>
                     }
                 >
                     <div className="flex items-center gap-3 bg-black/20 p-4 border border-white/5 rounded-xl">

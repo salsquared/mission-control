@@ -14,7 +14,11 @@ import {
     GoalPostSchema,
     GoalPatchSchema,
 } from './schemas/goals';
-import { ApplicationsListResponseSchema } from './schemas/applications';
+import {
+    ApplicationsListResponseSchema,
+    BackfillRequestSchema,
+    BackfillResponseSchema,
+} from './schemas/applications';
 import {
     SettingsGetResponseSchema,
     SettingsPostResponseSchema,
@@ -116,6 +120,12 @@ export const api = {
 
     applications: {
         list: () => jsonFetch('/api/applications', ApplicationsListResponseSchema),
+        backfill: (input?: z.infer<typeof BackfillRequestSchema>) =>
+            jsonFetch(
+                '/api/applications/backfill',
+                BackfillResponseSchema,
+                jsonBody('POST', input ?? {})
+            ),
     },
 
     settings: {

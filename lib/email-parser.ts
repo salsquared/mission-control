@@ -3,32 +3,80 @@ import { google } from "@ai-sdk/google";
 import { z } from "zod";
 
 /**
- * Zod schema defining the strict output structure expected from the LLM parser.
+ * Output of the LLM email classifier.
+ *
+ * `isApplicationRelated` is the relevance gate — when false, callers should
+ * skip the upsert. The keyword pre-filter (lib/applications/relevance.ts) is
+ * intentionally generous to avoid false negatives, so the classifier needs to
+ * be the final say on whether an email actually represents an application
+ * event.
  */
 export const applicationSchema = z.object({
-  company: z.string().describe("The name of the company or institution."),
-  role: z.string().optional().describe("Job title, program name, or role applied for. Default to the closest guess if missing."),
-  status: z.enum(["APPLIED", "UPDATED", "ASSESSMENT", "INTERVIEW_REQUESTED", "INTERVIEW", "OFFER", "REJECTED"])
-    .describe("Determine the closest match for the application status. Use UPDATED if they just need more info, ASSESSMENT if requesting a test/take-home."),
-  nextSteps: z.string().optional().describe("A brief summary of what the applicant must do next, e.g., 'Reply with availability' or 'Fill out the background check'."),
-  extractedDates: z.array(z.string()).optional().describe("Any distinct dates, times, or deadlines mentioned. Preserve original timezone logic if provided.")
+  isApplicationRelated: z.boolean().describe(
+    "True if and only if this email is about an actual application the user submitted (job, internship, or college/university). False for newsletters, recruiter cold outreach with no prior application, marketing, job board digests, or generic 'we're hiring' announcements."
+  ),
+  confidence: z.enum(["low", "medium", "high"]).describe(
+    "How confident you are in the classification. Use 'low' if the email is ambiguous or you had to guess heavily."
+  ),
+  kind: z.enum(["job", "internship", "college", "other"]).describe(
+    "What type of application. 'college' covers undergraduate/graduate admissions, university programs, and bootcamps with an admissions process. 'internship' for explicitly internship/co-op roles. 'job' for full-time, part-time, or contract employment. 'other' for anything that's still application-related but doesn't fit (scholarships, fellowships, grants, residencies, etc.)."
+  ),
+  company: z.string().describe(
+    "The name of the company, university, or institution. Strip suffixes like 'LLC', 'Inc.', 'Corp.', 'Recruiting', 'Careers'. For colleges, use the canonical name (e.g. 'Massachusetts Institute of Technology', not 'MIT Office of Admissions')."
+  ),
+  role: z.string().optional().describe(
+    "Job title, program name, or role applied for. For colleges, use the program/major (e.g. 'Computer Science BS'). Leave empty if truly not mentioned."
+  ),
+  status: z
+    .enum([
+      "APPLIED",
+      "UPDATED",
+      "ASSESSMENT",
+      "INTERVIEW_REQUESTED",
+      "INTERVIEW",
+      "OFFER",
+      "REJECTED",
+    ])
+    .describe(
+      "Closest match for current status. APPLIED = confirmation of submission. UPDATED = generic status update / 'still under review' / additional info requested. ASSESSMENT = take-home / coding test / portfolio request / college supplemental materials request. INTERVIEW_REQUESTED = asked to schedule. INTERVIEW = scheduled or completed. OFFER = job offer OR college admission OR waitlist-with-action OR scholarship offer. REJECTED = denial OR college reject/deferred-as-rejection."
+    ),
+  nextSteps: z.string().optional().describe(
+    "One-sentence summary of what the applicant needs to do next, e.g. 'Reply with availability for a 30-min call' or 'Submit official transcripts by Mar 1'. Omit if no action is required."
+  ),
+  extractedDates: z
+    .array(z.string())
+    .optional()
+    .describe(
+      "Distinct deadlines, interview times, or decision dates mentioned. Preserve the original wording including timezone."
+    ),
 });
 
-/**
- * Feed the raw email subject and body into Gemini 3.0 Flash to rapidly extract the canonical variables
- * necessary for the mission-control dashboard.
- */
-export async function parseApplicationEmail(emailContent: string, subject: string) {
+export type ParsedApplicationEmail = z.infer<typeof applicationSchema>;
+
+export async function parseApplicationEmail(
+  emailContent: string,
+  subject: string,
+  from?: string
+): Promise<ParsedApplicationEmail> {
+  // Trim long bodies — Gemini Flash can handle the full thing but most
+  // signal is in the first ~4k chars (greetings, status, action items).
+  const trimmedBody = emailContent.length > 6000 ? emailContent.slice(0, 6000) + "\n…[truncated]" : emailContent;
+
   const result = await generateObject({
-    model: google("gemini-3.0-flash"), // Utilizes the newest Flash architecture for extremely rapid extraction
+    model: google("gemini-3.0-flash"),
     schema: applicationSchema,
-    prompt: `Analyze the following email regarding an application:
-    
-    Subject: ${subject}
-    Email Body:
-    ${emailContent}
-    
-    Extract the company name, role, current application status, any immediate next steps, and any critical dates/deadlines.`
+    prompt: `You are classifying an email related to a job, internship, or college/university application.
+
+First, decide whether this email is actually about the user's own application (they submitted something and this is a status update or related message). Marketing, job-board digests, recruiter cold-outreach to someone who never applied, and "we're hiring" company announcements are NOT application-related — set isApplicationRelated=false.
+
+If it IS application-related, extract company/institution, role/program, current status, next steps, and any dates.
+
+For colleges, treat admission/decision/waitlist/deferral language as the corresponding status. Treat supplemental-material requests as ASSESSMENT.
+
+From: ${from ?? "(unknown)"}
+Subject: ${subject}
+Body:
+${trimmedBody}`,
   });
 
   return result.object;
