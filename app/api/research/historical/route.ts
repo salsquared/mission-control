@@ -31,10 +31,15 @@ async function getHandler(request: Request) {
             // Fetch that specific paper's details from arxiv
             const baseUrl = process.env.NEXTAUTH_URL || `http://localhost:${process.env.PORT || 3101}`;
             console.info(`[EXTERNAL API] Fetching existing historical paper from arXiv: ${existingSelection.paperId}`);
-            const res = await fetch(`http://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
+            const res = await fetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 
             if (res.ok) {
                 const xml = await res.text();
+                // arxiv's rate-limit body is plaintext "Rate exceeded." returned with 200.
+                // Throw so withCache STALE-FALLBACKs instead of silently caching [].
+                if (!xml.trimStart().startsWith('<')) {
+                    throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
+                }
                 // Simple parsing or just use the local route structure to make it easier, but we need details
                 // For simplicity, let's query the main route with a special query or just parse the XML directly here?
                 // Extract proper entry to avoid matching feed title
@@ -93,12 +98,15 @@ async function getHandler(request: Request) {
         if (topic.toLowerCase() === 'physics') arxivQuery = `all:physics`;
 
         const fullQuery = `${arxivQuery} AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
-        const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=100&sortBy=relevance&sortOrder=descending`;
+        const fetchUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=100&sortBy=relevance&sortOrder=descending`;
 
         console.info(`[EXTERNAL API] Fetching new historical papers from arXiv: ${fullQuery}`);
         const res2 = await fetch(fetchUrl);
         if (res2.ok) {
             const xml = await res2.text();
+            if (!xml.trimStart().startsWith('<')) {
+                throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
+            }
 
             // Extract all entries
             const entries = xml.split('<entry>');

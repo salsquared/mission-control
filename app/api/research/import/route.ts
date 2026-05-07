@@ -99,7 +99,7 @@ export async function POST(request: Request) {
         if ((!ssRes.ok || !paperMetadata?.summary || paperMetadata.summary === "No abstract available.") && paperIdFallback) {
             console.info(`[EXTERNAL API] Fetching fallback from arXiv for ${paperIdFallback}`);
             try {
-                const arxivApiUrl = `http://export.arxiv.org/api/query?id_list=${paperIdFallback}`;
+                const arxivApiUrl = `https://export.arxiv.org/api/query?id_list=${paperIdFallback}`;
                 const feed = await parser.parseURL(arxivApiUrl);
 
                 if (feed.items && feed.items.length > 0) {

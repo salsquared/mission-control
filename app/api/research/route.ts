@@ -154,29 +154,29 @@ async function getHandler(request: Request) {
             searchQueryParts.push(`submittedDate:[${dateFromStr}+TO+${dateToStr}]`);
 
             const searchQuery = searchQueryParts.join('+AND+');
-            const arxivApiUrl = `http://export.arxiv.org/api/query?search_query=${searchQuery}&start=0&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
+            const arxivApiUrl = `https://export.arxiv.org/api/query?search_query=${searchQuery}&start=0&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
 
-            try {
-                console.info(`[EXTERNAL API] Fetching from arXiv: ${arxivApiUrl}`);
-                const feed = await parser.parseURL(arxivApiUrl);
-                initialPapers = feed.items.map(item => {
-                    const rawId = item.id || item.link || Math.random().toString();
-                    const paperId = (rawId.split('/abs/')[1] || rawId).replace(/v\d+$/, '');
+            console.info(`[EXTERNAL API] Fetching from arXiv: ${arxivApiUrl}`);
+            // arxiv has a 1-req-per-3s soft policy; over the limit it returns a 200
+            // with plaintext "Rate exceeded." — bypassing rss-parser's normal error
+            // path. Throw on that so withCache serves the stale entry instead of
+            // freezing an empty result for the full TTL.
+            const feed = await parser.parseURL(arxivApiUrl);
+            initialPapers = feed.items.map(item => {
+                const rawId = item.id || item.link || Math.random().toString();
+                const paperId = (rawId.split('/abs/')[1] || rawId).replace(/v\d+$/, '');
 
-                    return {
-                        id: rawId,
-                        title: item.title?.replace(/\n/g, ' ').replace(/\s+/g, ' ') || "arXiv Paper",
-                        summary: item.summary?.replace(/\n/g, ' ').trim() || "",
-                        url: item.link || "",
-                        author: item.author || item['dc:creator'] || 'Unknown',
-                        published_at: item.isoDate || item.pubDate || new Date().toISOString(),
-                        source: 'arXiv',
-                        paperId: paperId
-                    };
-                });
-            } catch (err) {
-                console.error("Error fetching arxiv feed via rss-parser:", err);
-            }
+                return {
+                    id: rawId,
+                    title: item.title?.replace(/\n/g, ' ').replace(/\s+/g, ' ') || "arXiv Paper",
+                    summary: item.summary?.replace(/\n/g, ' ').trim() || "",
+                    url: item.link || "",
+                    author: item.author || item['dc:creator'] || 'Unknown',
+                    published_at: item.isoDate || item.pubDate || new Date().toISOString(),
+                    source: 'arXiv',
+                    paperId: paperId
+                };
+            });
         }
 
         // 2. Enrich with Semantic Scholar

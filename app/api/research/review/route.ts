@@ -29,10 +29,15 @@ async function getHandler(request: Request) {
 
         if (existingSelection) {
             console.info(`[EXTERNAL API] Fetching existing review paper from arXiv: ${existingSelection.paperId}`);
-            const res = await fetch(`http://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
+            const res = await fetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 
             if (res.ok) {
                 const xml = await res.text();
+                // arxiv's rate-limit body is plaintext "Rate exceeded." returned with 200.
+                // Throw so withCache STALE-FALLBACKs instead of silently caching [].
+                if (!xml.trimStart().startsWith('<')) {
+                    throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
+                }
                 // Extract proper entry
                 const entries = xml.split('<entry>');
                 if (entries.length > 1) {
@@ -89,12 +94,15 @@ async function getHandler(request: Request) {
         if (topic.toLowerCase() === 'physics') arxivQuery = `all:physics`;
 
         const fullQuery = `${arxivQuery} AND (ti:review OR ti:survey) AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
-        const fetchUrl = `http://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50&sortBy=relevance&sortOrder=descending`;
+        const fetchUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50&sortBy=relevance&sortOrder=descending`;
 
         console.info(`[EXTERNAL API] Fetching new review papers from arXiv: ${fullQuery}`);
         const res = await fetch(fetchUrl);
         if (res.ok) {
             const xml = await res.text();
+            if (!xml.trimStart().startsWith('<')) {
+                throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
+            }
 
             // Extract all entries
             const entries = xml.split('<entry>');
