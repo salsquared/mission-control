@@ -1,5 +1,28 @@
 import { z } from 'zod';
 
+// ─── Entity shape ──────────────────────────────────────────────────────────
+export const SavedPaperSchema = z.object({
+    id: z.string(),
+    paperId: z.string(),
+    title: z.string(),
+    summary: z.string(),
+    url: z.string(),
+    authors: z.string(),
+    publishedAt: z.string().datetime(),
+    topic: z.string(),
+    status: z.string(),
+    createdAt: z.string().datetime(),
+    updatedAt: z.string().datetime(),
+});
+
+// ─── Responses ─────────────────────────────────────────────────────────────
+export const SavedPapersListResponseSchema = z.array(SavedPaperSchema);
+export const SavedPaperMutationResponseSchema = SavedPaperSchema;
+export const SavedPaperDeleteResponseSchema = z.object({
+    success: z.literal(true),
+});
+
+// ─── Requests ──────────────────────────────────────────────────────────────
 export const SavedPaperPostSchema = z.object({
     paperId: z.string().min(1),
     title: z.string().optional(),
