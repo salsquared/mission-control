@@ -45,9 +45,9 @@ Five fetchers surface `[SCRAPER BROKEN]` via MVP1 Task 2B's sentinel and STALE-F
 
 ---
 
-## 1. Phase A — Auth and trust upgrades
+## 1. Phase A ✅ — Auth and trust upgrades
 
-### Task A1 — `[1.1b]` Pub/Sub OIDC verification
+### Task A1 ✅ — `[1.1b]` Pub/Sub OIDC verification
 Replaces `[1.1a]`'s shared-secret with Google-issued OIDC tokens.
 
 **Files:**
@@ -61,9 +61,11 @@ Replaces `[1.1a]`'s shared-secret with Google-issued OIDC tokens.
 
 **Acceptance:** Forging the previous shared-secret fails; only requests signed by the configured Pub/Sub service account succeed.
 
+**Status:** Shipped. `lib/google-oidc.ts` uses `jose`'s `createRemoteJWKSet` against Google's `oauth2/v3/certs`, 24h cache, RS256, issuer + audience pinned. Webhook 500s if `PUBSUB_AUDIENCE` is unset (deliberate fail-loud), 401s on verification failure. `PUBSUB_WEBHOOK_SECRET` is retired — operator must reconfigure the push subscription's `oidc_token` and set `PUBSUB_AUDIENCE` (see `docs/hosting.md` §5).
+
 ---
 
-### Task A2 — Service-token auth path for internal callers
+### Task A2 ✅ — Service-token auth path for internal callers
 MVP1 confirmed `1.2a`: `/api/calendar/event` now derives `userId` from session, so external services (Pulsar, future agents, scheduled jobs in `mission-control-scheduler`) can't hit it without an interactive cookie. Task A2 adds a parallel service-token path.
 
 **Files:**
@@ -75,9 +77,11 @@ MVP1 confirmed `1.2a`: `/api/calendar/event` now derives `userId` from session, 
 
 **Acceptance:** Pulsar (or any other configured service) can `POST /api/calendar/event` with the service token + matching `onBehalfOf` and create events. Anonymous callers still get 401; mismatched `onBehalfOf` still gets 403; interactive sessions are unaffected.
 
+**Status:** Shipped. `lib/auth-guards.ts` adds `requireServiceToken` and `requireSessionOrService`. All three calendar handlers (GET/POST/DELETE) accept either an interactive session or `SERVICE_TOKEN_PULSAR` + matching `?onBehalfOf=<userId>`. If the env vars are unset, the route falls back to session-only auth — safe default until Pulsar is ready to call calendar.
+
 ---
 
-## 2. Phase B — Repository pattern (`[2.1c]`)
+## 2. Phase B ✅ — Repository pattern (`[2.1c]`)
 
 Centralize Prisma access behind a thin repository layer so route handlers don't speak Prisma directly. This pays off in three places: testability, future caching/auditing, and a clean swap target if you ever migrate off SQLite.
 
@@ -100,9 +104,24 @@ Centralize Prisma access behind a thin repository layer so route handlers don't 
 
 **Risk:** Low but tedious. Do it incrementally — one model per PR.
 
+**Status:** Shipped across eight slices, one model per commit:
+
+| Slice | Repo | Models / consumers |
+|---|---|---|
+| 1 | `tasks.ts` | `prisma.task.*` — tasks route + parser + regenerator |
+| 2 | `goals.ts` | `prisma.lifeGoal.*` — goals route |
+| 3 | `users.ts` + `applications.ts` | applications route + Gmail webhook |
+| 4 | `saved-papers.ts` + `selected-papers.ts` | research/saved + research/historical + research/review |
+| 5 | `accounts.ts` | `lib/googleapis.ts` Google OAuth account lookup |
+| 6 | `cache-entries.ts` | L2 SQLite I/O for `withCache` |
+| 7 | `settings.ts` (extended) | settings route + the existing parse/serialize helpers |
+| 8 | `system.ts` | `prisma.$queryRaw` DB liveness probe for `/api/system` |
+
+Only `lib/auth.ts` still imports `prisma` directly — it passes the full client to NextAuth's `PrismaAdapter`, which legitimately requires the whole client. Every `prisma.<model>.*` call now lives in `lib/repositories/`.
+
 ---
 
-## 3. Phase C — Test contracts at every boundary (`[3.1c]`, `[8.2b]`)
+## 3. Phase C ✅ — Test contracts at every boundary (`[3.1c]`, `[8.2b]`)
 
 Combine the two related "Zod schemas everywhere" picks into one push.
 
@@ -130,6 +149,22 @@ Use the schemas to generate a small client SDK so the frontend doesn't hand-writ
 
 **Risk:** Medium. Big diff (many files) but most changes are mechanical.
 
+**Status:** Shipped across nine slices.
+
+| Slice | Subject |
+|---|---|
+| C1.1 | Request schemas for goals, saved-papers, settings (closes the MVP1 6A gap) |
+| C1.2 | Response schemas for the typed-client surface (tasks, goals, applications, settings, system, saved-papers) |
+| C2.1 | Install `@tanstack/react-query`, mount `QueryClientProvider` |
+| C2.2 | `lib/api-client.ts` — typed `api.tasks.*`, `api.goals.*`, etc., with `queryKeys` tuples for SSE invalidation. Dev-only response validation logs (doesn't throw) |
+| C2.3 | Migrate PlanningView (template) |
+| C2.4 | Migrate ApplicationsView + SavedPapersOverlay |
+| C2.5 | Migrate AI/Space/Physics views (loose `fetcher` for un-schemaed proxy routes; `useQueries` for per-company news) |
+| C2.6 | Migrate Finance + Internal views |
+| C2.7 | Drop SWR, migrate remaining straggler fetches in `ThemeProvider`, `TaskItem`, `ResearchPaperCard`, `LaunchCalendarWidget`, `CalendarWidget`. Add `api.calendarEvents.*` + calendar response schemas |
+
+Calendar is now in the typed client. Two raw `fetch('/api/...')` sites remain by design: `/api/research/import` (preview shape varies per upstream source) and `/api/system/logs/historical` (paginated log tail, internal-only).
+
 ---
 
 ## 4. Phase D — Optimistic concurrency on settings (`[6.1c]`)
@@ -147,7 +182,7 @@ Two browser tabs editing the dash order race today; the SSE event bus from MVP1 
 
 ---
 
-## 5. Phase E — Background work and live data (`[7.1b]`, `[2.2b]` follow-up)
+## 5. Phase E ✅ — Background work and live data (`[7.1b]`, `[2.2b]` follow-up)
 
 This phase has two threads, both shaped by the same constraint that the web tier should not host long-lived background work:
 
@@ -156,7 +191,7 @@ This phase has two threads, both shaped by the same constraint that the web tier
 
 > **Reversed from the original plan.** An earlier draft positioned Pulsar as the canonical scheduler for everything. Pulsar's scope is "just for financial information," and overloading it would defeat the boundary that makes the architecture clean. The scheduler process below is the right home for non-financial recurring work.
 
-### Task E1 — Standalone scheduler process
+### Task E1 ✅ — Standalone scheduler process
 **Files:**
 - `scheduler/index.ts` (new top-level dir): a long-lived Node process with a small declarative schedule:
   ```typescript
@@ -191,14 +226,18 @@ This phase has two threads, both shaped by the same constraint that the web tier
 - Restarting the web tier does not restart the scheduler and vice versa.
 - `sqlite3 prisma/prod.db "PRAGMA journal_mode;"` returns `wal` after the next clean restart.
 
-### Task E2 — Pulsar boundary stays narrow
+**Status:** Shipped. `scheduler/index.ts` is a long-lived Node process run via `tsx` (no build step — `tsc -p scheduler/tsconfig.json` from the original plan was replaced with `node_modules/.bin/tsx scheduler/index.ts` since `tsx` is already a dep and avoids `@/` path-alias rewriting in emitted JS). `scheduler/jobs/cache-prune.ts` is the first job. WAL pragmas applied in `lib/prisma.ts` on every client init. `launch-ms.sh` cold path starts both PM2 processes; `--restart` deletes both. Cron-based jobs (`weekly-paper-pick`, `notification-digest`) are scaffolded for but not implemented yet — when the first one lands, add a cron library or scheduler-side parsing.
+
+### Task E2 ✅ — Pulsar boundary stays narrow
 **Files:** none in mission-control.
 - Document explicitly in `docs/architecture.md` (post-MVP1 update) and in Pulsar's README: Pulsar owns financial fetches and writes; the scheduler owns everything else.
 - Resist the temptation to add non-financial jobs to Pulsar even if it's tempting "since it already exists."
 
 **Acceptance:** A `grep` of Pulsar's source for non-financial concepts (papers, notifications, cache, settings) returns zero matches. A grep of `scheduler/jobs/` for financial concepts (CoinGecko, Mempool, BTC, ETH) returns zero matches.
 
-### Task E3 — Cache pruning moves out of the web process
+**Status:** Shipped. `docs/architecture.md` §9.1 now lists all three production processes (web tier, scheduler, Pulsar) with their explicit scopes, and calls out the boundary as load-bearing with the grep-based test above.
+
+### Task E3 ✅ — Cache pruning moves out of the web process
 **File:** `instrumentation.ts`, `scheduler/jobs/cache-prune.ts`.
 - Remove the `setInterval(pruneExpiredCache, 5 * 60 * 1000)` registered in MVP1 Task 2A.
 - Re-implement as `scheduler/jobs/cache-prune.ts` that imports `pruneExpiredCache` from `lib/cache.ts` (already there).
@@ -207,9 +246,11 @@ This phase has two threads, both shaped by the same constraint that the web tier
 
 **Acceptance:** `prisma.cacheEntry` row count stays bounded; the web process never schedules anything.
 
+**Status:** Shipped. `instrumentation.ts` no longer has the `setInterval(pruneExpiredCache, 5 * 60 * 1000)` from MVP1 Task 2A — replaced by a comment pointing at `scheduler/jobs/cache-prune.ts`.
+
 ---
 
-### Task E4 — `[2.2b]` Live price updates via Pulsar WebSocket relay
+### Task E4 ✅ — `[2.2b]` Live price updates via Pulsar WebSocket relay
 
 Replaces FinanceView's 5-minute polling interval with event-driven updates pushed from Pulsar through mission-control's SSE event bus.
 
@@ -229,6 +270,10 @@ Replaces FinanceView's 5-minute polling interval with event-driven updates pushe
 - Restarting Pulsar (`pm2 restart pulsar`) causes a brief stale-data window then automatic reconnect; FinanceView recovers without a page reload.
 - `pm2 restart mission-control` cleanly tears down the relay and re-establishes it on the next boot (no leaked WS connections).
 - InternalView log panel shows `[PULSAR WS] connected` entries; a Pulsar restart shows `reconnecting` then `connected` again.
+
+**Status:** Shipped. `lib/pulsar-ws-relay.ts` uses Node 24's global `WebSocket` (no `ws` dep needed). Subscribes to `bitcoin/ethereum/solana` on connect; broadcasts `'FinanceTick'` events on each tick. Reconnect backoff is `1000 * 2^attempts` capped at 30s. SIGTERM closes the WS so a clean restart doesn't leak connections. `'FinanceTick'` was added to `ModelName`/`ServerEventModel` unions. FinanceView's `useServerEvents('FinanceTick', ...)` invalidates the `'finance'` query key — TanStack dedupes the resulting refetches. The 5-min `refetchInterval` stays as the safety-net fallback.
+
+Switched the FinanceView SWR `mutate('/api/finance')` from the original plan to `queryClient.invalidateQueries({ queryKey: ['finance'] })` because Phase C migrated the view off SWR.
 
 ---
 
@@ -276,15 +321,15 @@ After MVP1 Task 8A splits the registry into files, MVP2 promotes "a company" fro
 
 ## 8. Phase summary (suggested order)
 
-| Order | Task | Why this order |
-|---|---|---|
-| 1 | Phase B (`[2.1c]` repositories) | Unblocks every later refactor; small, mechanical, safe to ship in slices. |
-| 2 | Phase C (`[3.1c]` + `[8.2b]` Zod everywhere + typed client) | Pays off in every subsequent refactor. Catches regressions during the harder phases. |
-| 3 | Phase A (`[1.1b]` OIDC + service tokens) | Hardens the LAN-exposed surface before more callers (Pulsar's expanded job set) exist. |
-| 4 | Phase E (`[7.1b]` scheduler + Task E4 Pulsar WS relay) | Scheduler owns non-financial recurring work; WS relay replaces FinanceView polling. Note: Pulsar stays financial-only. |
-| 5 | Phase D (`[6.1c]` optimistic concurrency) | Small, contained. Could ship anywhere after MVP1 5A/5B but pairs well with Phase E because that's when "another caller might be writing" stops being hypothetical. |
-| 6 | Phase F (`[7.2c]` unified cache) | Highest risk; do last so you have the testing scaffolding from Phase C and the repository abstraction from Phase B. |
-| 7 | Phase G (`[8.1c]` adapter plugin) | Independent; can be done at any point after MVP1 Task 8A. Sequenced last only because it's the lowest-priority structural change. |
+| Order | Task | Status | Why this order |
+|---|---|---|---|
+| 1 | Phase B (`[2.1c]` repositories) | ✅ shipped | Unblocks every later refactor; small, mechanical, safe to ship in slices. |
+| 2 | Phase C (`[3.1c]` + `[8.2b]` Zod everywhere + typed client) | ✅ shipped (TanStack-shaped per §10.2) | Pays off in every subsequent refactor. Catches regressions during the harder phases. |
+| 3 | Phase A (`[1.1b]` OIDC + service tokens) | ✅ shipped | Hardens the LAN-exposed surface before more callers (Pulsar's expanded job set) exist. |
+| 4 | Phase E (`[7.1b]` scheduler + Task E4 Pulsar WS relay) | ✅ shipped | Scheduler owns non-financial recurring work; WS relay replaces FinanceView polling. Note: Pulsar stays financial-only. |
+| 5 | Phase D (`[6.1c]` optimistic concurrency) | 🔜 next | Small, contained. Could ship anywhere after MVP1 5A/5B but pairs well with Phase E because that's when "another caller might be writing" stops being hypothetical. |
+| 6 | Phase F (`[7.2c]` unified cache) | 🔜 pending | Highest risk; do last so you have the testing scaffolding from Phase C and the repository abstraction from Phase B. |
+| 7 | Phase G (`[8.1c]` adapter plugin) | 🔜 pending | Independent; can be done at any point after MVP1 Task 8A. Sequenced last only because it's the lowest-priority structural change. |
 
 ---
 
