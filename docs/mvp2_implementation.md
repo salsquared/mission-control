@@ -281,23 +281,30 @@ Switched the FinanceView SWR `mutate('/api/finance')` from the original plan to 
 
 ---
 
-## 6. Phase F — Unified cache abstraction (`[7.2c]`)
+## 6. Phase F ✅ — Unified cache abstraction (`[7.2c]`)
 
-Today (post-MVP1) the cache exists in two places: server (`lib/cache.ts` durable SQLite) and client (SWR). They share none of their machinery. Unifying them makes deduplication, invalidation, and revalidation policies coherent.
+Originally framed as a full re-architecture (bespoke `CacheBackend` interface + two backends + a unifying hook). Per the resolved §10.2 decision (TanStack Query everywhere), Phase F shipped as a **scope-contracted** version: not a refactor of `withCache`, but an *invalidation bridge* between the existing server cache and the existing client cache.
 
-**Files:**
-- `lib/cache/contract.ts`: a `CacheBackend` interface (`get`, `set`, `inflight`, `invalidate`).
-- Two backends: `MemorySQLiteBackend` (server) and `SWRBackend` (client adapter).
-- `lib/cache/use-cached-fetch.ts`: a single hook (`useCachedFetch(key, ttl, fetcher)`) used by both server actions and client components, dispatching to the right backend.
-- The SSE event bus's `broadcastEvent` invokes `cache.invalidate(model)` on the server and broadcasts an `invalidate` event the client picks up to invalidate its keys.
+### What shipped
 
-**Dependencies:** MVP1 Tasks 2A, 4A, and the SSE event bus from `db_source_of_truth_plan.md`.
+- **F1**: `lib/cache.ts` gained `invalidateCacheKey(key)` and `invalidateCacheByPrefix(prefix)`. Both clear L1 (in-memory map + in-flight dedup map) and L2 (SQLite via `lib/repositories/cache-entries.ts`'s new `deleteCacheEntry` and `deleteCacheEntriesByPrefix`). After clearing, both broadcast a `'Cache'` SSE event so connected clients refetch. `'Cache'` is a new `ModelName`/`ServerEventModel` member.
+- **F2**: `components/providers/CacheInvalidationListener.tsx` mounts inside `QueryClientProvider` and listens for `'Cache'` events. On each event it calls `queryClient.invalidateQueries()` — heavy-handed but simple. Every TanStack query refetches; TanStack dedupes the resulting requests.
+- **F3**: `POST /api/system/cache/invalidate` accepts `{ key }` or `{ prefix }` and dispatches to the lib functions. Wrapped in `api.system.invalidateCache` and exposed as a per-entry hover-button in InternalView's cache analytics card.
 
-**Acceptance:**
-- Same key invalidated server-side instantly invalidates on every connected client.
-- Removing the bare `withCache` wrapper still leaves all routes correctly cached.
+### What we deliberately did *not* build
 
-**Risk:** High. Cache abstractions are notoriously easy to get wrong. Consider keeping `withCache` as a *thin convenience wrapper* over `useCachedFetch` rather than removing it.
+- **`CacheBackend` interface + `MemorySQLiteBackend` / `SWRBackend`**: would have meant rewriting `withCache` to dispatch through an abstraction layer. No current consumer would benefit (we're not swapping backends), and TanStack already owns the client-side cache shape.
+- **`useCachedFetch` unified hook**: TanStack's `useQuery` is the unified hook. The api-client wraps the URL-keyed routes; the loose `fetcher` covers external-proxy queries.
+- **Fine-grained client invalidation by cache key**: TanStack tuple keys (`['research', 'ai', 'review']`) and `withCache` keys (URL pathname + sorted query) don't share a schema. Mapping between them would be fragile. Refetching all client queries on any server cache invalidation is fine at our scale (~10 active queries) and avoids the schema mismatch.
+
+### Acceptance
+
+- Hovering a cache entry in InternalView shows a Refresh button → click → server clears L1+L2 → SSE event → all client queries refetch ≤500 ms later.
+- The `withCache` wrapper is unchanged externally — every route that already used it continues to.
+
+### Risk realized
+
+Lower than the original plan rated it because we avoided the contract abstraction. The remaining surface (two server functions + one listener + one route) is mechanical.
 
 ---
 
@@ -332,7 +339,7 @@ After MVP1 Task 8A splits the registry into files, MVP2 promotes "a company" fro
 | 3 | Phase A (`[1.1b]` OIDC + service tokens) | ✅ shipped | Hardens the LAN-exposed surface before more callers (Pulsar's expanded job set) exist. |
 | 4 | Phase E (`[7.1b]` scheduler + Task E4 Pulsar WS relay) | ✅ shipped | Scheduler owns non-financial recurring work; WS relay replaces FinanceView polling. Note: Pulsar stays financial-only. |
 | 5 | Phase D (`[6.1c]` optimistic concurrency) | ✅ shipped | Small, contained. Could ship anywhere after MVP1 5A/5B but pairs well with Phase E because that's when "another caller might be writing" stops being hypothetical. |
-| 6 | Phase F (`[7.2c]` unified cache) | 🔜 pending | Highest risk; do last so you have the testing scaffolding from Phase C and the repository abstraction from Phase B. |
+| 6 | Phase F (`[7.2c]` unified cache) | ✅ shipped (scope-contracted: invalidation bridge, not full re-architecture) | Highest risk; do last so you have the testing scaffolding from Phase C and the repository abstraction from Phase B. |
 | 7 | Phase G (`[8.1c]` adapter plugin) | 🔜 pending | Independent; can be done at any point after MVP1 Task 8A. Sequenced last only because it's the lowest-priority structural change. |
 
 ---
