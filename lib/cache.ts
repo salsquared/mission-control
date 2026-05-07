@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { prisma } from './prisma';
+import { findCacheEntry, upsertCacheEntry, deleteExpiredCacheEntries } from '@/lib/repositories/cache-entries';
 
 interface L1Entry {
     data: any;
@@ -31,7 +31,7 @@ export function getCacheStats() {
 
 async function l2Read(key: string): Promise<L1Entry | null> {
     try {
-        const row = await prisma.cacheEntry.findUnique({ where: { key } });
+        const row = await findCacheEntry(key);
         if (!row) return null;
         const expiry = new Date(row.expiry).getTime();
         if (expiry <= Date.now()) return null;
@@ -43,10 +43,10 @@ async function l2Read(key: string): Promise<L1Entry | null> {
 
 async function l2Write(key: string, data: any, expiry: number): Promise<void> {
     try {
-        await prisma.cacheEntry.upsert({
-            where: { key },
-            update: { data: JSON.stringify(data), expiry: new Date(expiry) },
-            create: { key, data: JSON.stringify(data), expiry: new Date(expiry) },
+        await upsertCacheEntry({
+            key,
+            data: JSON.stringify(data),
+            expiry: new Date(expiry),
         });
     } catch (e) {
         console.warn(`[CACHE] L2 write failed for ${key}:`, e);
@@ -56,11 +56,9 @@ async function l2Write(key: string, data: any, expiry: number): Promise<void> {
 export async function pruneExpiredCache(): Promise<void> {
     if (!useSQLite()) return;
     try {
-        const result = await prisma.cacheEntry.deleteMany({
-            where: { expiry: { lt: new Date() } },
-        });
-        if (result.count > 0) {
-            console.info(`[CACHE] Pruned ${result.count} expired entries from SQLite`);
+        const count = await deleteExpiredCacheEntries();
+        if (count > 0) {
+            console.info(`[CACHE] Pruned ${count} expired entries from SQLite`);
         }
     } catch (e) {
         console.warn('[CACHE] Prune failed:', e);
