@@ -1,14 +1,18 @@
 import { NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireLocalOrSession } from "@/lib/auth-guards";
-import { parseGlobalSetting, serializeGlobalSetting } from "@/lib/repositories/settings";
+import {
+    parseGlobalSetting,
+    serializeGlobalSetting,
+    findGlobalSetting,
+    upsertGlobalSetting,
+} from "@/lib/repositories/settings";
 
 export async function GET(req: Request) {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;
 
     try {
-        const row = await prisma.globalSetting.findUnique({ where: { id: 'global' } });
+        const row = await findGlobalSetting();
         if (!row) {
             return NextResponse.json({ data: null });
         }
@@ -27,11 +31,7 @@ export async function POST(req: Request) {
         const body = await req.json();
         const serialized = serializeGlobalSetting(body);
 
-        await prisma.globalSetting.upsert({
-            where: { id: 'global' },
-            update: serialized,
-            create: { id: 'global', ...serialized },
-        });
+        await upsertGlobalSetting(serialized);
 
         return NextResponse.json({ success: true });
     } catch (error) {
