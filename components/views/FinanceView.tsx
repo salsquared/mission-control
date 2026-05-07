@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState } from "react";
-import useSWR from "swr";
+import { useQuery } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Bitcoin, Wallet } from "lucide-react";
 import { AssetPriceCard } from "../cards/AssetPriceCard";
@@ -30,8 +30,16 @@ const LastUpdated: React.FC<{ timestamp: number; intervalMins: number }> = ({ ti
 export const FinanceView: React.FC = () => {
     const [range, setRange] = useState("1");
 
-    const { data: financeData, isLoading: loadingFinance } = useSWR<any>('/api/finance', fetcher, { refreshInterval: 300_000 });
-    const { data: historyRaw } = useSWR<any>(`/api/finance/history?range=${range}&coin=bitcoin`, fetcher, { refreshInterval: 300_000 });
+    const { data: financeData, isLoading: loadingFinance } = useQuery<any>({
+        queryKey: ['finance'],
+        queryFn: () => fetcher('/api/finance'),
+        refetchInterval: 300_000,
+    });
+    const { data: historyRaw } = useQuery<any>({
+        queryKey: ['finance', 'history', range, 'bitcoin'],
+        queryFn: () => fetcher(`/api/finance/history?range=${range}&coin=bitcoin`),
+        refetchInterval: 300_000,
+    });
 
     const top100 = financeData?.top100 ?? [];
     const prices = financeData?.prices ?? { bitcoin: { usd: 0, usd_24h_change: 0 }, ethereum: { usd: 0 }, solana: { usd: 0 } };

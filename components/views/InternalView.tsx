@@ -1,8 +1,9 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import useSWR from "swr";
+import { useQuery } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
+import { api, queryKeys } from "@/lib/api-client";
 import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, ShieldAlert } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
@@ -61,10 +62,11 @@ function parseHostFromLog(message: string): string | null {
 
 export const InternalView: React.FC = () => {
     const { data: session } = useSession();
-    const { data: sysMetrics } = useSWR('/api/system', async (url: string) => {
-        const res = await fetch(url);
-        return res.ok ? res.json() : null;
-    }, { refreshInterval: 5000 });
+    const { data: sysMetrics } = useQuery({
+        queryKey: queryKeys.system,
+        queryFn: () => api.system.get(),
+        refetchInterval: 5000,
+    });
     const [sysLogs, setSysLogs] = useState<{ id: string; timestamp: string; level: string; message: string; }[]>([]);
     const [historicalLogs, setHistoricalLogs] = useState<{ ts: string; level: string; msg: string }[]>([]);
     const [loadingOlder, setLoadingOlder] = useState(false);
