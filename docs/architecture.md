@@ -277,14 +277,27 @@ This is the **only LLM call in the system**. The author-facing AICompanion is a 
 
 ### 9.1 Process model
 
-- **Dev**: `npm run dev` — `NODE_OPTIONS='--max-old-space-size=2048' next dev -p 4101 --webpack`. Watches the file system; `next.config.ts` excludes `prisma/*.db`, `prisma/*.db-journal`, `public/sw.js`, `public/sw.js.map` from the watcher to prevent reload loops.
+Production runs **three** related processes, each with a distinct scope:
+
+| Process | PM2 name | Owner repo | Scope |
+|---|---|---|---|
+| Web tier | `mission-control` | this repo | HTTP API, dashboard, SSE event bus, file watcher, OAuth |
+| Scheduler | `mission-control-scheduler` | this repo | Non-financial recurring jobs (cache pruning today; weekly paper picks, notification digests, fetcher health rollups planned) |
+| Pulsar | `pulsar-*` (per source) | `salsquared/pulsar` | Financial data ingestion only — CoinGecko, Mempool, Yahoo, FRED, ExchangeRate. Mission-control consumes via REST + WS |
+
+**This three-process boundary is intentional and load-bearing.** Pulsar stays narrow — *only* financial fetches. The scheduler exists precisely so mission-control doesn't acquire its own ingestion creep by adding "small" recurring jobs to Pulsar "since it already exists." A grep of `pulsar/` for non-financial concepts (papers, notifications, cache, settings) should return zero matches; a grep of `scheduler/jobs/` for financial concepts (CoinGecko, BTC, ETH, Mempool) should also return zero matches. If either grep produces hits, the boundary is leaking.
+
+- **Dev**: `npm run dev` — `NODE_OPTIONS='--max-old-space-size=2048' next dev -p 4101 --webpack`. Watches the file system; `next.config.ts` excludes `prisma/*.db`, `prisma/*.db-journal`, `public/sw.js`, `public/sw.js.map` from the watcher to prevent reload loops. The scheduler process is **not** started in dev — cache pruning won't run unless you launch `node_modules/.bin/tsx scheduler/index.ts` separately.
 - **Prod**: `launch-ms.sh` orchestrates everything:
   1. `nvm use 24` + `cd` into the repo.
   2. `set -a && source .env` so the binary inherits secrets (the script comments note that `next start` doesn't auto-load `.env` like `next dev` does — this caused a real incident, see `todo.md` completed items).
   3. Starts `node_modules/next/dist/bin/next` (not `npm start`) under PM2 named `mission-control`, with `--max-old-space-size=1024`. Going through PM2 directly to the next binary avoids npm leaving an orphaned node process when PM2 deletes it.
-  4. Polls until the port binds (IPv4 *or* IPv6) — bound to `localhost:3101` because hardcoding `127.0.0.1` broke Chrome on Node 17+ which prefers IPv6.
-  5. Opens `open -n -W -a "Google Chrome" --args --app="http://localhost:$PORT"`.
-- The Chrome window closing **does not stop the server**. PM2 keeps it running; logs accessed via `pm2 logs mission-control`.
+  4. Starts `node_modules/.bin/tsx scheduler/index.ts` under PM2 named `mission-control-scheduler`, with `--max-old-space-size=512`. Run via tsx so we don't need a build step or path-alias rewrites; same Prisma client and same `prisma/prod.db` as the web tier.
+  5. Polls until the web port binds (IPv4 *or* IPv6) — bound to `localhost:3101` because hardcoding `127.0.0.1` broke Chrome on Node 17+ which prefers IPv6.
+  6. Opens `open -n -W -a "Google Chrome" --args --app="$APP_URL"` (Caddy `https://mc.local` if installed, falling back to `http://localhost:$PORT`).
+- The Chrome window closing **does not stop the server**. PM2 keeps both processes running; logs accessed via `pm2 logs mission-control` and `pm2 logs mission-control-scheduler`.
+
+Because the scheduler and web tier both write to `prisma/prod.db`, `lib/prisma.ts` applies the SQLite write-concurrency pragmas (`journal_mode = WAL`, `busy_timeout = 5000`, `synchronous = NORMAL`) on every `PrismaClient` instantiation. WAL is persistent in the file header; the others are per-connection. Without WAL, the two writers would race on `SQLITE_BUSY`.
 
 ### 9.2 Storage and configuration
 
