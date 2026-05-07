@@ -6,6 +6,7 @@ import {
     findGlobalSetting,
     upsertGlobalSetting,
 } from "@/lib/repositories/settings";
+import { SettingsPostSchema } from "@/lib/schemas/settings";
 
 export async function GET(req: Request) {
     const guard = await requireLocalOrSession(req);
@@ -28,8 +29,11 @@ export async function POST(req: Request) {
     if ('error' in guard) return guard.error;
 
     try {
-        const body = await req.json();
-        const serialized = serializeGlobalSetting(body);
+        const parsed = SettingsPostSchema.safeParse(await req.json());
+        if (!parsed.success) {
+            return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
+        }
+        const serialized = serializeGlobalSetting(parsed.data);
 
         await upsertGlobalSetting(serialized);
 

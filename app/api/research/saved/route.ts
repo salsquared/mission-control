@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { broadcastEvent } from '@/lib/events';
 import { findSavedPapers, upsertSavedPaper, deleteSavedPaper } from '@/lib/repositories/saved-papers';
+import {
+    SavedPaperPostSchema,
+    SavedPaperDeleteQuerySchema,
+    SavedPaperListQuerySchema,
+} from '@/lib/schemas/saved-papers';
 
 export async function GET(request: Request) {
     const guard = await requireLocalOrSession(request);
@@ -9,10 +14,15 @@ export async function GET(request: Request) {
 
     try {
         const { searchParams } = new URL(request.url);
-        const topic = searchParams.get('topic');
-        const status = searchParams.get('status');
+        const queryParsed = SavedPaperListQuerySchema.safeParse({
+            topic: searchParams.get('topic'),
+            status: searchParams.get('status'),
+        });
+        if (!queryParsed.success) {
+            return NextResponse.json({ error: queryParsed.error.issues }, { status: 400 });
+        }
 
-        const savedPapers = await findSavedPapers({ topic, status });
+        const savedPapers = await findSavedPapers(queryParsed.data);
 
         return NextResponse.json(savedPapers);
     } catch (error) {
@@ -26,12 +36,11 @@ export async function POST(request: Request) {
     if ('error' in guard) return guard.error;
 
     try {
-        const body = await request.json();
-        const { paperId, title, summary, url, authors, publishedAt, topic, status } = body;
-
-        if (!paperId || !status || !topic) {
-            return NextResponse.json({ error: "Missing required fields: paperId, status, topic" }, { status: 400 });
+        const parsed = SavedPaperPostSchema.safeParse(await request.json());
+        if (!parsed.success) {
+            return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
         }
+        const { paperId, title, summary, url, authors, publishedAt, topic, status } = parsed.data;
 
         const paper = await upsertSavedPaper({
             paperId,
@@ -58,11 +67,13 @@ export async function DELETE(request: Request) {
 
     try {
         const { searchParams } = new URL(request.url);
-        const paperId = searchParams.get('paperId');
-
-        if (!paperId) {
-            return NextResponse.json({ error: "Missing paperId" }, { status: 400 });
+        const queryParsed = SavedPaperDeleteQuerySchema.safeParse({
+            paperId: searchParams.get('paperId'),
+        });
+        if (!queryParsed.success) {
+            return NextResponse.json({ error: queryParsed.error.issues }, { status: 400 });
         }
+        const { paperId } = queryParsed.data;
 
         await deleteSavedPaper(paperId);
 
