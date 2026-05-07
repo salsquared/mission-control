@@ -2,6 +2,7 @@
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
+import { CacheInvalidationListener } from "./CacheInvalidationListener";
 
 // One QueryClient per browser tab. Defaults are tuned for this app's posture:
 //   - Stale-while-revalidate is owned server-side by withCache, so client-side
@@ -20,5 +21,10 @@ export function QueryProvider({ children }: { children: React.ReactNode }) {
         },
     }));
 
-    return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+    return (
+        <QueryClientProvider client={client}>
+            <CacheInvalidationListener />
+            {children}
+        </QueryClientProvider>
+    );
 }
