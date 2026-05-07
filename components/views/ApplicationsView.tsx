@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useRef } from "react";
-import useSWR from "swr";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Section } from "../Section";
 import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus } from "lucide-react";
 import { useSession, signIn } from "next-auth/react";
@@ -9,7 +9,7 @@ import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Card } from "../ui/Card";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useServerEvents } from "@/hooks/useServerEvents";
-import { fetcher } from "@/lib/fetcher-client";
+import { api, queryKeys } from "@/lib/api-client";
 
 interface AppRecord {
     id: string;
@@ -40,14 +40,20 @@ export const ApplicationsView: React.FC = () => {
     const hasEverAuthedRef = useRef(false);
     if (status === "authenticated") hasEverAuthedRef.current = true;
 
-    const { data: appsData, mutate: mutateApps, isLoading: loading } = useSWR<any>(
-        session ? '/api/applications' : null,
-        fetcher
-    );
-    const apps: AppRecord[] = appsData?.applications ?? [];
+    const queryClient = useQueryClient();
+    const { data: appsData, isLoading: loading } = useQuery({
+        queryKey: queryKeys.applications,
+        queryFn: () => api.applications.list(),
+        enabled: Boolean(session),
+    });
+    const apps: AppRecord[] = (appsData?.applications ?? []) as unknown as AppRecord[];
 
-    useServerEvents('Application', useCallback(() => { mutateApps(); }, [mutateApps]));
-    useServerEvents('CalendarEvent', useCallback(() => { mutateApps(); }, [mutateApps]));
+    const invalidateApps = useCallback(
+        () => queryClient.invalidateQueries({ queryKey: queryKeys.applications }),
+        [queryClient]
+    );
+    useServerEvents('Application', invalidateApps);
+    useServerEvents('CalendarEvent', invalidateApps);
 
     if (status === "loading" && !hasEverAuthedRef.current) {
         return (
@@ -137,7 +143,7 @@ export const ApplicationsView: React.FC = () => {
                     icon={Mail} 
                     iconColorClass="text-purple-400"
                     action={
-                        <button onClick={() => mutateApps()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
+                        <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
                             <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status
                         </button>
                     }

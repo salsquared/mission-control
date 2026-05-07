@@ -1,6 +1,6 @@
-import React, { useState } from "react";
-import useSWR from "swr";
-import { fetcher } from "@/lib/fetcher-client";
+import React, { useState, useCallback } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { X, Bookmark, Heart, Check, Trash2, ExternalLink, PlusCircle, Loader2, Search } from "lucide-react";
 
@@ -33,26 +33,36 @@ export const SavedPapersOverlay: React.FC<SavedPapersOverlayProps> = ({ topic, o
         topic === 'General' ? 'AI' : (topic as any)
     );
 
-    const swrKey = activeTab !== 'IMPORT'
-        ? (viewTopic === 'All' ? '/api/research/saved' : `/api/research/saved?topic=${viewTopic}`)
-        : null;
+    const queryClient = useQueryClient();
+    const filter = viewTopic === 'All' ? undefined : { topic: viewTopic };
+    const queryKey = queryKeys.savedPapers(filter);
 
-    const { data: papersRaw, mutate: mutatePapers, isLoading: loading } = useSWR<SavedPaper[]>(swrKey, fetcher);
-    const papers = papersRaw ?? [];
+    const { data: papersRaw, isLoading: loading } = useQuery({
+        queryKey,
+        queryFn: () => api.savedPapers.list(filter),
+        enabled: activeTab !== 'IMPORT',
+    });
+    const papers = (papersRaw ?? []) as unknown as SavedPaper[];
 
-    useServerEvents('SavedPaper', () => { mutatePapers(); });
+    const invalidatePapers = useCallback(
+        () => queryClient.invalidateQueries({ queryKey: ['saved-papers'] }),
+        [queryClient]
+    );
+    useServerEvents('SavedPaper', invalidatePapers);
 
     React.useEffect(() => {
         if (viewTopic !== 'All') setSelectedTopic(viewTopic as any);
     }, [viewTopic]);
 
     const handleDelete = async (paperId: string) => {
-        mutatePapers(papers.filter(p => p.paperId !== paperId), { revalidate: false });
+        const prev = queryClient.getQueryData(queryKey);
+        queryClient.setQueryData(queryKey, (old: any) => (old ?? []).filter((p: any) => p.paperId !== paperId));
         try {
-            await fetch(`/api/research/saved?paperId=${paperId}`, { method: 'DELETE' });
+            await api.savedPapers.delete(paperId);
         } catch (err) {
             console.error(err);
-            mutatePapers();
+            queryClient.setQueryData(queryKey, prev);
+            invalidatePapers();
         }
     };
 
@@ -65,6 +75,8 @@ export const SavedPapersOverlay: React.FC<SavedPapersOverlayProps> = ({ topic, o
         setPreview(null);
 
         try {
+            // Import preview is a one-shot fetch; not yet wrapped in api-client because
+            // the response shape (preview) is loose and changes per source.
             const res = await fetch('/api/research/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -92,34 +104,24 @@ export const SavedPapersOverlay: React.FC<SavedPapersOverlayProps> = ({ topic, o
         }
 
         try {
-            const res = await fetch('/api/research/saved', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    paperId: preview.paperId,
-                    title: preview.title,
-                    summary: preview.summary,
-                    url: preview.url,
-                    authors: preview.author,
-                    publishedAt: preview.published_at,
-                    topic: selectedTopic,
-                    status
-                })
+            await api.savedPapers.upsert({
+                paperId: preview.paperId,
+                title: preview.title,
+                summary: preview.summary,
+                url: preview.url,
+                authors: preview.author,
+                publishedAt: preview.published_at,
+                topic: selectedTopic,
+                status,
             });
-
-            if (res.ok) {
-                setImportInput("");
-                setPreview(null);
-                // Switch to that tab implicitly to see what we just imported
-                setActiveTab(status);
-                // Don't auto-close! They might want to see the list again.
-            } else {
-                const errData = await res.json();
-                setImportError(errData.error || "Failed to save paper.");
-            }
-        } catch (err) {
+            setImportInput("");
+            setPreview(null);
+            // Switch to that tab implicitly to see what we just imported
+            setActiveTab(status);
+            // Don't auto-close! They might want to see the list again.
+        } catch (err: any) {
             console.error("Save error:", err);
-            setImportError("Failed to save paper to list.");
+            setImportError(err.message || "Failed to save paper to list.");
         }
     };
 
