@@ -1,5 +1,5 @@
 import React, { useState, useCallback } from "react";
-import useSWR from "swr";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KanbanColumnDef } from "../widgets/KanbanWidget";
 import { TaskItem } from "../ui/TaskItem";
 import { Section } from "../Section";
@@ -7,14 +7,15 @@ import { GoalCard, LifeGoal } from "../cards/GoalCard";
 import { ToDoCard } from "../cards/ToDoCard";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useServerEvents } from "@/hooks/useServerEvents";
-import { fetcher } from "@/lib/fetcher-client";
+import { api, queryKeys } from "@/lib/api-client";
 
 export const PlanningView: React.FC = () => {
-    const { data: tasksData, mutate: mutateTasks } = useSWR<any>('/api/tasks', fetcher);
-    const { data: goalsData, mutate: mutateGoals } = useSWR<any>('/api/goals', fetcher);
+    const queryClient = useQueryClient();
+    const { data: tasksData } = useQuery({ queryKey: queryKeys.tasks, queryFn: () => api.tasks.list() });
+    const { data: goalsData } = useQuery({ queryKey: queryKeys.goals, queryFn: () => api.goals.list() });
 
-    const tasks: TaskItem[] = tasksData?.tasks ?? [];
-    const lifeGoals: LifeGoal[] = goalsData?.goals ?? [];
+    const tasks: TaskItem[] = (tasksData?.tasks ?? []) as unknown as TaskItem[];
+    const lifeGoals: LifeGoal[] = (goalsData?.goals ?? []) as unknown as LifeGoal[];
     const loading = !tasksData && !goalsData;
 
     const [viewMode, setViewMode] = useState<"kanban" | "calendar">("kanban");
@@ -24,25 +25,24 @@ export const PlanningView: React.FC = () => {
     const [newGoalText, setNewGoalText] = useState("");
     const [newEstimatedTime, setNewEstimatedTime] = useState("");
 
-    useServerEvents('Task', useCallback(() => { mutateTasks(); }, [mutateTasks]));
-    useServerEvents('Goal', useCallback(() => { mutateGoals(); }, [mutateGoals]));
+    const invalidateTasks = useCallback(() => queryClient.invalidateQueries({ queryKey: queryKeys.tasks }), [queryClient]);
+    const invalidateGoals = useCallback(() => queryClient.invalidateQueries({ queryKey: queryKeys.goals }), [queryClient]);
+
+    useServerEvents('Task', invalidateTasks);
+    useServerEvents('Goal', invalidateGoals);
 
     const handleStatusChange = async (taskId: string, newStatus: string) => {
         // Optimistic update
-        mutateTasks(
-            { tasks: tasks.map(t => t.id === taskId ? { ...t, status: newStatus } : t) },
-            { revalidate: false }
-        );
+        const prev = queryClient.getQueryData(queryKeys.tasks);
+        queryClient.setQueryData(queryKeys.tasks, (old: any) => ({
+            tasks: (old?.tasks ?? []).map((t: any) => t.id === taskId ? { ...t, status: newStatus } : t),
+        }));
         try {
-            const res = await fetch("/api/tasks", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id: taskId, status: newStatus })
-            });
-            if (!res.ok) throw new Error("Failed to sync status");
+            await api.tasks.update({ id: taskId, status: newStatus as 'TODO' | 'IN_PROGRESS' | 'DONE' });
         } catch (e) {
             console.error(e);
-            mutateTasks(); // revert by revalidating
+            queryClient.setQueryData(queryKeys.tasks, prev);
+            invalidateTasks();
         }
     };
 
@@ -85,13 +85,8 @@ export const PlanningView: React.FC = () => {
         if (!text.trim()) return;
         setIsCreatingTask(true);
         try {
-            const res = await fetch('/api/tasks', {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text, isGoal: false })
-            });
-            if (!res.ok) throw new Error("Server returned " + res.status);
-            await mutateTasks();
+            await api.tasks.create({ text, isGoal: false });
+            await invalidateTasks();
             setNewTaskText("");
         } catch (e) {
             console.error("Failed to create", e);
@@ -104,13 +99,8 @@ export const PlanningView: React.FC = () => {
         if (!text.trim()) return;
         setIsCreatingGoal(true);
         try {
-            const res = await fetch('/api/goals', {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ text, estimatedTime })
-            });
-            if (!res.ok) throw new Error("Server returned " + res.status);
-            await mutateGoals();
+            await api.goals.create({ text, estimatedTime });
+            await invalidateGoals();
             setNewGoalText("");
             setNewEstimatedTime("");
         } catch (e) {
@@ -121,30 +111,30 @@ export const PlanningView: React.FC = () => {
     };
 
     const handleToggleGoal = async (id: string, currentStatus: boolean) => {
-        mutateGoals({ goals: lifeGoals.map(g => g.id === id ? { ...g, completed: !currentStatus } : g) }, { revalidate: false });
+        const prev = queryClient.getQueryData(queryKeys.goals);
+        queryClient.setQueryData(queryKeys.goals, (old: any) => ({
+            goals: (old?.goals ?? []).map((g: any) => g.id === id ? { ...g, completed: !currentStatus } : g),
+        }));
         try {
-            await fetch('/api/goals', {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id, completed: !currentStatus })
-            });
+            await api.goals.update({ id, completed: !currentStatus });
         } catch (error) {
             console.error(error);
-            mutateGoals();
+            queryClient.setQueryData(queryKeys.goals, prev);
+            invalidateGoals();
         }
     };
 
     const handleDeleteGoal = async (id: string) => {
-        mutateGoals({ goals: lifeGoals.filter(g => g.id !== id) }, { revalidate: false });
+        const prev = queryClient.getQueryData(queryKeys.goals);
+        queryClient.setQueryData(queryKeys.goals, (old: any) => ({
+            goals: (old?.goals ?? []).filter((g: any) => g.id !== id),
+        }));
         try {
-            await fetch('/api/goals', {
-                method: "DELETE",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ id })
-            });
+            await api.goals.delete(id);
         } catch (error) {
             console.error(error);
-            mutateGoals();
+            queryClient.setQueryData(queryKeys.goals, prev);
+            invalidateGoals();
         }
     };
 
@@ -178,7 +168,7 @@ export const PlanningView: React.FC = () => {
                     handleStatusChange={handleStatusChange}
                     calendarEvents={calendarEvents}
                     kanbanColumns={KANBAN_COLUMNS}
-                    handleReload={() => mutateTasks(undefined, { revalidate: true })}
+                    handleReload={() => invalidateTasks()}
                 />
             </Section>
         </Scrollbar>
