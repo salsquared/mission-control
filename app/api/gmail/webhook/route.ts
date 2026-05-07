@@ -10,10 +10,18 @@ import {
   createApplication,
   updateApplication,
 } from "@/lib/repositories/applications";
+import { verifyPubSubOIDC } from "@/lib/google-oidc";
 
 export async function POST(req: NextRequest) {
-  const secret = process.env.PUBSUB_WEBHOOK_SECRET;
-  if (!secret || req.headers.get('authorization') !== `Bearer ${secret}`) {
+  const audience = process.env.PUBSUB_AUDIENCE;
+  if (!audience) {
+    console.error("[GMAIL WEBHOOK] PUBSUB_AUDIENCE not configured");
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
+  try {
+    await verifyPubSubOIDC(req, audience);
+  } catch (e: any) {
+    console.warn(`[GMAIL WEBHOOK] OIDC verification failed: ${e.message}`);
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
   }
 
