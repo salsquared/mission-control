@@ -16,7 +16,6 @@ export interface ToDoCardProps {
     isCreatingTask: boolean;
     handleCreateTask: (text: string) => void;
     handleStatusChange: (taskId: string, newStatus: string) => void;
-    calendarEvents: any[];
     kanbanColumns: KanbanColumnDef<TaskItem>[];
     handleReload?: () => void;
 }
@@ -31,7 +30,6 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
     isCreatingTask,
     handleCreateTask,
     handleStatusChange,
-    calendarEvents,
     kanbanColumns,
     handleReload
 }) => {
@@ -112,10 +110,9 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
                         />
                     ) : (
                         <div className="h-full overflow-y-auto custom-scrollbar p-6">
-                            <CalendarWidget 
-                                isAdding={false} 
-                                setIsAdding={() => {}} 
-                                injectedTasks={calendarEvents as any} 
+                            <CalendarWidget
+                                isAdding={false}
+                                setIsAdding={() => {}}
                             />
                         </div>
                     )}

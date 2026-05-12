@@ -1,5 +1,5 @@
 import type { gmail_v1 } from "googleapis";
-import { parseApplicationEmail } from "@/lib/email-parser";
+import { parseApplicationEmail, type ParsedApplicationEmail } from "@/lib/email-parser";
 import { broadcastEvent } from "@/lib/events";
 import { looksRelevant } from "@/lib/applications/relevance";
 import {
@@ -7,6 +7,11 @@ import {
     createApplication,
     updateApplication,
 } from "@/lib/repositories/applications";
+import {
+    createApplicationEvents,
+    type ApplicationEventDraft,
+} from "@/lib/repositories/applicationEvents";
+import { syncEventToGcal } from "@/lib/calendar/sync";
 
 export type IngestOutcome =
     | { action: "created"; appId: string }
@@ -60,9 +65,10 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     }
     const classifierInput = body || `${subject}\n\n${snippet}`;
 
+    const sentAt = messageDate(message) ?? new Date();
     let parsed;
     try {
-        parsed = await parseApplicationEmail(classifierInput, subject, from);
+        parsed = await parseApplicationEmail(classifierInput, subject, from, sentAt);
     } catch (err: any) {
         return { action: "errored", reason: `classifier failed: ${err?.message ?? String(err)}` };
     }
@@ -82,6 +88,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
 
     let appId: string;
     let action: "created" | "updated";
+    const previousStatus = existingApp?.status ?? null;
 
     if (existingApp) {
         await updateApplication(existingApp.id, {
@@ -102,7 +109,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             status: parsed.status,
             kind: parsed.kind,
             nextSteps: parsed.nextSteps ?? null,
-            dateApplied: messageDate(message) ?? new Date(),
+            dateApplied: sentAt,
             lastEmailMsgId: msgId,
             lastUpdateAt: new Date(),
         });
@@ -110,11 +117,152 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         action = "created";
     }
 
+    const eventDrafts = buildEventDrafts({
+        appId,
+        msgId,
+        subject,
+        sentAt,
+        parsed,
+        action,
+        previousStatus,
+    });
+    const insertedEvents = await createApplicationEvents(eventDrafts);
+
+    // Mirror future-dated events to Gcal. We skip past events because backfill
+    // commonly walks 6 months of history — no point creating yesterday's
+    // interview on the user's calendar. Sync is best-effort and won't block
+    // ingest if Gcal is unreachable.
+    const now = Date.now();
+    for (const ev of insertedEvents) {
+        if (!ev.scheduledAt) continue;
+        if (ev.scheduledAt.getTime() < now) continue;
+        await syncEventToGcal(userId, ev, { company: parsed.company, role: parsed.role ?? null });
+    }
+
     if (broadcast) {
         broadcastEvent({ model: "Application", action: "upsert", id: appId, timestamp: Date.now() });
+        if (insertedEvents.length > 0) {
+            broadcastEvent({ model: "CalendarEvent", action: "invalidate", timestamp: Date.now() });
+        }
     }
 
     return action === "created" ? { action: "created", appId } : { action: "updated", appId };
+}
+
+/**
+ * Translate a parsed email + the resulting Application action into the
+ * timeline rows we want to write. The unique constraint on
+ * (applicationId, emailMsgId, kind) makes re-runs idempotent: createMany
+ * skips duplicates rather than failing.
+ *
+ * Note: we emit at most one INTERVIEW_SCHEDULED / ASSESSMENT_REQUESTED per
+ * email. Most rescheduling emails carry one date, and the unique constraint
+ * couldn't represent multiple per-email rows of the same kind anyway.
+ */
+function buildEventDrafts(input: {
+    appId: string;
+    msgId: string;
+    subject: string;
+    sentAt: Date;
+    parsed: ParsedApplicationEmail;
+    action: "created" | "updated";
+    previousStatus: string | null;
+}): ApplicationEventDraft[] {
+    const { appId, msgId, subject, sentAt, parsed, action, previousStatus } = input;
+    const drafts: ApplicationEventDraft[] = [];
+
+    drafts.push({
+        applicationId: appId,
+        kind: "EMAIL_RECEIVED",
+        title: subject || `Email about ${parsed.company}`,
+        occurredAt: sentAt,
+        emailMsgId: msgId,
+        notes: parsed.nextSteps ?? null,
+        syncSource: "ms",
+    });
+
+    if (action === "created") {
+        drafts.push({
+            applicationId: appId,
+            kind: "APPLIED",
+            title: `Applied to ${parsed.company}${parsed.role ? ` for ${parsed.role}` : ""}`,
+            occurredAt: sentAt,
+            emailMsgId: msgId,
+            toStatus: parsed.status,
+            syncSource: "ms",
+        });
+    } else if (previousStatus && previousStatus !== parsed.status) {
+        drafts.push({
+            applicationId: appId,
+            kind: "STATUS_CHANGED",
+            title: `${parsed.company}: ${previousStatus} → ${parsed.status}`,
+            occurredAt: sentAt,
+            emailMsgId: msgId,
+            fromStatus: previousStatus,
+            toStatus: parsed.status,
+            syncSource: "ms",
+        });
+    }
+
+    if (parsed.status === "OFFER") {
+        drafts.push({
+            applicationId: appId,
+            kind: "OFFER",
+            title: `Offer from ${parsed.company}`,
+            occurredAt: sentAt,
+            emailMsgId: msgId,
+            syncSource: "ms",
+        });
+    } else if (parsed.status === "REJECTED") {
+        drafts.push({
+            applicationId: appId,
+            kind: "REJECTION",
+            title: `Rejected by ${parsed.company}`,
+            occurredAt: sentAt,
+            emailMsgId: msgId,
+            syncSource: "ms",
+        });
+    }
+
+    let interviewEmitted = false;
+    let assessmentEmitted = false;
+    for (const dateEntry of parsed.extractedDates ?? []) {
+        if (!dateEntry.startsAt) continue;
+        const startsAt = new Date(dateEntry.startsAt);
+        if (Number.isNaN(startsAt.getTime())) continue;
+        const endsAt = dateEntry.endsAt ? new Date(dateEntry.endsAt) : null;
+        const validEnd = endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null;
+
+        if (dateEntry.kind === "INTERVIEW" && !interviewEmitted) {
+            drafts.push({
+                applicationId: appId,
+                kind: "INTERVIEW_SCHEDULED",
+                title: `Interview with ${parsed.company}`,
+                occurredAt: sentAt,
+                scheduledAt: startsAt,
+                endsAt: validEnd ?? new Date(startsAt.getTime() + 60 * 60 * 1000),
+                emailMsgId: msgId,
+                notes: dateEntry.rawText,
+                syncSource: "ms",
+            });
+            interviewEmitted = true;
+        } else if (dateEntry.kind === "ASSESSMENT" && !assessmentEmitted) {
+            drafts.push({
+                applicationId: appId,
+                kind: "ASSESSMENT_REQUESTED",
+                title: `Assessment for ${parsed.company}`,
+                occurredAt: sentAt,
+                scheduledAt: startsAt,
+                endsAt: validEnd,
+                emailMsgId: msgId,
+                notes: dateEntry.rawText,
+                syncSource: "ms",
+            });
+            assessmentEmitted = true;
+        }
+    }
+
+    return drafts;
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────────

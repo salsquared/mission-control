@@ -1,7 +1,7 @@
-import React, { useState, useCallback, useRef } from "react";
+import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Section } from "../Section";
-import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox } from "lucide-react";
+import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, RotateCw } from "lucide-react";
 import { useSession, signIn } from "next-auth/react";
 import { CalendarWidget } from "../widgets/CalendarWidget";
 import { KanbanWidget, KanbanColumnDef } from "../widgets/KanbanWidget";
@@ -35,6 +35,7 @@ export const ApplicationsView: React.FC = () => {
     const { data: session, status } = useSession();
     const [isCalendarAdding, setIsCalendarAdding] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
 
     // Track first-time authentication so background session revalidations
     // (window focus, periodic refetch, cross-device signin) don't unmount
@@ -56,6 +57,38 @@ export const ApplicationsView: React.FC = () => {
     );
     useServerEvents('Application', invalidateApps);
     useServerEvents('CalendarEvent', invalidateApps);
+
+    const syncFromGcal = useCallback(async (silent = false) => {
+        if (!session) return;
+        setIsSyncing(true);
+        try {
+            const result = await api.applications.events.sync();
+            if (result.applied > 0 || result.deleted > 0) {
+                queryClient.invalidateQueries({ queryKey: ['application-events'] });
+                if (!silent) {
+                    toastStore.push({
+                        message: `Gcal sync: ${result.applied} updated · ${result.deleted} removed`,
+                        type: 'info',
+                    });
+                }
+            } else if (!silent) {
+                toastStore.push({ message: result.reset ? 'Gcal sync reset — re-run to pull' : 'Gcal: no changes', type: 'info' });
+            }
+        } catch (e: any) {
+            if (!silent) toastStore.push({ message: `Gcal sync failed: ${e.message}`, type: 'error' });
+        } finally {
+            setIsSyncing(false);
+        }
+    }, [session, queryClient]);
+
+    // Background poll while the view is mounted. 5-min cadence so we don't
+    // hammer Google; the syncToken makes each tick cheap. Silent toasts —
+    // user only sees noise when they hit "Sync now" themselves.
+    useEffect(() => {
+        if (!session) return;
+        const id = setInterval(() => syncFromGcal(true), 5 * 60 * 1000);
+        return () => clearInterval(id);
+    }, [session, syncFromGcal]);
 
     const scanInbox = useCallback(async () => {
         setIsScanning(true);
@@ -165,6 +198,9 @@ export const ApplicationsView: React.FC = () => {
                         <div className="flex items-center gap-2">
                             <button onClick={scanInbox} disabled={isScanning} className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
                                 <Inbox className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} /> {isScanning ? "Scanning…" : "Scan Inbox"}
+                            </button>
+                            <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
+                                <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} /> {isSyncing ? "Syncing…" : "Sync Gcal"}
                             </button>
                             <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
                                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status

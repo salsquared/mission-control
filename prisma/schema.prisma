@@ -86,14 +86,15 @@ model Session {
 }
 
 model User {
-  id            String        @id @default(cuid())
+  id            String         @id @default(cuid())
   name          String?
-  email         String?       @unique
+  email         String?        @unique
   emailVerified DateTime?
   image         String?
   accounts      Account[]
   sessions      Session[]
   applications  Application[]
+  gcalSyncState GcalSyncState?
 }
 
 model VerificationToken {
@@ -119,9 +120,45 @@ model Application {
   updatedAt       DateTime  @updatedAt
 
   user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events          ApplicationEvent[]
 
   @@index([userId, status])
   @@index([userId, kind])
+}
+
+model ApplicationEvent {
+  id             String    @id @default(cuid())
+  applicationId  String
+  // APPLIED | STATUS_CHANGED | EMAIL_RECEIVED | ASSESSMENT_REQUESTED | INTERVIEW_SCHEDULED | OFFER | REJECTION | NOTE
+  kind           String
+  title          String
+  occurredAt     DateTime  // when it happened in real life
+  scheduledAt    DateTime? // future-dated for INTERVIEW_SCHEDULED / ASSESSMENT_REQUESTED
+  endsAt         DateTime?
+  fromStatus     String?
+  toStatus       String?
+  notes          String?
+  emailMsgId     String?   // gmail msg id this event came from
+  gcalEventId    String?   // populated after MS→Gcal sync
+  gcalUpdatedAt  DateTime? // Gcal `updated` field at last sync; for last-write-wins
+  syncSource     String?   // "ms" | "gcal" — which side originated the last write
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  application    Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, occurredAt])
+  @@index([scheduledAt])
+  @@index([gcalEventId])
+  // Dedupe re-ingestion of the same email producing the same kind of event
+  @@unique([applicationId, emailMsgId, kind])
+}
+
+model GcalSyncState {
+  userId       String   @id
+  syncToken    String?
+  lastSyncedAt DateTime @updatedAt
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 

@@ -77,10 +77,6 @@ export const PlanningView: React.FC = () => {
         { id: "done", title: "Done", colorClass: "bg-green-500/20 text-green-400", filterFn: (t) => t.status === "DONE", defaultTargetStatus: "DONE" },
     ];
 
-    const calendarEvents = tasks
-        .filter(t => t.dueDate)
-        .map(t => ({ id: t.id, summary: `🎯 ${t.text}`, start: { dateTime: t.dueDate! }, end: { dateTime: t.dueDate! } }));
-
     const handleCreateTask = async (text: string) => {
         if (!text.trim()) return;
         setIsCreatingTask(true);
@@ -166,7 +162,6 @@ export const PlanningView: React.FC = () => {
                     isCreatingTask={isCreatingTask}
                     handleCreateTask={handleCreateTask}
                     handleStatusChange={handleStatusChange}
-                    calendarEvents={calendarEvents}
                     kanbanColumns={KANBAN_COLUMNS}
                     handleReload={() => invalidateTasks()}
                 />

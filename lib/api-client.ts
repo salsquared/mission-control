@@ -42,6 +42,16 @@ import {
     CalendarEventDeleteResponseSchema,
     CalendarEventPostSchema,
 } from './schemas/calendar';
+import {
+    ApplicationEventsListResponseSchema,
+    ApplicationEventMutationResponseSchema,
+    ApplicationEventDeleteResponseSchema,
+    ApplicationEventSyncResponseSchema,
+    ApplicationEventPostSchema,
+    ApplicationEventPatchSchema,
+    GcalCandidatesResponseSchema,
+    ApplicationEventAdoptPostSchema,
+} from './schemas/applicationEvents';
 
 // ─── Internals ─────────────────────────────────────────────────────────────
 
@@ -93,6 +103,8 @@ export const queryKeys = {
     settings: ['settings'] as const,
     system: ['system'] as const,
     calendarEvents: ['calendar-events'] as const,
+    applicationEvents: (filter?: { applicationId?: string | null; upcoming?: boolean; kinds?: readonly string[] }) =>
+        ['application-events', filter ?? {}] as const,
     savedPapers: (filter?: { topic?: string | null; status?: string | null }) =>
         ['saved-papers', filter ?? {}] as const,
 };
@@ -126,6 +138,41 @@ export const api = {
                 BackfillResponseSchema,
                 jsonBody('POST', input ?? {})
             ),
+        events: {
+            list: (filter?: { applicationId?: string; upcoming?: boolean; kinds?: readonly string[] }) => {
+                const params = new URLSearchParams();
+                if (filter?.applicationId) params.set('applicationId', filter.applicationId);
+                if (filter?.upcoming) params.set('upcoming', 'true');
+                if (filter?.kinds && filter.kinds.length > 0) params.set('kinds', filter.kinds.join(','));
+                const qs = params.toString();
+                return jsonFetch(
+                    `/api/applications/events${qs ? '?' + qs : ''}`,
+                    ApplicationEventsListResponseSchema
+                );
+            },
+            create: (input: z.infer<typeof ApplicationEventPostSchema>) =>
+                jsonFetch('/api/applications/events', ApplicationEventMutationResponseSchema, jsonBody('POST', input)),
+            update: (input: z.infer<typeof ApplicationEventPatchSchema>) =>
+                jsonFetch('/api/applications/events', ApplicationEventMutationResponseSchema, jsonBody('PATCH', input)),
+            delete: (id: string) =>
+                jsonFetch(
+                    `/api/applications/events?id=${encodeURIComponent(id)}`,
+                    ApplicationEventDeleteResponseSchema,
+                    { method: 'DELETE' }
+                ),
+            sync: () =>
+                jsonFetch(
+                    '/api/applications/events/sync',
+                    ApplicationEventSyncResponseSchema,
+                    jsonBody('POST', {})
+                ),
+            gcalCandidates: (horizonDays?: number) => {
+                const qs = horizonDays ? `?horizonDays=${horizonDays}` : '';
+                return jsonFetch(`/api/applications/events/gcal-candidates${qs}`, GcalCandidatesResponseSchema);
+            },
+            adopt: (input: z.infer<typeof ApplicationEventAdoptPostSchema>) =>
+                jsonFetch('/api/applications/events/adopt', ApplicationEventMutationResponseSchema, jsonBody('POST', input)),
+        },
     },
 
     settings: {

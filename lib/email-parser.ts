@@ -44,10 +44,31 @@ export const applicationSchema = z.object({
     "One-sentence summary of what the applicant needs to do next, e.g. 'Reply with availability for a 30-min call' or 'Submit official transcripts by Mar 1'. Omit if no action is required."
   ),
   extractedDates: z
-    .array(z.string())
+    .array(
+      z.object({
+        rawText: z
+          .string()
+          .describe("Original wording from the email, including timezone if given."),
+        kind: z
+          .enum(["INTERVIEW", "ASSESSMENT", "DEADLINE", "DECISION", "OTHER"])
+          .describe(
+            "What this date represents. INTERVIEW = scheduled call/meeting. ASSESSMENT = take-home or coding test deadline. DEADLINE = action deadline (transcripts, materials). DECISION = the day they say they'll decide. OTHER = anything else."
+          ),
+        startsAt: z
+          .string()
+          .optional()
+          .describe(
+            "ISO 8601 timestamp if a specific datetime is given. Convert relative phrasing using the email's send date as the anchor. Omit if only a vague date is mentioned."
+          ),
+        endsAt: z
+          .string()
+          .optional()
+          .describe("ISO 8601 timestamp for end if a duration or end-time is given."),
+      })
+    )
     .optional()
     .describe(
-      "Distinct deadlines, interview times, or decision dates mentioned. Preserve the original wording including timezone."
+      "Distinct deadlines, interview times, or decision dates mentioned. Use the email's own header date to resolve relative references like 'Tuesday at 3pm'."
     ),
 });
 
@@ -56,11 +77,13 @@ export type ParsedApplicationEmail = z.infer<typeof applicationSchema>;
 export async function parseApplicationEmail(
   emailContent: string,
   subject: string,
-  from?: string
+  from?: string,
+  sentAt?: Date
 ): Promise<ParsedApplicationEmail> {
   // Trim long bodies — Gemini Flash can handle the full thing but most
   // signal is in the first ~4k chars (greetings, status, action items).
   const trimmedBody = emailContent.length > 6000 ? emailContent.slice(0, 6000) + "\n…[truncated]" : emailContent;
+  const anchor = (sentAt ?? new Date()).toISOString();
 
   const result = await generateObject({
     model: google("gemini-3.0-flash"),
@@ -73,6 +96,9 @@ If it IS application-related, extract company/institution, role/program, current
 
 For colleges, treat admission/decision/waitlist/deferral language as the corresponding status. Treat supplemental-material requests as ASSESSMENT.
 
+When resolving relative dates like "Tuesday at 3pm" or "next week", use the email's send-date below as the anchor.
+
+Email send-date (anchor): ${anchor}
 From: ${from ?? "(unknown)"}
 Subject: ${subject}
 Body:

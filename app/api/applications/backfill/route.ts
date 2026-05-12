@@ -94,6 +94,7 @@ export async function POST(req: NextRequest) {
 
         if (counts.created > 0 || counts.updated > 0) {
             broadcastEvent({ model: "Application", action: "invalidate", timestamp: Date.now() });
+            broadcastEvent({ model: "CalendarEvent", action: "invalidate", timestamp: Date.now() });
         }
 
         const result = {
