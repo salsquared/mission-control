@@ -1,4 +1,6 @@
-<!--- Start parsing under this line --->
+# Archived task list — frozen snapshot
+
+> The `Task` DB table is now the source of truth for tasks (see `CLAUDE.md` and `docs/architecture.md`). This file was the previous source-of-truth and is kept as a read-only snapshot for historical reference. Editing it has no effect on the running app — `lib/tasks/parser.ts` and the file watcher were removed in the cutover. All task IDs below are still present in the `Task` table.
 
 ## Feature Fixes
 ### Company News API

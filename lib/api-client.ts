@@ -4,6 +4,7 @@ import {
     TasksListResponseSchema,
     TaskMutationResponseSchema,
     TaskCreateResponseSchema,
+    TaskDeleteResponseSchema,
     TaskPatchSchema,
     TaskPostSchema,
 } from './schemas/tasks';
@@ -16,6 +17,10 @@ import {
 } from './schemas/goals';
 import {
     ApplicationsListResponseSchema,
+    ApplicationMutationResponseSchema,
+    ApplicationDeleteResponseSchema,
+    ApplicationPostSchema,
+    ApplicationPatchSchema,
     BackfillRequestSchema,
     BackfillResponseSchema,
 } from './schemas/applications';
@@ -52,6 +57,20 @@ import {
     GcalCandidatesResponseSchema,
     ApplicationEventAdoptPostSchema,
 } from './schemas/applicationEvents';
+import {
+    ProfileGetResponseSchema,
+    ProfilePatchSchema,
+    WorkRoleMutationResponseSchema,
+    WorkRolePostSchema,
+    WorkRolePatchSchema,
+    ProjectMutationResponseSchema,
+    ProjectPostSchema,
+    ProjectPatchSchema,
+    EducationMutationResponseSchema,
+    EducationPostSchema,
+    EducationPatchSchema,
+    ProfileDeleteResponseSchema,
+} from './schemas/profile';
 
 // ─── Internals ─────────────────────────────────────────────────────────────
 
@@ -107,6 +126,7 @@ export const queryKeys = {
         ['application-events', filter ?? {}] as const,
     savedPapers: (filter?: { topic?: string | null; status?: string | null }) =>
         ['saved-papers', filter ?? {}] as const,
+    profile: ['profile'] as const,
 };
 
 // ─── API surface ───────────────────────────────────────────────────────────
@@ -118,6 +138,8 @@ export const api = {
             jsonFetch('/api/tasks', TaskMutationResponseSchema, jsonBody('PATCH', input)),
         create: (input: z.infer<typeof TaskPostSchema>) =>
             jsonFetch('/api/tasks', TaskCreateResponseSchema, jsonBody('POST', input)),
+        delete: (id: string) =>
+            jsonFetch('/api/tasks', TaskDeleteResponseSchema, jsonBody('DELETE', { id })),
     },
 
     goals: {
@@ -132,6 +154,16 @@ export const api = {
 
     applications: {
         list: () => jsonFetch('/api/applications', ApplicationsListResponseSchema),
+        create: (input: z.infer<typeof ApplicationPostSchema>) =>
+            jsonFetch('/api/applications', ApplicationMutationResponseSchema, jsonBody('POST', input)),
+        update: (input: z.infer<typeof ApplicationPatchSchema>) =>
+            jsonFetch('/api/applications', ApplicationMutationResponseSchema, jsonBody('PATCH', input)),
+        delete: (id: string) =>
+            jsonFetch(
+                `/api/applications?id=${encodeURIComponent(id)}`,
+                ApplicationDeleteResponseSchema,
+                { method: 'DELETE' }
+            ),
         backfill: (input?: z.infer<typeof BackfillRequestSchema>) =>
             jsonFetch(
                 '/api/applications/backfill',
@@ -224,6 +256,48 @@ export const api = {
                 CalendarEventDeleteResponseSchema,
                 { method: 'DELETE' }
             ),
+    },
+
+    profile: {
+        get: () => jsonFetch('/api/profile', ProfileGetResponseSchema),
+        update: (input: z.infer<typeof ProfilePatchSchema>) =>
+            jsonFetch('/api/profile', ProfileGetResponseSchema, jsonBody('PATCH', input)),
+        workRoles: {
+            create: (input: z.infer<typeof WorkRolePostSchema>) =>
+                jsonFetch('/api/profile/work-roles', WorkRoleMutationResponseSchema, jsonBody('POST', input)),
+            update: (input: z.infer<typeof WorkRolePatchSchema>) =>
+                jsonFetch('/api/profile/work-roles', WorkRoleMutationResponseSchema, jsonBody('PATCH', input)),
+            delete: (id: string) =>
+                jsonFetch(
+                    `/api/profile/work-roles?id=${encodeURIComponent(id)}`,
+                    ProfileDeleteResponseSchema,
+                    { method: 'DELETE' }
+                ),
+        },
+        projects: {
+            create: (input: z.infer<typeof ProjectPostSchema>) =>
+                jsonFetch('/api/profile/projects', ProjectMutationResponseSchema, jsonBody('POST', input)),
+            update: (input: z.infer<typeof ProjectPatchSchema>) =>
+                jsonFetch('/api/profile/projects', ProjectMutationResponseSchema, jsonBody('PATCH', input)),
+            delete: (id: string) =>
+                jsonFetch(
+                    `/api/profile/projects?id=${encodeURIComponent(id)}`,
+                    ProfileDeleteResponseSchema,
+                    { method: 'DELETE' }
+                ),
+        },
+        education: {
+            create: (input: z.infer<typeof EducationPostSchema>) =>
+                jsonFetch('/api/profile/education', EducationMutationResponseSchema, jsonBody('POST', input)),
+            update: (input: z.infer<typeof EducationPatchSchema>) =>
+                jsonFetch('/api/profile/education', EducationMutationResponseSchema, jsonBody('PATCH', input)),
+            delete: (id: string) =>
+                jsonFetch(
+                    `/api/profile/education?id=${encodeURIComponent(id)}`,
+                    ProfileDeleteResponseSchema,
+                    { method: 'DELETE' }
+                ),
+        },
     },
 
     savedPapers: {

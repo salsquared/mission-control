@@ -1,6 +1,6 @@
 # Architecture Design Review
 
-> **Document scope.** This is a synthesis review of the Mission Control system as it exists in the repository today. It complements the surface-level documents in `docs/` (`apis.md`, `frontend_terminology.md`, `hosting.md`, `todo.md`) by describing the system as a whole — its goals, layers, data flows, integration points, deployment model, observability, and the trade-offs and risks embedded in the current design. Where this document and the surface docs disagree, this document reflects what the code actually does.
+> **Document scope.** This is a synthesis review of the Mission Control system as it exists in the repository today. It complements the surface-level documents in `docs/` (`apis.md`, `frontend_terminology.md`, `hosting.md`) by describing the system as a whole — its goals, layers, data flows, integration points, deployment model, observability, and the trade-offs and risks embedded in the current design. Where this document and the surface docs disagree, this document reflects what the code actually does.
 
 ---
 
@@ -14,7 +14,7 @@ The intentional design constraints that shape every other decision below are:
 2. **Always-on background process.** The production server is a persistent PM2 process; the UI is a thin client over it. Server uptime is part of the user experience.
 3. **Hardware budget is small.** Mac mini RAM is the binding resource. Dev is capped at 2 GB old-space, prod at 1 GB (`package.json` scripts). Every "is it worth caching" decision is biased toward "yes."
 4. **External APIs are flaky and rate-limited.** Most data does not originate here. The system's job is to wrap, normalize, cache, and degrade gracefully around a long tail of third-party APIs and HTML pages.
-5. **The author is the only consumer.** "Documented" can mean "in `todo.md`," secrets can live in `.env`, and a feature can ship behind a `console.log`. This is reflected in the level of error-handling and validation throughout.
+5. **The author is the only consumer.** "Documented" can mean "in `docs/`," secrets can live in `.env`, and a feature can ship behind a `console.log`. This is reflected in the level of error-handling and validation throughout.
 
 Everything that looks "weird" in the codebase — markdown-as-source-of-truth, in-process pub/sub for logs, an in-memory cache that survives HMR via `globalThis`, hand-written HTML scrapers per company — is downstream of these constraints.
 
@@ -32,7 +32,6 @@ graph TB
         API["/api/*"] --> Cache["withCache (in-proc)"]
         API --> Prisma["Prisma"] --> SQLite["SQLite (dev.db | prod.db)"]
         API --> Fetchers["fetchers/ · company-registry"]
-        API --> Tasks["tasks/parser ↔ docs/todo.md"]
         API --> Logger["logger (monkey-patched console)"]
         API --> GAPIs["googleapis (per-user OAuth client)"]
         Dashboard["Dashboard (RSC-disabled, use client)<br/>Views – Sections – Grids – Cards/Widgets"]
@@ -56,7 +55,7 @@ The codebase is organized along the lines defined in `docs/frontend_terminology.
 | **Hosting / Process** | `launch-ms.sh`, PM2 | Process supervision, environment loading, port management, Chrome app launcher |
 | **Framework** | `next.config.ts`, `instrumentation.ts`, `middleware.ts` | Next.js (webpack), Serwist PWA wrapping, request logging, in-process logger init |
 | **Persistence** | `prisma/`, `lib/prisma.ts` | SQLite via Prisma; dual DB files for dev/prod; query-level logging via `$extends` |
-| **Domain libraries** | `lib/` | `cache`, `auth`, `googleapis`, `email-parser`, `company-registry`, `fetchers/*`, `tasks/parser`, `logger` |
+| **Domain libraries** | `lib/` | `cache`, `auth`, `googleapis`, `email-parser`, `company-registry`, `fetchers/*`, `logger` |
 | **HTTP API** | `app/api/**/route.ts` | Thin route handlers; dispatch to lib code; wrap with `withCache` where useful |
 | **App shell** | `app/layout.tsx`, `app/page.tsx`, `app/globals.css`, `app/sw.ts` | Root providers, font loading, PWA SW, OKLCH theme variables |
 | **Dashboard** | `components/Dashboard.tsx` | Slide carousel of dashes, global overlays (Launchpad, Library, AI Companion), bottom nav |
@@ -93,11 +92,11 @@ The Prisma schema groups into six roughly orthogonal subdomains:
 | **NextAuth** | `User`, `Account`, `Session`, `VerificationToken` | Standard NextAuth + Prisma adapter; stores Google refresh/access tokens on `Account` |
 | **Applications pipeline** | `Application` | Job/internship/admissions tracker; owned by user; fed by Gmail webhook + manual edits |
 | **Research library** | `SavedPaper`, `SelectedHistoricalPaper`, `SelectedReviewPaper` | User's saved papers + per-week deduplication ledgers for "paper of the week" features |
-| **Tasks / Goals** | `Task`, `LifeGoal` | `Task` is the *source of truth*; `docs/todo.md` is the regenerated projection. `LifeGoal` is a separate DB-native model |
+| **Tasks / Goals** | `Task`, `LifeGoal` | Both DB-native. The `Task` table is the source of truth (a previous `docs/todo.md` ↔ DB sync was removed; the archived file lives at `docs/todo.archive.md`). |
 | **Settings** | `GlobalSetting` | One row keyed `"global"` with typed columns for theme prefs + a `version` integer for optimistic concurrency |
 | **Cache** | `CacheEntry` | Durable L2 backing for `withCache` (gated by `CACHE_BACKEND=sqlite`); the scheduler prunes expired rows |
 
-Notable: the `Task` table is **not** the source of truth for tasks. `docs/todo.md` is. Stable IDs are injected as inline HTML comments (`<!-- id: ... -->`) and the DB row is rewritten from the file on every mtime change.
+Notable: ordering for tasks is by `Task.position` (integer), which was backfilled from the old `lineNumber` column when the markdown sync was removed.
 
 ### 4.3 Data flow patterns
 
@@ -106,7 +105,7 @@ The codebase uses **five distinct data-flow patterns**, each appropriate to a di
 1. **External-API-only, fully cached** — most space/AI/research/news endpoints. `withCache(handler, ttl)` is the only persistence; on error, last-good is served. Examples: `/api/space/launches`, `/api/research`, `/api/ai/llmleaderboard`, `/api/company-news`.
 2. **External + DB ledger** — `selectedReviewPaper` and `selectedHistoricalPaper` deduplicate weekly picks, and the historical/review endpoints check DB first before re-querying arXiv. The DB is a *commitment log*, not a cache.
 3. **Pulsar-fronted financial data** — `/api/finance` and `/api/finance/history` proxy to a sibling PM2 process (`salsquared/pulsar`) over REST; `lib/pulsar-ws-relay.ts` keeps a long-lived WebSocket open against `${PULSAR_URL}/ws/prices` and rebroadcasts each tick as a `FinanceTick` SSE event so connected clients invalidate their `'finance'` query within seconds. Pulsar owns ingestion (CoinGecko, Mempool, Yahoo, FRED, ExchangeRate); mission-control owns no crypto state itself.
-4. **DB-as-source-of-truth, markdown projection** — `Task` table is canonical. `app/api/tasks/route.ts` PATCH/POST writes the DB *first*, broadcasts a `Task` SSE event, then async-regenerates `docs/todo.md` from the DB via `lib/tasks/regenerator.ts`. External edits to the markdown are picked up by `lib/tasks/watcher.ts` (debounced `fs.watch`) and synced back to the DB; an echo-suppression flag in the regenerator prevents the write loop. An in-memory `Mutex` serializes file writes.
+4. **DB-native CRUD + SSE invalidation** — `Task`, `LifeGoal`, `Application`/`ApplicationEvent`, etc. The route writes the DB and immediately broadcasts a typed `ServerEvent` on the in-process bus; connected SSE clients invalidate the matching TanStack query and refetch. No file-side projection or watcher to keep in sync.
 5. **External event-driven** — Google Cloud Pub/Sub pushes Gmail history events to `/api/gmail/webhook`, which decodes the base64 envelope, calls `gmail.users.history.list`, fetches new messages, and runs them through `parseApplicationEmail` (Gemini 3.0 Flash via `@ai-sdk/google`) to upsert `Application` rows. This is the only inbound integration.
 
 Pattern 1 is the dominant one: **most endpoints are stateless cache-fronted external proxies.**
@@ -127,7 +126,7 @@ A complete inventory is maintained in `docs/apis.md`. The brief by-feature break
 - **Space** — `/api/space` (SNAPI), `/space/launches` (Space Devs LL2), `/space/satellites` (CelesTrak), `/space/solar` (NOAA SWPC), `/space/moon` (deterministic ephemeris + hardcoded phenomena).
 - **Company news** — `/api/company-news?company=<id>`. Adapter-dispatched (see §6).
 - **Applications / Calendar / Gmail** — `/api/applications` (session-gated read), `/api/calendar/event` (Google Calendar; accepts session **or** `SERVICE_TOKEN_PULSAR` + `?onBehalfOf=<userId>`), `/api/gmail/webhook` (Pub/Sub push, OIDC-verified).
-- **Tasks / Goals / Settings** — `/api/tasks` (DB-first, async markdown regeneration + file watcher), `/api/goals` (DB CRUD on `LifeGoal`), `/api/settings` (typed `GlobalSetting` columns with `version`-based optimistic concurrency via `If-Match`).
+- **Tasks / Goals / Settings** — `/api/tasks` (DB CRUD: GET/POST/PATCH/DELETE), `/api/goals` (DB CRUD on `LifeGoal`), `/api/settings` (typed `GlobalSetting` columns with `version`-based optimistic concurrency via `If-Match`).
 - **System / Cache** — `/api/system` (telemetry incl. Pulsar reachability), `/api/system/logs` (SSE), `/api/system/logs/historical` (PM2 log tail), `/api/system/cache/invalidate` (operator-triggered `withCache` invalidation).
 - **Events** — `/api/events` is the SSE channel for every model invalidation (`Task`, `Goal`, `SavedPaper`, `Application`, `CalendarEvent`, `Setting`, `FinanceTick`, `Cache`).
 
@@ -312,7 +311,7 @@ Production runs **three** related processes, each with a distinct scope:
 
 | Process | PM2 name | Owner repo | Scope |
 |---|---|---|---|
-| Web tier | `mission-control` | this repo | HTTP API, dashboard, SSE event bus, file watcher, OAuth |
+| Web tier | `mission-control` | this repo | HTTP API, dashboard, SSE event bus, OAuth |
 | Scheduler | `mission-control-scheduler` | this repo | Non-financial recurring jobs (cache pruning today; weekly paper picks, notification digests, fetcher health rollups planned) |
 | Pulsar | `pulsar-*` (per source) | `salsquared/pulsar` | Financial data ingestion only — CoinGecko, Mempool, Yahoo, FRED, ExchangeRate. Mission-control consumes via REST + WS |
 
@@ -321,7 +320,7 @@ Production runs **three** related processes, each with a distinct scope:
 - **Dev**: `npm run dev` — `NODE_OPTIONS='--max-old-space-size=2048' next dev -p 4101 --webpack`. Watches the file system; `next.config.ts` excludes `prisma/*.db`, `prisma/*.db-journal`, `public/sw.js`, `public/sw.js.map` from the watcher to prevent reload loops. The scheduler process is **not** started in dev — cache pruning won't run unless you launch `node_modules/.bin/tsx scheduler/index.ts` separately.
 - **Prod**: `launch-ms.sh` orchestrates everything:
   1. `nvm use 24` + `cd` into the repo.
-  2. `set -a && source .env` so the binary inherits secrets (the script comments note that `next start` doesn't auto-load `.env` like `next dev` does — this caused a real incident, see `todo.md` completed items).
+  2. `set -a && source .env` so the binary inherits secrets (the script comments note that `next start` doesn't auto-load `.env` like `next dev` does — this caused a real incident, recorded in `docs/todo.archive.md`).
   3. Starts `node_modules/next/dist/bin/next` (not `npm start`) under PM2 named `mission-control`, with `--max-old-space-size=1024`. Going through PM2 directly to the next binary avoids npm leaving an orphaned node process when PM2 deletes it.
   4. Starts `node_modules/.bin/tsx scheduler/index.ts` under PM2 named `mission-control-scheduler`, with `--max-old-space-size=512`. Run via tsx so we don't need a build step or path-alias rewrites; same Prisma client and same `prisma/prod.db` as the web tier.
   5. Polls until the web port binds (IPv4 *or* IPv6) — bound to `localhost:3101` because hardcoding `127.0.0.1` broke Chrome on Node 17+ which prefers IPv6.
@@ -338,11 +337,11 @@ Because the scheduler and web tier both write to `prisma/prod.db`, `lib/prisma.t
 
 ### 9.3 LAN access (planned)
 
-`todo.md` has an open task to "broadcast the server on the local network and make it mobile-compatible." Today the binding is `localhost`, which means LAN access requires either changing the bind address in `launch-ms.sh` or proxying. The PWA + service worker pieces are already in place for the install-as-app flow once the network bind is opened.
+There's an open task (in the `Task` DB) to "broadcast the server on the local network and make it mobile-compatible." Today the binding is `localhost`, which means LAN access requires either changing the bind address in `launch-ms.sh` or proxying. The PWA + service worker pieces are already in place for the install-as-app flow once the network bind is opened.
 
 ### 9.4 Inbound webhook path
 
-Per `todo.md`, the Gmail webhook is intended to be reached via **Cloudflare Tunnels** (`salsquared.xyz`) → Pub/Sub topic. This is the only way an external request gets to a Mac mini behind a residential NAT. Today the route works locally but the tunnel/Pub/Sub topic is an external prerequisite, not something the repo provisions.
+The Gmail webhook is intended to be reached via **Cloudflare Tunnels** (`salsquared.xyz`) → Pub/Sub topic. This is the only way an external request gets to a Mac mini behind a residential NAT. Today the route works locally but the tunnel/Pub/Sub topic is an external prerequisite, not something the repo provisions.
 
 ---
 
@@ -389,8 +388,8 @@ The general posture is "trust the LAN, distrust nothing else." LAN traffic is ga
 
 | Decision | Trade-off |
 |---|---|
-| **SQLite in-process** | Zero-ops persistence, dual dev/prod files. No replication, no concurrent writers (`Mutex` already exists for the markdown file path). |
-| **`docs/todo.md` as task source of truth** | Editing tasks in the editor *or* the UI is supported. PATCH writes the file *first*, bumps `lastSyncedMtime`, then updates the DB. The DB is a derived projection and can be rebuilt from the file at any time. |
+| **SQLite in-process** | Zero-ops persistence, dual dev/prod files. No replication, no concurrent writers; `journal_mode = WAL` is the only concurrency primitive. |
+| **DB-native tasks (no markdown sync)** | The DB and UI are the only ways to interact with tasks. Editing happens through the API; a previous `docs/todo.md` ↔ DB pipeline was removed to drop a moving part. The archived snapshot lives at `docs/todo.archive.md`. |
 | **In-process cache, not Redis** | Simpler, one fewer service. Loses cache on restart (mitigated by `globalThis` survival across HMR). No cross-process sharing — non-issue for single PM2 process. |
 | **Monkey-patched `console`** | Every log line in the universe ends up in the in-app viewer for free. Cost: third-party library noise pollutes the feed; you can't have a "raw" `console.log` without it being captured. |
 | **TanStack Query everywhere** | Shared cache + dedup + invalidation API across all views. Cost: one extra dependency; query keys must be kept in sync with SSE event models for invalidation to land. |
@@ -449,9 +448,8 @@ Mission Control is a **single-host aggregation layer over many noisy external AP
 The key invariants that make it work:
 
 - **Stale-while-revalidate everything**: `withCache` makes flaky upstream APIs an internal concern, not a user-facing one.
-- **Markdown ↔ DB for tasks**: the user's editor is a first-class write surface alongside the UI; the DB is a projection.
 - **Console-as-bus**: every server-side `console.*` becomes an event in the in-app log viewer, no extra plumbing.
-- **One source of truth per concern**: `useAppStore.theme`/`/api/settings` for cross-device prefs; `localStorage` for per-device prefs; the `Task` table (with `docs/todo.md` as a regenerated projection) for tasks; `prisma` for everything else.
+- **One source of truth per concern**: `useAppStore.theme`/`/api/settings` for cross-device prefs; `localStorage` for per-device prefs; the `Task` table for tasks (DB-native, no file mirror); `prisma` for everything else.
 - **A registry, not a switch statement**: company news is a config table, not a tree of `if (company === ...)`. New sources are config; new shapes are code.
 
 The most material open work is the **Gmail webhook auth gap**, the **stub AICompanion**, and the absence of any **automated tests**. Most other items in §14 are improvements rather than risks; together they describe a system that is comfortably correct for its current single-user, localhost deployment but would need meaningful hardening to face a wider blast radius.
@@ -460,23 +458,18 @@ The most material open work is the **Gmail webhook auth gap**, the **stub AIComp
 
 ## 17. Event State and Lifecycle Management
 
-This section documents the real-time event system and state lifecycle introduced during MVP1. It covers the server-side event bus, the SSE transport, the file-watcher echo loop, the unified client state store, and the stale-data toast pipeline.
+This section documents the real-time event system and state lifecycle introduced during MVP1. It covers the server-side event bus, the SSE transport, the unified client state store, and the stale-data toast pipeline.
 
 ---
 
 ### 17.1 Overview
 
-The system has **two independent event-driven pipelines** that together keep the UI consistent without polling:
-
-1. **Server event bus → SSE → TanStack invalidation** — mutations from any route (or an external Pub/Sub push) are broadcast to all connected SSE clients, which call `queryClient.invalidateQueries({ queryKey: [model] })` to refetch from the server.
-2. **File watcher → DB sync → broadcast** — edits to `docs/todo.md` in an external editor are detected by a Node `fs.watch`, synced to the DB, and broadcast as a `Task` invalidation event.
+The system has **one event-driven pipeline** that keeps the UI consistent without polling: mutations from any route (or an external Pub/Sub push) are broadcast on the in-process bus to all connected SSE clients, which call `queryClient.invalidateQueries({ queryKey: [model] })` to refetch from the server.
 
 ```mermaid
 graph LR
     subgraph Server
         A["Route PATCH/POST/DELETE"] -->|broadcastEvent| B["lib/events.ts<br/>(globalThis fan-out)"]
-        W["fs.watch<br/>(docs/todo.md)"] -->|debounce 500ms| P["syncTasksFromFile<br/>(parser → DB)"]
-        P -->|broadcastEvent Task.invalidate| B
         B -->|fan-out to all listeners| SSE["/api/events<br/>SSE stream"]
     end
     subgraph Browser
@@ -579,68 +572,43 @@ Every mutating route calls `broadcastEvent` after a successful DB write:
 
 | Source | Trigger | Model | Action |
 |---|---|---|---|
-| `app/api/tasks/route.ts` | PATCH, POST | `Task` | `upsert` |
+| `app/api/tasks/route.ts` | PATCH, POST, DELETE | `Task` | `upsert` / `delete` |
 | `app/api/goals/route.ts` | POST, PATCH, DELETE | `Goal` | `upsert` / `delete` |
 | `app/api/research/saved/route.ts` | POST, DELETE | `SavedPaper` | `upsert` / `delete` |
 | `app/api/calendar/event/route.ts` | POST, DELETE | `CalendarEvent` | `upsert` / `delete` |
 | `app/api/gmail/webhook/route.ts` | POST (Pub/Sub push) | `Application` | `upsert` |
-| `lib/tasks/watcher.ts` | fs.watch callback | `Task` | `invalidate` |
 | `lib/pulsar-ws-relay.ts` | Pulsar WS `tick` message | `FinanceTick` | `upsert` (id is the assetId) |
 | `lib/cache.ts` | `invalidateCacheKey` / `invalidateCacheByPrefix` | `Cache` | `invalidate` (id is the cache key, optionally with `*` suffix for prefix) |
 
-`invalidate` (used only by the file watcher) means "something about this model changed — refetch everything." `upsert`/`delete` carry an `id` but the frontend currently treats all three the same way (calls `mutate()`).
+`invalidate` means "something about this model changed — refetch everything." `upsert`/`delete` carry an `id` but the frontend currently treats all three the same way (calls `mutate()`).
 
 ---
 
-### 17.6 Task file watcher and echo suppression
+### 17.6 Task lifecycle (DB-native, no file sync)
 
-The file watcher introduces a **potential write loop**: when the UI mutates a task, the route writes `docs/todo.md`, the watcher fires, and without suppression the watcher would re-sync the file back to the DB and broadcast again.
-
-The echo-suppression flag in `lib/tasks/regenerator.ts` breaks this loop:
+Tasks live entirely in the `Task` table. There is no longer a markdown file mirror: `docs/todo.md` is archived (`docs/todo.archive.md`) and the file watcher / parser / regenerator under `lib/tasks/` were removed in the DB-as-source-of-truth cutover.
 
 ```mermaid
 sequenceDiagram
     participant UI
-    participant Route as /api/tasks PATCH
-    participant Regen as regenerator.ts
-    participant Watcher as watcher.ts
-    participant DB
-
-    UI->>Route: PATCH {id, status}
-    Route->>DB: task.update(...)
-    Route->>Route: broadcastEvent(Task.upsert)
-    Route->>Regen: regenerateMarkdownFromDB()
-    Regen->>Regen: suppressNextFileChange() → _suppressNext=true
-    Regen->>Regen: fs.writeFile(todo.md, ...)
-    Regen-->>Route: done
-    Note over Watcher: fs.watch fires (500ms debounce)
-    Watcher->>Regen: consumeSuppressFlag()
-    Regen-->>Watcher: true (was suppressed)
-    Watcher->>Watcher: return early — no DB sync, no broadcast
-```
-
-Conversely, when the user edits `docs/todo.md` directly in their editor:
-
-```mermaid
-sequenceDiagram
-    participant Editor
-    participant Watcher as watcher.ts
-    participant Parser as tasks/parser
+    participant Route as /api/tasks (PATCH/POST/DELETE)
     participant DB
     participant Bus as lib/events
+    participant SSE
+    participant Browser
 
-    Editor->>Editor: save todo.md
-    Note over Watcher: fs.watch fires (500ms debounce)
-    Watcher->>Watcher: consumeSuppressFlag() → false (external edit)
-    Watcher->>Parser: syncTasksFromFile(filePath)
-    Parser->>DB: upsert tasks
-    Watcher->>Bus: broadcastEvent(Task.invalidate)
-    Bus->>SSE: fan-out to all listeners
-    SSE->>Browser: data: {model:"Task", action:"invalidate"}
+    UI->>Route: PATCH {id, status}
+    Route->>DB: prisma.task.update(...)
+    Route->>Bus: broadcastEvent({model:"Task", action:"upsert"})
+    Bus->>SSE: fan-out
+    SSE->>Browser: data: {model:"Task", action:"upsert"}
     Browser->>Browser: queryClient.invalidateQueries → refetch /api/tasks
 ```
 
-The 500 ms debounce in the watcher absorbs rapid successive saves (e.g. a formatter or auto-save bouncing the mtime) and collapses them into a single sync.
+Implications:
+- No write loop, no echo suppression, no Mutex around file writes — the route is pure DB CRUD.
+- Concurrent edits are handled by SQLite row locks; the Prisma client is the only writer.
+- Ordering is by `Task.position` (integer, backfilled from the old `lineNumber` in the cutover migration); `nextPosition(parentId)` computes the next slot for inserts.
 
 ---
 
@@ -753,9 +721,6 @@ sequenceDiagram
     participant TS as TanStack queryClient
     participant Route as PATCH /api/tasks
     participant DB as SQLite
-    participant Regen as regenerator.ts
-    participant File as docs/todo.md
-    participant Watcher as watcher.ts
     participant Bus as lib/events
     participant SSE as /api/events SSE
     participant Hook as useServerEvents('Task')
@@ -764,20 +729,14 @@ sequenceDiagram
     UI->>Route: PATCH {id, status: 'DONE'}
     Route->>DB: task.update({status:'DONE'})
     Route->>Bus: broadcastEvent(Task.upsert, id)
-    Route->>Regen: regenerateMarkdownFromDB()
-    Regen->>Regen: _suppressNext = true
-    Regen->>File: fs.writeFile (line patched: [x])
     Route-->>UI: 200 OK
     Bus->>SSE: fan-out event
     SSE-->>Hook: data: {model:'Task', action:'upsert'}
     Hook->>TS: invalidateQueries({queryKey: queryKeys.tasks})
     TS-->>UI: updated task list (now authoritative from DB)
-    Note over Watcher: fs.watch fires (500ms later)
-    Watcher->>Regen: consumeSuppressFlag() → true
-    Watcher->>Watcher: suppressed — exits early
 ```
 
-The optimistic `setQueryData` in the UI provides instant feedback. The SSE-triggered `invalidateQueries` then replaces it with the authoritative DB value, typically within 100–200 ms of the PATCH completing. The file update is a side effect of the DB mutation, not a cause — and the suppress flag ensures the watcher doesn't create a second round-trip.
+The optimistic `setQueryData` in the UI provides instant feedback. The SSE-triggered `invalidateQueries` then replaces it with the authoritative DB value, typically within 100–200 ms of the PATCH completing.
 
 ---
 
@@ -793,9 +752,7 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Broadcast** — Sending one event to multiple subscribers at once. `broadcastEvent` iterates a `Set` of registered listeners and calls each with the event.
 
-- **Debounce** — Collapsing a burst of repeated calls into a single trailing call. Used by the file watcher (500 ms — coalesces rapid editor saves) and by `ThemeProvider`'s settings sync (500 ms — collapses keystroke-rate state changes into one POST).
-
-- **Echo suppression** — A flag set before a programmatic file write so a subsequent file-watch event doesn't loop the change back into the DB. `suppressNextFileChange()` raises it; `consumeSuppressFlag()` reads-and-clears it.
+- **Debounce** — Collapsing a burst of repeated calls into a single trailing call. Used by `ThemeProvider`'s settings sync (500 ms — collapses keystroke-rate state changes into one POST).
 
 - **Event** — A small, structured payload describing that *something happened*. In mission-control every `ServerEvent` carries `{model, action, id?, timestamp}`. Events are passive notifications: zero or more listeners can react to the same one, and the publisher doesn't know or care who consumes it. Distinct from a **request**, which is a directed call awaiting a response.
 
@@ -819,7 +776,7 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **In-flight dedup** — Server-side de-duplication of concurrent identical requests. Two callers that miss the same cache key share one upstream fetch instead of stampeding the source (Task 6C).
 
-- **Invalidate** — Mark cached or derived state as stale so it gets refetched. The `Task.invalidate` event from the file watcher tells the client to refetch `/api/tasks` wholesale rather than carrying a specific id; the `Cache.invalidate` event from `invalidateCacheKey`/`invalidateCacheByPrefix` tells the client to refetch *every* TanStack query.
+- **Invalidate** — Mark cached or derived state as stale so it gets refetched. The `Cache.invalidate` event from `invalidateCacheKey`/`invalidateCacheByPrefix` tells the client to refetch *every* TanStack query that depends on the invalidated cache key prefix.
 
 - **Listener** — A callback registered with a pub/sub bus. `subscribeToEvents(fn)` adds `fn` to the `__EVENT_LISTENERS` set on `globalThis`.
 
@@ -841,7 +798,7 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Mutate / Mutation** — A write operation (POST/PATCH/DELETE) that changes server state. In TanStack Query, `queryClient.invalidateQueries({ queryKey })` is the client-side function that marks queries stale and triggers a refetch; `queryClient.setQueryData(key, updater)` is used for optimistic-update writes.
 
-- **Mutex** — A lock that serializes access to a shared resource. The `docs/todo.md` writer uses an in-memory `Mutex` so concurrent PATCHes don't interleave their writes.
+- **Mutex** — A lock that serializes access to a shared resource. No code path uses one currently (the previous markdown-task writer did; it was removed when the file mirror was dropped).
 
 - **NextAuth** — Authentication library for Next.js. Handles OAuth flows, session cookies, and DB persistence via the Prisma adapter.
 
@@ -863,7 +820,7 @@ Web-dev and systems terminology used throughout this document. Alphabetical.
 
 - **Prisma** — TypeScript ORM. Generates a typed client from `schema.prisma` that mission-control uses for all DB access.
 
-- **Projection** — A read model derived from another source of truth. The `Task` table is a projection of `docs/todo.md`; the markdown is canonical and the table is rebuildable from it.
+- **Projection** — A read model derived from another source of truth. Used loosely in this codebase: e.g., the `CacheEntry` table is a durable projection of the in-process `withCache` map (gated by `CACHE_BACKEND=sqlite`).
 
 - **PWA (Progressive Web App)** — A web app installable to the home screen with offline support via a service worker. Configured here via `@serwist/next`.
 

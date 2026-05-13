@@ -95,6 +95,7 @@ model User {
   sessions      Session[]
   applications  Application[]
   gcalSyncState GcalSyncState?
+  profile       Profile?
 }
 
 model VerificationToken {
@@ -161,6 +162,81 @@ model GcalSyncState {
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
+// Profile spine (§7 milestone, decision 4 — Option C: hybrid spine + JSON bullets).
+// Bullets live as JSON arrays on the owning row, shape:
+//   [{ id: cuid, text: string, tags: string[], locked: boolean, excluded: boolean }]
+model Profile {
+  id        String   @id @default(cuid())
+  userId    String   @unique
+  headline  String?
+  summary   String?
+  location  String?
+  email     String?
+  phone     String?
+  links     String?  // JSON: [{label, url}]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workRoles WorkRole[]
+  projects  Project[]
+  education Education[]
+}
+
+model WorkRole {
+  id        String    @id @default(cuid())
+  profileId String
+  company   String
+  title     String
+  location  String?
+  startDate DateTime
+  endDate   DateTime?
+  bullets   String    @default("[]")
+  position  Int       @default(0)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  profile   Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, position])
+}
+
+model Project {
+  id          String   @id @default(cuid())
+  profileId   String
+  name        String
+  description String?
+  repoUrl     String?
+  liveUrl     String?
+  bullets     String   @default("[]")
+  metrics     String?  // JSON: populated by §9 GitHub scheduler job
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  profile     Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, position])
+}
+
+model Education {
+  id          String    @id @default(cuid())
+  profileId   String
+  institution String
+  degree      String?
+  field       String?
+  startDate   DateTime?
+  endDate     DateTime?
+  bullets     String    @default("[]")
+  position    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, position])
+}
+
 
 model Task {
   id          String    @id @default(cuid())
@@ -169,9 +245,8 @@ model Task {
   priority    String?   // "BLOCKER", "HIGH", "MEDIUM", "LOW"
   project     String?
   dueDate     DateTime?
-  filePath    String
-  lineNumber  Int
-  notes       String?   // Markdown notes extracted under this task
+  position    Int       @default(0)
+  notes       String?
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
@@ -180,7 +255,7 @@ model Task {
   children    Task[]    @relation("TaskToTask")
 
   @@index([status])
-  @@index([filePath])
+  @@index([position])
 }
 
 model LifeGoal {

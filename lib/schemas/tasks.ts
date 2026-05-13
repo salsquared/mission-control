@@ -9,8 +9,7 @@ export const TaskSchema = z.object({
     priority: z.enum(['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']).nullable(),
     project: z.string().nullable(),
     dueDate: z.string().datetime().nullable(),
-    filePath: z.string(),
-    lineNumber: z.number().int(),
+    position: z.number().int(),
     notes: z.string().nullable(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -31,6 +30,11 @@ export const TaskCreateResponseSchema = z.object({
     id: z.string(),
 });
 
+export const TaskDeleteResponseSchema = z.object({
+    success: z.literal(true),
+    id: z.string(),
+});
+
 // ─── Requests ──────────────────────────────────────────────────────────────
 export const TaskPatchSchema = z.object({
     id: z.string().min(1),
@@ -38,13 +42,24 @@ export const TaskPatchSchema = z.object({
     text: z.string().min(1).optional(),
     dueDate: z.string().nullable().optional(),
     priority: z.enum(['BLOCKER', 'HIGH', 'MEDIUM', 'LOW']).nullable().optional(),
+    position: z.number().int().optional(),
+    parentId: z.string().nullable().optional(),
 }).refine(
-    (d) => d.status !== undefined || d.text !== undefined || d.dueDate !== undefined || d.priority !== undefined,
-    { message: 'At least one of status, text, dueDate, or priority must be provided' }
+    (d) => d.status !== undefined
+        || d.text !== undefined
+        || d.dueDate !== undefined
+        || d.priority !== undefined
+        || d.position !== undefined
+        || d.parentId !== undefined,
+    { message: 'At least one mutable field must be provided' }
 );
 
 export const TaskPostSchema = z.object({
     text: z.string().min(1),
     parentId: z.string().optional(),
     isGoal: z.boolean().optional(),
+});
+
+export const TaskDeleteSchema = z.object({
+    id: z.string().min(1),
 });

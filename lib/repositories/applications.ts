@@ -18,6 +18,8 @@ export interface ApplicationUpdate {
     kind?: string | null;
     nextSteps?: string | null;
     role?: string | null;
+    company?: string;
+    dateApplied?: Date | null;
     lastEmailMsgId?: string | null;
     lastUpdateAt?: Date;
 }
@@ -27,6 +29,10 @@ export function findApplicationsByUser(userId: string): Promise<Application[]> {
         where: { userId },
         orderBy: { lastUpdateAt: 'desc' },
     });
+}
+
+export function findApplicationByIdForUser(id: string, userId: string): Promise<Application | null> {
+    return prisma.application.findFirst({ where: { id, userId } });
 }
 
 export function findApplicationByCompany(
@@ -44,4 +50,8 @@ export function createApplication(data: ApplicationCreate): Promise<Application>
 
 export function updateApplication(id: string, data: ApplicationUpdate): Promise<Application> {
     return prisma.application.update({ where: { id }, data });
+}
+
+export function deleteApplication(id: string): Promise<Application> {
+    return prisma.application.delete({ where: { id } });
 }

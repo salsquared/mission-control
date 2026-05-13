@@ -58,18 +58,19 @@ Anything that reads/sends Gmail or writes Calendar events depends on these scope
 
 `lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (so it lands in the in-app log viewer). The client is cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by which `.env.{development,production}` Next.js picks up. When debugging prod data issues, point at `prisma/prod.db` explicitly.
 
-Schema highlights: standard NextAuth tables (`Account`/`Session`/`User`/`VerificationToken`), `Application` (job tracker), `Task` (synced from `docs/todo.md`, see below), `LifeGoal`, `SavedPaper` + weekly selection tables (`SelectedHistoricalPaper`, `SelectedReviewPaper`), `CryptoPrice` time series, and `GlobalSetting` (single row of JSON keyed `id="global"`).
+Schema highlights: standard NextAuth tables (`Account`/`Session`/`User`/`VerificationToken`), `Application` + `ApplicationEvent` (job tracker), `Task` (DB-native, see below), `LifeGoal`, `SavedPaper` + weekly selection tables (`SelectedHistoricalPaper`, `SelectedReviewPaper`), `GlobalSetting` (single row keyed `id="global"`).
 
-### Task system: markdown file ↔ DB
+### Task system: DB + UI only
 
-`docs/todo.md` is the **source of truth** for tasks. `lib/tasks/parser.ts:syncTasksFromFile()` walks the file, assigns/preserves stable ids in inline HTML comments (`<!-- id: ... -->`), parses priority emoji (🔴🟡🔵🟢), `@due(date)` annotations, and indentation-based parent/child relationships, then upserts the `Task` table.
+The `Task` table in `prisma/schema.prisma` is the source of truth for tasks. There is no markdown file sync — the previous `docs/todo.md` ↔ DB pipeline (`lib/tasks/parser.ts`, `regenerator.ts`, `watcher.ts`) was removed; `docs/todo.archive.md` is the read-only snapshot from before the cutover.
 
-`app/api/tasks/route.ts`:
-- `GET` — re-syncs only when the file's mtime changed (uses `lastSyncedMtime`); accepts `?force=true`.
-- `PATCH` — rewrites the matching markdown line **first**, bumps `lastSyncedMtime` to skip the next auto-sync, then updates the DB row directly for snappier UI. An in-memory `Mutex` serializes file writes.
-- `POST` — appends a new task line (optionally under a parent), then re-syncs.
+`app/api/tasks/route.ts` is pure DB CRUD:
+- `GET` — returns all tasks ordered by `position` then `createdAt`.
+- `POST` — creates a task; computes `position` via `nextPosition(parentId)` (parent's position + 1, or `MAX(position) + 1`).
+- `PATCH` — partial update (`status`, `text`, `dueDate`, `priority`, `position`, `parentId`).
+- `DELETE` — removes a task; cascading is handled by the schema (`parentId` `onDelete: SET NULL`).
 
-When adding task fields, both the regex parser and the PATCH line-rewriter need to be updated, and `prisma/schema.prisma:Task` extended.
+When adding task fields: update `prisma/schema.prisma:Task`, the Zod schemas in `lib/schemas/tasks.ts`, the repository helpers in `lib/repositories/tasks.ts`, and the route in `app/api/tasks/route.ts`. No file-side parser to keep in sync.
 
 ### Pluggable news ingestion
 

@@ -114,48 +114,126 @@ Email is in scope; we'll need it for other notification surfaces in Mission Cont
 
 Templates live as React/HTML components. PDF export goes through a headless-Chromium print job (Puppeteer or Playwright). DOCX export comes later from the same templated HTML via an HTML→DOCX converter, so visual templates are defined once.
 
-### ⚠ 4. Profile schema — needs your call. Expanded:
+### ✅ 4. Profile schema — Option C (hybrid spine + JSON bullets)
 
-The two paths and what they actually buy or cost:
+A small set of "spine" tables for queryable structure, with bullets stored as JSON arrays on the entity that owns them. Picked over fully-normalized (A) and pure blob (B) as the right balance of selection ergonomics and schema stability for a single-user dataset.
 
-**Option A — Normalized tables.** Roughly:
-- `Profile` (userId, headline, summary)
-- `WorkRole` (profileId, company, title, startDate, endDate, location)
-- `Bullet` (roleId, text, order, locked, excluded) — atomic resume line
-- `Skill` (name, category)
-- `BulletSkill` (bulletId, skillId) — many-to-many tag table
-- `Project` (profileId, name, repoUrl, description, metricsJson)
-- `ProjectSkill` (projectId, skillId)
-- `Education` (profileId, institution, degree, dates)
+Tables:
+- `Profile` (userId, headline, summary, location, email, phone, linksJson)
+- `WorkRole` (profileId, company, title, location, startDate, endDate, bulletsJson, order)
+- `Project` (profileId, name, description, repoUrl, liveUrl, bulletsJson, metricsJson, order)
+- `Education` (profileId, institution, degree, field, startDate, endDate, bulletsJson, order)
 
-Pros:
-- Story 32 ("tag bullets by skill") and Story 34 ("pick the most relevant bullets per posting") become a SQL query — `SELECT bullet WHERE skill IN (posting_keywords) ORDER BY relevance`. No LLM judgement required for selection, only for *rewriting* the chosen bullets to fit the role.
-- Story 35 ("show *why* each bullet was selected") works because every selected bullet has a stable id and a known tag overlap with the posting.
-- Story 36 ("lock specific bullets, exclude others") is a column on `Bullet`.
-- Editing a single bullet is one UPDATE; doesn't rewrite the whole profile.
-- Versioning is per-row (snapshot table or audit trail).
+Each `bulletsJson` is `[{ id, text, tags: string[], locked: bool, excluded: bool }]` — bullet `id` is stable (cuid generated client- or server-side, stored inside the JSON).
 
-Cons:
-- 6–8 new tables, a non-trivial migration, more UI to build (one form per entity type).
-- Story 30 ("import from PDF/DOCX/LinkedIn") still needs an LLM extraction step to *map* free-form bullets into the normalized shape. The import work doesn't shrink — it just produces structured output instead of a blob.
-- More schema to keep stable while we iterate.
+Why this shape:
+- **Selection (story 34)** stays SQL-ish: pull all bullets for a user (a handful of rows → a few hundred bullets total), filter by tag overlap with posting keywords in JS. LLM only rewrites the chosen bullets; it doesn't select.
+- **Traceability (35) / lock / exclude (36)** all key off the stable bullet id.
+- **Edit a bullet (31)** reads the owning row, mutates the JSON array, writes the row. Cheap for one user.
+- **Skill tags** are denormalized strings inside each bullet — no `Skill`/`BulletSkill` join tables. Re-tagging means re-running the LLM tagger.
+- **Versioning (33)** = snapshot table per spine entity (each row's prior state copied on edit), simpler than per-bullet audit rows.
+- **Schema churn** stays low: adding "Publications" or "Talks" later is one new spine table, not a four-table migration.
 
-**Option B — Single JSON blob per user.** One row in `Profile` with a `profileJson` column.
-
-Pros:
-- Ships fast. The import step is "dump the PDF text into the blob, ask the user to clean it up in a textarea."
-- No migrations when the profile's mental model shifts.
-- Snapshot versioning is "copy the blob" — Git-style.
-
-Cons:
-- Bullet selection (story 34) becomes "LLM, here's my whole profile, here's the posting, return a tailored resume." It works, but it's opaque and slow per generation. Traceability (story 35) is weak.
-- "Lock a bullet" / "exclude a bullet" (story 36) needs every bullet to have stable IDs *inside* the blob, which is half-normalized anyway.
-- Filtering / dashboards on top of the profile (e.g., "show me every bullet tagged Go") require either loading every blob into memory or maintaining a denormalized index.
-
-**My recommendation:** Option A. Sections 7–8 (the actual differentiator) lean on tag-driven bullet selection. The blob shortcut makes the first import easier and the first generation harder — and we're going to do the generation many times.
-
-But this is a real fork in the road; pick the one you'll actually maintain.
+Disfavored alternatives:
+- **Option A (fully normalized)** — `Bullet`, `Skill`, `BulletSkill`, etc. Most ergonomic at query time, but 6–8 tables and the most schema-churn risk as the profile model evolves.
+- **Option B (single JSON blob)** — fastest to ship but every generation pays LLM tokens to re-read the whole profile, and lock/exclude needs ids inside the blob anyway.
+- **Option D (blob + denormalized BulletIndex)** — blob as canonical with a projected index. Rejected because the projection becomes the new thing that can silently drift.
 
 ### ✅ 5. GitHub access — public API only
 
 No OAuth scope to maintain. We pull public repo metadata (commits, languages, stars, READMEs). Private repos are out of scope; if you want one represented on a resume you can add it manually as a `Project` row.
+
+---
+
+## Milestones
+
+Tracks are independent (different code surfaces, can be sequenced or parallelized). Each milestone scopes to the 🔴 stories in its section; 🟡/🔵 stories live in a follow-up milestone of the same track.
+
+### Track A — Pipeline UX & manual edits
+Sections §2, §4, §10–12. Frontend-heavy; builds on existing `Application` + `ApplicationEvent`. Closest to user-visible value.
+
+Current state (what already works): the Kanban view in `components/views/ApplicationsView.tsx` renders applications grouped by status across five columns (Applied / Assessment / Interviewing / Offer / Archive). `KanbanWidget` already supports drag-and-drop via an `onStatusChange` callback. The Gmail webhook + multi-kind classifier ingests new applications and writes `ApplicationEvent` rows. What's missing is *every write path from the UI* — status, manual add, edits, notes, delete — plus the per-application drill-in.
+
+#### MA — Pipeline writes + drill-in (🔴 stories 5, 6, 7, 8)
+
+Wires the existing Kanban to writes and adds the missing per-application detail view.
+
+- **MA.1 — Write API.** Extend `app/api/applications/route.ts` with `POST` (manual create — story 7), `PATCH` (status + any field — story 6/13), `DELETE` (story 15, deferred until MA-followup but the schema supports it cleanly via cascade). All routes session-gated through `getServerSession` → `findUserByEmail` → ownership check on `Application.userId`. Zod schemas in a new `lib/schemas/applications.ts`. PATCH writes an `ApplicationEvent` of `kind: STATUS_CHANGED` (with `fromStatus`/`toStatus`) whenever status moves — so story 8's drill-in shows status flips alongside email events automatically.
+- **MA.2 — Drag-to-status wiring (story 6).** `ApplicationsView` gets an `onStatusChange={(id, newStatus) => api.applications.update({id, status: newStatus})}` on the KanbanWidget, with optimistic update via TanStack `setQueryData` and rollback on error (mirroring the `PlanningView` pattern). Broadcast `Application.upsert` on the server side.
+- **MA.3 — Manual add (story 7).** "Add application" button on the Applications dash header opens a small modal: company, role, status (default `APPLIED`), kind (`job` / `internship` / `college` / `other`), optional URL, optional date applied. POST creates the row and (if dateApplied is set) an `ApplicationEvent kind: APPLIED`. No email linkage required.
+- **MA.4 — Drill-in timeline (story 8).** Click an application card → opens an overlay (`components/overlays/ApplicationDetailOverlay.tsx`) showing: header (company, role, status as editable chip, dates), timeline (every `ApplicationEvent` for this application, chronologically — `EMAIL_RECEIVED`, `STATUS_CHANGED`, `INTERVIEW_SCHEDULED`, etc., with each event's `title`/`notes`/`scheduledAt`/`occurredAt`), and a footer "Add note" composer. Pulls from the existing `/api/applications/events?applicationId=<id>` route; no new read endpoint needed.
+- **MA.5 — Add-note composer (story 14, pulled forward).** The footer in MA.4 calls a new `POST /api/applications/events` with `{applicationId, kind: 'NOTE', title, notes, occurredAt: now}`. Notes are first-class timeline rows, not a separate `Application.notes` column — keeps the timeline as the only thing the user has to read to understand the application's state.
+- **MA.6 — API client + types.** New `api.applications.update`, `api.applications.create`, `api.applications.delete`, `api.applications.events.create` in `lib/api-client.ts`. Zod response schemas; query key fanout: `['applications']`, `['applications', 'events', id]`.
+
+Deferred to MA-followup (🟡): inline-edit of arbitrary fields (story 13 — most fields are already edited via status drag + note compose; remaining ones — company/role/nextSteps — get inline edit on the overlay), delete confirmation UI (story 15 — DELETE route ships in MA.1 but the button comes later), kind toggle UI on existing rows (story 51 — schema already supports `kind`, the UI just needs to surface it).
+
+Deferred to track A's second milestone (MA-2, 🟡): document attachment (stories 47–48; ties into M8 resume archival), follow-up nudges (stories 49–50; scheduler job + UI).
+
+### Track B — Job discovery + notifications
+Sections §5, §6. Self-contained server work: new scheduler jobs, new tables, a new fetcher strategy. Per Decision 1, all crawler work runs in `mission-control-scheduler` (NOT Pulsar — that boundary is load-bearing).
+
+Current state: `scheduler/index.ts` is a simple `setInterval` runner with one job (`cache-prune`). `lib/fetchers/` has four strategies (rss, scrape, snapi, google-news) used by the company news pipeline. None of the watchlist / posting / notification schema exists yet.
+
+#### MB — Watchlists, crawler, in-app notifications (🔴 stories 16, 17, 19, 25)
+
+Ships a working "hunt on my behalf" loop end-to-end at minimum viable scope: declare a careers-page watchlist, scheduler crawls it, new postings deduplicate into a feed, a notification fires in-app.
+
+- **MB.1 — Schema.** Three new tables:
+  - `Watchlist` (id, userId, name, kind: `'careers-page' | 'keyword'`, config JSON, scheduleMinutes Int, lastRunAt DateTime?, lastSuccessAt DateTime?, lastError String?, active Boolean default true). For `careers-page` the config is `{ rootUrl, listingSelector, titleSelector, linkSelector, locationSelector?, postedAtSelector?, snippetSelector? }`. For `keyword` (deferred): `{ source, query, filters }`.
+  - `JobPosting` (id, watchlistId, externalId String — stable hash of company+title+link when no native id, company, title, location, postedAt?, snippet?, sourceUrl, status: `'new' | 'tracked' | 'hidden' | 'closed'`, firstSeenAt, lastSeenAt, removedAt?, raw JSON). `@@unique([watchlistId, externalId])` for dedup.
+  - `Notification` (id, userId, kind: `'posting' | 'application' | 'system'`, title, body, payload JSON, channels: `'in_app,email'`, createdAt, readAt?, dismissedAt?). Index `[userId, createdAt]`.
+
+  Migration name: `add_watchlists_postings_notifications`. Add `User.watchlists`, `User.notifications` relations.
+
+- **MB.2 — Generic careers-page fetcher.** New `lib/fetchers/careers-page-fetcher.ts`: given the `careers-page` config, fetch the root URL with a politeness-respecting client (single concurrent request per host, 2s min delay between requests to the same host, User-Agent identifying the bot), parse with cheerio, run the configured selectors, return `RawPosting[]`. Reused by the scheduler job — never called from web tier. Errors are reported but don't throw (writes `lastError` on the Watchlist).
+
+- **MB.3 — Scheduler job.** New `scheduler/jobs/job-watcher.ts` exporting `runJobWatcher()`. Registered in `scheduler/index.ts` JOBS array, runs every 10 minutes. Algorithm per tick:
+  1. Load all `Watchlist` rows where `active = true` and `lastRunAt < now - scheduleMinutes`.
+  2. For each watchlist, fetch via the configured strategy (`careers-page` for MB).
+  3. Compute `externalId` per posting (hash of company+title+link).
+  4. Upsert into `JobPosting`: new rows → `status: 'new'` + create a `Notification` row (kind: 'posting'); existing rows → bump `lastSeenAt`. Any prior posting *not* in the current fetch result for this watchlist → set `removedAt` and `status: 'closed'` (story 22's groundwork — schema-side support, no UI yet).
+  5. Update Watchlist `lastRunAt`/`lastSuccessAt`/`lastError`.
+
+- **MB.4 — Read/write API.**
+  - `app/api/watchlists/route.ts` (GET list, POST create) + `[id]/route.ts` (PATCH update, DELETE). Session-gated.
+  - `app/api/postings/route.ts` (GET feed; query params: `?status=new&watchlistId=...&limit=50`).
+  - `app/api/postings/[id]/route.ts` (PATCH to set status; `tracked` is the one-click "track" from story 20 — pulled forward enough to wire to a future MB-followup "create Application from posting" flow, but no Application creation yet in MB).
+  - `app/api/notifications/route.ts` (GET list, PATCH mark-read/mark-all-read). Notifications stream in via SSE using the existing `lib/events.ts` (`Notification.upsert` events).
+
+- **MB.5 — In-app notification surface.** A new corner widget (bell icon in the dash header? or a slide-in overlay? — decide on implementation): unread count badge, dropdown lists recent notifications, click navigates to the posting in the feed. New `lib/api-client.ts` keys: `api.watchlists`, `api.postings`, `api.notifications`. SSE listener via `useServerEvents('Notification', invalidate)`.
+
+- **MB.6 — Watchlists & feed view.** New section in the Applications dash (or a new dedicated "Discovery" dash, TBD when wiring): "Watchlists" card lists active watchlists with last-run status + edit/pause; "New postings" card lists `JobPosting` rows with `status: 'new'`, each with a "Track" / "Hide" button. Editing a watchlist's selectors is a form with inputs for each CSS selector + a "Test" button that runs the fetcher in-process and shows what got parsed (helps the user dial in selectors without waiting for the next scheduler tick).
+
+Deferred to MB-followup (🟡 stories 18, 20, 21, 22, 26, 27):
+- **Aggregator strategies** (story 18) — Greenhouse, Lever, Ashby, Workday each have a stable API or a stable HTML shape. One fetcher per source (`greenhouse-fetcher.ts`, etc.) reusing the politeness layer from MB.2.
+- **LinkedIn** (story 21's hourly cadence + politeness-sensitive source) — separate, slowest cadence and most-likely-to-get-blocked; needs careful UA + rate strategy.
+- **"Track" → draft Application** (story 20) — wires `POST /api/postings/[id]/track` to create an `Application` with `status: 'INTERESTED'` (new status value to add to the enum-by-convention) prefilled from the posting metadata.
+- **Closed-posting UI** (story 22) — the schema already records `removedAt`; surface it as a "Closed" filter in the feed and a status badge on tracked postings.
+- **Per-watchlist notification preferences** (story 26) — add `notificationMode: 'each' | 'digest'` to Watchlist, and a daily digest job that batches `each: false` watchlists.
+- **Application-side notifications** (story 27) — reuse `Notification` table, fire on `ApplicationEvent` create when kind is one of (`INTERVIEW_SCHEDULED`, `OFFER`, `REJECTION`); a separate "no response in N days" scheduler job.
+- **Email delivery** (Decision 2) — once a provider is picked, the notification dispatcher reads `channels` and sends via the provider. The scheduler job that fires notifications doesn't need to change.
+
+Deferred to 🔵 round: negative filters (story 23), compensation parsing (story 24), quiet hours (story 28).
+
+### Track C — Profile + resume + GitHub
+Sections §7, §8, §9. Unblocked by Decision 4 (Option C). Largest new surface area.
+
+#### M7 — Profile spine + import (🔴 stories 29, 30)
+
+Ships a structured profile model and a way to import an existing resume into it. No resume generation yet (that's M8).
+
+- **M7.1 — Schema.** Add `Profile`, `WorkRole`, `Project`, `Education` to `prisma/schema.prisma`. `WorkRole.bullets` / `Project.bullets` / `Education.bullets` are JSON columns shaped `[{id, text, tags[], locked, excluded}]`. `Project.metrics` JSON column reserved for §9 GitHub job. Migration name `add_profile_spine`. Run against `dev.db`; run separately against `prod.db`.
+- **M7.2 — Read/write API.** `app/api/profile/route.ts` (`GET` upserts an empty profile on first call; `PATCH` for header fields). Child routes `app/api/profile/work-roles/route.ts` + `[id]/route.ts`, mirrored for `projects` and `education`. Bullet array writes go through helpers in `lib/profile/bullets.ts`. All routes scope by `userId` from `getServerSession`. No `withCache` — these are user-write paths.
+- **M7.3 — `ProfileView` dash.** New dash registered in `BASE_DASHES`, default title + hue in the store, `components/views/ProfileView.tsx`. Sections: Header card (inline-edit identity), Work history (stack of `WorkRoleCard`s with drag-reorder + add-role), Projects (same shape), Education (same shape). Bullets render as `BulletRow`s with lock/exclude toggles. Tag chips read-only this milestone.
+- **M7.4 — Import.** `POST /api/profile/import` accepts PDF (`pdf-parse`), DOCX (`mammoth`), LinkedIn export ZIP (unzip → `Positions.csv` / `Education.csv` / `Projects.csv`), or pasted text JSON. Extract → Claude with structured-output prompt → single Prisma transaction that upserts Profile and replaces children. UI is a modal from the ProfileView header with three tabs, drag-drop, and a destructive-overwrite confirmation.
+- **M7.5 — Wiring.** `User.profile` relation; TanStack query keys `['profile']` etc.; invalidate the right keys per mutation; let `ProfileView` own its fetching (no preload from `Dashboard`).
+
+Deferred to M7-followup (🟡): tag editing UI on bullets (story 32 — `tags[]` is already in the shape), inline tag autocomplete, profile snapshots/versioning (story 33; `ProfileSnapshot(userId, takenAt, payloadJson)`, button-press-only).
+
+Out of scope (handled in later milestones): resume HTML→PDF rendering (M8), GitHub-driven project metrics (M9 writes to `Project.metrics`).
+
+#### M8 — Tailored resume generation (later)
+🔴 stories 34, 38. Pulls bullets via tag overlap with posting → LLM rewrites for emphasis → React/HTML template → headless-Chromium print to PDF (per Decision 3). DOCX comes after. Detailed plan when M7 ships.
+
+#### M9 — GitHub-driven project metrics (later)
+🟡 stories 42–43. New scheduler job under `scheduler/jobs/` that hits the public GitHub API for the user's portfolio-flagged `Project` rows and writes into `Project.metrics`. Detailed plan when M7 ships.

@@ -11,6 +11,8 @@ import { Scrollbar } from "../ui/Scrollbar";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { api, queryKeys } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
+import { AddApplicationModal } from "../overlays/AddApplicationModal";
+import { ApplicationDetailOverlay } from "../overlays/ApplicationDetailOverlay";
 
 interface AppRecord {
     id: string;
@@ -36,6 +38,8 @@ export const ApplicationsView: React.FC = () => {
     const [isCalendarAdding, setIsCalendarAdding] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
+    const [isAdding, setIsAdding] = useState(false);
+    const [detailAppId, setDetailAppId] = useState<string | null>(null);
 
     // Track first-time authentication so background session revalidations
     // (window focus, periodic refetch, cross-device signin) don't unmount
@@ -57,6 +61,22 @@ export const ApplicationsView: React.FC = () => {
     );
     useServerEvents('Application', invalidateApps);
     useServerEvents('CalendarEvent', invalidateApps);
+
+    const handleStatusChange = useCallback(async (id: string, newStatus: string) => {
+        const prev = queryClient.getQueryData(queryKeys.applications);
+        queryClient.setQueryData(queryKeys.applications, (old: any) => ({
+            applications: (old?.applications ?? []).map((a: any) =>
+                a.id === id ? { ...a, status: newStatus, lastUpdateAt: new Date().toISOString() } : a
+            ),
+        }));
+        try {
+            await api.applications.update({ id, status: newStatus as any });
+            queryClient.invalidateQueries({ queryKey: ['application-events'] });
+        } catch (e: any) {
+            queryClient.setQueryData(queryKeys.applications, prev);
+            toastStore.push({ message: `Status update failed: ${e.message}`, type: 'error' });
+        }
+    }, [queryClient]);
 
     const syncFromGcal = useCallback(async (silent = false) => {
         if (!session) return;
@@ -120,7 +140,11 @@ export const ApplicationsView: React.FC = () => {
         const colorClass = colDef?.colorClass || "bg-slate-500/20 text-slate-400 border-none";
 
         return (
-            <div key={app.id} className="bg-black/40 border border-white/5 rounded-xl p-4 shadow-xl hover:border-white/20 hover:bg-black/60 transition-all cursor-default relative overflow-hidden group">
+            <div
+                key={app.id}
+                onClick={() => setDetailAppId(app.id)}
+                className="bg-black/40 border border-white/5 rounded-xl p-4 shadow-xl hover:border-white/20 hover:bg-black/60 transition-all relative overflow-hidden group"
+            >
                 <div className={`absolute top-0 left-0 w-1 h-full ${colorClass.split(" ")[0]} opacity-50`}></div>
                 <h5 className="font-bold text-slate-100 truncate flex items-center gap-2">
                     {app.company}
@@ -142,19 +166,29 @@ export const ApplicationsView: React.FC = () => {
     const cards: CardItem[] = [
         {
             id: "kanban",
-            colSpan: 1,
-            className: "col-span-1 md:col-span-2 lg:col-span-1",
+            colSpan: 3,
             content: (
-                <Card 
-                    title="Pipeline Kanban" 
-                    icon={Mail} 
+                <Card
+                    title="Pipeline Kanban"
+                    icon={Mail}
                     iconColorClass="text-blue-400"
+                    action={
+                        <button
+                            onClick={() => setIsAdding(true)}
+                            className="p-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-lg transition-colors cursor-pointer"
+                            title="Add application"
+                        >
+                            <Plus className="w-4 h-4" />
+                        </button>
+                    }
                     withInnerContainer
                 >
                     <KanbanWidget<AppRecord>
                         items={apps}
                         columns={pipelineColumns}
                         getStatus={(app) => app.status}
+                        getItemId={(app) => app.id}
+                        onStatusChange={handleStatusChange}
                         renderItem={renderKanbanItem}
                         loading={loading}
                         emptyText="No applications"
@@ -166,9 +200,9 @@ export const ApplicationsView: React.FC = () => {
             id: "calendar",
             colSpan: 2,
             content: (
-                <Card 
-                    title="Upcoming Interviews" 
-                    icon={CalendarIcon} 
+                <Card
+                    title="Upcoming Interviews"
+                    icon={CalendarIcon}
                     iconColorClass="text-emerald-400"
                     action={
                         <button
@@ -187,38 +221,37 @@ export const ApplicationsView: React.FC = () => {
         },
         {
             id: "conn-status",
-            colSpan: 3,
-            hFit: true,
+            colSpan: 1,
             content: (
-                <Card 
-                    title="Account Status" 
-                    icon={Mail} 
+                <Card
+                    title="Account Status"
+                    icon={Mail}
                     iconColorClass="text-purple-400"
-                    action={
-                        <div className="flex items-center gap-2">
-                            <button onClick={scanInbox} disabled={isScanning} className="flex items-center gap-2 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
+                >
+                    <div className="flex flex-col gap-3">
+                        <div className="flex items-center gap-3 bg-black/20 p-4 border border-white/5 rounded-xl">
+                            {session?.user?.image ? (
+                                <img src={session.user.image} className="w-10 h-10 rounded-full border border-slate-700/50" alt="avatar" />
+                            ) : (
+                                <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
+                                    <Mail className="w-5 h-5 text-slate-400" />
+                                </div>
+                            )}
+                            <div className="flex flex-col min-w-0">
+                                <span className="text-sm font-semibold text-slate-200 truncate">{session?.user?.name || "Connected User"}</span>
+                                <span className="text-xs text-slate-500 truncate">{session?.user?.email}</span>
+                            </div>
+                        </div>
+                        <div className="flex flex-col gap-2">
+                            <button onClick={scanInbox} disabled={isScanning} className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
                                 <Inbox className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} /> {isScanning ? "Scanning…" : "Scan Inbox"}
                             </button>
-                            <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
+                            <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
                                 <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} /> {isSyncing ? "Syncing…" : "Sync Gcal"}
                             </button>
-                            <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
+                            <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center justify-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
                                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status
                             </button>
-                        </div>
-                    }
-                >
-                    <div className="flex items-center gap-3 bg-black/20 p-4 border border-white/5 rounded-xl">
-                        {session?.user?.image ? (
-                            <img src={session.user.image} className="w-10 h-10 rounded-full border border-slate-700/50" alt="avatar" />
-                        ) : (
-                            <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
-                                <Mail className="w-5 h-5 text-slate-400" />
-                            </div>
-                        )}
-                        <div className="flex flex-col">
-                            <span className="text-sm font-semibold text-slate-200 truncate">{session?.user?.name || "Connected User"}</span>
-                            <span className="text-xs text-slate-500 truncate">{session?.user?.email}</span>
                         </div>
                     </div>
                 </Card>
@@ -251,6 +284,17 @@ export const ApplicationsView: React.FC = () => {
                     </div>
                 )}
             </Section>
+            <AddApplicationModal
+                open={isAdding}
+                onClose={() => setIsAdding(false)}
+                onCreated={() => invalidateApps()}
+            />
+            {detailAppId && (
+                <ApplicationDetailOverlay
+                    applicationId={detailAppId}
+                    onClose={() => setDetailAppId(null)}
+                />
+            )}
         </Scrollbar>
     );
 };

@@ -6,10 +6,6 @@ export async function register() {
         // Cache pruning is owned by the mission-control-scheduler PM2 process
         // (scheduler/jobs/cache-prune.ts) — see MVP2 Phase E3.
 
-        const { join } = await import('path');
-        const { startFileWatcher } = await import('./lib/tasks/watcher');
-        startFileWatcher(join(process.cwd(), 'docs', 'todo.md'));
-
         const { startPulsarRelay, stopPulsarRelay } = await import('./lib/pulsar-ws-relay');
         startPulsarRelay();
 
