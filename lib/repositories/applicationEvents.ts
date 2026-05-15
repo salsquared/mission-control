@@ -61,6 +61,11 @@ export async function maybeNotifyForApplicationEvent(
     const title = companyHint
         ? `${companyHint} — ${event.title}`
         : event.title;
+    // Email dispatch is deferred until the broader "email as app-wide feature"
+    // conversation lands (OQ1 followup). The primitive lives at lib/email/send.ts
+    // and the /api/notifications/test endpoint exercises it end-to-end. When we
+    // resume, this `channels` literal becomes "in_app,email" and the helper is
+    // re-imported + awaited.
     try {
         await prisma.notification.create({
             data: {

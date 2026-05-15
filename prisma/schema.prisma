@@ -337,10 +337,15 @@ model Notification {
   title       String
   body        String?
   payload     String    // JSON: { postingId? / applicationId? / ... }
-  channels    String    @default("in_app")
+  channels    String    @default("in_app") // comma-sep: "in_app", "in_app,email", ...
   createdAt   DateTime  @default(now())
   readAt      DateTime?
   dismissedAt DateTime?
+  // Email delivery (Gmail OAuth, OQ1 — see docs/implementation.md). NULL means
+  // either no email was attempted (channels excluded "email") or it hasn't
+  // dispatched yet. emailError is set when delivery was attempted but failed.
+  emailSentAt DateTime?
+  emailError  String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
