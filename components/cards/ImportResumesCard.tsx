@@ -28,6 +28,11 @@ function errMessage(e: unknown): string {
 
 const ACCEPT = ".pdf,.docx,.txt,.md,.markdown,.json,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,application/json";
 
+// Mirror of `MAX_FILES` in `app/api/profile/import/route.ts`. Kept in sync by
+// convention — if the server cap moves, bump this. Better to reject in the UI
+// than to make the user wait through a failed upload.
+const MAX_FILES = 8;
+
 export function ImportResumesCard() {
     const queryClient = useQueryClient();
     const fileInput = useRef<HTMLInputElement>(null);
@@ -42,12 +47,19 @@ export function ImportResumesCard() {
         setFiles(prev => {
             const seen = new Set(prev.map(f => `${f.name}:${f.size}`));
             const out = [...prev];
+            let dropped = 0;
             for (const f of list) {
                 const key = `${f.name}:${f.size}`;
-                if (!seen.has(key)) {
-                    out.push(f);
-                    seen.add(key);
-                }
+                if (seen.has(key)) continue;
+                if (out.length >= MAX_FILES) { dropped++; continue; }
+                out.push(f);
+                seen.add(key);
+            }
+            if (dropped > 0) {
+                toastStore.push({
+                    message: `Import is capped at ${MAX_FILES} files; ${dropped} skipped.`,
+                    type: "warning",
+                });
             }
             return out;
         });

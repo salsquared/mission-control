@@ -10,6 +10,7 @@
 import * as cheerio from "cheerio";
 import type { CareersPageConfigSchema } from "@/lib/schemas/watchlists";
 import { z } from "zod";
+import { assertExternalHttpUrl, assertSafeResponseUrl, UnsafeURLError } from "@/lib/security/url-guard";
 
 type CareersPageConfig = z.infer<typeof CareersPageConfigSchema>;
 
@@ -43,6 +44,13 @@ function tryResolveURL(href: string, base: string): string | null {
 }
 
 export async function fetchCareersPage(config: CareersPageConfig): Promise<FetcherResult> {
+    try {
+        assertExternalHttpUrl(config.rootUrl);
+    } catch (e) {
+        if (e instanceof UnsafeURLError) return { ok: false, error: e.message };
+        throw e;
+    }
+
     let pattern: RegExp;
     try {
         pattern = new RegExp(config.linkPattern);
@@ -67,6 +75,13 @@ export async function fetchCareersPage(config: CareersPageConfig): Promise<Fetch
         clearTimeout(timeoutId);
         if (!res.ok) {
             return { ok: false, error: `HTTP ${res.status} ${res.statusText} from ${config.rootUrl}` };
+        }
+        // If redirects landed on an internal target, refuse.
+        try {
+            assertSafeResponseUrl(res);
+        } catch (e) {
+            if (e instanceof UnsafeURLError) return { ok: false, error: e.message };
+            throw e;
         }
         html = await res.text();
     } catch (e) {
@@ -95,9 +110,12 @@ export async function fetchCareersPage(config: CareersPageConfig): Promise<Fetch
         // Reject titles that are clearly nav: too short or matches generic words alone.
         if (title.length < 3) return;
 
-        // Look for an obvious location hint in nearby text. Optional — skip if not present.
+        // Look for an obvious location hint in nearby text. Strict: only accept
+        // "City, ST" (comma + 2-letter state abbrev) or the literal work-mode
+        // strings. Bare single capitalized words like "Engineering" or "Apply"
+        // produce far more garbage than signal — better to return null.
         const parentText = clean($(el).parent().text());
-        const locationMatch = parentText.match(/\b([A-Z][a-z]+(?:[,\s][A-Z]{2})?|Remote|Hybrid|On-site|On site)\b/);
+        const locationMatch = parentText.match(/\b([A-Z][a-zA-Z.\-]+(?:[\s.][A-Z][a-zA-Z.\-]+)*,\s*[A-Z]{2}|Remote|Hybrid|On-site|On site)\b/);
         const location = locationMatch ? clean(locationMatch[0]) : null;
 
         out.push({

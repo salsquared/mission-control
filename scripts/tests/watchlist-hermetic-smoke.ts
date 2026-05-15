@@ -15,6 +15,12 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { AddressInfo } from "net";
 import { PrismaClient } from "@prisma/client";
+
+// Test-only: allow fetching the in-process fixture server at 127.0.0.1.
+// Production deployments never set this; the SSRF guard in lib/security/url-guard.ts
+// rejects private IPs otherwise.
+process.env.MC_ALLOW_PRIVATE_FETCH = "1";
+
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 
 const prisma = new PrismaClient();
@@ -182,6 +188,29 @@ async function main() {
         if (r4.closed !== 0) fail(`fourth run: expected 0 closed (already closed), got ${r4.closed}`);
         else pass("fourth run: already-closed posting not re-closed");
 
+        // ─── Empty-fetch safety: fixture returns 0 postings → must NOT mass-close ───
+        // This is the bug from the code review: when seenExternalIds is empty,
+        // `notIn: []` matches every prior row. The fix skips closed-detection
+        // on empty fetches. Backdate every remaining open posting past the 6h
+        // grace so the only thing preventing mass-close is the new guard.
+        const remaining = await prisma.jobPosting.findMany({
+            where: { watchlistId, status: { notIn: ["closed", "hidden"] } },
+            select: { id: true },
+        });
+        const longAgo = new Date(Date.now() - 7 * 60 * 60 * 1000);
+        await prisma.jobPosting.updateMany({
+            where: { id: { in: remaining.map(r => r.id) } },
+            data: { lastSeenAt: longAgo },
+        });
+        fixture.setPostings([]); // empty fixture — simulates transient source blank
+        const rEmpty = await runWatchlist(watchlistId);
+        if (rEmpty.error) return fail("empty-fetch run errored", rEmpty.error);
+        if (rEmpty.closed !== 0) fail(`empty-fetch safety: expected 0 closed, got ${rEmpty.closed} — bug regressed!`);
+        else pass("empty-fetch safety: 0 closed despite stale lastSeenAt (bug stays fixed)");
+        const openAfter = await prisma.jobPosting.count({ where: { watchlistId, status: { notIn: ["closed", "hidden"] } } });
+        if (openAfter !== remaining.length) fail(`empty-fetch safety: ${remaining.length - openAfter} postings flipped despite empty fetch`);
+        else pass("empty-fetch safety: open postings count unchanged");
+
         // ─── Fifth: server returns 500, watchlist records error ───
         // Need to capture the next request to return 500. Approach: stop the
         // server, run, then restart. Actually simpler: change linkPattern via
@@ -203,6 +232,46 @@ async function main() {
         const wAfter = await prisma.watchlist.findUnique({ where: { id: watchlistId } });
         if (!wAfter?.lastError) fail("fifth run: lastError not recorded on watchlist");
         else pass("fifth run: lastError recorded on watchlist row");
+
+        // ─── Concurrent runs: per-watchlist mutex (#4) ───
+        // Fire two runWatchlist calls in parallel. The mutex should share the
+        // in-flight promise so both callers get the same result and no
+        // duplicate-create P2002 hits the DB. First restore a valid config
+        // (the prior test corrupted linkPattern); then point the fixture at a
+        // brand-new posting so two parallel runs would otherwise race to create.
+        await prisma.watchlist.update({
+            where: { id: watchlistId },
+            data: {
+                config: JSON.stringify({
+                    kind: "careers-page",
+                    rootUrl: fixture.rootUrl(),
+                    linkPattern: "/careers/jobs/",
+                    companyName: "Hermetic Co",
+                }),
+                lastError: null,
+            },
+        });
+        fixture.setPostings([
+            { slug: "100", title: "Senior Engineer" },
+            { slug: "300", title: "Product Manager" },
+            { slug: "400", title: "Engineering Manager" },
+            { slug: "500", title: "Newly Posted" }, // unseen — both runs would race to create
+        ]);
+        const [pA, pB] = [runWatchlist(watchlistId), runWatchlist(watchlistId)];
+        const [resA, resB] = await Promise.all([pA, pB]);
+        if (resA.error || resB.error) fail(`concurrent runs errored: A=${resA.error}, B=${resB.error}`);
+        else pass("two parallel runWatchlist calls both succeeded");
+        if (resA.newPostings !== resB.newPostings || resA.seenAgain !== resB.seenAgain) {
+            fail(`concurrent runs returned different counts: A=${JSON.stringify(resA)} B=${JSON.stringify(resB)}`);
+        } else {
+            pass("concurrent runs returned identical RunResult (mutex shared the in-flight promise)");
+        }
+        // The total newly-created row count for slug 500 should be exactly 1, not 2.
+        const newlyPostedCount = await prisma.jobPosting.count({
+            where: { watchlistId, title: "Newly Posted" },
+        });
+        if (newlyPostedCount !== 1) fail(`concurrent runs created ${newlyPostedCount} rows for "Newly Posted", expected 1`);
+        else pass("concurrent runs created exactly 1 JobPosting row for the new posting");
 
         // ─── Paused watchlist: skip ───
         await prisma.watchlist.update({

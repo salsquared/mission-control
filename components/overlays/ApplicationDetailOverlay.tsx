@@ -15,8 +15,21 @@ import {
     ExternalLink,
 } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
-import { APPLICATION_STATUSES, APPLICATION_KINDS } from "@/lib/schemas/applications";
+import {
+    APPLICATION_STATUSES,
+    APPLICATION_KINDS,
+    type ApplicationsListResponseSchema,
+    type ApplicationSchema,
+    type ApplicationPatchSchema,
+} from "@/lib/schemas/applications";
+import type { ApplicationEventSchema } from "@/lib/schemas/applicationEvents";
+import type { z } from "zod";
 import { toastStore } from "@/lib/toast-store";
+
+type Application = z.infer<typeof ApplicationSchema>;
+type ApplicationsCache = z.infer<typeof ApplicationsListResponseSchema>;
+type ApplicationPatch = z.infer<typeof ApplicationPatchSchema>;
+type ApplicationEvent = z.infer<typeof ApplicationEventSchema>;
 
 type EditingField = 'company' | 'role' | 'nextSteps' | null;
 
@@ -96,10 +109,10 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         setEditValue("");
     };
 
-    const optimisticPatch = (patch: Record<string, unknown>) => {
-        const prev = queryClient.getQueryData(queryKeys.applications);
-        queryClient.setQueryData(queryKeys.applications, (old: any) => ({
-            applications: (old?.applications ?? []).map((a: any) =>
+    const optimisticPatch = (patch: Partial<Application>) => {
+        const prev = queryClient.getQueryData<ApplicationsCache>(queryKeys.applications);
+        queryClient.setQueryData<ApplicationsCache>(queryKeys.applications, (old) => ({
+            applications: (old?.applications ?? []).map((a) =>
                 a.id === applicationId ? { ...a, ...patch, lastUpdateAt: new Date().toISOString() } : a
             ),
         }));
@@ -111,17 +124,17 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         const val = editValue.trim();
         // Company is required; bail (keep prior value) if it would become empty.
         if (editingField === 'company' && !val) { cancelEdit(); return; }
-        const patch: Record<string, unknown> = { id: applicationId };
+        const patch: ApplicationPatch = { id: applicationId };
         if (editingField === 'company') patch.company = val;
         if (editingField === 'role') patch.role = val || null;
         if (editingField === 'nextSteps') patch.nextSteps = val || null;
         const prev = optimisticPatch(patch);
         cancelEdit();
         try {
-            await api.applications.update(patch as any);
-        } catch (e: any) {
+            await api.applications.update(patch);
+        } catch (e) {
             queryClient.setQueryData(queryKeys.applications, prev);
-            toastStore.push({ message: `Save failed: ${e.message}`, type: 'error' });
+            toastStore.push({ message: `Save failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
 
@@ -130,9 +143,9 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         const prev = optimisticPatch({ kind: newKind });
         try {
             await api.applications.update({ id: applicationId, kind: newKind });
-        } catch (e: any) {
+        } catch (e) {
             queryClient.setQueryData(queryKeys.applications, prev);
-            toastStore.push({ message: `Update failed: ${e.message}`, type: 'error' });
+            toastStore.push({ message: `Update failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
 
@@ -140,14 +153,14 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         queryKey: queryKeys.applications,
         queryFn: () => api.applications.list(),
     });
-    const app = (appsData?.applications ?? []).find((a: any) => a.id === applicationId) as any | undefined;
+    const app: Application | undefined = (appsData?.applications ?? []).find((a) => a.id === applicationId);
 
     const eventsKey = queryKeys.applicationEvents({ applicationId });
     const { data: eventsData, isLoading: eventsLoading } = useQuery({
         queryKey: eventsKey,
         queryFn: () => api.applications.events.list({ applicationId }),
     });
-    const events = (eventsData?.events ?? []) as any[];
+    const events: ApplicationEvent[] = eventsData?.events ?? [];
 
     // Server returns occurredAt desc by default. The timeline reads top-down
     // newest-first, which matches the user's mental model ("what happened
@@ -157,20 +170,20 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         [events]
     );
 
-    const handleStatusChange = async (newStatus: string) => {
+    const handleStatusChange = async (newStatus: typeof APPLICATION_STATUSES[number]) => {
         if (!app || newStatus === app.status) return;
-        const prev = queryClient.getQueryData(queryKeys.applications);
-        queryClient.setQueryData(queryKeys.applications, (old: any) => ({
-            applications: (old?.applications ?? []).map((a: any) =>
+        const prev = queryClient.getQueryData<ApplicationsCache>(queryKeys.applications);
+        queryClient.setQueryData<ApplicationsCache>(queryKeys.applications, (old) => ({
+            applications: (old?.applications ?? []).map((a) =>
                 a.id === applicationId ? { ...a, status: newStatus, lastUpdateAt: new Date().toISOString() } : a
             ),
         }));
         try {
-            await api.applications.update({ id: applicationId, status: newStatus as any });
+            await api.applications.update({ id: applicationId, status: newStatus });
             queryClient.invalidateQueries({ queryKey: eventsKey });
-        } catch (e: any) {
+        } catch (e) {
             queryClient.setQueryData(queryKeys.applications, prev);
-            toastStore.push({ message: `Status update failed: ${e.message}`, type: 'error' });
+            toastStore.push({ message: `Status update failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
 
@@ -189,8 +202,8 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
             });
             setNoteText("");
             queryClient.invalidateQueries({ queryKey: eventsKey });
-        } catch (e: any) {
-            toastStore.push({ message: `Note save failed: ${e.message}`, type: 'error' });
+        } catch (e) {
+            toastStore.push({ message: `Note save failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         } finally {
             setSavingNote(false);
         }
@@ -206,8 +219,8 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
             toastStore.push({ message: `Deleted ${app.company}`, type: 'info' });
             queryClient.invalidateQueries({ queryKey: queryKeys.applications });
             onClose();
-        } catch (e: any) {
-            toastStore.push({ message: `Delete failed: ${e.message}`, type: 'error' });
+        } catch (e) {
+            toastStore.push({ message: `Delete failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
             setDeleting(false);
         }
     };

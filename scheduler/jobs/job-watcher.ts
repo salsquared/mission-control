@@ -37,7 +37,34 @@ function externalIdFor(company: string, title: string, sourceUrl: string): strin
     return h.digest("hex");
 }
 
+// Per-watchlist in-process mutex. Prevents the findUnique→create race when a
+// user double-clicks "Run now" or when a scheduler tick collides with a
+// manual run. Also avoids wasted external fetch work. Survives HMR in dev by
+// hanging off globalThis.
+//
+// Two callers of the same id share one fetch + one DB pass + one RunResult.
+type RunningMap = Map<string, Promise<RunResult>>;
+const g = globalThis as unknown as { __mcRunningWatchlists?: RunningMap };
+if (!g.__mcRunningWatchlists) g.__mcRunningWatchlists = new Map();
+const RUNNING = g.__mcRunningWatchlists;
+
 async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): Promise<RunResult> {
+    // If a run is already in flight for this watchlist, return its promise.
+    // Don't apply the new opts to the in-flight run — the original caller's
+    // broadcast preference wins. This is fine because the result is the same
+    // either way; the SSE broadcast only matters for the in-process caller.
+    const inFlight = RUNNING.get(watchlistId);
+    if (inFlight) return inFlight;
+    const promise = processOneInner(watchlistId, opts);
+    RUNNING.set(watchlistId, promise);
+    try {
+        return await promise;
+    } finally {
+        RUNNING.delete(watchlistId);
+    }
+}
+
+async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean }): Promise<RunResult> {
     const broadcast = opts?.broadcast ?? false;
     const watchlist = await prisma.watchlist.findUnique({ where: { id: watchlistId } });
     if (!watchlist) return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: "watchlist not found" };
@@ -110,8 +137,15 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
                 data: { lastSeenAt: runAt },
             });
             seenAgain++;
-        } else {
-            const created = await prisma.jobPosting.create({
+            continue;
+        }
+        // Try to create. If a different process (scheduler vs manual run via
+        // Next.js) raced us here, the unique constraint on (watchlistId,
+        // externalId) throws Prisma P2002 — treat that as a lost race and
+        // fall back to bumping lastSeenAt instead of erroring out the run.
+        let created: { id: string } | null = null;
+        try {
+            created = await prisma.jobPosting.create({
                 data: {
                     watchlistId,
                     externalId,
@@ -125,28 +159,45 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
                     lastSeenAt: runAt,
                     raw: JSON.stringify(raw),
                 },
+                select: { id: true },
             });
-            if (willNotifyForNew) {
-                await prisma.notification.create({
-                    data: {
-                        userId: watchlist.userId,
-                        kind: "posting",
-                        title: `${raw.company} — ${raw.title}`,
-                        body: raw.location ?? null,
-                        payload: JSON.stringify({ postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl }),
-                        channels: "in_app",
-                    },
+        } catch (e) {
+            const code = (e as { code?: string } | null)?.code;
+            if (code === "P2002") {
+                await prisma.jobPosting.update({
+                    where: { watchlistId_externalId: { watchlistId, externalId } },
+                    data: { lastSeenAt: runAt },
                 });
+                seenAgain++;
+                continue;
             }
-            newPostings++;
+            throw e;
         }
+        if (willNotifyForNew) {
+            await prisma.notification.create({
+                data: {
+                    userId: watchlist.userId,
+                    kind: "posting",
+                    title: `${raw.company} — ${raw.title}`,
+                    body: raw.location ?? null,
+                    payload: JSON.stringify({ postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl }),
+                    channels: "in_app",
+                },
+            });
+        }
+        newPostings++;
     }
 
     // Closed-posting detection (story 22). Any prior posting for this watchlist
     // that we *didn't* see in this run, that's been silent for > 6h, and that
     // isn't already terminal (closed/hidden), gets marked closed.
+    //
+    // SAFETY: skip when the fetch returned zero postings. An empty fetch can
+    // happen for benign reasons (source temporarily blank, SPA misrender,
+    // CDN hiccup) and would otherwise nuke the entire feed via `notIn: []`
+    // matching every row. Better to wait for the next tick than to mass-close.
     let closed = 0;
-    if (!isFirstRun) {
+    if (!isFirstRun && fetchResult.postings.length > 0) {
         const sixHoursAgo = new Date(runAt.getTime() - 6 * 60 * 60 * 1000);
         const closeResult = await prisma.jobPosting.updateMany({
             where: {

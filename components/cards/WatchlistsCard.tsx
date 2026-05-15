@@ -39,18 +39,16 @@ export function WatchlistsCard() {
     async function runNow(id: string) {
         setBusyId(id);
         try {
+            // `api.watchlists.run` throws on non-2xx (the route returns 502 when
+            // the fetcher errors), so reaching this point means success.
             const result = await api.watchlists.run(id);
-            if (result.error) {
-                toastStore.push({ message: `Run failed: ${result.error}`, type: "error" });
-            } else {
-                toastStore.push({
-                    message: `Run complete — ${result.newPostings} new, ${result.seenAgain} seen-again`,
-                    type: "info",
-                });
-                queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
-                queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
-                queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
-            }
+            toastStore.push({
+                message: `Run complete — ${result.newPostings} new, ${result.seenAgain} seen-again`,
+                type: "info",
+            });
+            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
+            queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
         } catch (e) {
             toastStore.push({ message: `Run failed: ${errMessage(e)}`, type: "error" });
         } finally {

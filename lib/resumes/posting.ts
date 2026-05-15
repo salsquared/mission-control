@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { z } from "zod";
 import { chatJSON } from "@/lib/ai/gemini";
+import { assertExternalHttpUrl, assertSafeResponseUrl } from "@/lib/security/url-guard";
 
 export interface PostingInput {
     url?: string;
@@ -32,14 +33,25 @@ function clean(s: string): string {
 }
 
 async function fetchVisibleText(url: string): Promise<string> {
-    const res = await fetch(url, {
-        headers: {
-            "User-Agent": "mission-control-resume-bot/1.0 (+https://mc.local)",
-            "Accept": "text/html,application/xhtml+xml",
-        },
-        redirect: "follow",
-    });
+    assertExternalHttpUrl(url);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8_000);
+    let res: Response;
+    try {
+        res = await fetch(url, {
+            headers: {
+                "User-Agent": "mission-control-resume-bot/1.0 (+https://mc.local)",
+                "Accept": "text/html,application/xhtml+xml",
+            },
+            redirect: "follow",
+            signal: controller.signal,
+        });
+    } finally {
+        clearTimeout(timeoutId);
+    }
     if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
+    // Re-check in case the redirect chain landed on an internal target.
+    assertSafeResponseUrl(res);
     const html = await res.text();
     const $ = cheerio.load(html);
     // Drop noise
