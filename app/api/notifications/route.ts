@@ -43,11 +43,15 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const unreadOnly = url.searchParams.get("unread") === "true";
+    const includeDismissed = url.searchParams.get("includeDismissed") === "true";
     const limitRaw = Number(url.searchParams.get("limit") ?? DEFAULT_LIMIT);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.floor(limitRaw)), MAX_LIMIT) : DEFAULT_LIMIT;
 
     const where: Record<string, unknown> = { userId };
     if (unreadOnly) where.readAt = null;
+    // Default: hide dismissed notifications from the bell. Pass ?includeDismissed=true
+    // for a debug / history view later.
+    if (!includeDismissed) where.dismissedAt = null;
 
     try {
         const [rows, unreadCount] = await Promise.all([
@@ -56,7 +60,7 @@ export async function GET(req: NextRequest) {
                 orderBy: { createdAt: "desc" },
                 take: limit,
             }),
-            prisma.notification.count({ where: { userId, readAt: null } }),
+            prisma.notification.count({ where: { userId, readAt: null, dismissedAt: null } }),
         ]);
         return NextResponse.json({ notifications: rows.map(serialize), unreadCount }, { status: 200 });
     } catch (e) {
@@ -82,6 +86,15 @@ export async function PATCH(req: NextRequest) {
             const r = await prisma.notification.updateMany({
                 where: { userId, readAt: null },
                 data: { readAt: new Date() },
+            });
+            updated = r.count;
+        } else if ("dismissedAt" in parsed.data) {
+            const dismissedAt = parsed.data.dismissedAt ? new Date(parsed.data.dismissedAt) : null;
+            const r = await prisma.notification.updateMany({
+                where: { id: { in: parsed.data.ids }, userId },
+                // Dismissing also marks read — a notification a user has
+                // explicitly hidden has by definition been seen.
+                data: { dismissedAt, readAt: dismissedAt ? new Date() : null },
             });
             updated = r.count;
         } else {

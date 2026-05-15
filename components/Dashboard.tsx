@@ -17,6 +17,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
 import { LaunchpadOverlay } from "./overlays/LaunchpadOverlay";
+import { NotificationBell } from "./overlays/NotificationBell";
 import { useEffect } from "react";
 
 export interface DashConfig {
@@ -205,6 +206,11 @@ export const Dashboard: React.FC = () => {
                     <LaunchpadOverlay dashes={BASE_DASHES} goToSlide={goToSlide} />
                 )}
             </AnimatePresence>
+
+            {/* Global notification bell — fixed top-right, visible from every dash.
+                Hidden when the Launchpad is open since the Launchpad takes over
+                the chrome and the bell would clash with its dash grid. */}
+            {!isLaunchpadOpen && <NotificationBell />}
 
             {/* Navigation Controls (Only visible when not in Launchpad) */}
             {!isLaunchpadOpen && (

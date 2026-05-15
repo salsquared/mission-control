@@ -61,13 +61,14 @@ export async function maybeNotifyForApplicationEvent(
     const title = companyHint
         ? `${companyHint} — ${event.title}`
         : event.title;
-    // Email dispatch is deferred until the broader "email as app-wide feature"
-    // conversation lands (OQ1 followup). The primitive lives at lib/email/send.ts
-    // and the /api/notifications/test endpoint exercises it end-to-end. When we
-    // resume, this `channels` literal becomes "in_app,email" and the helper is
-    // re-imported + awaited.
+    // OQ1 resolution (2026-05-15): application-side events get BOTH in-app and
+    // email. These are the high-signal events (interview scheduled, offer,
+    // rejection, assessment requested) that warrant pushing past the dashboard
+    // into the user's inbox. Posting / system notifications stay in-app only —
+    // emailing 400 Anthropic postings on first crawl would be terrible UX.
+    let created: { id: string } | null = null;
     try {
-        await prisma.notification.create({
+        created = await prisma.notification.create({
             data: {
                 userId,
                 kind: "application",
@@ -78,11 +79,21 @@ export async function maybeNotifyForApplicationEvent(
                     eventId: event.id,
                     eventKind: event.kind,
                 }),
-                channels: "in_app",
+                channels: "in_app,email",
             },
+            select: { id: true },
         });
     } catch (e) {
         console.warn(`[applicationEvents] notification create failed for event ${event.id}:`, e);
+        return;
+    }
+    // Dispatch email side-channel. Best-effort: the helper writes its own status
+    // onto the row (emailSentAt / emailError). We await rather than fire-and-
+    // forget so the caller (Gmail webhook / event POST) gets a single completion
+    // signal; personal-scale traffic makes the few-hundred-ms Gmail latency fine.
+    if (created) {
+        const { dispatchNotificationEmail } = await import("@/lib/email/send");
+        await dispatchNotificationEmail(created.id);
     }
 }
 

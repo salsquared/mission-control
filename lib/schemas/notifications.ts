@@ -22,6 +22,7 @@ export type NotificationWire = z.infer<typeof NotificationSchema>;
 
 export const NotificationPatchSchema = z.union([
     z.object({ ids: z.array(z.string().min(1)).min(1), readAt: z.string().datetime().nullable() }),
+    z.object({ ids: z.array(z.string().min(1)).min(1), dismissedAt: z.string().datetime().nullable() }),
     z.object({ markAllRead: z.literal(true) }),
 ]);
 
