@@ -163,15 +163,16 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         queryKey: eventsKey,
         queryFn: () => api.applications.events.list({ applicationId }),
     });
-    const events: ApplicationEvent[] = eventsData?.events ?? [];
 
     // Server returns occurredAt desc by default. The timeline reads top-down
     // newest-first, which matches the user's mental model ("what happened
-    // most recently?") for an open application.
-    const sortedEvents = useMemo(
-        () => [...events].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime()),
-        [events]
-    );
+    // most recently?") for an open application. Derive `events` inside the
+    // memo so the `?? []` doesn't create a fresh array identity each render
+    // (which would defeat the memo).
+    const sortedEvents = useMemo(() => {
+        const events: ApplicationEvent[] = eventsData?.events ?? [];
+        return [...events].sort((a, b) => new Date(b.occurredAt).getTime() - new Date(a.occurredAt).getTime());
+    }, [eventsData]);
 
     const handleStatusChange = async (newStatus: typeof APPLICATION_STATUSES[number]) => {
         if (!app || newStatus === app.status) return;

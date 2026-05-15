@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { FileText, FileType2, Loader2, Link as LinkIcon, ChevronDown, ChevronRight } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
@@ -31,6 +31,18 @@ interface SelectionRow {
 
 const FORMAT_STORAGE_KEY = "mc-resume-format";
 
+// Human-readable labels for the API route's internal `stage` values. The
+// stage field comes from app/api/resumes/route.ts — keep this map in sync
+// if new stages get added there.
+const STAGE_LABELS = {
+    input: "Bad input",
+    load: "Loading your profile",
+    parse: "Reading the posting",
+    select: "Picking bullets",
+    rewrite: "Rewriting bullets via AI",
+    render: "Rendering the file",
+} as const;
+
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }
@@ -38,7 +50,16 @@ function errMessage(e: unknown): string {
 export function GenerateResumeCard() {
     const [url, setUrl] = useState("");
     const [text, setText] = useState("");
-    const [format, setFormat] = useState<Format>("pdf");
+    // Lazy init from localStorage so we don't need a useEffect + setState
+    // dance (the latter pattern triggers react-compiler's cascading-render
+    // warning). Safe at module load because this component is "use client".
+    const [format, setFormat] = useState<Format>(() => {
+        try {
+            const saved = window.localStorage.getItem(FORMAT_STORAGE_KEY);
+            if (saved === "pdf" || saved === "docx") return saved;
+        } catch { /* localStorage unavailable */ }
+        return "pdf";
+    });
     const [busy, setBusy] = useState(false);
     const [stage, setStage] = useState<string | null>(null);
     const [lastResult, setLastResult] = useState<GenerateResult | null>(null);
@@ -50,14 +71,6 @@ export function GenerateResumeCard() {
         queryFn: () => api.resumes.get(lastResult!.id!),
         enabled: showTrace && !!lastResult?.id,
     });
-
-    // Restore last-chosen format on mount.
-    useEffect(() => {
-        try {
-            const saved = window.localStorage.getItem(FORMAT_STORAGE_KEY);
-            if (saved === "pdf" || saved === "docx") setFormat(saved);
-        } catch { /* localStorage unavailable */ }
-    }, []);
 
     function pickFormat(f: Format) {
         setFormat(f);
@@ -84,12 +97,19 @@ export function GenerateResumeCard() {
             });
             if (!res.ok) {
                 let detail = "";
+                let stageLabel = "";
                 try {
                     const j = await res.json();
                     detail = j.error ? (typeof j.error === "string" ? j.error : JSON.stringify(j.error)) : "";
-                    if (j.stage) detail = `[${j.stage}] ${detail}`;
+                    // Translate the API's internal `stage` field into something the
+                    // user understands — "rewrite" means nothing to them, "AI
+                    // rewrite step" does.
+                    stageLabel = STAGE_LABELS[j.stage as keyof typeof STAGE_LABELS] ?? "";
                 } catch { /* non-JSON */ }
-                throw new Error(detail || `HTTP ${res.status}`);
+                const composed = stageLabel
+                    ? `${stageLabel}: ${detail}`
+                    : detail || `HTTP ${res.status}`;
+                throw new Error(composed);
             }
             const blob = await res.blob();
             const responseFormat = (res.headers.get("X-Resume-Format") as Format | null) ?? format;
