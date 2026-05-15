@@ -12,11 +12,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-- `npm run dev` — Next.js dev server on **port 4101**, webpack, `--max-old-space-size=2048`. Loads `.env.development` (`DATABASE_URL=file:./dev.db`).
-- `npm run build` — production build (webpack).
-- `npm run start` — production server on **port 3101**, `--max-old-space-size=1024`. Loads `.env.production` (`DATABASE_URL=file:./prod.db`).
+**Both tiers run under PM2.** This is the canonical setup — do NOT run `npm run dev` / `npm run start` ad-hoc; PM2 already owns the ports and will fight you for them.
+
+| PM2 process | Port | DB | Backing script |
+| --- | --- | --- | --- |
+| `mission-control-dev` | 4101 | `prisma/dev.db` (via `.env.development`) | `npm run dev` |
+| `mission-control` | 3101 | `prisma/prod.db` (via `.env.production`) | `npm run start` (compiled build) |
+| `mission-control-scheduler` | — | shared | `scheduler/index.ts` |
+
+Restart / inspect:
+- `pm2 restart mission-control-dev` — pick up config changes (next.config.ts, env, etc.) on the dev tier.
+- `pm2 restart mission-control` — same for prod after a fresh build.
+- `pm2 logs mission-control-dev` (or `mission-control` / `mission-control-scheduler`) — tail logs.
+- `pm2 list` — quick status of all three.
+
+The npm scripts themselves remain useful for one-offs:
+- `npm run build` — production build (webpack). Run before restarting `mission-control` so it picks up new compiled code.
 - `npm run lint` — ESLint (flat config, extends `eslint-config-next`).
-- `./launch-ms.sh` — production launcher: starts the built server under PM2 (`mission-control` process) and opens Chrome in `--app=` mode at `http://localhost:3101`. `./launch-ms.sh --restart` force-kills and recreates the PM2 process. The PM2 process persists after the Chrome window closes; logs via `pm2 logs mission-control`.
+- `./launch-ms.sh` — convenience launcher that ensures the prod PM2 process is up and opens Chrome in `--app=` mode at `http://localhost:3101`. `./launch-ms.sh --restart` force-kills and recreates the PM2 process.
 - `npx prisma migrate dev` / `npx prisma generate` — schema lives at `prisma/schema.prisma` (SQLite). Dev and prod use **separate DB files** in `prisma/`.
 
 There is no test runner configured. One-off scripts (DB checkers, fetcher experiments, parser tests) belong in `scripts/tests/` as kebab-case `.ts` files and are run with `tsx` (e.g. `npx tsx scripts/tests/check-cache.ts`). This is enforced — do not put experiments in the repo root or `/tmp`.

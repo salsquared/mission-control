@@ -155,9 +155,9 @@ Sections §2, §4, §10–12. Frontend-heavy; builds on existing `Application` +
 
 Current state (what already works): the Kanban view in `components/views/ApplicationsView.tsx` renders applications grouped by status across five columns (Applied / Assessment / Interviewing / Offer / Archive). `KanbanWidget` already supports drag-and-drop via an `onStatusChange` callback. The Gmail webhook + multi-kind classifier ingests new applications and writes `ApplicationEvent` rows. What's missing is *every write path from the UI* — status, manual add, edits, notes, delete — plus the per-application drill-in.
 
-#### MA — Pipeline writes + drill-in (🔴 stories 5, 6, 7, 8)
+#### MA — Pipeline writes + drill-in (🔴 stories 5, 6, 7, 8) ✅ shipped
 
-Wires the existing Kanban to writes and adds the missing per-application detail view.
+Verified end-to-end on 2026-05-15 (`scripts/tests/applications-api-smoke.ts`, 10/10 green): POST manual create, PATCH status auto-emits a `STATUS_CHANGED` event with correct `fromStatus`/`toStatus`, POST `NOTE` events, GET timeline returns chronological events, DELETE removes from list, empty PATCH validates 400. The work below was already implemented (route + UI + api-client) before MA was reviewed — flagging here for traceability:
 
 - **MA.1 — Write API.** Extend `app/api/applications/route.ts` with `POST` (manual create — story 7), `PATCH` (status + any field — story 6/13), `DELETE` (story 15, deferred until MA-followup but the schema supports it cleanly via cascade). All routes session-gated through `getServerSession` → `findUserByEmail` → ownership check on `Application.userId`. Zod schemas in a new `lib/schemas/applications.ts`. PATCH writes an `ApplicationEvent` of `kind: STATUS_CHANGED` (with `fromStatus`/`toStatus`) whenever status moves — so story 8's drill-in shows status flips alongside email events automatically.
 - **MA.2 — Drag-to-status wiring (story 6).** `ApplicationsView` gets an `onStatusChange={(id, newStatus) => api.applications.update({id, status: newStatus})}` on the KanbanWidget, with optimistic update via TanStack `setQueryData` and rollback on error (mirroring the `PlanningView` pattern). Broadcast `Application.upsert` on the server side.
