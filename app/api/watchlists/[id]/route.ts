@@ -1,0 +1,88 @@
+import { NextRequest, NextResponse } from "next/server";
+import { prisma } from "@/lib/prisma";
+import { requireSession } from "@/lib/auth-guards";
+import { broadcastEvent } from "@/lib/events";
+import { WatchlistPatchSchema } from "@/lib/schemas/watchlists";
+
+export const runtime = "nodejs";
+
+function userIdFromGuard(guard: { session: { user?: unknown } }): string | null {
+    const user = guard.session.user as { id?: string } | undefined;
+    return user?.id && user.id.length > 0 ? user.id : null;
+}
+
+function serialize(w: {
+    id: string; userId: string; name: string; kind: string; config: string;
+    scheduleMinutes: number; lastRunAt: Date | null; lastSuccessAt: Date | null;
+    lastError: string | null; active: boolean; createdAt: Date; updatedAt: Date;
+}) {
+    return {
+        ...w,
+        config: JSON.parse(w.config),
+        lastRunAt: w.lastRunAt?.toISOString() ?? null,
+        lastSuccessAt: w.lastSuccessAt?.toISOString() ?? null,
+        createdAt: w.createdAt.toISOString(),
+        updatedAt: w.updatedAt.toISOString(),
+    };
+}
+
+async function ownedWatchlist(userId: string, id: string) {
+    return prisma.watchlist.findFirst({ where: { id, userId } });
+}
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+    const userId = userIdFromGuard(guard);
+    if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+
+    const { id } = await params;
+    if (!await ownedWatchlist(userId, id)) {
+        return NextResponse.json({ error: "Watchlist not found" }, { status: 404 });
+    }
+
+    const parsed = WatchlistPatchSchema.safeParse(await req.json().catch(() => ({})));
+    if (!parsed.success) {
+        return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
+    }
+
+    try {
+        const data: Record<string, unknown> = {};
+        if (parsed.data.name !== undefined) data.name = parsed.data.name;
+        if (parsed.data.config !== undefined) {
+            data.config = JSON.stringify(parsed.data.config);
+            // Keep the denormalized kind column in sync with config.kind.
+            data.kind = parsed.data.config.kind;
+        }
+        if (parsed.data.scheduleMinutes !== undefined) data.scheduleMinutes = parsed.data.scheduleMinutes;
+        if (parsed.data.active !== undefined) data.active = parsed.data.active;
+
+        const row = await prisma.watchlist.update({ where: { id }, data });
+        broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });
+        return NextResponse.json({ watchlist: serialize(row) }, { status: 200 });
+    } catch (e) {
+        console.error(`[watchlists/${id} PATCH] error:`, e);
+        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    }
+}
+
+export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+    const userId = userIdFromGuard(guard);
+    if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+
+    const { id } = await params;
+    if (!await ownedWatchlist(userId, id)) {
+        return NextResponse.json({ error: "Watchlist not found" }, { status: 404 });
+    }
+
+    try {
+        await prisma.watchlist.delete({ where: { id } });
+        broadcastEvent({ model: 'Watchlist', action: 'delete', id, timestamp: Date.now() });
+        return NextResponse.json({ success: true, id }, { status: 200 });
+    } catch (e) {
+        console.error(`[watchlists/${id} DELETE] error:`, e);
+        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    }
+}

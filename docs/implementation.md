@@ -46,13 +46,14 @@ Blocked-by: M8 Phase 2 for MA-f.3, MB Phase 1 for MA-f.4 (notifications surface)
 Stories: 16, 17, 19, 25 (🔴) — minimum viable "hunt on my behalf" loop.
 
 **Scope IN:**
-- Single source type: `careers-page` (one URL + a link pattern). One fetcher.
+- Two source types: `careers-page` (HTML scrape + link pattern) **and** `greenhouse` (boards-api.greenhouse.io JSON). Greenhouse pulled forward from Phase 2 after discovering that most modern careers pages are SPAs that don't expose postings in initial HTML. Anthropic, Stripe, Rocket Lab, Vercel, and many more publish their boards via Greenhouse — covers the bulk of real-world targets without needing headless rendering.
 - In-app notifications only.
 - Manual + auto crawl (user "Run now" button + scheduler every 10 min).
 - "Track" / "Hide" actions that move a posting between `status='new'|'tracked'|'hidden'`. No Application creation yet — that ships in MB Phase 2 with the rest of story 20.
+- First-crawl notification digest: when a brand-new watchlist returns more than 20 postings on its first run, we still store every posting but emit a single `kind='system'` summary notification instead of one-per-posting. Subsequent runs always emit per-posting notifications for the (typically small) delta.
 
 **Scope OUT** (deferred to MB Phase 2+):
-- Aggregator strategies (Greenhouse, Lever, Ashby, Workday)
+- Lever, Ashby, Workday aggregator strategies
 - LinkedIn (rate-sensitive, separate)
 - "Track → draft Application" linkage
 - Email delivery
@@ -142,7 +143,7 @@ Zod schemas: `lib/schemas/watchlists.ts`, `lib/schemas/notifications.ts`.
 Per tick:
 1. Query active watchlists where `lastRunAt IS NULL OR lastRunAt < now - scheduleMinutes`.
 2. For each watchlist, call the fetcher.
-3. For each `RawPosting`: compute `externalId = sha256(company|title|sourceUrl)` → upsert into `JobPosting`. If row didn't exist → status `'new'` + insert `Notification(kind='posting')`. If row existed → bump `lastSeenAt` (do nothing else).
+3. For each `RawPosting`: compute `externalId = sha256(company + '|' + title + '|' + sourceUrl)` (decided 2026-05-15 — picked over `sha256(sourceUrl)` alone because some careers pages decorate URLs with tracking params that would defeat URL-only dedup) → upsert into `JobPosting`. If row didn't exist → status `'new'` + insert `Notification(kind='posting')`. If row existed → bump `lastSeenAt` (do nothing else).
 4. Update watchlist `lastRunAt`, `lastSuccessAt` (on success), or `lastError` (on fail).
 5. Broadcast `Posting` + `Notification` SSE events for everything that changed.
 
@@ -164,28 +165,30 @@ All session-gated; SSE broadcasts on write.
 
 `lib/api-client.ts` gets `api.watchlists.*`, `api.postings.*`, `api.notifications.*`. `hooks/useServerEvents.ts` extended with `'Watchlist'` / `'Posting'` / `'Notification'` channels.
 
-#### MB.5 — Discovery dash
+#### MB.5 — Watchlists + postings UI (inside Applications dash)
 
-New top-level dash (`'discovery'`) registered in `Dashboard.tsx` `BASE_DASHES`, hue `200` (cyan), under the per-device `'app-state'` Zustand persist.
+**Decided 2026-05-15: option (b)** — no new top-level dash. Two new sections appended to `ApplicationsView.tsx` after the Kanban:
 
-Two sections:
-- **Watchlists** — list with last-run timestamp + last-error chip, per-row actions: Pause toggle, Run now, Edit, Delete. "Add watchlist" modal: name + URL + linkPattern + scheduleMinutes.
-- **New postings** — list filtered to `status='new'`, each: company / title / location / `Track` / `Hide` / link to source.
+- **Watchlists** card — list with last-run timestamp + last-error chip, per-row actions: Pause toggle, Run now, Edit, Delete. "Add watchlist" modal: name + URL + linkPattern + companyName + scheduleMinutes.
+- **New postings** card — list filtered to `status='new'`, each: company / title / location / `Track` / `Hide` / link to source. Hides as soon as status leaves `'new'`.
 
-Notifications surface: tiny bell + unread-count in the dash header (or punt to a separate notifications dash). Default: inline in the Discovery dash for Phase 1, full notifications view in a later milestone.
+Notifications surface: inline within the Watchlists card for Phase 1 (recent posting-notifications shown in their own pane). A proper global notification bell is a Phase 3 concern.
 
 #### MB.6 — End-to-end smoke
 
+**Decided 2026-05-15: real URL** (option a). Smoke targets `https://www.rocketlabusa.com/careers/` (listed in story 17). Smoke is intentionally flakier than the others — if Rocket Lab restructures their page, this fails and the linkPattern needs updating. Acceptable trade-off; the user picked it.
+
 `scripts/tests/watchlist-e2e-smoke.ts`:
 1. Forge a NextAuth session.
-2. Start a tiny local HTTP server serving a hermetic HTML fixture (a fake careers page with 3 known links). Avoid pointing at real external URLs — they go stale and break the smoke.
-3. POST a watchlist pointing at the fixture URL with a known `linkPattern`.
-4. Call `POST /api/watchlists/[id]/run` (synchronous trigger of the scheduler job for one watchlist).
-5. Assert: 3 `JobPosting` rows created with `status='new'`, 3 `Notification` rows created.
-6. Re-run the same trigger → no new postings, no new notifications (dedupe verified).
-7. PATCH one posting to `status='tracked'`; verify.
-8. PATCH all notifications `markAllRead: true`; GET unread → 0.
-9. Cleanup: delete posts/watchlist/notifications, tear down session and fixture server.
+2. POST a watchlist with `rootUrl: https://www.rocketlabusa.com/careers/`, a permissive `linkPattern` matching job-detail hrefs, `companyName: 'Rocket Lab'`.
+3. Call `POST /api/watchlists/[id]/run`.
+4. Assert: ≥ 1 `JobPosting` row created with `status='new'`, ≥ 1 `Notification` row created.
+5. Re-run the same trigger → no new postings, no new notifications (dedupe verified — `externalId` collision on second pass).
+6. PATCH one posting to `status='tracked'`; verify it falls out of the `new` feed.
+7. PATCH all notifications `markAllRead: true`; GET `?unread=true` → 0.
+8. Cleanup: delete postings, watchlist, notifications; tear down session.
+
+If Rocket Lab's careers page is unreachable from the test environment (offline, region-blocked, etc.), skip with a clear message; do not fail.
 
 #### MB Phase 1 acceptance
 

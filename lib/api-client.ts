@@ -71,6 +71,21 @@ import {
     EducationPatchSchema,
     ProfileDeleteResponseSchema,
 } from './schemas/profile';
+import {
+    WatchlistPostSchema,
+    WatchlistPatchSchema,
+    WatchlistsListResponseSchema,
+    WatchlistMutationResponseSchema,
+    WatchlistRunResponseSchema,
+    JobPostingPatchSchema,
+    PostingsListResponseSchema,
+    PostingMutationResponseSchema,
+} from './schemas/watchlists';
+import {
+    NotificationPatchSchema,
+    NotificationsListResponseSchema,
+    NotificationPatchResponseSchema,
+} from './schemas/notifications';
 
 // ─── Internals ─────────────────────────────────────────────────────────────
 
@@ -127,6 +142,11 @@ export const queryKeys = {
     savedPapers: (filter?: { topic?: string | null; status?: string | null }) =>
         ['saved-papers', filter ?? {}] as const,
     profile: ['profile'] as const,
+    watchlists: ['watchlists'] as const,
+    postings: (filter?: { status?: string; watchlistId?: string }) =>
+        ['postings', filter ?? {}] as const,
+    notifications: (filter?: { unread?: boolean }) =>
+        ['notifications', filter ?? {}] as const,
 };
 
 // ─── API surface ───────────────────────────────────────────────────────────
@@ -316,5 +336,44 @@ export const api = {
                 SavedPaperDeleteResponseSchema,
                 { method: 'DELETE' }
             ),
+    },
+
+    watchlists: {
+        list: () => jsonFetch('/api/watchlists', WatchlistsListResponseSchema),
+        create: (input: z.infer<typeof WatchlistPostSchema>) =>
+            jsonFetch('/api/watchlists', WatchlistMutationResponseSchema, jsonBody('POST', input)),
+        update: (id: string, input: z.infer<typeof WatchlistPatchSchema>) =>
+            jsonFetch(`/api/watchlists/${encodeURIComponent(id)}`, WatchlistMutationResponseSchema, jsonBody('PATCH', input)),
+        delete: (id: string) =>
+            jsonFetch(`/api/watchlists/${encodeURIComponent(id)}`,
+                z.object({ success: z.literal(true), id: z.string() }),
+                { method: 'DELETE' }),
+        run: (id: string) =>
+            jsonFetch(`/api/watchlists/${encodeURIComponent(id)}/run`, WatchlistRunResponseSchema, { method: 'POST' }),
+    },
+
+    postings: {
+        list: (filter?: { status?: string; watchlistId?: string; limit?: number }) => {
+            const params = new URLSearchParams();
+            if (filter?.status) params.set('status', filter.status);
+            if (filter?.watchlistId) params.set('watchlistId', filter.watchlistId);
+            if (filter?.limit) params.set('limit', String(filter.limit));
+            const qs = params.toString();
+            return jsonFetch(`/api/postings${qs ? '?' + qs : ''}`, PostingsListResponseSchema);
+        },
+        update: (id: string, input: z.infer<typeof JobPostingPatchSchema>) =>
+            jsonFetch(`/api/postings/${encodeURIComponent(id)}`, PostingMutationResponseSchema, jsonBody('PATCH', input)),
+    },
+
+    notifications: {
+        list: (filter?: { unread?: boolean; limit?: number }) => {
+            const params = new URLSearchParams();
+            if (filter?.unread) params.set('unread', 'true');
+            if (filter?.limit) params.set('limit', String(filter.limit));
+            const qs = params.toString();
+            return jsonFetch(`/api/notifications${qs ? '?' + qs : ''}`, NotificationsListResponseSchema);
+        },
+        update: (input: z.infer<typeof NotificationPatchSchema>) =>
+            jsonFetch('/api/notifications', NotificationPatchResponseSchema, jsonBody('PATCH', input)),
     },
 };

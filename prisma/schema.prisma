@@ -96,6 +96,8 @@ model User {
   applications  Application[]
   gcalSyncState GcalSyncState?
   profile       Profile?
+  watchlists    Watchlist[]
+  notifications Notification[]
 }
 
 model VerificationToken {
@@ -274,4 +276,65 @@ model CacheEntry {
   updatedAt DateTime @updatedAt
 
   @@index([expiry])
+}
+
+// MB Phase 1 — job discovery. See docs/implementation.md §MB.1.
+model Watchlist {
+  id              String    @id @default(cuid())
+  userId          String
+  name            String
+  kind            String    // "careers-page" (only value for Phase 1)
+  config          String    // JSON: { rootUrl, linkPattern, companyName, location? }
+  scheduleMinutes Int       @default(30)
+  lastRunAt       DateTime?
+  lastSuccessAt   DateTime?
+  lastError       String?
+  active          Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postings JobPosting[]
+
+  @@index([userId, active])
+}
+
+model JobPosting {
+  id          String    @id @default(cuid())
+  watchlistId String
+  externalId  String    // sha256(company + '|' + title + '|' + sourceUrl)
+  company     String
+  title       String
+  location    String?
+  postedAt    DateTime?
+  snippet     String?
+  sourceUrl   String
+  status      String    // "new" | "tracked" | "hidden" | "closed"
+  firstSeenAt DateTime  @default(now())
+  lastSeenAt  DateTime  @default(now())
+  removedAt   DateTime?
+  raw         String    // JSON of the raw extracted fields, for debugging
+
+  watchlist Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, externalId])
+  @@index([status, lastSeenAt])
+}
+
+model Notification {
+  id          String    @id @default(cuid())
+  userId      String
+  kind        String    // "posting" | "application" | "system"
+  title       String
+  body        String?
+  payload     String    // JSON: { postingId? / applicationId? / ... }
+  channels    String    @default("in_app")
+  createdAt   DateTime  @default(now())
+  readAt      DateTime?
+  dismissedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, readAt])
 }

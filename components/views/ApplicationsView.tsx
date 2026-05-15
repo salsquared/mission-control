@@ -13,6 +13,8 @@ import { api, queryKeys } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
 import { AddApplicationModal } from "../overlays/AddApplicationModal";
 import { ApplicationDetailOverlay } from "../overlays/ApplicationDetailOverlay";
+import { WatchlistsCard } from "../cards/WatchlistsCard";
+import { NewPostingsCard } from "../cards/NewPostingsCard";
 
 interface AppRecord {
     id: string;
@@ -284,6 +286,14 @@ export const ApplicationsView: React.FC = () => {
                     </div>
                 )}
             </Section>
+            {session && (
+                <Section title="Job Discovery" description="Watchlists + new postings — crawled by the scheduler every 10 minutes">
+                    <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <WatchlistsCard />
+                        <NewPostingsCard />
+                    </div>
+                </Section>
+            )}
             <AddApplicationModal
                 open={isAdding}
                 onClose={() => setIsAdding(false)}
