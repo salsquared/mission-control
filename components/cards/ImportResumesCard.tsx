@@ -8,6 +8,7 @@ import { queryKeys } from "@/lib/api-client";
 interface PerFileCounts {
     workRolesAdded: number;
     workRolesMerged: number;
+    workRolesDroppedNoStartDate?: number;
     projectsAdded: number;
     projectsMerged: number;
     educationAdded: number;
@@ -91,6 +92,15 @@ export function ImportResumesCard() {
                 c.bulletsAdded ? `${c.bulletsAdded} bullets` : null,
             ].filter(Boolean).join(", ");
             toastStore.push({ message: `Imported: ${summary || "no new items (everything deduped)"}`, type: "info" });
+            // Surface roles dropped because the LLM couldn't infer a startDate —
+            // otherwise the user wonders why half their resume is missing.
+            const dropped = c.workRolesDroppedNoStartDate ?? 0;
+            if (dropped > 0) {
+                toastStore.push({
+                    message: `${dropped} work role${dropped === 1 ? "" : "s"} skipped — couldn't read a start date. Add manually.`,
+                    type: "warning",
+                });
+            }
             setFiles([]);
         } catch (e) {
             toastStore.push({ message: `Import failed: ${errMessage(e)}`, type: "error" });

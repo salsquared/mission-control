@@ -106,6 +106,8 @@ export interface EducationCreate {
 export interface MergeCounts {
     workRolesAdded: number;
     workRolesMerged: number;
+    /** Work roles dropped because the LLM couldn't infer a startDate (Prisma requires non-null). */
+    workRolesDroppedNoStartDate: number;
     projectsAdded: number;
     projectsMerged: number;
     educationAdded: number;
@@ -200,6 +202,7 @@ function emptyCounts(): MergeCounts {
     return {
         workRolesAdded: 0,
         workRolesMerged: 0,
+        workRolesDroppedNoStartDate: 0,
         projectsAdded: 0,
         projectsMerged: 0,
         educationAdded: 0,
@@ -214,6 +217,7 @@ function addCounts(a: MergeCounts, b: MergeCounts): MergeCounts {
     return {
         workRolesAdded: a.workRolesAdded + b.workRolesAdded,
         workRolesMerged: a.workRolesMerged + b.workRolesMerged,
+        workRolesDroppedNoStartDate: a.workRolesDroppedNoStartDate + b.workRolesDroppedNoStartDate,
         projectsAdded: a.projectsAdded + b.projectsAdded,
         projectsMerged: a.projectsMerged + b.projectsMerged,
         educationAdded: a.educationAdded + b.educationAdded,
@@ -379,7 +383,13 @@ function mergeOneFile(acc: Accumulator, existing: ExistingProfileForMerge, incom
             counts.bulletsDeduped += merged.deduped;
         } else {
             const sd = parseDate(wr.startDate);
-            if (!sd) continue; // schema requires startDate for new work roles
+            if (!sd) {
+                // Prisma's WorkRole.startDate is non-null; we can't create the row.
+                // Surface this so the user knows to add the role manually instead
+                // of wondering why their resume is half-imported.
+                counts.workRolesDroppedNoStartDate++;
+                continue;
+            }
             acc.workRolesToCreate.push({
                 company: wr.company,
                 title: wr.title,

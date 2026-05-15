@@ -64,14 +64,21 @@ async function fetchVisibleText(url: string): Promise<string> {
 export async function parsePosting(input: PostingInput): Promise<ParsedPosting> {
     let rawText = "";
     let sourceUrl: string | null = null;
+    const hasUrl = !!input.url && input.url.trim().length > 0;
+    const hasText = !!input.text && input.text.trim().length > 0;
 
-    if (input.url && input.url.trim().length > 0) {
-        sourceUrl = input.url.trim();
-        rawText = await fetchVisibleText(sourceUrl);
+    // When both are supplied, the pasted text wins — it's almost always more
+    // accurate than what we can scrape, and the user clearly wanted to override.
+    // Skip the URL fetch entirely in that case (saves a slow round-trip and
+    // dodges SSRF-guard rejections from URLs the user only included for
+    // archival purposes).
+    if (hasUrl) sourceUrl = input.url!.trim();
+    if (hasText) {
+        rawText = clean(input.text!).slice(0, MAX_INPUT_CHARS);
+    } else if (hasUrl) {
+        rawText = await fetchVisibleText(sourceUrl!);
     }
-    if (input.text && input.text.trim().length > 0) {
-        rawText = clean(input.text).slice(0, MAX_INPUT_CHARS);
-    }
+
     if (rawText.length < 30) {
         throw new Error("Posting input is empty or too short — provide a URL or paste the listing text.");
     }

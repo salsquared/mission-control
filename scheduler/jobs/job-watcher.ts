@@ -174,16 +174,23 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             throw e;
         }
         if (willNotifyForNew) {
-            await prisma.notification.create({
-                data: {
-                    userId: watchlist.userId,
-                    kind: "posting",
-                    title: `${raw.company} — ${raw.title}`,
-                    body: raw.location ?? null,
-                    payload: JSON.stringify({ postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl }),
-                    channels: "in_app",
-                },
-            });
+            // Best-effort: a notification failure (DB blip, length constraint,
+            // etc.) shouldn't blow up the whole watchlist run. The posting row
+            // is the load-bearing artifact; the notification is a nudge.
+            try {
+                await prisma.notification.create({
+                    data: {
+                        userId: watchlist.userId,
+                        kind: "posting",
+                        title: `${raw.company} — ${raw.title}`,
+                        body: raw.location ?? null,
+                        payload: JSON.stringify({ postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl }),
+                        channels: "in_app",
+                    },
+                });
+            } catch (e) {
+                console.warn(`[job-watcher] notification create failed for posting ${created.id}:`, e);
+            }
         }
         newPostings++;
     }

@@ -38,7 +38,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     }
 
     try {
-        const existing = await prisma.application.findUnique({ where: { postingId: posting.id } });
+        // Defensive: include userId so a future cross-user posting share can't
+        // leak somebody else's Application via the unique-key shortcut. Today
+        // ownership is enforced transitively via watchlist.user above.
+        const existing = await prisma.application.findFirst({ where: { postingId: posting.id, userId } });
         if (existing) {
             return NextResponse.json({
                 application: existing,

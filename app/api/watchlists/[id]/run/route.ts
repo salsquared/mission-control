@@ -30,6 +30,6 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         console.error(`[watchlists/${id}/run] error:`, e);
-        return NextResponse.json({ watchlistId: id, newPostings: 0, seenAgain: 0, error: msg }, { status: 500 });
+        return NextResponse.json({ watchlistId: id, newPostings: 0, seenAgain: 0, closed: 0, error: msg }, { status: 500 });
     }
 }

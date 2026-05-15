@@ -62,13 +62,22 @@ const SYSTEM_PROMPT = [
     "8. Output strictly the JSON shape requested — no commentary, no markdown fences.",
 ].join("\n");
 
+// Largest chunk of resume text we'll send to Gemini in one call. Real resumes
+// max out around 10-20k chars; OCR'd PDFs occasionally balloon to 100k+ with
+// boilerplate. Cap protects free-tier token budget and avoids 400s on the
+// 8MB-PDF case the original extractor accepts.
+const MAX_IMPORT_TEXT_CHARS = 60_000;
+
 function buildUserPrompt(text: string, filename: string): string {
+    const truncated = text.length > MAX_IMPORT_TEXT_CHARS
+        ? text.slice(0, MAX_IMPORT_TEXT_CHARS) + "\n\n[…truncated — original was longer]"
+        : text;
     return [
         `Filename: ${filename}`,
         "",
         "Resume text (extracted from the source file — may have minor OCR-ish artifacts):",
         "---",
-        text,
+        truncated,
         "---",
         "",
         "Return JSON with this exact shape:",

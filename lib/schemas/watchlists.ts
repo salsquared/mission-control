@@ -16,7 +16,10 @@ export const WatchlistKindSchema = z.enum(WATCHLIST_KINDS);
 export const CareersPageConfigSchema = z.object({
     kind: z.literal("careers-page"),
     rootUrl: z.string().url(),
-    linkPattern: z.string().min(1), // regex source
+    // regex source; bounded length is a cheap defense against ReDoS — short
+    // patterns can still be catastrophic but the realistic worst case is much
+    // smaller than what arbitrary-length input allows.
+    linkPattern: z.string().min(1).max(200),
     companyName: z.string().min(1),
     location: z.string().optional(),
 });
