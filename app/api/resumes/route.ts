@@ -7,6 +7,7 @@ import { selectBullets, flattenSelections } from "@/lib/resumes/select";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
 import { renderResumePDF } from "@/lib/resumes/render-pdf";
+import { renderResumeDOCX } from "@/lib/resumes/render-docx";
 import { AIError } from "@/lib/ai/gemini";
 import type { ProfileWire } from "@/lib/schemas/profile";
 
@@ -25,8 +26,14 @@ const ResumePostBodySchema = z.object({
     posting: PostingInputSchema,
     options: z.object({
         template: z.literal("ats-plain").optional(),
+        format: z.enum(["pdf", "docx"]).optional(),
     }).optional(),
 });
+
+const FORMAT_CONTENT_TYPES = {
+    pdf: "application/pdf",
+    docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+} as const;
 
 function userIdFromGuard(guard: { session: { user?: unknown } }): string | null {
     const user = guard.session.user as { id?: string } | undefined;
@@ -82,24 +89,28 @@ export async function POST(req: NextRequest) {
         stage = "rewrite";
         const rewrites = await rewriteBullets(flat, posting);
 
-        // 5. Render PDF
+        // 5. Render
         stage = "render";
+        const format = parsed.data.options?.format ?? "pdf";
         const props = composeResumeProps(profile, selection, rewrites);
-        const pdf = await renderResumePDF(props);
+        const bytes = format === "docx"
+            ? await renderResumeDOCX(props)
+            : await renderResumePDF(props);
 
         const companySlug = sanitizeFilenamePart(posting.company ?? "resume");
         const dateSlug = new Date().toISOString().slice(0, 10);
-        const filename = `resume-${companySlug || "untitled"}-${dateSlug}.pdf`;
+        const filename = `resume-${companySlug || "untitled"}-${dateSlug}.${format}`;
 
-        return new NextResponse(new Uint8Array(pdf), {
+        return new NextResponse(new Uint8Array(bytes), {
             status: 200,
             headers: {
-                "Content-Type": "application/pdf",
-                "Content-Length": String(pdf.length),
+                "Content-Type": FORMAT_CONTENT_TYPES[format],
+                "Content-Length": String(bytes.length),
                 "Content-Disposition": `attachment; filename="${filename}"`,
                 "Cache-Control": "no-store",
                 "X-Resume-Title": posting.title ?? "",
                 "X-Resume-Company": posting.company ?? "",
+                "X-Resume-Format": format,
             },
         });
     } catch (e) {

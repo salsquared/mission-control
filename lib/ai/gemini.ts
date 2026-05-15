@@ -1,7 +1,11 @@
 import { GoogleGenAI } from "@google/genai";
 import type { z } from "zod";
 
-const DEFAULT_MODEL = "gemini-2.5-flash";
+// `gemini-flash-latest` is Google's alias that auto-tracks the latest stable
+// Flash model — Gemini 2.5 Flash today, Gemini 3.x Flash whenever Google promotes
+// it. Pinning to the alias is the right default for resume-tier reasoning;
+// override with `model: '<exact-name>'` if you need a specific version.
+const DEFAULT_MODEL = "gemini-flash-latest";
 
 export class AIError extends Error {
     constructor(
