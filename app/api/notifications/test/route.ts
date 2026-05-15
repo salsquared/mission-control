@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
-import { dispatchNotificationEmail } from "@/lib/email/send";
+import { dispatchNotification } from "@/lib/notifications/dispatch";
 
 export const runtime = "nodejs";
 export const maxDuration = 30;
@@ -28,18 +28,19 @@ export async function POST(_req: NextRequest) {
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
 
     try {
-        const created = await prisma.notification.create({
-            data: {
-                userId,
-                kind: "system",
-                title: "mission-control email test",
-                body: "If you're reading this in your inbox, the Gmail OAuth send pipeline is wired correctly. Generated at " + new Date().toISOString() + ".",
-                payload: JSON.stringify({ test: true, sentAt: new Date().toISOString() }),
-                channels: "in_app,email",
-            },
+        // The test endpoint forces email by overriding channels — it doesn't
+        // matter what tier we pick for the row, the email side-channel kicks
+        // in because "email" is in `channels`. Using tier='standard' for the
+        // row's UI prominence (between low-volume posting and critical app).
+        const created = await dispatchNotification({
+            userId,
+            tier: "standard",
+            kind: "system",
+            title: "mission-control email test",
+            body: "If you're reading this in your inbox, the Gmail OAuth send pipeline is wired correctly. Generated at " + new Date().toISOString() + ".",
+            payload: { test: true, sentAt: new Date().toISOString() },
+            channels: "in_app,email",
         });
-
-        await dispatchNotificationEmail(created.id);
 
         // Re-fetch to surface emailSentAt / emailError from the dispatch.
         const refreshed = await prisma.notification.findUnique({ where: { id: created.id } });

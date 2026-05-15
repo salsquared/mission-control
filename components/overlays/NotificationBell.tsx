@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Bell, BellRing, X, ExternalLink, Loader2, CheckCheck } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -48,7 +48,29 @@ export const NotificationBell: React.FC = () => {
         queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
     });
 
-    const notifications = data?.notifications ?? [];
+    // Pin critical-tier unread notifications to the top regardless of recency
+    // — a posting that landed 5 minutes ago shouldn't bury an offer that came
+    // in this morning. Tier ordering: critical > standard > low. Within tier,
+    // unread first, then createdAt desc.
+    const notifications = useMemo(() => {
+        const rows = data?.notifications ?? [];
+        const tierRank: Record<string, number> = { critical: 0, standard: 1, low: 2 };
+        return [...rows].sort((a, b) => {
+            const aUnread = a.readAt ? 1 : 0;
+            const bUnread = b.readAt ? 1 : 0;
+            // critical-unread always wins
+            const aCriticalUnread = a.tier === "critical" && !a.readAt ? 0 : 1;
+            const bCriticalUnread = b.tier === "critical" && !b.readAt ? 0 : 1;
+            if (aCriticalUnread !== bCriticalUnread) return aCriticalUnread - bCriticalUnread;
+            // then by tier
+            const tierDiff = (tierRank[a.tier] ?? 99) - (tierRank[b.tier] ?? 99);
+            if (tierDiff !== 0) return tierDiff;
+            // then unread before read
+            if (aUnread !== bUnread) return aUnread - bUnread;
+            // then by recency
+            return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+    }, [data]);
     const unread = data?.unreadCount ?? 0;
     const hasUnread = unread > 0;
 
@@ -178,6 +200,7 @@ export const NotificationBell: React.FC = () => {
                                             const dotColor = KIND_DOT_COLOR[n.kind] ?? "bg-white/40";
                                             const payload = (n.payload ?? {}) as { sourceUrl?: string; applicationId?: string };
                                             const sourceUrl = typeof payload.sourceUrl === "string" ? payload.sourceUrl : null;
+                                            const isCritical = n.tier === "critical";
                                             return (
                                                 <li
                                                     key={n.id}
@@ -185,6 +208,9 @@ export const NotificationBell: React.FC = () => {
                                                     className={[
                                                         "group relative px-3 py-2.5 transition-colors",
                                                         isUnread ? "bg-white/[0.03] hover:bg-white/[0.06] cursor-pointer" : "hover:bg-white/[0.03]",
+                                                        // Red left rail for critical-unread; muted red for critical-already-read so the user still
+                                                        // recognizes which thread mattered.
+                                                        isCritical && isUnread ? "border-l-2 border-rose-500" : isCritical ? "border-l-2 border-rose-500/30" : "",
                                                     ].join(" ")}
                                                 >
                                                     <div className="flex items-start gap-2">

@@ -334,6 +334,9 @@ model Notification {
   id          String    @id @default(cuid())
   userId      String
   kind        String    // "posting" | "application" | "system"
+  // tier: "critical" | "standard" | "low". Drives default channels and UI
+  // prominence. Central dispatcher (lib/notifications/dispatch.ts) sets this.
+  tier        String    @default("low")
   title       String
   body        String?
   payload     String    // JSON: { postingId? / applicationId? / ... }

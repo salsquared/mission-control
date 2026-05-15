@@ -2,11 +2,17 @@ import { z } from "zod";
 
 export const NOTIFICATION_KINDS = ["posting", "application", "system"] as const;
 export const NotificationKindSchema = z.enum(NOTIFICATION_KINDS);
+export type NotificationKind = z.infer<typeof NotificationKindSchema>;
+
+export const NOTIFICATION_TIERS = ["critical", "standard", "low"] as const;
+export const NotificationTierSchema = z.enum(NOTIFICATION_TIERS);
+export type NotificationTier = z.infer<typeof NotificationTierSchema>;
 
 export const NotificationSchema = z.object({
     id: z.string(),
     userId: z.string(),
     kind: NotificationKindSchema,
+    tier: NotificationTierSchema,
     title: z.string(),
     body: z.string().nullable(),
     payload: z.record(z.string(), z.unknown()),

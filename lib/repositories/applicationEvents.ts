@@ -61,39 +61,26 @@ export async function maybeNotifyForApplicationEvent(
     const title = companyHint
         ? `${companyHint} — ${event.title}`
         : event.title;
-    // OQ1 resolution (2026-05-15): application-side events get BOTH in-app and
-    // email. These are the high-signal events (interview scheduled, offer,
-    // rejection, assessment requested) that warrant pushing past the dashboard
-    // into the user's inbox. Posting / system notifications stay in-app only —
-    // emailing 400 Anthropic postings on first crawl would be terrible UX.
-    let created: { id: string } | null = null;
+    // Critical-tier per lib/notifications/dispatch.ts: in-app + email.
+    // These are the high-signal events (interview scheduled, offer, rejection,
+    // assessment requested) that warrant pushing past the dashboard into the
+    // user's inbox.
     try {
-        created = await prisma.notification.create({
-            data: {
-                userId,
-                kind: "application",
-                title,
-                body,
-                payload: JSON.stringify({
-                    applicationId: event.applicationId,
-                    eventId: event.id,
-                    eventKind: event.kind,
-                }),
-                channels: "in_app,email",
+        const { dispatchNotification } = await import("@/lib/notifications/dispatch");
+        await dispatchNotification({
+            userId,
+            tier: "critical",
+            kind: "application",
+            title,
+            body,
+            payload: {
+                applicationId: event.applicationId,
+                eventId: event.id,
+                eventKind: event.kind,
             },
-            select: { id: true },
         });
     } catch (e) {
-        console.warn(`[applicationEvents] notification create failed for event ${event.id}:`, e);
-        return;
-    }
-    // Dispatch email side-channel. Best-effort: the helper writes its own status
-    // onto the row (emailSentAt / emailError). We await rather than fire-and-
-    // forget so the caller (Gmail webhook / event POST) gets a single completion
-    // signal; personal-scale traffic makes the few-hundred-ms Gmail latency fine.
-    if (created) {
-        const { dispatchNotificationEmail } = await import("@/lib/email/send");
-        await dispatchNotificationEmail(created.id);
+        console.warn(`[applicationEvents] dispatchNotification failed for event ${event.id}:`, e);
     }
 }
 

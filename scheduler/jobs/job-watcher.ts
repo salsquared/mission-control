@@ -22,6 +22,7 @@ import { fetchLever } from "@/lib/fetchers/lever-fetcher";
 import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
 import { WatchlistConfigSchema } from "@/lib/schemas/watchlists";
 import { broadcastEvent } from "@/lib/events";
+import { dispatchNotification } from "@/lib/notifications/dispatch";
 
 export interface RunResult {
     watchlistId: string;
@@ -174,22 +175,20 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             throw e;
         }
         if (willNotifyForNew) {
-            // Best-effort: a notification failure (DB blip, length constraint,
-            // etc.) shouldn't blow up the whole watchlist run. The posting row
-            // is the load-bearing artifact; the notification is a nudge.
+            // Low-tier — in-app only. Posting notifications are high-volume by
+            // nature; email-blasting them would be a terrible UX. The user
+            // sees them in the bell + the Discovery feed.
             try {
-                await prisma.notification.create({
-                    data: {
-                        userId: watchlist.userId,
-                        kind: "posting",
-                        title: `${raw.company} — ${raw.title}`,
-                        body: raw.location ?? null,
-                        payload: JSON.stringify({ postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl }),
-                        channels: "in_app",
-                    },
+                await dispatchNotification({
+                    userId: watchlist.userId,
+                    tier: "low",
+                    kind: "posting",
+                    title: `${raw.company} — ${raw.title}`,
+                    body: raw.location ?? null,
+                    payload: { postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl },
                 });
             } catch (e) {
-                console.warn(`[job-watcher] notification create failed for posting ${created.id}:`, e);
+                console.warn(`[job-watcher] dispatchNotification failed for posting ${created.id}:`, e);
             }
         }
         newPostings++;
@@ -217,16 +216,16 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         });
         closed = closeResult.count;
         if (closed > 0) {
-            await prisma.notification.create({
-                data: {
-                    userId: watchlist.userId,
-                    kind: "system",
-                    title: `${watchlist.name} — ${closed} ${closed === 1 ? "posting" : "postings"} closed`,
-                    body: "Removed from the source feed for more than 6 hours.",
-                    payload: JSON.stringify({ watchlistId, closed }),
-                    channels: "in_app",
-                },
-            });
+            // Standard tier — important enough to flag in the bell, but no
+            // email blast. The user will see it next time they open MC.
+            await dispatchNotification({
+                userId: watchlist.userId,
+                tier: "standard",
+                kind: "system",
+                title: `${watchlist.name} — ${closed} ${closed === 1 ? "posting" : "postings"} closed`,
+                body: "Removed from the source feed for more than 6 hours.",
+                payload: { watchlistId, closed },
+            }).catch(e => console.warn(`[job-watcher] closure-summary dispatch failed:`, e));
         }
     }
 
@@ -237,17 +236,16 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
 
     // First-run digest: when we suppressed per-posting notifications, drop a
     // single summary one so the user still sees the watchlist did something.
+    // Standard tier — single high-value system row, in-app only.
     if (isFirstRun && !willNotifyForNew && newPostings > 0) {
-        await prisma.notification.create({
-            data: {
-                userId: watchlist.userId,
-                kind: "system",
-                title: `${watchlist.name} — ${newPostings} postings found on first crawl`,
-                body: `Open the watchlist to browse them — per-posting notifications kick in for new postings going forward.`,
-                payload: JSON.stringify({ watchlistId, newPostings }),
-                channels: "in_app",
-            },
-        });
+        await dispatchNotification({
+            userId: watchlist.userId,
+            tier: "standard",
+            kind: "system",
+            title: `${watchlist.name} — ${newPostings} postings found on first crawl`,
+            body: `Open the watchlist to browse them — per-posting notifications kick in for new postings going forward.`,
+            payload: { watchlistId, newPostings },
+        }).catch(e => console.warn(`[job-watcher] first-run digest dispatch failed:`, e));
     }
 
     if (broadcast) {
