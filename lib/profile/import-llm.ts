@@ -1,0 +1,91 @@
+import { z } from "zod";
+import { chatJSON } from "@/lib/ai/gemini";
+
+const HeaderSchema = z.object({
+    headline: z.string().nullable(),
+    summary: z.string().nullable(),
+    location: z.string().nullable(),
+    email: z.string().nullable(),
+    phone: z.string().nullable(),
+    links: z.array(z.object({ label: z.string(), url: z.string() })).nullable(),
+});
+
+const WorkRoleExtractSchema = z.object({
+    company: z.string(),
+    title: z.string(),
+    location: z.string().nullable(),
+    startDate: z.string().nullable(),
+    endDate: z.string().nullable(),
+    bullets: z.array(z.string()),
+});
+
+const ProjectExtractSchema = z.object({
+    name: z.string(),
+    description: z.string().nullable(),
+    repoUrl: z.string().nullable(),
+    liveUrl: z.string().nullable(),
+    bullets: z.array(z.string()),
+});
+
+const EducationExtractSchema = z.object({
+    institution: z.string(),
+    degree: z.string().nullable(),
+    field: z.string().nullable(),
+    startDate: z.string().nullable(),
+    endDate: z.string().nullable(),
+    bullets: z.array(z.string()),
+});
+
+const ExtractedProfileSchema = z.object({
+    header: HeaderSchema,
+    workRoles: z.array(WorkRoleExtractSchema),
+    projects: z.array(ProjectExtractSchema),
+    education: z.array(EducationExtractSchema),
+});
+
+export type ExtractedProfile = z.infer<typeof ExtractedProfileSchema>;
+export type ExtractedWorkRole = z.infer<typeof WorkRoleExtractSchema>;
+export type ExtractedProject = z.infer<typeof ProjectExtractSchema>;
+export type ExtractedEducation = z.infer<typeof EducationExtractSchema>;
+
+const SYSTEM_PROMPT = [
+    "You extract structured profile data from resume text.",
+    "",
+    "Rules:",
+    "1. NEVER invent information. If a field isn't clearly stated in the source, return null (or an empty array for bullets).",
+    "2. Preserve original bullet wording. Do not summarize, expand, or rephrase.",
+    "3. Dates: return ISO 8601 strings (e.g. '2024-01-15T00:00:00.000Z'). When only a month + year are given (e.g. 'May 2024'), use the first of that month. When only a year is given, use Jan 1 of that year. If the date is 'Present' / 'Current' / ongoing, return null for endDate.",
+    "4. A 'project' is something the candidate built and named — open-source repos, side projects, capstones. Course assignments without a name are not projects. If unsure, prefer NOT classifying as a project.",
+    "5. Distinguish work roles from projects: paid employment / formal internships / fellowships are work roles. Skip 'volunteer activities' unless they read like a job.",
+    "6. Education entries are degree programs. Bootcamps, certificate programs, and academic awards each count as separate education entries.",
+    "7. Links: extract every distinct URL with a sensible label (e.g. {label: 'GitHub', url: 'https://github.com/foo'}). If the resume uses bare URLs, label them by host or section.",
+    "8. Output strictly the JSON shape requested — no commentary, no markdown fences.",
+].join("\n");
+
+function buildUserPrompt(text: string, filename: string): string {
+    return [
+        `Filename: ${filename}`,
+        "",
+        "Resume text (extracted from the source file — may have minor OCR-ish artifacts):",
+        "---",
+        text,
+        "---",
+        "",
+        "Return JSON with this exact shape:",
+        "{",
+        "  \"header\": { \"headline\": string|null, \"summary\": string|null, \"location\": string|null, \"email\": string|null, \"phone\": string|null, \"links\": Array<{label,url}>|null },",
+        "  \"workRoles\": Array<{ \"company\": string, \"title\": string, \"location\": string|null, \"startDate\": string|null, \"endDate\": string|null, \"bullets\": string[] }>,",
+        "  \"projects\": Array<{ \"name\": string, \"description\": string|null, \"repoUrl\": string|null, \"liveUrl\": string|null, \"bullets\": string[] }>,",
+        "  \"education\": Array<{ \"institution\": string, \"degree\": string|null, \"field\": string|null, \"startDate\": string|null, \"endDate\": string|null, \"bullets\": string[] }>",
+        "}",
+    ].join("\n");
+}
+
+export async function extractProfileFromText(text: string, filename: string): Promise<ExtractedProfile> {
+    return chatJSON({
+        system: SYSTEM_PROMPT,
+        user: buildUserPrompt(text, filename),
+        schema: ExtractedProfileSchema,
+        temperature: 0.1,
+    });
+}

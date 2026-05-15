@@ -17,7 +17,7 @@ const nextConfig: NextConfig = {
   // pulled in transitively via undici) and fails the build. These are loaded
   // via Node's runtime require instead. `jose` was the most recent addition
   // (Phase A1 OIDC); `googleapis` was already pulling undici in.
-  serverExternalPackages: ['jose', 'googleapis', 'googleapis-common'],
+  serverExternalPackages: ['jose', 'googleapis', 'googleapis-common', 'pdf-parse', 'mammoth', 'puppeteer-core'],
   webpack: (config, { dev, isServer, nextRuntime }) => {
     if (dev && !isServer) {
       let ignored = [];

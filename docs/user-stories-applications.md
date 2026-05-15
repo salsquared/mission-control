@@ -52,6 +52,7 @@ Working list. Priority emoji matches `docs/todo.md` (🔴 = must-have for next s
 
 29. 🔴 As a user, I want a structured profile of my work history (roles, companies, dates, responsibilities, skills, accomplishments with metrics) stored once and reused everywhere — not retyped per resume.
 30. 🔴 As a user, I want to import my profile from an existing resume (PDF / DOCX / LinkedIn export) so I don't bootstrap it by hand.
+30a. 🔴 As a user, I want my profile to act as a master repository of resume material I can tailor from — not a single "current" resume. I want to upload one resume or many (over time, across roles), and have the LLM recognize duplicate items (same role, same bullet, near-identical wording across uploads) and merge them with what I've already captured, while adding any genuinely new items. Over months of applications this should *accumulate* into a richer pool, never overwrite it, so any future tailored resume can pull the strongest evidence from across my whole history.
 31. 🟡 As a user, I want to edit any history entry (add a bullet, fix a date, retire a role) and have the change flow into every future generated resume.
 32. 🟡 As a user, I want to tag bullets and accomplishments with skills/keywords (e.g., "Go", "distributed systems", "leadership") so I can filter and surface the right ones per role.
 33. 🔵 As a user, I want versioned snapshots of my profile so I can see how my history has been described over time and roll back unintended edits.
@@ -225,7 +226,16 @@ Ships a structured profile model and a way to import an existing resume into it.
 - **M7.1 — Schema.** Add `Profile`, `WorkRole`, `Project`, `Education` to `prisma/schema.prisma`. `WorkRole.bullets` / `Project.bullets` / `Education.bullets` are JSON columns shaped `[{id, text, tags[], locked, excluded}]`. `Project.metrics` JSON column reserved for §9 GitHub job. Migration name `add_profile_spine`. Run against `dev.db`; run separately against `prod.db`.
 - **M7.2 — Read/write API.** `app/api/profile/route.ts` (`GET` upserts an empty profile on first call; `PATCH` for header fields). Child routes `app/api/profile/work-roles/route.ts` + `[id]/route.ts`, mirrored for `projects` and `education`. Bullet array writes go through helpers in `lib/profile/bullets.ts`. All routes scope by `userId` from `getServerSession`. No `withCache` — these are user-write paths.
 - **M7.3 — `ProfileView` dash.** New dash registered in `BASE_DASHES`, default title + hue in the store, `components/views/ProfileView.tsx`. Sections: Header card (inline-edit identity), Work history (stack of `WorkRoleCard`s with drag-reorder + add-role), Projects (same shape), Education (same shape). Bullets render as `BulletRow`s with lock/exclude toggles. Tag chips read-only this milestone.
-- **M7.4 — Import.** `POST /api/profile/import` accepts PDF (`pdf-parse`), DOCX (`mammoth`), LinkedIn export ZIP (unzip → `Positions.csv` / `Education.csv` / `Projects.csv`), or pasted text JSON. Extract → Claude with structured-output prompt → single Prisma transaction that upserts Profile and replaces children. UI is a modal from the ProfileView header with three tabs, drag-drop, and a destructive-overwrite confirmation.
+- **M7.4 — Import (merge, not overwrite — per story 30a).** `POST /api/profile/import` accepts PDF (`pdf-parse`), DOCX (`mammoth`), LinkedIn export ZIP (unzip → `Positions.csv` / `Education.csv` / `Projects.csv`), or pasted text JSON. Accepts **one or many** files in a single upload. Pipeline:
+  1. Extract raw text per file.
+  2. LLM structured-output pass per file → `{workRoles[], projects[], education[]}` candidate tree.
+  3. **Dedupe + merge** against existing profile:
+     - Work role match key: `(company, title)` with a date-overlap tiebreaker. On match, merge bullet arrays by LLM-judged semantic similarity (drop near-duplicate wording, keep the strongest phrasing); on no match, create a new role.
+     - Project match key: `name` (case-insensitive) with `repoUrl` tiebreaker.
+     - Education match key: `(institution, degree, field)`.
+     - Bullet match: an LLM "are these two bullets the same accomplishment?" gate keyed on stable bullet ids, run only against bullets in the same parent entity.
+  4. Single Prisma transaction writes the merged result.
+  UI is a modal from the ProfileView header: drag-drop one or many files, a preview pane showing per-file "new vs merged vs duplicate" counts, and an explicit "Append to repository" CTA (no destructive overwrite — the master-repository framing in story 30a forbids it). A "Reset profile" button stays available as a separate path with its own confirmation.
 - **M7.5 — Wiring.** `User.profile` relation; TanStack query keys `['profile']` etc.; invalidate the right keys per mutation; let `ProfileView` own its fetching (no preload from `Dashboard`).
 
 Deferred to M7-followup (🟡): tag editing UI on bullets (story 32 — `tags[]` is already in the shape), inline tag autocomplete, profile snapshots/versioning (story 33; `ProfileSnapshot(userId, takenAt, payloadJson)`, button-press-only).
