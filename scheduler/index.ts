@@ -8,6 +8,7 @@
 import { runCachePrune } from './jobs/cache-prune';
 import { runDueWatchlists } from './jobs/job-watcher';
 import { runGithubMetrics } from './jobs/github-metrics';
+import { runStaleApplicationNudges } from './jobs/stale-applications';
 
 interface IntervalJob {
     name: string;
@@ -43,6 +44,16 @@ const JOBS: IntervalJob[] = [
             const r = await runGithubMetrics();
             if (r.processed > 0) {
                 console.info(`[github-metrics] processed ${r.processed} — ${r.succeeded} succeeded, ${r.failed} failed, ${r.skippedRecent} skipped (recent)`);
+            }
+        },
+    },
+    {
+        name: 'stale-applications',
+        intervalMs: 24 * 60 * 60 * 1000, // daily — nudge dedup is on the helper side
+        run: async () => {
+            const r = await runStaleApplicationNudges();
+            if (r.processed > 0) {
+                console.info(`[stale-applications] processed ${r.processed} stale apps — ${r.nudged} nudged, ${r.skippedCooldown} cooled-down`);
             }
         },
     },

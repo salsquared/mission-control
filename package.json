@@ -9,7 +9,12 @@
     "lint": "eslint",
     "migrate:prod": "DATABASE_URL=file:./prod.db npx prisma migrate deploy",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:hermetic": "./scripts/pre-push.sh",
+    "postinstall": "simple-git-hooks"
+  },
+  "simple-git-hooks": {
+    "pre-push": "./scripts/pre-push.sh"
   },
   "dependencies": {
     "@ai-sdk/google": "^3.0.1",
@@ -74,6 +79,7 @@
     "eslint": "^9",
     "eslint-config-next": "16.1.1",
     "prisma": "^6.19.2",
+    "simple-git-hooks": "^2.13.1",
     "tailwindcss": "^4",
     "tailwindcss-animate": "^1.0.7",
     "tsx": "^4.21.0",
