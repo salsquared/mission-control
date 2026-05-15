@@ -11,17 +11,19 @@
 
 ## Last session
 
-- **Date:** 2026-05-14
-- **Branch:** `main` (uncommitted Profile dash UI in working tree, not yet committed)
-- **Last commit on main:** `b1f7513 feat(profile): add bullets management for work roles, projects, and education`
+- **Date:** 2026-05-15
+- **Branch:** `main`. M8 Phase 1 implementation complete; **awaiting `GEMINI_API_KEY` from the user** to verify the happy path end-to-end.
+- **Last commits on main:**
+  - `e41b6c0 test(profile): add headless API + SSE smoke harness`
+  - `0367263 feat(profile): implement work roles, projects, and education management with bullet functionality`
 
 ## Umbrella goal
 
 **Finish `docs/user-stories-applications.md` so the user can apply to jobs and internships ASAP.** That doc is the canonical roadmap — three independent tracks (Track A: pipeline UX; Track B: job discovery + notifications; Track C: profile + resume generation + GitHub). Don't re-derive the plan here; consult that file for milestone definitions (MA, MB, M7, M8, M9).
 
 **Top-level priority order** (chosen for "apply ASAP"):
-1. **M7 — Profile spine** (Track C). 95% done; lint-blocked. *In progress.*
-2. **M8 — Tailored resume generation** (Track C). The actual feature that produces sendable resumes. Detailed plan to be written once M7 ships.
+1. ✅ **M7 — Profile spine** (Track C). Shipped 2026-05-14 in `0367263` + `e41b6c0`.
+2. **M8 — Tailored resume generation** (Track C). *Current focus.* Detailed plan in `docs/user-stories-applications.md` §M8. Phase 1 produces the first sendable PDF.
 3. **MA — Pipeline writes + drill-in** (Track A). So applications the user *sends* get tracked end-to-end (manual add, status drag, timeline, notes).
 4. **MB — Watchlists + notifications** (Track B). Hunts for new postings. Lower urgency than M8 — the user can hand-source openings; what they can't easily do is hand-tailor a resume per posting.
 
@@ -29,45 +31,39 @@ Out of scope until top-of-stack ships: AI Companion prompt tuning, visual polish
 
 ## Critical path — current
 
-**M7 finish → commit → M8 design → M8 build → first generated resume → user applies.**
-
-Everything else (MA, MB, M9, follow-ups) is parallelizable behind this.
+**Happy-path verify → first generated resume → user applies.** Phase 2 archival, MA, MB, M7.4 import, M9 are all parallelizable behind this.
 
 ## Immediate next actions (in order)
 
-1. ~~**Fix lint blockers.**~~ ✅ Done 2026-05-14. Lint is green for all profile-related files (`ProfileView.tsx`, `app/api/profile/route.ts`, plus the three child routes `work-roles/route.ts` / `projects/route.ts` / `education/route.ts` — the audit missed 9 `catch (e: any)` errors in those, all fixed). Wire-type aliases now consumed in `ProfileView.tsx`.
-2. ~~**Sign into dev mode + run repo smoke test.**~~ ✅ Done 2026-05-14. **19/19 passed** against `prisma/dev.db` (user `salsalcedo4321@gmail.com`). Covers `findOrCreateProfile` idempotency, header PATCH, full WorkRole/Project/Education CRUD, cross-user ownership, position assignment, bullet normalization, JSON round-trip. Does **not** cover API routes, SSE broadcasts, or concurrency.
-    - **Gotcha discovered:** Prisma resolves a relative `DATABASE_URL` from the **schema file's directory** (`prisma/`), not the project root. The correct command is `DATABASE_URL="file:./dev.db" npx tsx scripts/tests/profile-repo-smoke.ts`. The previously-documented `file:./prisma/dev.db` resolves to `prisma/prisma/dev.db` and silently creates an empty DB.
-3. ~~**Headless API + SSE smoke.**~~ ✅ Done 2026-05-14. New script `scripts/tests/profile-api-smoke.ts` forges a NextAuth db session against the dev user, exercises the full HTTP surface, and tears the session row down. **17/17 passed:** GET hydration, PATCH header round-trip, POST/PATCH/DELETE on work-roles/projects/education, bullets normalized + `locked` preserved, 400 on bad payload, 404 on unknown id, final GET shows nothing leaked. SSE listener on `/api/events` captured **9 `Profile` broadcasts** matching every successful write (6 upserts + 3 deletes; the 400/404 correctly did not broadcast).
-    - **Cookie name gotcha** baked into the script: NextAuth here uses `__Secure-next-auth.session-token` even on `http://localhost` (likely because `NEXTAUTH_URL` is https). The default `next-auth.session-token` returns 401.
-    - Re-run later with: `DATABASE_URL="file:./dev.db" npx tsx scripts/tests/profile-api-smoke.ts` (dev server must be on 4101).
-4. **Manual UI smoke** (only user-actionable item left before commit). In `npm run dev` on port 4101: open Profile dash → create work role → add bullets → toggle locked/excluded → reorder → reload. Second tab to eyeball `'Profile'` SSE cross-tab sync **in the rendered UI** (the backend pipe is already verified). Confirm or change `viewHue: 280`.
-5. **Commit M7 UI.** One commit: `feat(profile): add Profile dash UI`. Bundle cards + view + Dashboard wiring + state wiring + hook union + bullets utility refactor + child-route lint cleanup + new `scripts/tests/profile-api-smoke.ts`. No AI attribution per the `feedback_no_commit_attribution` memory.
-6. **Start M8 design.** Read user stories §8 (34, 38 are the 🔴) + Decision 3 (HTML → headless-Chromium print to PDF). Write a milestone-level plan into this doc under "Immediate next actions" before coding.
+M8 Phase 1 is fully wired. Detailed design lives in `docs/user-stories-applications.md` §M8.
 
-## In-progress work — M7 (Profile dash UI)
+1. ~~**M8.1–M8.7 — Phase 1 build.**~~ ✅ Done 2026-05-15. Dependencies installed (`@google/genai`, `puppeteer-core`), Gemini wrapper at `lib/ai/gemini.ts` (default model `gemini-2.5-flash`; reads `GOOGLE_GENERATIVE_AI_KEY` with `GOOGLE_GEN_AI_KEY` / `GEMINI_API_KEY` / `GOOGLE_API_KEY` fallbacks), posting parser at `lib/resumes/posting.ts`, deterministic bullet selection at `lib/resumes/select.ts` (10/10 unit smoke green), Gemini rewrite at `lib/resumes/rewrite.ts`, ATS template + puppeteer renderer at `lib/resumes/templates/ats-plain.tsx` + `lib/resumes/render-pdf.ts` (render smoke produced a valid 62KB PDF in 2.3s), API route at `app/api/resumes/route.ts`, trigger card at `components/cards/GenerateResumeCard.tsx` wired into ProfileView under a new "Resume" section. Production build passes; unauth → 401 and auth+bad-payload → 400 with `{error, stage}` shape both confirmed.
+2. **Happy-path verification.** `GOOGLE_GENERATIVE_AI_KEY` is in `.env`. With the dev server on 4101, open the Profile dash → "Resume" section → paste a job posting (URL or text) → "Generate". A PDF should open in a new tab in ≤ 15s. Acceptance criteria (from §M8 Phase 1): one page, locked bullets always present, excluded bullets absent, no hallucinated metrics or claims.
+3. **Phase 2 — archival.** If Phase 1 acceptance holds, start §M8 Phase 2 (M8.8 — `GeneratedResume` table; M8.9 — traceability UI; M8.10 — per-Application linkage). Adds the schema + persists each successful generation so the user can later see "which bullets did I send to Acme?".
+4. **MA — pipeline writes + drill-in.** Once resumes are reliably generated, MA gives the user the kanban write-paths (manual add, drag-to-status, drill-in timeline, notes). Plan already in `user-stories-applications.md` §MA.1–MA.6.
 
-Audit on 2026-05-14 confirmed all of the following are in place — only the lint blockers in step 1 above stand between this and a commit:
+**Phase 2 deferred (post-MVP):** `GeneratedResume` archival table (story 39), per-bullet traceability surfaced in the UI (story 35), multi-template (story 37 🟡), DOCX export (story 38's DOCX half — Decision 3 says comes after PDF), cover letter (story 40 🔵), skills-gap report (story 41 🔵).
 
-- **Committed in `b1f7513`:** schema (`prisma/schema.prisma:168-240`), migration `20260513010032_add_profile_spine`, repos (`lib/repositories/profile.ts`), `lib/profile/`, all four API routes (`app/api/profile/{route.ts,work-roles,projects,education}/route.ts`), Zod schemas.
-- **Uncommitted (working tree):**
-  - New UI: `components/views/ProfileView.tsx`, `components/cards/{ProfileHeaderCard,WorkRoleCard,ProjectCard,EducationCard}.tsx`, `components/ui/{EditableField,BulletRow}.tsx`.
-  - New test: `scripts/tests/profile-repo-smoke.ts`.
-  - Wiring: `components/Dashboard.tsx` (registers `'profile'`), `components/providers/state/index.ts` (titles/hues/order, hue `280`), `hooks/useServerEvents.ts` (adds `'Profile'`), `lib/profile/bullets.ts` (`crypto.randomBytes` → `globalThis.crypto.randomUUID`), `lib/schemas/profile.ts` (adds `ProfileWire`/`WorkRoleWire`/`ProjectWire`/`EducationWire`).
-- **Verified working:** SSE broadcasts (all 4 routes publish `'Profile'`), api-client coverage (every method `ProfileView` calls exists), `queryKeys.profile = ['profile']`, smoke test coverage, full Prisma field surface.
+## In-progress work — M8 (Tailored resume generation)
+
+Currently at the **design / pre-implementation** boundary. M7 prerequisites are all landed:
+- Profile schema + repos + API routes (commit `0367263`).
+- Headless API + SSE smoke harness (commit `e41b6c0`).
+- Bullets carry the `tags[]` + `locked` + `excluded` flags M8's selection step depends on.
+
+Open design questions to settle while building Phase 1:
+- **API key handling.** `GEMINI_API_KEY` lives in untracked `.env`. M8 is the first AI-dependent feature in the repo; document the var in CLAUDE.md and surface a clear error message if it's missing.
+- **Sync vs async.** Phase 1 is synchronous (one request → one PDF). If the rewrite call sometimes exceeds a sensible web-request budget (say 30s), revisit and move generation to a job row + polling in Phase 2.
 
 ## Recently completed
 
-- **2026-05-14** — Headless M7 API + SSE smoke green: production `npm run build` clean, unauth probes correctly 401/405, authenticated CRUD via forged session 17/17, SSE captured 9 `Profile` broadcasts matching the writes. Caught a second cookie-name gotcha: `__Secure-next-auth.session-token` is the cookie even on `http://localhost`.
-- **2026-05-14** — M7 repo smoke test green: 19/19 against `prisma/dev.db`. Caught a doc bug — `DATABASE_URL`'s relative path resolves from the schema dir (`prisma/`), not the repo root, so the correct value is `file:./dev.db`. Cleaned up the empty phantom `prisma/prisma/dev.db` left by previous attempts.
-- **2026-05-14** — M7 lint cleanup. Cleared all 26 profile-related `@typescript-eslint/no-explicit-any` + 1 unescaped-entity errors: 16 in `ProfileView.tsx` (patch-handler params, reorder helper rewritten as 3 per-kind functions, `&quot;` for the literal `"`), 2 in `app/api/profile/route.ts`, and 9 in the three child routes (`work-roles`/`projects`/`education`) that the prior audit had missed. Wire-type aliases now imported and used in `ProfileView.tsx`.
-- **2026-05-14** — Refocused `next_steps.md` around the umbrella goal (finish `docs/user-stories-applications.md` to enable applying to jobs/internships ASAP). Dropped the deferred AI Companion question per user direction.
-- **2026-05-14** — Audit of M7 readiness: confirmed SSE, API client, query keys, smoke test harness, card components, and Prisma field coverage all green.
-- **2026-05-14** — Bullets utility refactor: removed Node-only `crypto` import from `lib/profile/bullets.ts`; ids now via `globalThis.crypto.randomUUID`. Added wire-format type exports to `lib/schemas/profile.ts`.
-- **Pre-session (`b1f7513`)** — Profile schema, repos, API routes, and bullets management committed to `main`.
-- **Pre-session (`bb9de3f`)** — Google Calendar integration for application events.
-- **Pre-session (`6dc24f9`)** — Gmail inbox backfill + multi-kind application classifier.
+- **2026-05-14** — M7 shipped in two commits. `0367263` lands the full Profile dash UI (cards, view, wiring, lint cleanup, repo smoke test). `e41b6c0` adds the headless API + SSE smoke harness that backs up M7 without any browser interaction needed.
+- **2026-05-14** — Headless M7 API + SSE smoke green: production `npm run build` clean, unauth probes correctly 401/405, authenticated CRUD via forged session 17/17, SSE captured 9 `Profile` broadcasts matching the writes. Caught the `__Secure-next-auth.session-token` cookie-name gotcha (NextAuth uses the secure-prefixed cookie even on `http://localhost`).
+- **2026-05-14** — M7 repo smoke test green: 19/19 against `prisma/dev.db`. Caught a doc bug — `DATABASE_URL`'s relative path resolves from the schema dir (`prisma/`), not the repo root, so the correct value is `file:./dev.db`. Documented in CLAUDE.md.
+- **2026-05-14** — M7 lint cleanup. Cleared all 26 profile-related `@typescript-eslint/no-explicit-any` + 1 unescaped-entity errors. Wire-type aliases now imported and used in `ProfileView.tsx`.
 
 ## Known issues / parked TODOs
 
-- `viewHue: 280` (purple) for Profile dash is a placeholder — confirm at manual-smoke time.
+- **Manual UI smoke for M7** is still nominally outstanding (eyeball the Profile dash in `npm run dev`, confirm cards render and drag-reorder works, sanity-check the `viewHue: 280` accent). Backend pipe is verified end-to-end so this is a low-risk visual confirmation, not a blocker. Do it whenever you're next at a browser.
+- **M7.4 — Profile import from PDF/DOCX/LinkedIn export** is deferred. M8 doesn't strictly require it (you can type bullets into the Profile dash directly), but it's the next M7-track work after M8 ships. Plan stub lives in `docs/user-stories-applications.md` §M7.4.
+- **`viewHue: 280`** (purple) for Profile dash is a placeholder — easy one-liner change in `components/providers/state/index.ts` once you've eyeballed it.

@@ -232,8 +232,62 @@ Deferred to M7-followup (🟡): tag editing UI on bullets (story 32 — `tags[]`
 
 Out of scope (handled in later milestones): resume HTML→PDF rendering (M8), GitHub-driven project metrics (M9 writes to `Project.metrics`).
 
-#### M8 — Tailored resume generation (later)
-🔴 stories 34, 38. Pulls bullets via tag overlap with posting → LLM rewrites for emphasis → React/HTML template → headless-Chromium print to PDF (per Decision 3). DOCX comes after. Detailed plan when M7 ships.
+#### M8 — Tailored resume generation (current focus)
+
+🔴 stories 34, 38. Ships a working "paste posting → get tailored PDF" loop end-to-end at minimum viable scope. Builds on M7's Profile spine — depends on the stable bullet ids and the `tags[]` / `locked` / `excluded` flags already in the bullet JSON shape (Decision 4).
+
+Phase 1 ships the PDF; DOCX, archival, multi-template, cover letter, and skills-gap are deferred phases.
+
+**Phase 1 — PDF MVP**
+
+- **M8.1 — Dependencies.** Add `@google/genai` (Google's unified GenAI SDK; supports Gemini API key flow on the free tier) and `puppeteer-core` (no bundled Chromium — points at the system Chrome at `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`, verified present as Chrome 148.x on this machine). Add `GEMINI_API_KEY` to the untracked `.env` and document it in CLAUDE.md alongside the other secrets. Free-tier Gemini keys come from Google AI Studio (aistudio.google.com).
+- **M8.2 — Gemini client wrapper.** New `lib/ai/gemini.ts` exposes `chatJSON<T>({system, user, schema, model?})` where `schema` is a Zod schema validated against the parsed response. Defaults to `gemini-2.0-flash` (free-tier friendly, fast, sufficient for bullet rewriting). Uses `@google/genai`'s `generateContent` with `responseMimeType: 'application/json'` for structured output, wraps retries (429 / 5xx), and surfaces a typed `AIError` on schema failure (so callers can show "couldn't parse posting" rather than a stack trace). All M8 prompts route through this — never construct the SDK inline. Log token usage to `console.info` so the in-app log viewer captures it.
+- **M8.3 — Posting parser.** `lib/resumes/posting.ts` exports `parsePosting(input: {url?: string, text?: string}): Promise<ParsedPosting>` where `ParsedPosting = {title?, company?, location?, seniority?, rawText: string, keywords: string[]}`. URL inputs fetch the page, strip with cheerio, and feed the visible text. Keyword extraction is one Claude call: "Return the 10–25 most load-bearing terms from this posting — technologies, methodologies, seniority signals, domain words. JSON array of strings." Cached via `withCache(..., 60 * 60)` keyed on the URL or a hash of the pasted text, so re-generating against the same posting is free.
+- **M8.4 — Bullet selection (deterministic).** `lib/resumes/select.ts` exports `selectBullets(profile, keywords): Selection[]`. For each bullet across work roles / projects / education:
+  - **Score** = `2 × (tag-overlap count)` + `1 × (case-insensitive substring matches of any keyword inside the bullet text)`.
+  - `locked: true` → score is `+Infinity` (always included).
+  - `excluded: true` → bullet is skipped entirely.
+  - Sort each entity's bullets by score desc; take top N per entity (defaults: work role 4, project 3, education 2). Drop entities whose entire bullet set scored 0 unless the entity is locked at the entity level (a future flag — for now, always include education and the most-recent work role even with zero matches).
+  - Output `Selection[]`: `{kind: 'workRole'|'project'|'education', sourceId, bulletId, originalText, score, matchedTags[], matchedKeywords[]}`.
+  - Pure / deterministic / no LLM. Easy to unit-test as `scripts/tests/resume-select-smoke.ts`.
+- **M8.5 — Bullet rewrite (LLM).** `lib/resumes/rewrite.ts` exports `rewriteBullets(selections, posting): Promise<RewrittenBullet[]>`. Single Claude call. The prompt:
+  - Includes the full `Selection[]` plus the posting's keywords + title/company/seniority.
+  - Constraints: "lead with strong action verbs; do NOT invent metrics or claims absent from the original; match the posting's terminology where the concept already matches; keep each bullet to ~1 line / ≤ 25 words; preserve the bullet `id` exactly."
+  - Returns `[{id, rewrittenText, matchedKeywords[]}]`. Validated by Zod; if any returned id doesn't match an input id, fail loudly.
+  - Single call, not per-bullet — keeps token cost predictable (a profile of ~30 bullets stays well inside Sonnet's context).
+- **M8.6 — Template + PDF render.** `lib/resumes/templates/ats-plain.tsx` is a server-only React component with no client JS: header (name, headline, links), Experience (work roles with rewritten bullets), Projects, Education. Styling is plain CSS-in-string or a single `<style>` tag in the rendered HTML (no Tailwind in the rendered page — keep the surface minimal for ATS parsers). `lib/resumes/render-pdf.ts` exports `renderResumePDF(props): Promise<Buffer>`:
+  - `import { renderToStaticMarkup } from 'react-dom/server'` → wrap in `<!doctype html><html>…</html>` boilerplate.
+  - Launch puppeteer with `{ headless: 'new' }`, `await page.setContent(html, { waitUntil: 'networkidle0' })`, `return page.pdf({ format: 'Letter', printBackground: false, margin: { top: '0.5in', bottom: '0.5in', left: '0.5in', right: '0.5in' } })`.
+  - Browser is **pooled on `globalThis`** to survive HMR and avoid paying the ~1s launch cost per request. Single shared browser, multiple pages per request.
+- **M8.7 — API endpoint + trigger UI.** `app/api/resumes/route.ts`:
+  - `POST` → body `{posting: {url?, text?}, options?: {template?: 'ats-plain'}}`. Session-gated through `requireSession`. Runs `parsePosting → selectBullets → rewriteBullets → renderResumePDF`. Streams back `application/pdf` with `Content-Disposition: attachment; filename="resume-<company>-<date>.pdf"`.
+  - Errors return JSON `{error, stage}` (where `stage` is one of `parse | select | rewrite | render`) so the UI can show a useful failure message.
+  - Trigger UI: new `components/cards/GenerateResumeCard.tsx` on the Profile dash. Inputs: URL field + textarea (paste posting). "Generate" button hits the endpoint via `fetch` (NOT TanStack mutation — we want the raw PDF blob). On success, `window.open(URL.createObjectURL(blob))` opens it in a new tab; user can save from there. Don't try to embed an `<iframe>` PDF preview in v1.
+  - `api.resumes.generate(...)` helper in `lib/api-client.ts` returning `Promise<Blob>`.
+
+**Phase 1 acceptance criteria:**
+- A profile with ≥ 3 work roles and ≥ 3 bullets each produces a one-page PDF in ≤ 15 seconds against a real Greenhouse-hosted posting.
+- The PDF opens in Chrome/Preview/Acrobat with no rendering glitches.
+- Locked bullets always appear; excluded bullets never appear.
+- A bullet's text in the PDF differs from the source bullet only in phrasing — no hallucinated metrics, no fabricated claims.
+
+**Phase 2 — archival + traceability**
+
+- **M8.8 — `GeneratedResume` schema.** New table: `(id, userId, createdAt, postingInput JSON, profileSnapshot JSON, selections JSON, rewrites JSON, templateKey, status enum, pdfPath String?, applicationId String?)`. Each generation gets persisted *after* the PDF renders successfully. `profileSnapshot` is the full hydrated profile at gen-time so future profile edits don't break the archive. `pdfPath` points at `data/resumes/<id>.pdf` (gitignored).
+- **M8.9 — Traceability UI (story 35).** A "Why this bullet?" toggle on the trigger UI shows, per selection, the matched keywords + matched tags + score. Reads from the `selections` payload of the last generation.
+- **M8.10 — Per-Application linkage (story 39).** Once MA ships the application detail overlay, `applicationId` on `GeneratedResume` lets the timeline show "Resume vN sent on 2026-XX-XX".
+
+**Phase 3 — DOCX (story 38's second half)**
+
+- **M8.11 — DOCX export.** Add `html-to-docx` (or equivalent — evaluate at implementation time). Same templated HTML feeds the converter; `?format=docx` on the API switches the response. Decision 3 explicitly puts this after PDF.
+
+**Deferred to M8-followup (🟡):**
+- Multiple templates (story 37) — single-column, two-column, modern, etc. Picker on the trigger UI.
+- Lock / exclude UI for bullets (story 36) — schema already supports it via the M7 `BulletRow` toggles, just needs to be exposed prominently.
+
+**Deferred to 🔵 round:**
+- Cover letter generation (story 40) — same scaffolding, different prompt + template.
+- Skills-gap report (story 41) — posting keywords minus the union of bullet tags + bullet substrings.
 
 #### M9 — GitHub-driven project metrics (later)
 🟡 stories 42–43. New scheduler job under `scheduler/jobs/` that hits the public GitHub API for the user's portfolio-flagged `Project` rows and writes into `Project.metrics`. Detailed plan when M7 ships.

@@ -8,6 +8,7 @@ import { ProfileHeaderCard } from "../cards/ProfileHeaderCard";
 import { WorkRoleCard } from "../cards/WorkRoleCard";
 import { ProjectCard } from "../cards/ProjectCard";
 import { EducationCard } from "../cards/EducationCard";
+import { GenerateResumeCard } from "../cards/GenerateResumeCard";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { api, queryKeys } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
@@ -255,6 +256,12 @@ export const ProfileView: React.FC = () => {
     return (
         <Scrollbar className="w-full h-full pb-8">
             <div className="flex flex-col gap-4 max-w-5xl mx-auto px-2 pt-4">
+                <Section title="Resume">
+                    <div className="mt-4">
+                        <GenerateResumeCard />
+                    </div>
+                </Section>
+
                 <Section title="Identity">
                     <div className="mt-4">
                         <ProfileHeaderCard
