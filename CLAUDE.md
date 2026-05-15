@@ -118,3 +118,45 @@ Article count is capped by `MAX_NEWS_ARTICLES` in `lib/constants.ts`.
 - API routes that fetch external data should be wrapped in `withCache` — bare external `fetch` per request is the exception, not the rule.
 - For server-side logging use `console.info` / `console.warn` / `console.error` (they're captured by the in-app log viewer). Don't introduce a separate logger.
 - `.env*` files are gitignored. There are checked-in `.env.development` and `.env.production` that **only** contain `DATABASE_URL` — real secrets (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NEXTAUTH_SECRET`, `GEMINI_API_KEY`, `CHROME_EXECUTABLE_PATH` override, AI keys, etc.) live in an untracked `.env`. `GOOGLE_GENERATIVE_AI_KEY` powers the resume-generation pipeline (see `lib/ai/gemini.ts`; falls back to `GOOGLE_GEN_AI_KEY` / `GEMINI_API_KEY` / `GOOGLE_API_KEY`). A free key comes from Google AI Studio (aistudio.google.com).
+
+## Backups + recovery
+
+Two pieces of state matter:
+
+- **`prisma/prod.db`** — every Application, ApplicationEvent, Profile entity, Watchlist, JobPosting, Notification, GeneratedResume row.
+- **`data/resumes/<id>.<ext>`** — the actual PDF/DOCX bytes archived per generation. `GeneratedResume.artifactPath` points at this directory.
+
+`scripts/backup-db.sh` snapshots both, mirrors to Google Drive via rclone, and prunes local copies older than 30 days. Designed for cron / launchd; run by hand any time. Falls back to local-only if rclone isn't on PATH (warns loudly).
+
+**Set up the cron (run once):**
+
+```sh
+# Open crontab editor
+crontab -e
+
+# Add:
+# 0 4 * * *  cd /Users/sal/salsquared/mission-control && ./scripts/backup-db.sh >> ~/backups/mission-control/backup.log 2>&1
+```
+
+**Recovery — Mac died, fresh machine:**
+
+```sh
+# 1. Pull the latest backup from Drive
+rclone copy gdrive:backups/mission-control/  ~/restore/  --include "mc-*.db" --include "mc-resumes-*.tar.gz"
+
+# 2. Stop everything
+pm2 stop mission-control mission-control-dev mission-control-scheduler
+
+# 3. Restore the DB
+cp ~/restore/mc-LATEST.db prisma/prod.db
+rm -f prisma/prod.db-wal prisma/prod.db-shm   # let SQLite rebuild WAL sidecars
+
+# 4. Restore artifacts
+rm -rf data/resumes/*    # leave .gitkeep
+tar -xzf ~/restore/mc-resumes-LATEST.tar.gz -C data/
+
+# 5. Bring services back up
+pm2 start mission-control mission-control-dev mission-control-scheduler
+```
+
+The Cloudflare tunnel (`cloudflared` PID checked via `pm2 list` won't show it — it's a system-level process via Homebrew) handles the public-hostname side. `requireLocalOrSession` in `lib/auth-guards.ts` gates tunnel traffic behind NextAuth while LAN hosts (localhost / mc.local) skip auth.
