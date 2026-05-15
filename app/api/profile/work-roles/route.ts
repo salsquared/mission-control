@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: workRole.id, timestamp: Date.now() });
         return NextResponse.json({ workRole }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[work-roles POST] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
@@ -72,7 +72,7 @@ export async function PATCH(req: NextRequest) {
         if (!workRole) return NextResponse.json({ error: "WorkRole not found" }, { status: 404 });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: workRole.id, timestamp: Date.now() });
         return NextResponse.json({ workRole }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[work-roles PATCH] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
@@ -97,7 +97,7 @@ export async function DELETE(req: NextRequest) {
         if (!ok) return NextResponse.json({ error: "WorkRole not found" }, { status: 404 });
         broadcastEvent({ model: 'Profile', action: 'delete', id: parsed.data.id, timestamp: Date.now() });
         return NextResponse.json({ success: true, id: parsed.data.id }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[work-roles DELETE] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }

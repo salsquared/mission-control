@@ -55,6 +55,7 @@ const DEFAULT_DASH_TITLES: Record<string, string> = {
     'internal-systems': 'Internal Systems',
     'physics': 'Physics',
     'applications': 'Applications',
+    'profile': 'Profile',
     'planning': 'Planning & Strategy',
 };
 
@@ -63,10 +64,10 @@ export const useAppStore = create<AppState>()(
         (set, get) => ({
             // ---------- ThemeSlice defaults ----------
             isDarkMode: true,
-            viewHues: { rocketry: 250, crypto: 150, 'ai-news': 200, 'internal-systems': 320 },
+            viewHues: { rocketry: 250, crypto: 150, 'ai-news': 200, 'internal-systems': 320, profile: 280 },
             viewHuesEnabled: true,
             activeViewId: 'rocketry',
-            dashOrder: ['rocketry', 'crypto', 'ai-news', 'physics', 'applications', 'planning', 'internal-systems'],
+            dashOrder: ['rocketry', 'crypto', 'ai-news', 'physics', 'applications', 'profile', 'planning', 'internal-systems'],
             dashTitles: {},
             defaultDashTitles: DEFAULT_DASH_TITLES,
             viewScreenshots: {},

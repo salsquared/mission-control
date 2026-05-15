@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: project.id, timestamp: Date.now() });
         return NextResponse.json({ project }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[projects POST] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
@@ -66,7 +66,7 @@ export async function PATCH(req: NextRequest) {
         if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: project.id, timestamp: Date.now() });
         return NextResponse.json({ project }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[projects PATCH] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
@@ -91,7 +91,7 @@ export async function DELETE(req: NextRequest) {
         if (!ok) return NextResponse.json({ error: "Project not found" }, { status: 404 });
         broadcastEvent({ model: 'Profile', action: 'delete', id: parsed.data.id, timestamp: Date.now() });
         return NextResponse.json({ success: true, id: parsed.data.id }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[projects DELETE] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }

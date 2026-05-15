@@ -7,6 +7,7 @@ import { FinanceView } from "./views/FinanceView";
 import { AIView } from "./views/AIView";
 import { PhysicsView } from "./views/PhysicsView";
 import { ApplicationsView } from "./views/ApplicationsView";
+import { ProfileView } from "./views/ProfileView";
 import { PlanningView } from "./views/PlanningView";
 import { AICompanion } from "./AICompanion";
 import { SavedPapersOverlay } from "./overlays/SavedPapersOverlay";
@@ -63,6 +64,11 @@ const BASE_DASHES: DashConfig[] = [
         id: "applications",
         title: "Applications",
         component: <ApplicationsView />,
+    },
+    {
+        id: "profile",
+        title: "Profile",
+        component: <ProfileView />,
     },
     {
         id: "planning",

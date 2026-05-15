@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: education.id, timestamp: Date.now() });
         return NextResponse.json({ education }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[education POST] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
@@ -68,7 +68,7 @@ export async function PATCH(req: NextRequest) {
         if (!education) return NextResponse.json({ error: "Education not found" }, { status: 404 });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: education.id, timestamp: Date.now() });
         return NextResponse.json({ education }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[education PATCH] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
@@ -93,7 +93,7 @@ export async function DELETE(req: NextRequest) {
         if (!ok) return NextResponse.json({ error: "Education not found" }, { status: 404 });
         broadcastEvent({ model: 'Profile', action: 'delete', id: parsed.data.id, timestamp: Date.now() });
         return NextResponse.json({ success: true, id: parsed.data.id }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[education DELETE] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }

@@ -20,7 +20,7 @@ export async function GET() {
     try {
         const profile = await findOrCreateProfile(userId);
         return NextResponse.json({ profile }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[profile GET] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }
@@ -41,7 +41,7 @@ export async function PATCH(req: NextRequest) {
         const profile = await updateProfileHeader(userId, parsed.data);
         broadcastEvent({ model: 'Profile', action: 'upsert', id: profile.id, timestamp: Date.now() });
         return NextResponse.json({ profile }, { status: 200 });
-    } catch (e: any) {
+    } catch (e) {
         console.error("[profile PATCH] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }

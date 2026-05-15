@@ -167,3 +167,11 @@ export const EducationPatchSchema = z.object({
 });
 
 export const ProfileChildDeleteSchema = z.object({ id: z.string().min(1) });
+
+// Wire-format types (dates as ISO strings) — what the API returns over JSON
+// and what UI components actually receive. Distinct from the Prisma-backed
+// HydratedX types in lib/repositories/profile, which use Date objects.
+export type ProfileWire = z.infer<typeof ProfileSchema>;
+export type WorkRoleWire = z.infer<typeof WorkRoleSchema>;
+export type ProjectWire = z.infer<typeof ProjectSchema>;
+export type EducationWire = z.infer<typeof EducationSchema>;

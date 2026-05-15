@@ -2,6 +2,14 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Session protocol — read on every start, update on every end
+
+`docs/next_steps.md` is the living cross-session context doc (last session state, in-flight work, open questions, parked TODOs).
+
+- **At the start of every session**, read `docs/next_steps.md` in full before touching the codebase. Reconcile it against current `git status` / on-disk state — if the file claims work is in progress that's already landed or been discarded, fix the doc first.
+- **At the end of every session** (or when the user signals they're wrapping: "ok done", "let's stop here", "save progress", or before a context handoff), update `docs/next_steps.md`: move finished items into "Recently completed" (keep ~3–5), refresh "In-progress work" / "Open questions", and use absolute ISO dates (e.g. `2026-05-14`) — never relative ones.
+- The doc is for *state-derivable* facts (uncommitted work, decisions deferred to "next time"). Code-derivable facts (architecture, conventions) belong in this CLAUDE.md, not there.
+
 ## Commands
 
 - `npm run dev` — Next.js dev server on **port 4101**, webpack, `--max-old-space-size=2048`. Loads `.env.development` (`DATABASE_URL=file:./dev.db`).
@@ -57,6 +65,8 @@ Anything that reads/sends Gmail or writes Calendar events depends on these scope
 ### Prisma + dual SQLite databases
 
 `lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (so it lands in the in-app log viewer). The client is cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by which `.env.{development,production}` Next.js picks up. When debugging prod data issues, point at `prisma/prod.db` explicitly.
+
+When invoking a `tsx` script against the dev DB (e.g. `scripts/tests/*.ts`), pass `DATABASE_URL="file:./dev.db"` — **not** `file:./prisma/dev.db`. Prisma resolves a relative `file:` URL from the schema's directory (`prisma/`), so `file:./prisma/dev.db` silently creates a phantom `prisma/prisma/dev.db` and you'll get empty-DB results.
 
 Schema highlights: standard NextAuth tables (`Account`/`Session`/`User`/`VerificationToken`), `Application` + `ApplicationEvent` (job tracker), `Task` (DB-native, see below), `LifeGoal`, `SavedPaper` + weekly selection tables (`SelectedHistoricalPaper`, `SelectedReviewPaper`), `GlobalSetting` (single row keyed `id="global"`).
 

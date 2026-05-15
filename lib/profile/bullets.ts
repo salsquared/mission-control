@@ -1,4 +1,3 @@
-import crypto from 'crypto';
 import type { Bullet } from './types';
 
 // JSON storage helpers for the `bullets` columns on WorkRole / Project / Education.
@@ -22,10 +21,10 @@ export function serializeBullets(bullets: Bullet[]): string {
 }
 
 export function newBulletId(): string {
-    // Short, URL-safe, collision-resistant. Not a cuid (we don't need DB-style
-    // ordering inside an array); 12 random base64url chars is fine for a
-    // single-user dataset.
-    return 'b_' + crypto.randomBytes(9).toString('base64url');
+    // Uses globalThis.crypto.randomUUID — supported in Node 19+ and all
+    // modern browsers, so card components can mint client-side ids during
+    // optimistic updates without a server round-trip.
+    return 'b_' + globalThis.crypto.randomUUID();
 }
 
 // Build a fresh bullet from text + optional tags. Defaults locked/excluded to false.
