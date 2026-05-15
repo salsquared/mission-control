@@ -23,10 +23,15 @@ const JOBS: IntervalJob[] = [
             const result = await runDueWatchlists();
             if (result.processed > 0) {
                 const totals = result.results.reduce(
-                    (acc, r) => ({ new: acc.new + r.newPostings, seen: acc.seen + r.seenAgain, errs: acc.errs + (r.error ? 1 : 0) }),
-                    { new: 0, seen: 0, errs: 0 },
+                    (acc, r) => ({
+                        new: acc.new + r.newPostings,
+                        seen: acc.seen + r.seenAgain,
+                        closed: acc.closed + r.closed,
+                        errs: acc.errs + (r.error ? 1 : 0),
+                    }),
+                    { new: 0, seen: 0, closed: 0, errs: 0 },
                 );
-                console.info(`[job-watcher] processed ${result.processed} watchlists — ${totals.new} new, ${totals.seen} seen-again, ${totals.errs} errored`);
+                console.info(`[job-watcher] processed ${result.processed} watchlists — ${totals.new} new, ${totals.seen} seen-again, ${totals.closed} closed, ${totals.errs} errored`);
             }
         },
     },

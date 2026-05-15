@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ExternalLink, EyeOff, Loader2, MapPin, Newspaper, Bookmark } from "lucide-react";
+import { ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
@@ -27,14 +27,30 @@ export function NewPostingsCard() {
 
     const postings = data?.postings ?? [];
 
-    async function setStatus(id: string, status: "tracked" | "hidden") {
+    async function trackAsApplication(id: string, title: string) {
         setBusyId(id);
         try {
-            await api.postings.update(id, { status });
+            const result = await api.postings.trackAsApplication(id);
+            const msg = result.created
+                ? `Tracked "${title}" as a new application`
+                : `Already tracked — opened existing application`;
+            toastStore.push({ message: msg, type: "info" });
             queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
-            toastStore.push({ message: status === "tracked" ? "Tracked" : "Hidden", type: "info" });
+            queryClient.invalidateQueries({ queryKey: queryKeys.applications });
         } catch (e) {
-            toastStore.push({ message: `Update failed: ${errMessage(e)}`, type: "error" });
+            toastStore.push({ message: `Track failed: ${errMessage(e)}`, type: "error" });
+        } finally {
+            setBusyId(null);
+        }
+    }
+
+    async function hide(id: string) {
+        setBusyId(id);
+        try {
+            await api.postings.update(id, { status: "hidden" });
+            queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
+        } catch (e) {
+            toastStore.push({ message: `Hide failed: ${errMessage(e)}`, type: "error" });
         } finally {
             setBusyId(null);
         }
@@ -88,16 +104,16 @@ export function NewPostingsCard() {
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
                                         <button
-                                            onClick={() => setStatus(p.id, "tracked")}
+                                            onClick={() => trackAsApplication(p.id, p.title)}
                                             disabled={busy}
-                                            title="Track this posting"
+                                            title="Create an application from this posting"
                                             className="flex items-center gap-1 px-2 py-1 rounded text-[11px] font-semibold text-cyan-100 bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/30 disabled:opacity-40"
                                         >
-                                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Bookmark className="w-3 h-3" />}
-                                            Track
+                                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <BriefcaseBusiness className="w-3 h-3" />}
+                                            Track as App
                                         </button>
                                         <button
-                                            onClick={() => setStatus(p.id, "hidden")}
+                                            onClick={() => hide(p.id)}
                                             disabled={busy}
                                             title="Hide this posting"
                                             className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10 disabled:opacity-40"

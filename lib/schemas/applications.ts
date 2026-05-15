@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 // Canonical status values — mirrors the LLM classifier enum in lib/email-parser.ts.
+// INTERESTED is the pre-applied state (story 20): a posting tracked from the
+// watchlist feed but not yet sent. Living before APPLIED keeps the kanban order
+// chronological from interest → applied → ... → outcome.
 export const APPLICATION_STATUSES = [
+    'INTERESTED',
     'APPLIED',
     'UPDATED',
     'ASSESSMENT',
@@ -28,6 +32,7 @@ export const ApplicationSchema = z.object({
     nextSteps: z.string().nullable(),
     dateApplied: z.string().datetime().nullable(),
     lastEmailMsgId: z.string().nullable(),
+    postingId: z.string().nullable(),
     lastUpdateAt: z.string().datetime(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),

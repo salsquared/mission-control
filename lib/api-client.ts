@@ -145,6 +145,7 @@ export const queryKeys = {
     watchlists: ['watchlists'] as const,
     postings: (filter?: { status?: string; watchlistId?: string }) =>
         ['postings', filter ?? {}] as const,
+    posting: (id: string) => ['posting', id] as const,
     notifications: (filter?: { unread?: boolean }) =>
         ['notifications', filter ?? {}] as const,
 };
@@ -361,8 +362,20 @@ export const api = {
             const qs = params.toString();
             return jsonFetch(`/api/postings${qs ? '?' + qs : ''}`, PostingsListResponseSchema);
         },
+        get: (id: string) =>
+            jsonFetch(`/api/postings/${encodeURIComponent(id)}`, PostingMutationResponseSchema),
         update: (id: string, input: z.infer<typeof JobPostingPatchSchema>) =>
             jsonFetch(`/api/postings/${encodeURIComponent(id)}`, PostingMutationResponseSchema, jsonBody('PATCH', input)),
+        trackAsApplication: (id: string) =>
+            jsonFetch(
+                `/api/postings/${encodeURIComponent(id)}/track-as-application`,
+                z.object({
+                    application: z.object({ id: z.string(), status: z.string(), company: z.string(), role: z.string().nullable() }).passthrough(),
+                    posting: z.object({ id: z.string(), status: z.string() }),
+                    created: z.boolean(),
+                }),
+                { method: 'POST' },
+            ),
     },
 
     notifications: {

@@ -28,6 +28,7 @@ interface AppRecord {
 type AppKanbanColumnDef = KanbanColumnDef<AppRecord> & { statuses: string[] };
 
 const pipelineColumns: AppKanbanColumnDef[] = [
+    { id: "interested", title: "Interested", statuses: ["INTERESTED"], filterFn: (app) => ["INTERESTED"].includes(app.status), defaultTargetStatus: "INTERESTED", colorClass: "bg-cyan-500/20 text-cyan-400 border border-cyan-500/20" },
     { id: "applied", title: "Applied", statuses: ["APPLIED", "UPDATED"], filterFn: (app) => ["APPLIED", "UPDATED"].includes(app.status), defaultTargetStatus: "APPLIED", colorClass: "bg-blue-500/20 text-blue-400 border border-blue-500/20" },
     { id: "assessment", title: "Assessment", statuses: ["ASSESSMENT"], filterFn: (app) => ["ASSESSMENT"].includes(app.status), defaultTargetStatus: "ASSESSMENT", colorClass: "bg-purple-500/20 text-purple-400 border border-purple-500/20" },
     { id: "interviewing", title: "Interviewing", statuses: ["INTERVIEW_REQUESTED", "INTERVIEW"], filterFn: (app) => ["INTERVIEW_REQUESTED", "INTERVIEW"].includes(app.status), defaultTargetStatus: "INTERVIEW", colorClass: "bg-amber-500/20 text-amber-500 border border-amber-500/20" },

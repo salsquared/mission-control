@@ -10,7 +10,14 @@ interface AddWatchlistModalProps {
     onCreated: () => void;
 }
 
-type Kind = "greenhouse" | "careers-page";
+type Kind = "greenhouse" | "lever" | "ashby" | "careers-page";
+
+const KIND_HELP: Record<Kind, string> = {
+    "greenhouse": "Slug from boards.greenhouse.io/<slug> — e.g. anthropic, stripe, rocketlab, vercel.",
+    "lever": "Slug from jobs.lever.co/<slug> — e.g. spotify, leverdemo.",
+    "ashby": "Slug from jobs.ashbyhq.com/<slug> — e.g. notion, posthog.",
+    "careers-page": "Use only for old-school static-HTML careers pages. Most modern pages are SPAs and won't work here — try one of the aggregator kinds first.",
+};
 
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -48,14 +55,17 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         e.preventDefault();
         if (submitting) return;
         if (!name.trim() || !companyName.trim()) return;
-        if (kind === "greenhouse" && !boardSlug.trim()) return;
+        if (kind !== "careers-page" && !boardSlug.trim()) return;
         if (kind === "careers-page" && (!rootUrl.trim() || !linkPattern.trim())) return;
 
         setSubmitting(true);
         try {
-            const config = kind === "greenhouse"
-                ? { kind: "greenhouse" as const, boardSlug: boardSlug.trim(), companyName: companyName.trim() }
-                : { kind: "careers-page" as const, rootUrl: rootUrl.trim(), linkPattern: linkPattern.trim(), companyName: companyName.trim() };
+            const config = (() => {
+                if (kind === "greenhouse") return { kind: "greenhouse" as const, boardSlug: boardSlug.trim(), companyName: companyName.trim() };
+                if (kind === "lever") return { kind: "lever" as const, boardSlug: boardSlug.trim(), companyName: companyName.trim() };
+                if (kind === "ashby") return { kind: "ashby" as const, boardSlug: boardSlug.trim(), companyName: companyName.trim() };
+                return { kind: "careers-page" as const, rootUrl: rootUrl.trim(), linkPattern: linkPattern.trim(), companyName: companyName.trim() };
+            })();
             await api.watchlists.create({
                 name: name.trim(),
                 config,
@@ -87,8 +97,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
 
                 <form onSubmit={handleSubmit} className="p-4 flex flex-col gap-3">
                     <label className="text-[11px] uppercase tracking-wide text-white/40">Source</label>
-                    <div className="inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40 w-fit" role="group">
-                        {(["greenhouse", "careers-page"] as const).map(k => (
+                    <div className="inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40 w-fit flex-wrap" role="group">
+                        {(["greenhouse", "lever", "ashby", "careers-page"] as const).map(k => (
                             <button
                                 key={k}
                                 type="button"
@@ -104,6 +114,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             </button>
                         ))}
                     </div>
+                    <p className="text-[10px] text-white/40 -mt-2">{KIND_HELP[kind]}</p>
 
                     <label className="text-[11px] uppercase tracking-wide text-white/40">Name</label>
                     <input
@@ -125,22 +136,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                         className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
                     />
 
-                    {kind === "greenhouse" ? (
-                        <>
-                            <label className="text-[11px] uppercase tracking-wide text-white/40">Greenhouse board slug</label>
-                            <input
-                                type="text"
-                                placeholder="anthropic"
-                                value={boardSlug}
-                                onChange={(e) => setBoardSlug(e.target.value)}
-                                disabled={submitting}
-                                className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
-                            />
-                            <p className="text-[10px] text-white/40 -mt-1">
-                                The bit before <code>.greenhouse.io</code> on their job board — e.g. <code>anthropic</code> for <code>boards.greenhouse.io/anthropic</code>.
-                            </p>
-                        </>
-                    ) : (
+                    {kind === "careers-page" ? (
                         <>
                             <label className="text-[11px] uppercase tracking-wide text-white/40">Careers page URL</label>
                             <input
@@ -163,6 +159,18 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             <p className="text-[10px] text-white/40 -mt-1">
                                 A regex matched against each link&apos;s resolved <code>href</code>. Use the page&apos;s actual job-detail URL shape.
                             </p>
+                        </>
+                    ) : (
+                        <>
+                            <label className="text-[11px] uppercase tracking-wide text-white/40">{kind} board slug</label>
+                            <input
+                                type="text"
+                                placeholder={kind === "greenhouse" ? "anthropic" : kind === "lever" ? "spotify" : "notion"}
+                                value={boardSlug}
+                                onChange={(e) => setBoardSlug(e.target.value)}
+                                disabled={submitting}
+                                className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
+                            />
                         </>
                     )}
 

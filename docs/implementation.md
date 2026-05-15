@@ -197,39 +197,26 @@ If Rocket Lab's careers page is unreachable from the test environment (offline, 
 - Notification fires on first-seen postings.
 - Hide / Track move postings out of the "new" feed.
 
-### MB Phase 2 — Aggregator strategies + email + auto-track ⏳
+### MB Phase 2a — Track→App + Lever/Ashby + closed detection ✅
 
-Stories: 18, 20, 21, 22, 26 (🟡).
+Stories: 18 (Lever/Ashby), 20 (Track→App), 22 (closed detection) — 🟡.
+Shipped 2026-05-15. Smoke: `scripts/tests/watchlist-phase2-smoke.ts` (10/10 green).
 
-#### MB-2.1 — Aggregator fetchers
+- **MB-2.3 Track→App** — new `POST /api/postings/[id]/track-as-application` creates `Application(status='INTERESTED', kind='job', postingId, role=posting.title)` in a single Prisma transaction and flips `posting.status='tracked'`. Idempotent on re-call (returns the existing Application + `created:false`). UI: "Track as App" button on NewPostingsCard. ApplicationDetailOverlay shows a "Tracked from: <sourceUrl>" line with a "Closed" badge if the underlying posting transitions to closed. Schema: `INTERESTED` added to `APPLICATION_STATUSES` (placed first so kanban order reads interest → applied → ...); `Application.postingId String? @unique` with `onDelete: SetNull` to JobPosting. Migration `add_interested_status_and_posting_link`.
+- **MB-2.1 (partial) Lever + Ashby fetchers** — `lib/fetchers/lever-fetcher.ts` (api.lever.co/v0/postings/<slug>) and `lib/fetchers/ashby-fetcher.ts` (api.ashbyhq.com/posting-api/job-board/<slug>). WATCHLIST_KINDS expanded to `["careers-page", "greenhouse", "lever", "ashby"]`. AddWatchlistModal kind picker shows all four with per-kind help text.
+- **MB-2.4 Closed-posting detection** — at the end of each scheduler tick (skipped on first run), any non-terminal JobPosting whose `externalId` wasn't in the current fetch set AND whose `lastSeenAt < runAt - 6h` flips to `status='closed', removedAt=runAt`. One `Notification(kind='system')` per watchlist summarizing the closures. The 6h grace window prevents transient feed glitches from prematurely marking postings closed. `RunResult.closed` count exposed via `/api/watchlists/[id]/run`.
 
-One module per source under `lib/fetchers/`:
-- `greenhouse-fetcher.ts` — Greenhouse has a stable JSON API at `https://boards-api.greenhouse.io/v1/boards/{slug}/jobs`. Config: `{ slug }`.
-- `lever-fetcher.ts` — Lever has `https://api.lever.co/v0/postings/{slug}`. Config: `{ slug }`.
-- `ashby-fetcher.ts` — Ashby exposes a JSON feed at `https://jobs.ashbyhq.com/api/non-user-graphql?op=ApiJobBoardWithTeams`. Config: `{ slug }`.
-- `workday-fetcher.ts` — Workday has per-tenant JSON endpoints with predictable shapes. Config: `{ tenantHost, tenantPath }`.
+### MB Phase 2b — Remaining Phase 2 stories ⏳
 
-Each module exports `fetch(config): Promise<RawPosting[]>`. The scheduler job dispatches by `watchlist.kind`.
+Stories: 18 (Workday), 21 (LinkedIn), 26 (per-watchlist mode) (🟡) · Decision 2 (email).
 
-Add `kind` enum values: `'greenhouse' | 'lever' | 'ashby' | 'workday'`. Watchlist config schemas validated per-kind via zod discriminated union.
+#### MB-2.1b — Workday fetcher (deferred — fiddly per-tenant URLs)
+
+Workday has per-tenant JSON endpoints (e.g. `https://<tenant>.wd5.myworkdayjobs.com/wday/cxs/<tenant>/<career-site>/jobs`) with predictable shapes — POST with a small JSON body for pagination/filters. Each tenant has a slightly different URL prefix. Config: `{ tenantHost, careerSite, companyName, locationCountry? }`.
 
 #### MB-2.2 — LinkedIn (story 21)
 
-Separate, slowest cadence (hourly or longer), most rate-sensitive. Probably its own fetcher with explicit rate-limit handling + user-supplied search URL.
-
-#### MB-2.3 — "Track" → draft Application (story 20)
-
-- Add `'INTERESTED'` to `APPLICATION_STATUSES` enum in `lib/schemas/applications.ts`.
-- New route `POST /api/postings/[id]/track-as-application`: creates `Application` with status `INTERESTED`, `company`, `role` from posting, `dateApplied: null`, `kind: 'job'`. Returns `{ application, posting }`.
-- Posting status flips to `'tracked'` and a reverse `Application.postingId` reference is recorded (new optional field on Application).
-- Drill-in overlay shows the source posting link.
-
-#### MB-2.4 — Closed-posting detection (story 22)
-
-In the scheduler tick, after fetch:
-- Any `JobPosting` for this watchlist NOT in the current fetch's `externalId` set, AND last seen > 24h ago → set `removedAt = now`, `status = 'closed'`.
-- Notification kind `'system'` summarizing closures: "3 postings from Rocket Lab closed".
-- UI: closed badge on tracked postings; "Closed" filter in the feed.
+Separate, slowest cadence (hourly or longer), most rate-sensitive. Its own fetcher with explicit rate-limit handling + user-supplied search URL.
 
 #### MB-2.5 — Per-watchlist notification mode (story 26)
 

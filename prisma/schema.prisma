@@ -118,12 +118,14 @@ model Application {
   nextSteps       String?
   dateApplied     DateTime?
   lastEmailMsgId  String?   // Gmail message id of the last ingested email; used to dedupe re-runs
+  postingId       String?   @unique // links back to the JobPosting this app was tracked from, if any
   lastUpdateAt    DateTime  @default(now())
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   events          ApplicationEvent[]
+  posting         JobPosting? @relation(fields: [postingId], references: [id], onDelete: SetNull)
 
   @@index([userId, status])
   @@index([userId, kind])
@@ -315,7 +317,8 @@ model JobPosting {
   removedAt   DateTime?
   raw         String    // JSON of the raw extracted fields, for debugging
 
-  watchlist Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  watchlist   Watchlist    @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+  application Application? // back-relation; the foreign key lives on Application
 
   @@unique([watchlistId, externalId])
   @@index([status, lastSeenAt])

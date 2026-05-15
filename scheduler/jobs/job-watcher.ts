@@ -18,6 +18,8 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { fetchCareersPage } from "@/lib/fetchers/careers-page-fetcher";
 import { fetchGreenhouse } from "@/lib/fetchers/greenhouse-fetcher";
+import { fetchLever } from "@/lib/fetchers/lever-fetcher";
+import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
 import { WatchlistConfigSchema } from "@/lib/schemas/watchlists";
 import { broadcastEvent } from "@/lib/events";
 
@@ -25,6 +27,7 @@ export interface RunResult {
     watchlistId: string;
     newPostings: number;
     seenAgain: number;
+    closed: number;
     error: string | null;
 }
 
@@ -37,8 +40,8 @@ function externalIdFor(company: string, title: string, sourceUrl: string): strin
 async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): Promise<RunResult> {
     const broadcast = opts?.broadcast ?? false;
     const watchlist = await prisma.watchlist.findUnique({ where: { id: watchlistId } });
-    if (!watchlist) return { watchlistId, newPostings: 0, seenAgain: 0, error: "watchlist not found" };
-    if (!watchlist.active) return { watchlistId, newPostings: 0, seenAgain: 0, error: "watchlist is paused" };
+    if (!watchlist) return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: "watchlist not found" };
+    if (!watchlist.active) return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: "watchlist is paused" };
 
     let config: ReturnType<typeof WatchlistConfigSchema.parse>;
     try {
@@ -50,7 +53,7 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
             where: { id: watchlistId },
             data: { lastRunAt: new Date(), lastError: `invalid config: ${msg}` },
         });
-        return { watchlistId, newPostings: 0, seenAgain: 0, error: `invalid config: ${msg}` };
+        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: `invalid config: ${msg}` };
     }
 
     if (config.kind !== watchlist.kind) {
@@ -60,12 +63,17 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
             where: { id: watchlistId },
             data: { lastRunAt: new Date(), lastError: msg },
         });
-        return { watchlistId, newPostings: 0, seenAgain: 0, error: msg };
+        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: msg };
     }
 
-    const fetchResult = config.kind === "greenhouse"
-        ? await fetchGreenhouse(config)
-        : await fetchCareersPage(config);
+    const fetchResult = await (() => {
+        switch (config.kind) {
+            case "greenhouse": return fetchGreenhouse(config);
+            case "lever":      return fetchLever(config);
+            case "ashby":      return fetchAshby(config);
+            case "careers-page": return fetchCareersPage(config);
+        }
+    })();
     const runAt = new Date();
 
     if (!fetchResult.ok) {
@@ -73,11 +81,12 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
             where: { id: watchlistId },
             data: { lastRunAt: runAt, lastError: fetchResult.error },
         });
-        return { watchlistId, newPostings: 0, seenAgain: 0, error: fetchResult.error };
+        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: fetchResult.error };
     }
 
     let newPostings = 0;
     let seenAgain = 0;
+    const seenExternalIds = new Set<string>();
 
     // First-run sanity: if a watchlist has never been crawled before AND a single
     // pull returns more than this many postings, we still record them all (so the
@@ -90,6 +99,7 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
 
     for (const raw of fetchResult.postings) {
         const externalId = externalIdFor(raw.company, raw.title, raw.sourceUrl);
+        seenExternalIds.add(externalId);
         const existing = await prisma.jobPosting.findUnique({
             where: { watchlistId_externalId: { watchlistId, externalId } },
             select: { id: true },
@@ -132,6 +142,36 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
         }
     }
 
+    // Closed-posting detection (story 22). Any prior posting for this watchlist
+    // that we *didn't* see in this run, that's been silent for > 6h, and that
+    // isn't already terminal (closed/hidden), gets marked closed.
+    let closed = 0;
+    if (!isFirstRun) {
+        const sixHoursAgo = new Date(runAt.getTime() - 6 * 60 * 60 * 1000);
+        const closeResult = await prisma.jobPosting.updateMany({
+            where: {
+                watchlistId,
+                status: { notIn: ["closed", "hidden"] },
+                externalId: { notIn: Array.from(seenExternalIds) },
+                lastSeenAt: { lt: sixHoursAgo },
+            },
+            data: { status: "closed", removedAt: runAt },
+        });
+        closed = closeResult.count;
+        if (closed > 0) {
+            await prisma.notification.create({
+                data: {
+                    userId: watchlist.userId,
+                    kind: "system",
+                    title: `${watchlist.name} — ${closed} ${closed === 1 ? "posting" : "postings"} closed`,
+                    body: "Removed from the source feed for more than 6 hours.",
+                    payload: JSON.stringify({ watchlistId, closed }),
+                    channels: "in_app",
+                },
+            });
+        }
+    }
+
     await prisma.watchlist.update({
         where: { id: watchlistId },
         data: { lastRunAt: runAt, lastSuccessAt: runAt, lastError: null },
@@ -162,7 +202,7 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
         }
     }
 
-    return { watchlistId, newPostings, seenAgain, error: null };
+    return { watchlistId, newPostings, seenAgain, closed, error: null };
 }
 
 /**
@@ -195,7 +235,7 @@ export async function runDueWatchlists(): Promise<{ processed: number; results: 
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[job-watcher] processOne(${c.id}) threw:`, e);
-            results.push({ watchlistId: c.id, newPostings: 0, seenAgain: 0, error: msg });
+            results.push({ watchlistId: c.id, newPostings: 0, seenAgain: 0, closed: 0, error: msg });
         }
     }
     return { processed: due.length, results };

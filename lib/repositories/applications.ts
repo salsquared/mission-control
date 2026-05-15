@@ -10,6 +10,7 @@ export interface ApplicationCreate {
     nextSteps?: string | null;
     dateApplied?: Date;
     lastEmailMsgId?: string | null;
+    postingId?: string | null;
     lastUpdateAt?: Date;
 }
 

@@ -12,12 +12,42 @@ import {
     ClipboardCheck,
     ArrowRight,
     Trash2,
+    ExternalLink,
 } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { APPLICATION_STATUSES, APPLICATION_KINDS } from "@/lib/schemas/applications";
 import { toastStore } from "@/lib/toast-store";
 
 type EditingField = 'company' | 'role' | 'nextSteps' | null;
+
+const PostingSourceLine: React.FC<{ postingId: string }> = ({ postingId }) => {
+    const { data } = useQuery({
+        queryKey: queryKeys.posting(postingId),
+        queryFn: () => api.postings.get(postingId),
+        retry: false,
+    });
+    if (!data?.posting) return null;
+    const closed = data.posting.status === 'closed';
+    return (
+        <div className="mt-1 flex items-center gap-2 text-[11px] text-white/40">
+            <span>Tracked from:</span>
+            <a
+                href={data.posting.sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-cyan-300/80 hover:text-cyan-200 underline underline-offset-2 truncate max-w-[28ch]"
+            >
+                {data.posting.sourceUrl}
+                <ExternalLink className="w-3 h-3 shrink-0" />
+            </a>
+            {closed && (
+                <span className="text-[10px] uppercase tracking-wide text-red-300/80 bg-red-500/10 border border-red-500/20 px-1.5 py-0.5 rounded">
+                    Closed
+                </span>
+            )}
+        </div>
+    );
+};
 
 interface ApplicationDetailOverlayProps {
     applicationId: string;
@@ -226,6 +256,9 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                             >
                                 {app?.role || <span className="italic text-white/30">Click to add role</span>}
                             </p>
+                        )}
+                        {app?.postingId && (
+                            <PostingSourceLine postingId={app.postingId} />
                         )}
                         {app && (
                             <>

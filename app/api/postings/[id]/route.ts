@@ -34,6 +34,25 @@ function serialize(p: {
     };
 }
 
+export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+    const userId = userIdFromGuard(guard);
+    if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+
+    const { id } = await params;
+    try {
+        const row = await prisma.jobPosting.findFirst({
+            where: { id, watchlist: { userId } },
+        });
+        if (!row) return NextResponse.json({ error: "Posting not found" }, { status: 404 });
+        return NextResponse.json({ posting: serialize(row) }, { status: 200 });
+    } catch (e) {
+        console.error(`[postings/${id} GET] error:`, e);
+        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    }
+}
+
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const guard = await requireSession();
     if ('error' in guard) return guard.error;

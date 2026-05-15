@@ -1,12 +1,16 @@
 import { z } from "zod";
 
-// Phase 1 supports two source types:
-//   - careers-page: scrape an HTML page with cheerio + a link regex (works for
-//     the small set of careers pages that still serve static HTML).
-//   - greenhouse: hit boards-api.greenhouse.io/v1/boards/<slug>/jobs (works for
-//     most modern hiring pipelines — Anthropic, Stripe, Rocket Lab, etc.).
-// Phase 2 will add lever/ashby/workday/linkedin.
-export const WATCHLIST_KINDS = ["careers-page", "greenhouse"] as const;
+// Source types:
+//   - careers-page: scrape an HTML page with cheerio + a link regex (small set
+//     of companies that still serve static HTML).
+//   - greenhouse: boards-api.greenhouse.io/v1/boards/<slug>/jobs (Anthropic,
+//     Stripe, Rocket Lab, Vercel, ...).
+//   - lever: api.lever.co/v0/postings/<slug> (Spotify, Lever's own boards,
+//     many YC companies).
+//   - ashby: api.ashbyhq.com/posting-api/job-board/<slug> (Notion, PostHog,
+//     many AI-era companies).
+// Phase 2b will add workday + linkedin.
+export const WATCHLIST_KINDS = ["careers-page", "greenhouse", "lever", "ashby"] as const;
 export const WatchlistKindSchema = z.enum(WATCHLIST_KINDS);
 
 export const CareersPageConfigSchema = z.object({
@@ -23,9 +27,23 @@ export const GreenhouseConfigSchema = z.object({
     companyName: z.string().min(1),
 });
 
+export const LeverConfigSchema = z.object({
+    kind: z.literal("lever"),
+    boardSlug: z.string().min(1), // the api.lever.co/v0/postings/<slug> slug
+    companyName: z.string().min(1),
+});
+
+export const AshbyConfigSchema = z.object({
+    kind: z.literal("ashby"),
+    boardSlug: z.string().min(1), // the api.ashbyhq.com/posting-api/job-board/<slug> slug
+    companyName: z.string().min(1),
+});
+
 export const WatchlistConfigSchema = z.discriminatedUnion("kind", [
     CareersPageConfigSchema,
     GreenhouseConfigSchema,
+    LeverConfigSchema,
+    AshbyConfigSchema,
 ]);
 
 export type WatchlistConfig = z.infer<typeof WatchlistConfigSchema>;
@@ -117,5 +135,6 @@ export const WatchlistRunResponseSchema = z.object({
     watchlistId: z.string(),
     newPostings: z.number().int(),
     seenAgain: z.number().int(),
+    closed: z.number().int(),
     error: z.string().nullable(),
 });
