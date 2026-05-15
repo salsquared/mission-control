@@ -86,18 +86,19 @@ model Session {
 }
 
 model User {
-  id            String         @id @default(cuid())
-  name          String?
-  email         String?        @unique
-  emailVerified DateTime?
-  image         String?
-  accounts      Account[]
-  sessions      Session[]
-  applications  Application[]
-  gcalSyncState GcalSyncState?
-  profile       Profile?
-  watchlists    Watchlist[]
-  notifications Notification[]
+  id               String            @id @default(cuid())
+  name             String?
+  email            String?           @unique
+  emailVerified    DateTime?
+  image            String?
+  accounts         Account[]
+  sessions         Session[]
+  applications     Application[]
+  gcalSyncState    GcalSyncState?
+  profile          Profile?
+  watchlists       Watchlist[]
+  notifications    Notification[]
+  generatedResumes GeneratedResume[]
 }
 
 model VerificationToken {
@@ -123,9 +124,10 @@ model Application {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
-  user            User       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  events          ApplicationEvent[]
-  posting         JobPosting? @relation(fields: [postingId], references: [id], onDelete: SetNull)
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  events           ApplicationEvent[]
+  posting          JobPosting?       @relation(fields: [postingId], references: [id], onDelete: SetNull)
+  generatedResumes GeneratedResume[]
 
   @@index([userId, status])
   @@index([userId, kind])
@@ -340,4 +342,26 @@ model Notification {
 
   @@index([userId, createdAt])
   @@index([userId, readAt])
+}
+
+// M8 Phase 2 — resume archival + traceability. See docs/implementation.md §M8-2.1.
+model GeneratedResume {
+  id              String   @id @default(cuid())
+  userId          String
+  applicationId   String?
+  createdAt       DateTime @default(now())
+  postingInput    String   // JSON: { url?, text?, parsedKeywords[] }
+  profileSnapshot String   // JSON: full hydrated profile at gen-time
+  selections      String   // JSON: [{ kind, sourceId, sourceLabel, bulletId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[], locked }]
+  templateKey     String   @default("ats-plain")
+  format          String   // "pdf" | "docx"
+  status          String   // "ready" | "failed"
+  artifactPath    String?  // relative path under data/resumes/ (gitignored)
+  error           String?
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([applicationId])
 }

@@ -148,6 +148,9 @@ export const queryKeys = {
     posting: (id: string) => ['posting', id] as const,
     notifications: (filter?: { unread?: boolean }) =>
         ['notifications', filter ?? {}] as const,
+    resumes: (filter?: { applicationId?: string }) =>
+        ['resumes', filter ?? {}] as const,
+    resume: (id: string) => ['resume', id] as const,
 };
 
 // ─── API surface ───────────────────────────────────────────────────────────
@@ -388,5 +391,54 @@ export const api = {
         },
         update: (input: z.infer<typeof NotificationPatchSchema>) =>
             jsonFetch('/api/notifications', NotificationPatchResponseSchema, jsonBody('PATCH', input)),
+    },
+
+    resumes: {
+        // Lightweight list (no selections / no snapshot).
+        list: (filter?: { applicationId?: string; limit?: number }) => {
+            const params = new URLSearchParams();
+            if (filter?.applicationId) params.set('applicationId', filter.applicationId);
+            if (filter?.limit) params.set('limit', String(filter.limit));
+            const qs = params.toString();
+            return jsonFetch(
+                `/api/resumes${qs ? '?' + qs : ''}`,
+                z.object({
+                    resumes: z.array(z.object({
+                        id: z.string(),
+                        userId: z.string(),
+                        applicationId: z.string().nullable(),
+                        createdAt: z.string(),
+                        templateKey: z.string(),
+                        format: z.string(),
+                        status: z.string(),
+                        hasArtifact: z.boolean(),
+                        error: z.string().nullable(),
+                    })),
+                }),
+            );
+        },
+        // Full row including selections — drives the "Why these bullets?" UI.
+        get: (id: string, includeSnapshot = false) =>
+            jsonFetch(
+                `/api/resumes/${encodeURIComponent(id)}${includeSnapshot ? '?includeSnapshot=1' : ''}`,
+                z.object({
+                    resume: z.object({
+                        id: z.string(),
+                        userId: z.string(),
+                        applicationId: z.string().nullable(),
+                        createdAt: z.string(),
+                        templateKey: z.string(),
+                        format: z.string(),
+                        status: z.string(),
+                        hasArtifact: z.boolean(),
+                        error: z.string().nullable(),
+                        postingInput: z.unknown(),
+                        selections: z.unknown(),
+                        profileSnapshot: z.unknown().optional(),
+                    }),
+                }),
+            ),
+        // Returns a direct download URL — UI uses it as href, no fetch needed.
+        downloadUrl: (id: string) => `/api/resumes/${encodeURIComponent(id)}/download`,
     },
 };

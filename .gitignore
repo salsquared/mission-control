@@ -68,3 +68,9 @@ public/swe-worker-*.js
 *.db-shm
 *.db-wal
 .restart-flag
+
+# Generated resume artifacts (M8 Phase 2). The DB row points at the path;
+# the bytes live here. Keep the directory tracked via .gitkeep so deployments
+# don't fail on missing parent.
+/data/resumes/*
+!/data/resumes/.gitkeep

@@ -284,52 +284,23 @@ Story 38's second half (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/res
 
 `?format=docx` on the route; same selection + rewrite pipeline; html-to-docx renderer; PDF/DOCX toggle on the trigger card persisted to localStorage. Also bumped default model from `gemini-2.5-flash` to `gemini-flash-latest` (~30–42% faster).
 
-### M8 Phase 2 — Archival + traceability + Application linkage ⏳
+### M8 Phase 2 — Archival + traceability + Application linkage ✅
 
-Stories: 35 (🟡 traceability), 36 (🟡 lock/exclude UI surfacing), 39 (🟡 archival).
+Stories: 35 (🟡 traceability), 39 (🟡 archival). Shipped 2026-05-15. Smoke: `scripts/tests/resume-archival-smoke.ts` (17/17 green).
 
-#### M8-2.1 — `GeneratedResume` schema
+- New `GeneratedResume` Prisma model (userId, applicationId?, postingInput, profileSnapshot, selections, templateKey, format, status, artifactPath?, error). Migration `add_generated_resumes`. Reverse relations on User + Application; `Application.posting onDelete:SetNull` so deleting a posting doesn't nuke the archived resume.
+- `lib/resumes/storage.ts` — filesystem-backed at `data/resumes/<id>.<ext>` (gitignored with `.gitkeep` retained). `safeRelative` rejects traversal.
+- `/api/resumes POST` now persists after a successful render: write artifact → row insert → return bytes + `X-Resume-Id` header. Best-effort: a persistence failure doesn't fail the user's generation.
+- New routes: `GET /api/resumes` (list, filter by applicationId), `GET /api/resumes/[id]` (full row including selections, `?includeSnapshot=1` for the heavy profile blob), `GET /api/resumes/[id]/download` (streams artifact, owner-only).
+- `POST /api/resumes` body now accepts `applicationId` (defensive: route verifies owner before linking; 400 otherwise).
+- **Traceability UI (story 35)**: `GenerateResumeCard` has a "Why these bullets?" expander on the last generation — per selection: source label, original vs rewritten text (line-through diff), matched tags + keywords as chips, score.
+- **Per-Application linkage (story 39)**: `ApplicationDetailOverlay` has a new "Resumes for this application" expandable section — lists every linked `GeneratedResume` with format badge + timestamp + download link, plus an inline form to generate one scoped to this application.
 
-```prisma
-model GeneratedResume {
-  id              String   @id @default(cuid())
-  userId          String
-  applicationId   String?
-  createdAt       DateTime @default(now())
-  postingInput    String   // JSON: { url?, text, parsedKeywords[] }
-  profileSnapshot String   // JSON: full HydratedProfile at gen time
-  selections      String   // JSON: [{ bulletId, sourceKind, sourceId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[] }]
-  templateKey     String   @default("ats-plain")
-  format          String   // "pdf" | "docx"
-  status          String   // "ready" | "failed"
-  artifactPath    String?  // data/resumes/<id>.<ext> (gitignored)
-  error           String?
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
-  @@index([userId, createdAt])
-  @@index([applicationId])
-}
-```
+Story 36 (lock/exclude UI surfacing) deferred — toggles already exist; just needs better discoverability. Polish-tier.
 
-`data/resumes/` directory added to `.gitignore`. `Application.generatedResumes` reverse-relation.
+### M8 Phase 2-followup ⏳
 
-#### M8-2.2 — Persist on successful generation
-
-After `renderResumePDF`/`renderResumeDOCX` returns, the route writes a `GeneratedResume` row and the artifact to `data/resumes/<id>.<ext>`. On failure, write the row with `status='failed'` + `error` for diagnostics. Return the `id` in a new `X-Resume-Id` header so the UI can link to it later.
-
-#### M8-2.3 — Traceability UI (story 35)
-
-A "Why this bullet?" expander on the trigger card (or a separate "Last generation" pane). For each `Selection`, show: `matchedTags`, `matchedKeywords`, score, original vs rewritten text. Reads from the last persisted `GeneratedResume.selections`.
-
-#### M8-2.4 — Per-Application linkage (story 39 — also serves MA-f.3)
-
-- New "Generate for this application" button on `ApplicationDetailOverlay`. Takes the application's company/role and pre-fills the trigger card, scoped to attach the resulting `GeneratedResume` to that application.
-- New "Resumes sent" section on the overlay listing every `GeneratedResume` with `applicationId = this.id`. Each row: format, date, download link, "Generated for posting: <link>" if `postingInput.url` is set.
-- Update the timeline to surface resume artifacts as a new `ApplicationEvent.kind = 'RESUME_GENERATED'` (or just keep them in their own pane — decide at implementation time which feels better in the UI).
-
-#### M8-2.5 — Lock/exclude UI surfacing (story 36)
-
-M7 already supports `locked` / `excluded` on bullets via the `BulletRow` toggles, but they're cosmetic. Phase 2 ensures the toggles are discoverable: clearer iconography (lock vs eye-with-slash), tooltips, and a "Locked: always included / Excluded: never included" legend on the dash.
+- **M8-2.5** — surface lock/exclude bullet toggles more prominently in the M7 Profile cards (tooltips, legend, clearer iconography).
 
 ### M8 Phase 3 — Multi-template + cover letter + skills-gap 💤
 

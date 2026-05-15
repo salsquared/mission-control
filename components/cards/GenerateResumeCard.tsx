@@ -1,16 +1,32 @@
 "use client";
 import React, { useEffect, useState } from "react";
-import { FileText, FileType2, Loader2, Link as LinkIcon } from "lucide-react";
+import { FileText, FileType2, Loader2, Link as LinkIcon, ChevronDown, ChevronRight } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
+import { api, queryKeys } from "@/lib/api-client";
 
 type Format = "pdf" | "docx";
 
 interface GenerateResult {
+    id: string | null;
     url: string;
     filename: string;
     title: string | null;
     company: string | null;
     format: Format;
+}
+
+interface SelectionRow {
+    kind: string;
+    sourceId: string;
+    sourceLabel: string;
+    bulletId: string;
+    originalText: string;
+    rewrittenText: string;
+    score: number;
+    matchedTags: string[];
+    matchedKeywords: string[];
+    locked: boolean;
 }
 
 const FORMAT_STORAGE_KEY = "mc-resume-format";
@@ -26,6 +42,14 @@ export function GenerateResumeCard() {
     const [busy, setBusy] = useState(false);
     const [stage, setStage] = useState<string | null>(null);
     const [lastResult, setLastResult] = useState<GenerateResult | null>(null);
+    const [showTrace, setShowTrace] = useState(false);
+
+    // Traceability (M8-2.3): fetch the full row when the user expands "Why these bullets?"
+    const traceQuery = useQuery({
+        queryKey: queryKeys.resume(lastResult?.id ?? ""),
+        queryFn: () => api.resumes.get(lastResult!.id!),
+        enabled: showTrace && !!lastResult?.id,
+    });
 
     // Restore last-chosen format on mount.
     useEffect(() => {
@@ -76,12 +100,14 @@ export function GenerateResumeCard() {
             })();
             const objectUrl = URL.createObjectURL(blob);
             setLastResult({
+                id: res.headers.get("X-Resume-Id"),
                 url: objectUrl,
                 filename,
                 title: res.headers.get("X-Resume-Title"),
                 company: res.headers.get("X-Resume-Company"),
                 format: responseFormat,
             });
+            setShowTrace(false);
             // PDFs preview in-browser; DOCX needs a download. Open PDFs in a new tab; trigger download for DOCX.
             if (responseFormat === "pdf") {
                 window.open(objectUrl, "_blank");
@@ -178,6 +204,79 @@ export function GenerateResumeCard() {
                     </a>
                 )}
             </div>
+
+            {lastResult?.id && (
+                <div className="mt-3">
+                    <button
+                        type="button"
+                        onClick={() => setShowTrace(s => !s)}
+                        className="flex items-center gap-1 text-[11px] text-white/50 hover:text-white/80 transition-colors"
+                    >
+                        {showTrace ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        Why these bullets?
+                    </button>
+                    {showTrace && (
+                        <div className="mt-2 rounded-lg bg-black/30 border border-white/10 px-3 py-2 max-h-[24rem] overflow-y-auto">
+                            {traceQuery.isLoading ? (
+                                <div className="flex items-center gap-2 text-[11px] text-white/40">
+                                    <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                                </div>
+                            ) : traceQuery.error ? (
+                                <div className="text-[11px] text-red-300/80">Failed to load: {errMessage(traceQuery.error)}</div>
+                            ) : traceQuery.data ? (
+                                <TraceList selections={(traceQuery.data.resume.selections as SelectionRow[]) ?? []} />
+                            ) : null}
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 }
+
+const TraceList: React.FC<{ selections: SelectionRow[] }> = ({ selections }) => {
+    if (selections.length === 0) {
+        return <div className="text-[11px] text-white/40 italic">No selections recorded.</div>;
+    }
+    return (
+        <ul className="space-y-2.5">
+            {selections.map(s => {
+                const changed = s.rewrittenText !== s.originalText;
+                return (
+                    <li key={s.bulletId} className="text-[11px]">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="uppercase tracking-wide text-purple-300/80 text-[10px]">{s.kind}</span>
+                            <span className="text-white/70 truncate">{s.sourceLabel}</span>
+                            {s.locked && (
+                                <span className="text-[10px] text-amber-300/80 bg-amber-500/10 border border-amber-500/20 px-1 rounded">locked</span>
+                            )}
+                            <span className="text-white/30">score {Number.isFinite(s.score) ? s.score : "∞"}</span>
+                        </div>
+                        {changed ? (
+                            <div className="space-y-1 ml-1">
+                                <div className="text-white/40 line-through">{s.originalText}</div>
+                                <div className="text-white/90">{s.rewrittenText}</div>
+                            </div>
+                        ) : (
+                            <div className="text-white/80 ml-1">{s.originalText}</div>
+                        )}
+                        {(s.matchedTags.length > 0 || s.matchedKeywords.length > 0) && (
+                            <div className="mt-1 ml-1 flex flex-wrap gap-1">
+                                {s.matchedTags.map(t => (
+                                    <span key={`t-${t}`} className="text-[10px] text-cyan-300/80 bg-cyan-500/10 border border-cyan-500/20 px-1.5 rounded">
+                                        tag:{t}
+                                    </span>
+                                ))}
+                                {s.matchedKeywords.map(k => (
+                                    <span key={`k-${k}`} className="text-[10px] text-purple-300/80 bg-purple-500/10 border border-purple-500/20 px-1.5 rounded">
+                                        kw:{k}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </li>
+                );
+            })}
+        </ul>
+    );
+};

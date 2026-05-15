@@ -13,6 +13,9 @@ import {
     ArrowRight,
     Trash2,
     ExternalLink,
+    ChevronDown,
+    ChevronRight,
+    FileText,
 } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import {
@@ -396,6 +399,8 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                     )}
                 </div>
 
+                {app && <ApplicationResumesSection applicationId={app.id} company={app.company} role={app.role ?? null} />}
+
                 <form onSubmit={handleAddNote} className="p-4 border-t border-white/10 shrink-0 flex gap-2">
                     <input
                         type="text"
@@ -414,6 +419,157 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                     </button>
                 </form>
             </div>
+        </div>
+    );
+};
+
+// ─── M8-2.4: Per-Application Generate + "Resumes sent" section ─────────
+
+const ApplicationResumesSection: React.FC<{ applicationId: string; company: string; role: string | null }> = ({ applicationId, company, role }) => {
+    const queryClient = useQueryClient();
+    const [open, setOpen] = useState(false);
+    const [postingUrl, setPostingUrl] = useState("");
+    const [postingText, setPostingText] = useState("");
+    const [generating, setGenerating] = useState(false);
+
+    const { data, isLoading } = useQuery({
+        queryKey: queryKeys.resumes({ applicationId }),
+        queryFn: () => api.resumes.list({ applicationId }),
+    });
+    const resumes = data?.resumes ?? [];
+
+    async function handleGenerate() {
+        if (generating) return;
+        if (!postingUrl.trim() && !postingText.trim()) return;
+        setGenerating(true);
+        try {
+            const res = await fetch("/api/resumes", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    posting: {
+                        url: postingUrl.trim() || undefined,
+                        text: postingText.trim() || undefined,
+                    },
+                    applicationId,
+                }),
+            });
+            if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                throw new Error(body.error ?? `HTTP ${res.status}`);
+            }
+            const resumeId = res.headers.get("X-Resume-Id");
+            const fmt = res.headers.get("X-Resume-Format") ?? "pdf";
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            if (fmt === "pdf") {
+                window.open(url, "_blank");
+            } else {
+                const a = document.createElement("a");
+                a.href = url;
+                a.download = `resume-${company}-${new Date().toISOString().slice(0, 10)}.docx`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }
+            toastStore.push({ message: `Resume generated for ${company} (${fmt.toUpperCase()})`, type: "info" });
+            setPostingUrl("");
+            setPostingText("");
+            if (resumeId) {
+                queryClient.invalidateQueries({ queryKey: queryKeys.resumes({ applicationId }) });
+            }
+        } catch (e) {
+            toastStore.push({ message: `Generate failed: ${e instanceof Error ? e.message : String(e)}`, type: "error" });
+        } finally {
+            setGenerating(false);
+        }
+    }
+
+    return (
+        <div className="px-4 py-3 border-t border-white/10 shrink-0">
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                className="flex items-center justify-between w-full text-left text-xs uppercase tracking-wide text-white/50 hover:text-white/80"
+            >
+                <span>Resumes for this application{resumes.length > 0 && <span className="ml-2 text-purple-300/80">({resumes.length})</span>}</span>
+                {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            </button>
+
+            {open && (
+                <div className="mt-2 space-y-3">
+                    {/* Existing resumes */}
+                    {isLoading ? (
+                        <div className="flex items-center gap-2 text-[11px] text-white/40">
+                            <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                        </div>
+                    ) : resumes.length === 0 ? (
+                        <p className="text-[11px] text-white/40 italic">No resumes generated for this application yet.</p>
+                    ) : (
+                        <ul className="space-y-1">
+                            {resumes.map(r => (
+                                <li key={r.id} className="flex items-center justify-between rounded-md bg-black/30 border border-white/10 px-2.5 py-1.5">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span className="text-[10px] uppercase tracking-wide text-purple-300/80 bg-purple-500/10 px-1.5 py-0.5 rounded">
+                                            {r.format}
+                                        </span>
+                                        <span className="text-[11px] text-white/70">
+                                            {new Date(r.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' })}
+                                        </span>
+                                        {r.status === 'failed' && (
+                                            <span className="text-[10px] text-red-300/80 bg-red-500/10 border border-red-500/20 px-1 rounded">failed</span>
+                                        )}
+                                    </div>
+                                    {r.hasArtifact ? (
+                                        <a
+                                            href={api.resumes.downloadUrl(r.id)}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="text-[11px] text-purple-300 hover:text-purple-200 underline underline-offset-2"
+                                        >
+                                            Download
+                                        </a>
+                                    ) : (
+                                        <span className="text-[10px] text-white/30">no file</span>
+                                    )}
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+
+                    {/* Generate-for-this-application form */}
+                    <div className="rounded-md bg-purple-500/5 border border-purple-400/20 p-2.5 space-y-2">
+                        <div className="text-[11px] text-white/60">
+                            Generate a tailored resume for <span className="text-white/90">{role || "this role"}</span> at <span className="text-white/90">{company}</span>.
+                        </div>
+                        <input
+                            type="url"
+                            value={postingUrl}
+                            onChange={e => setPostingUrl(e.target.value)}
+                            placeholder="Posting URL (optional)"
+                            disabled={generating}
+                            className="w-full px-2 py-1.5 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40"
+                        />
+                        <textarea
+                            value={postingText}
+                            onChange={e => setPostingText(e.target.value)}
+                            placeholder="Or paste posting text…"
+                            disabled={generating}
+                            rows={3}
+                            className="w-full px-2 py-1.5 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40 resize-y"
+                        />
+                        <button
+                            type="button"
+                            onClick={handleGenerate}
+                            disabled={generating || (!postingUrl.trim() && !postingText.trim())}
+                            className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 text-[11px] font-semibold text-purple-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            {generating ? <Loader2 className="w-3 h-3 animate-spin" /> : <FileText className="w-3 h-3" />}
+                            {generating ? "Generating…" : "Generate"}
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
