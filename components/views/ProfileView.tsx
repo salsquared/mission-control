@@ -278,7 +278,8 @@ export const ProfileView: React.FC = () => {
                     </div>
                 </Section>
 
-                <Section title="Work History">
+                <Section title="Work History" description="Hover a bullet to lock 🔒 (always include) or exclude 🚫 (never include). Tags help the resume generator match the right bullets to a posting.">
+
                     <div className="mt-4 space-y-3">
                         {profile.workRoles.length === 0 ? (
                             <p className="text-sm text-white/40 italic">No roles yet. Click &quot;Add role&quot; below.</p>

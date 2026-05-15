@@ -194,6 +194,8 @@ export interface ProjectCreateInput {
     repoUrl?: string | null;
     liveUrl?: string | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
+    githubRepo?: string | null;
+    portfolio?: boolean;
     position?: number;
 }
 
@@ -209,6 +211,8 @@ export async function createProject(userId: string, input: ProjectCreateInput): 
             repoUrl: input.repoUrl ?? null,
             liveUrl: input.liveUrl ?? null,
             bullets: serializeBullets(bullets),
+            githubRepo: input.githubRepo ?? null,
+            portfolio: input.portfolio ?? false,
             position,
         },
     });
@@ -221,6 +225,8 @@ export interface ProjectUpdateInput {
     repoUrl?: string | null;
     liveUrl?: string | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
+    githubRepo?: string | null;
+    portfolio?: boolean;
     position?: number;
 }
 
@@ -235,6 +241,8 @@ export async function updateProject(userId: string, id: string, input: ProjectUp
     if (input.description !== undefined) payload.description = input.description;
     if (input.repoUrl !== undefined) payload.repoUrl = input.repoUrl;
     if (input.liveUrl !== undefined) payload.liveUrl = input.liveUrl;
+    if (input.githubRepo !== undefined) payload.githubRepo = input.githubRepo;
+    if (input.portfolio !== undefined) payload.portfolio = input.portfolio;
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
     const row = await prisma.project.update({ where: { id }, data: payload });

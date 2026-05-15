@@ -208,21 +208,25 @@ model WorkRole {
 }
 
 model Project {
-  id          String   @id @default(cuid())
-  profileId   String
-  name        String
-  description String?
-  repoUrl     String?
-  liveUrl     String?
-  bullets     String   @default("[]")
-  metrics     String?  // JSON: populated by §9 GitHub scheduler job
-  position    Int      @default(0)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id                 String    @id @default(cuid())
+  profileId          String
+  name               String
+  description        String?
+  repoUrl            String?
+  liveUrl            String?
+  bullets            String    @default("[]")
+  metrics            String?   // JSON: { stars, primaryLanguage, languageMix, lastCommitAt, commitsTotal, ageDays }
+  githubRepo         String?   // "owner/repo" — drives the M9 scheduler fetch
+  portfolio          Boolean   @default(false) // flag to fetch metrics for this project + surface on resumes
+  metricsUpdatedAt   DateTime?
+  position           Int       @default(0)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
-  profile     Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile            Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, position])
+  @@index([portfolio, metricsUpdatedAt])
 }
 
 model Education {

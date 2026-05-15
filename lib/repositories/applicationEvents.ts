@@ -34,6 +34,53 @@ export interface ApplicationEventDraft {
  * on SQLite even though the runtime supports `ON CONFLICT IGNORE`. With
  * typical ingest emitting ~3-5 rows per email, the loop cost is trivial.
  */
+// ApplicationEvent kinds that warrant an in-app Notification when they fire.
+// (Story 27.) Things the user MUST see: interviews getting scheduled, offers,
+// rejections, assessments coming in. Skip the noisy/self-initiated kinds
+// (APPLIED, STATUS_CHANGED, EMAIL_RECEIVED, NOTE).
+const NOTIFY_EVENT_KINDS = new Set([
+    "INTERVIEW_SCHEDULED",
+    "OFFER",
+    "REJECTION",
+    "ASSESSMENT_REQUESTED",
+]);
+
+/**
+ * Fire a Notification for an event of attention-worthy kind. Best-effort —
+ * a notification failure must not fail the caller's create.
+ */
+export async function maybeNotifyForApplicationEvent(
+    event: { id: string; kind: string; title: string; applicationId: string; scheduledAt: Date | null; notes: string | null },
+    userId: string,
+    companyHint?: string,
+): Promise<void> {
+    if (!NOTIFY_EVENT_KINDS.has(event.kind)) return;
+    const body = event.scheduledAt
+        ? `${event.scheduledAt.toLocaleString()}${event.notes ? ` · ${event.notes.slice(0, 120)}` : ""}`
+        : event.notes ?? null;
+    const title = companyHint
+        ? `${companyHint} — ${event.title}`
+        : event.title;
+    try {
+        await prisma.notification.create({
+            data: {
+                userId,
+                kind: "application",
+                title,
+                body,
+                payload: JSON.stringify({
+                    applicationId: event.applicationId,
+                    eventId: event.id,
+                    eventKind: event.kind,
+                }),
+                channels: "in_app",
+            },
+        });
+    } catch (e) {
+        console.warn(`[applicationEvents] notification create failed for event ${event.id}:`, e);
+    }
+}
+
 export async function createApplicationEvents(
     drafts: ApplicationEventDraft[]
 ): Promise<ApplicationEvent[]> {

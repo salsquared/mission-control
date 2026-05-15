@@ -206,9 +206,14 @@ Shipped 2026-05-15. Smoke: `scripts/tests/watchlist-phase2-smoke.ts` (10/10 gree
 - **MB-2.1 (partial) Lever + Ashby fetchers** — `lib/fetchers/lever-fetcher.ts` (api.lever.co/v0/postings/<slug>) and `lib/fetchers/ashby-fetcher.ts` (api.ashbyhq.com/posting-api/job-board/<slug>). WATCHLIST_KINDS expanded to `["careers-page", "greenhouse", "lever", "ashby"]`. AddWatchlistModal kind picker shows all four with per-kind help text.
 - **MB-2.4 Closed-posting detection** — at the end of each scheduler tick (skipped on first run), any non-terminal JobPosting whose `externalId` wasn't in the current fetch set AND whose `lastSeenAt < runAt - 6h` flips to `status='closed', removedAt=runAt`. One `Notification(kind='system')` per watchlist summarizing the closures. The 6h grace window prevents transient feed glitches from prematurely marking postings closed. `RunResult.closed` count exposed via `/api/watchlists/[id]/run`.
 
-### MB Phase 2b — Remaining Phase 2 stories ⏳
+### MB Phase 2b — Remaining Phase 2 stories ⏳ (deferred — see below)
 
-Stories: 18 (Workday), 21 (LinkedIn), 26 (per-watchlist mode) (🟡) · Decision 2 (email).
+Stories: 18 (Workday), 21 (LinkedIn), 26 (per-watchlist mode) (🟡) · Decision 2 (email). Deferred because each one is a genuinely large undertaking that needs a separate scoping conversation:
+
+- **LinkedIn**: anti-bot detection makes naïve fetching unreliable; needs explicit search-URL input, rate-limited cadence, possibly a user-agent rotation strategy. Worth doing only if Greenhouse/Lever/Ashby coverage proves insufficient.
+- **Workday**: per-tenant URL prefixes mean each company needs hand-configured `{tenantHost, careerSite}` — operationally fiddly. Lower ROI than the aggregators already shipped.
+- **Email delivery**: requires picking a provider (Resend most likely), provisioning an API key, env-var setup, optionally a verified sending domain. Real work, not a one-line config. Defer until in-app notifications prove insufficient.
+- **Per-watchlist `each`/`digest`/`silent` mode**: needs settings UI + a daily-digest scheduler job. Small but blocked on email landing (only `each` and `silent` make sense without email).
 
 #### MB-2.1b — Workday fetcher (deferred — fiddly per-tenant URLs)
 
@@ -226,13 +231,20 @@ Add `notificationMode: 'each' | 'digest' | 'silent'` to `Watchlist` config. New 
 
 Pick a provider when implementing (Resend most likely — clean SDK, generous free tier). Reads `Notification.channels`; if `'email'` is included, send via the provider. `EMAIL_FROM` + `RESEND_API_KEY` env vars.
 
-### MB Phase 3 — Application-side notifications + polish ⏳
+### MB Phase 3a — Application-side notifications ✅
 
-Stories: 27 (🟡), 28 (🔵), 23 (🔵), 24 (🔵).
+Story 27 (🟡). Shipped 2026-05-15.
 
-#### MB-3.1 — Application-side notifications (story 27)
+New helper `maybeNotifyForApplicationEvent(event, userId, companyHint?)` in `lib/repositories/applicationEvents.ts`. Emits a `Notification(kind='application', payload={applicationId, eventId, eventKind})` when an `ApplicationEvent` of kind `INTERVIEW_SCHEDULED` / `OFFER` / `REJECTION` / `ASSESSMENT_REQUESTED` is created. Skips the noisy/self-initiated kinds (APPLIED, STATUS_CHANGED, EMAIL_RECEIVED, NOTE). Wired into both create paths:
 
-On `ApplicationEvent` create where `kind ∈ { INTERVIEW_SCHEDULED, OFFER, REJECTION }` → emit `Notification(kind='application', payload={applicationId, eventId})`. Reuses the same surface as posting notifications.
+- `lib/applications/ingest.ts` (Gmail webhook + classifier funnel) — fires after `createApplicationEvents` for every inserted event, passing the parsed company name as the hint.
+- `app/api/applications/events/route.ts POST` (manual create from the detail overlay) — fires after the row creates, with the joined `application.company` as the hint. Also broadcasts `Notification` SSE since the create runs in-process.
+
+Best-effort: notification failures log to `console.warn` and don't fail the caller's create.
+
+### MB Phase 3b — Polish ⏳
+
+Stories: 28 (🔵), 23 (🔵), 24 (🔵).
 
 #### MB-3.2 — Stale-application nudges (overlaps MA-f.4)
 
@@ -240,7 +252,7 @@ Daily scheduler job: applications with `lastUpdateAt < now - configurableDays` �
 
 #### MB-3.3 — Quiet hours (story 28)
 
-User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEnd: '08:00', tz }`. Notification dispatcher (the part that delivers to channels) holds delivery until the window opens; in-app stays unaffected.
+User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEnd: '08:00', tz }`. Notification dispatcher (the part that delivers to channels) holds delivery until the window opens; in-app stays unaffected. Blocked on email landing — in-app notifications are silent enough on their own that quiet hours aren't needed yet.
 
 #### MB-3.4 — Negative filters + compensation parsing (🔵, stories 23 + 24)
 
@@ -263,14 +275,12 @@ Stories: 30, 30a (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/profile-i
 
 Pipeline: `lib/profile/extract.ts` (PDF via pdf-parse v2, DOCX via mammoth, TXT/MD/JSON inline) → `lib/profile/import-llm.ts` (Gemini structured-output extraction) → `lib/profile/merge.ts` (deterministic dedup + append-merge against existing profile). Append-to-repository semantics enforced — no overwrite. `next.config.ts` carries `pdf-parse / mammoth / puppeteer-core / html-to-docx` in `serverExternalPackages`.
 
-### M7.4 followups — Fuzzy bullet dedup + extra formats 💤
+### M7.4 followups — Fuzzy dedup + extra formats 💤 / partial ✅
 
-Stories: 30a polish, 32 (🟡).
-
-- **M7.4-f.1 — LLM fuzzy bullet dedup**: current dedup is exact-text only. "Built a TS API" vs "Built a TypeScript API" both survive. Add an LLM "are these the same accomplishment?" pass scoped to one parent entity, batched per role to keep token cost down. Surface "merged similar bullet" rows in the import preview.
-- **M7.4-f.2 — LinkedIn export ZIP**: unzip → read `Positions.csv` / `Education.csv` / `Projects.csv` → run through the same merge layer. No LLM needed (CSV is already structured).
-- **M7.4-f.3 — Legacy `.doc`**: mammoth handles `.docx` only. Either skip `.doc` with a clearer error or wire a converter (libreoffice CLI? `textract`?).
-- **M7.4-f.4 — Tag editing UI** (story 32): per-bullet tag chips in the BulletRow component with inline-add + autocomplete from existing tags in the profile.
+- ✅ **M7.4-f.4 — Tag editing UI** (story 32). Shipped 2026-05-15. BulletRow now renders each tag as a click-to-remove chip and has an inline "+ tag" affordance. Tags persist via the existing bullet PATCH path (the bullet shape already had `tags: string[]`). Autocomplete from other tags in the profile deferred — current entry experience is fine and autocomplete needs the parent component to thread `allTags` down.
+- 💤 **M7.4-f.1 — LLM fuzzy bullet dedup**: current dedup is exact-text only. "Built a TS API" vs "Built a TypeScript API" both survive. Add an LLM "are these the same accomplishment?" pass scoped to one parent entity, batched per role to keep token cost down. Deferred because the cost-vs-value of an extra Gemini call per import isn't obvious yet; tag-editing UI lets the user fix this manually.
+- 💤 **M7.4-f.2 — LinkedIn export ZIP**: unzip → read `Positions.csv` / `Education.csv` / `Projects.csv` → run through the same merge layer. No LLM needed. Deferred — currently uploading the PDF version of a resume covers the same data.
+- 💤 **M7.4-f.3 — Legacy `.doc`**: mammoth handles `.docx` only. Either skip `.doc` with a clearer error or wire a converter (libreoffice CLI? `textract`?). Defer — niche format these days.
 
 ### M8 Phase 1 — Tailored resume generation ✅
 
@@ -298,9 +308,9 @@ Stories: 35 (🟡 traceability), 39 (🟡 archival). Shipped 2026-05-15. Smoke: 
 
 Story 36 (lock/exclude UI surfacing) deferred — toggles already exist; just needs better discoverability. Polish-tier.
 
-### M8 Phase 2-followup ⏳
+### M8 Phase 2-followup ✅
 
-- **M8-2.5** — surface lock/exclude bullet toggles more prominently in the M7 Profile cards (tooltips, legend, clearer iconography).
+- ✅ **M8-2.5** — Lock/exclude bullet UI prominence (story 36). Shipped 2026-05-15. Locked bullets get amber border + always-visible lock icon; excluded bullets get rose border + line-through text + always-visible eye-off icon. Tooltips on hover explain "always include" vs "never include". Section description on the Profile dash's Work History section legends the symbols. Locking and excluding are now mutually exclusive (setting one clears the other).
 
 ### M8 Phase 3 — Multi-template + cover letter + skills-gap 💤
 
@@ -310,38 +320,21 @@ Stories: 37 (🟡 templates), 40 (🔵 cover letter), 41 (🔵 skills-gap).
 - **M8-3.2 — Cover letter** (🔵 story 40): new `lib/resumes/cover-letter.ts` that uses the same Profile + Posting + a different prompt. Output is plain Markdown rendered the same way (PDF via puppeteer, DOCX via html-to-docx).
 - **M8-3.3 — Skills-gap report** (🔵 story 41): `posting.keywords` minus the union of (all profile bullet tags + all profile bullet substring matches). Surfaces "the posting talks about X, your profile doesn't mention X" so the user can fill the gap manually or in the cover letter.
 
-### M9 — GitHub-driven project metrics ⏳
+### M9 Phase 1 — GitHub-driven project metrics ✅
 
-Stories: 42, 43, 44 (🟡) · 45, 46 (🔵).
+Stories: 42, 43, 44 (🟡). Shipped 2026-05-15.
 
-#### M9.1 — Schema additions
+- Schema additions (migration `add_project_github_metrics`): `Project.githubRepo` (`owner/repo`), `Project.portfolio` (Boolean default false), `Project.metricsUpdatedAt`. `metrics` JSON already existed from M7.
+- `lib/fetchers/github-public-fetcher.ts` — public GitHub REST only (Decision 5). Three calls per repo: `/repos/{o}/{r}`, `/repos/{o}/{r}/languages`, `/repos/{o}/{r}/commits?per_page=1` (the link-header `rel="last"` page approximates `commitsTotal`). Goes through `assertExternalHttpUrl` for symmetry with other fetchers. Errors returned, not thrown.
+- `scheduler/jobs/github-metrics.ts` — new PM2 scheduler job at 6h cadence, with a 20h freshness gate inside so each repo is effectively refreshed daily. Skips projects without `portfolio=true` AND `githubRepo` set. Registered as the third job in `scheduler/index.ts`.
+- API: `app/api/profile/projects/route.ts` POST/PATCH accept `githubRepo` (zod-validated as `[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+`) and `portfolio`. Repository helpers + Prisma types updated.
+- Resume template: `lib/resumes/templates/ats-plain.tsx`'s `formatMetricsLine()` renders e.g. "★ 142 · 2,300 commits over 14 months · Go / TypeScript / Python" under the project name when metrics are present. Skip threshold: stars only render at ≥ 5.
 
-- `Project.githubRepo` (String?) — `owner/repo` format
-- `Project.portfolio` (Boolean default false) — flagged for resume use
-- `Project.metricsUpdatedAt` (DateTime?)
-- Already has `metrics` JSON column from M7.
+### M9 Phase 2 — GitHub UX polish 💤
 
-#### M9.2 — Scheduler job
-
-`scheduler/jobs/github-project-metrics.ts`. Per tick (daily): for each `portfolio=true` project with `githubRepo` set, hit GitHub public API:
-- `GET /repos/{owner}/{repo}` — stars, language, description
-- `GET /repos/{owner}/{repo}/languages` — language mix
-- `GET /repos/{owner}/{repo}/commits?per_page=1` — last commit date
-- Compute "X commits over Y months" client-side via commit count + first-commit date
-
-Write into `Project.metrics` JSON: `{ stars, primaryLanguage, languageMix, lastCommitAt, commitsTotal, ageDays }`. No OAuth — public API only (Decision 5).
-
-#### M9.3 — Surface in resume template
-
-Resume template reads `metrics` when present and renders a compact "★ 142 · 2,300 commits over 14 months · Go / TypeScript / Python" line under the project name. Bullet selection unchanged.
-
-#### M9.4 — Suggested-rewrites (🔵 story 45)
-
-When `metrics` change meaningfully (crossed 100 stars, shipped a new language, etc.), enqueue a `Notification(kind='system')` suggesting the user revisit the project bullets. Defer until M9.1–M9.3 are real.
-
-#### M9.5 — README-as-source (🔵 story 46)
-
-`GET /repos/{owner}/{repo}/readme` → use README as additional context for the rewrite prompt (per-project, when generating). Defer until prompts are stable.
+- **Project portfolio toggle UI** — add a checkbox + repo input on `ProjectCard` so the user can flip projects to portfolio mode without going through Prisma.
+- **M9.4 — Suggested-rewrites** (🔵 story 45): when `metrics` change meaningfully (crossed 100 stars, shipped a new language, big release), enqueue a `Notification(kind='system')` suggesting the user revisit the project bullets.
+- **M9.5 — README-as-source** (🔵 story 46): `GET /repos/{owner}/{repo}/readme` → feed README into the rewrite prompt for portfolio projects.
 
 ---
 

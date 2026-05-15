@@ -9,6 +9,7 @@ import {
     APPLICATION_EVENT_KINDS,
 } from "@/lib/schemas/applicationEvents";
 import { syncEventToGcal, deleteEventFromGcal } from "@/lib/calendar/sync";
+import { maybeNotifyForApplicationEvent } from "@/lib/repositories/applicationEvents";
 
 export const runtime = "nodejs";
 
@@ -91,7 +92,12 @@ export async function POST(req: NextRequest) {
         role: event.application.role,
     });
 
+    // MB-3.1 (story 27): fire an in-app Notification for attention-worthy
+    // kinds (INTERVIEW_SCHEDULED / OFFER / REJECTION / ASSESSMENT_REQUESTED).
+    await maybeNotifyForApplicationEvent(event, userId, event.application.company);
+
     broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, timestamp: Date.now() });
+    broadcastEvent({ model: "Notification", action: "upsert", id: userId, timestamp: Date.now() });
     return NextResponse.json({ event }, { status: 200 });
 }
 

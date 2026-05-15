@@ -9,6 +9,7 @@ import {
 } from "@/lib/repositories/applications";
 import {
     createApplicationEvents,
+    maybeNotifyForApplicationEvent,
     type ApplicationEventDraft,
 } from "@/lib/repositories/applicationEvents";
 import { syncEventToGcal } from "@/lib/calendar/sync";
@@ -127,6 +128,12 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         previousStatus,
     });
     const insertedEvents = await createApplicationEvents(eventDrafts);
+
+    // Fire in-app notifications for attention-worthy kinds (MB-3.1, story 27).
+    // Best-effort — helper swallows individual failures.
+    for (const ev of insertedEvents) {
+        await maybeNotifyForApplicationEvent(ev, userId, parsed.company);
+    }
 
     // Mirror future-dated events to Gcal. We skip past events because backfill
     // commonly walks 6 months of history — no point creating yesterday's

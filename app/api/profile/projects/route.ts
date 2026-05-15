@@ -33,6 +33,8 @@ export async function POST(req: NextRequest) {
             repoUrl: parsed.data.repoUrl ?? null,
             liveUrl: parsed.data.liveUrl ?? null,
             bullets: parsed.data.bullets,
+            githubRepo: parsed.data.githubRepo ?? null,
+            portfolio: parsed.data.portfolio,
             position: parsed.data.position,
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: project.id, timestamp: Date.now() });
@@ -61,6 +63,8 @@ export async function PATCH(req: NextRequest) {
             repoUrl: parsed.data.repoUrl,
             liveUrl: parsed.data.liveUrl,
             bullets: parsed.data.bullets,
+            githubRepo: parsed.data.githubRepo,
+            portfolio: parsed.data.portfolio,
             position: parsed.data.position,
         });
         if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });

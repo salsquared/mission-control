@@ -50,6 +50,9 @@ export const ProjectSchema = z.object({
     liveUrl: z.string().nullable(),
     bullets: z.array(BulletSchema),
     metrics: z.unknown().nullable(),
+    githubRepo: z.string().nullable(),
+    portfolio: z.boolean(),
+    metricsUpdatedAt: z.string().datetime().nullable(),
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -132,6 +135,8 @@ export const ProjectPostSchema = z.object({
     repoUrl: z.string().nullable().optional(),
     liveUrl: z.string().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
+    githubRepo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).nullable().optional(),
+    portfolio: z.boolean().optional(),
     position: z.number().int().optional(),
 });
 
@@ -142,6 +147,8 @@ export const ProjectPatchSchema = z.object({
     repoUrl: z.string().nullable().optional(),
     liveUrl: z.string().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
+    githubRepo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).nullable().optional(),
+    portfolio: z.boolean().optional(),
     position: z.number().int().optional(),
 });
 

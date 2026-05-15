@@ -7,6 +7,7 @@
 
 import { runCachePrune } from './jobs/cache-prune';
 import { runDueWatchlists } from './jobs/job-watcher';
+import { runGithubMetrics } from './jobs/github-metrics';
 
 interface IntervalJob {
     name: string;
@@ -32,6 +33,16 @@ const JOBS: IntervalJob[] = [
                     { new: 0, seen: 0, closed: 0, errs: 0 },
                 );
                 console.info(`[job-watcher] processed ${result.processed} watchlists — ${totals.new} new, ${totals.seen} seen-again, ${totals.closed} closed, ${totals.errs} errored`);
+            }
+        },
+    },
+    {
+        name: 'github-metrics',
+        intervalMs: 6 * 60 * 60 * 1000, // 6h — combined with the 20h freshness gate inside the job, effectively daily-ish per portfolio project
+        run: async () => {
+            const r = await runGithubMetrics();
+            if (r.processed > 0) {
+                console.info(`[github-metrics] processed ${r.processed} — ${r.succeeded} succeeded, ${r.failed} failed, ${r.skippedRecent} skipped (recent)`);
             }
         },
     },
