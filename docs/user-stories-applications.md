@@ -2,6 +2,8 @@
 
 Working list. Priority emoji matches `docs/todo.md` (🔴 = must-have for next ship, 🟡 = important, 🔵 = nice-to-have / later).
 
+**Implementation status, sub-milestones, file paths, and concrete API/schema shapes live in [`docs/implementation.md`](./implementation.md).** This doc says *what* and *why*; that one says *how* and *in what order*. Cross-session running state lives in [`docs/next_steps.md`](./next_steps.md).
+
 ## 1. Capture from email
 
 1. 🔴 As a job seeker, when a recruiter emails me, I want the app to detect it automatically so I don't have to manually log every confirmation, rejection, or interview invite.
