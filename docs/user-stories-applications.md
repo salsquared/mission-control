@@ -68,7 +68,7 @@ Working list. Priority emoji matches `docs/todo.md` (🔴 = must-have for next s
 38. 🔴 ✅ As a user, I want the generated resume to be exportable as PDF and DOCX, with the same content rendered identically across both.
 39. 🟡 ✅ As a user, I want every generated resume archived against the Application it was sent for so I can later say "what version did I send Acme on March 5?"
 40. 🔵 ⛔ As a user, I want a generated cover letter alongside the resume, with the same posting/profile context. *(User decision: writing cover letters by hand. OOS.)*
-41. 🔵 As a user, I want a "skills gap" report — keywords the posting emphasizes that my profile lacks evidence for — so I know what to address in the cover letter or upskill on.
+41. 🔵 ✅ As a user, I want a "skills gap" report — keywords the posting emphasizes that my profile lacks evidence for — so I know what to address in the cover letter or upskill on.
 
 ## 9. GitHub-driven project metrics
 
@@ -105,10 +105,10 @@ Working list. Priority emoji matches `docs/todo.md` (🔴 = must-have for next s
 
 - **All 🔴 must-haves shipped** (16/16). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX — is in production.
 - **🟡 shipped: 22/25.** Still open: **37** (multi-template picker). *Resume side of **47** shipped; cover-letter side is OOS by user decision.*
-- **🔵 shipped: 2/13** (story **23** negative filters; story **51** multi-kind). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **33** (profile snapshots), **41** (skills-gap report), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **50** (recruiter contacts).
+- **🔵 shipped: 3/13** (stories **23** negative filters, **41** skills-gap, **51** multi-kind). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **33** (profile snapshots), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **50** (recruiter contacts).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **37** second resume template; **41** skills-gap (posting keywords minus profile tag/keyword coverage); **33** profile snapshots (one extra table, button-triggered); **50** recruiter contacts.
+**Next-up candidates** (small surface, real leverage): **37** second resume template; **33** profile snapshots (one extra table, button-triggered); **50** recruiter contacts.
 
 ---
 

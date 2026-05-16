@@ -48,6 +48,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
                 error: row.error,
                 postingInput: safeJSON(row.postingInput),
                 selections: safeJSON(row.selections),
+                skillsGap: row.skillsGap ? safeJSON(row.skillsGap) ?? [] : [],
                 ...(includeSnapshot ? { profileSnapshot: safeJSON(row.profileSnapshot) } : {}),
             },
         }, { status: 200 });

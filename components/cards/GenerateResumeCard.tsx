@@ -226,33 +226,79 @@ export function GenerateResumeCard() {
             </div>
 
             {lastResult?.id && (
-                <div className="mt-3">
-                    <button
-                        type="button"
-                        onClick={() => setShowTrace(s => !s)}
-                        className="flex items-center gap-1 text-[11px] text-white/50 hover:text-white/80 transition-colors"
-                    >
-                        {showTrace ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                        Why these bullets?
-                    </button>
-                    {showTrace && (
-                        <div className="mt-2 rounded-lg bg-black/30 border border-white/10 px-3 py-2 max-h-[24rem] overflow-y-auto">
-                            {traceQuery.isLoading ? (
-                                <div className="flex items-center gap-2 text-[11px] text-white/40">
-                                    <Loader2 className="w-3 h-3 animate-spin" /> Loading…
-                                </div>
-                            ) : traceQuery.error ? (
-                                <div className="text-[11px] text-red-300/80">Failed to load: {errMessage(traceQuery.error)}</div>
-                            ) : traceQuery.data ? (
-                                <TraceList selections={(traceQuery.data.resume.selections as SelectionRow[]) ?? []} />
-                            ) : null}
-                        </div>
+                <div className="mt-3 space-y-2">
+                    <div>
+                        <button
+                            type="button"
+                            onClick={() => setShowTrace(s => !s)}
+                            className="flex items-center gap-1 text-[11px] text-white/50 hover:text-white/80 transition-colors"
+                        >
+                            {showTrace ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                            Why these bullets?
+                        </button>
+                        {showTrace && (
+                            <div className="mt-2 rounded-lg bg-black/30 border border-white/10 px-3 py-2 max-h-[24rem] overflow-y-auto">
+                                {traceQuery.isLoading ? (
+                                    <div className="flex items-center gap-2 text-[11px] text-white/40">
+                                        <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                                    </div>
+                                ) : traceQuery.error ? (
+                                    <div className="text-[11px] text-red-300/80">Failed to load: {errMessage(traceQuery.error)}</div>
+                                ) : traceQuery.data ? (
+                                    <TraceList selections={(traceQuery.data.resume.selections as SelectionRow[]) ?? []} />
+                                ) : null}
+                            </div>
+                        )}
+                    </div>
+                    {traceQuery.data && (
+                        <SkillsGapBlock gap={(traceQuery.data.resume.skillsGap as string[] | undefined) ?? []} />
                     )}
                 </div>
             )}
         </div>
     );
 }
+
+// Story 41 — surface keywords the posting emphasized that the profile has
+// no evidence for. Posting keywords that are *covered* aren't shown — those
+// are visible per-bullet in the trace via `tag:` / `kw:` chips above.
+const SkillsGapBlock: React.FC<{ gap: string[] }> = ({ gap }) => {
+    const [expanded, setExpanded] = useState(false);
+    if (gap.length === 0) {
+        return (
+            <div className="flex items-center gap-1.5 text-[11px] text-emerald-300/70">
+                <span aria-hidden>●</span>
+                <span>No skills gap — every posting keyword has coverage in your profile.</span>
+            </div>
+        );
+    }
+    return (
+        <div>
+            <button
+                type="button"
+                onClick={() => setExpanded(s => !s)}
+                className="flex items-center gap-1 text-[11px] text-amber-300/80 hover:text-amber-200 transition-colors"
+            >
+                {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                Skills gap — {gap.length} posting keyword{gap.length === 1 ? "" : "s"} uncovered
+            </button>
+            {expanded && (
+                <div className="mt-2 rounded-lg bg-amber-500/[0.04] border border-amber-500/20 px-3 py-2">
+                    <p className="text-[10px] text-white/40 mb-1.5">
+                        These terms appeared in the posting but don&apos;t match any of your bullet tags or substring of your bullet text. Consider addressing them in a cover letter or adding evidence to your profile.
+                    </p>
+                    <div className="flex flex-wrap gap-1">
+                        {gap.map(g => (
+                            <span key={g} className="text-[10px] text-amber-200 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                                {g}
+                            </span>
+                        ))}
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
 
 const TraceList: React.FC<{ selections: SelectionRow[] }> = ({ selections }) => {
     if (selections.length === 0) {

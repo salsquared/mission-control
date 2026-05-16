@@ -379,6 +379,10 @@ model GeneratedResume {
   postingInput    String   // JSON: { url?, text?, parsedKeywords[] }
   profileSnapshot String   // JSON: full hydrated profile at gen-time
   selections      String   // JSON: [{ kind, sourceId, sourceLabel, bulletId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[], locked }]
+  // Story 41 — JSON array of posting keywords that have NO coverage in the
+  // profile (no bullet tags match, no bullet text contains them as a substring).
+  // NULL on legacy rows generated before the column existed.
+  skillsGap       String?
   templateKey     String   @default("ats-plain")
   format          String   // "pdf" | "docx"
   status          String   // "ready" | "failed"

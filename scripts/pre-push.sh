@@ -31,6 +31,7 @@ SUITES=(
     "scripts/tests/url-guard-smoke.ts"
     "scripts/tests/fetcher-unit-smoke.ts"
     "scripts/tests/resume-select-smoke.ts"
+    "scripts/tests/skills-gap-smoke.ts"
     "scripts/tests/profile-merge-smoke.ts"
     "scripts/tests/email-message-smoke.ts"
     "scripts/tests/watchlist-hermetic-smoke.ts"

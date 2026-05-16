@@ -434,6 +434,7 @@ export const api = {
                         error: z.string().nullable(),
                         postingInput: z.unknown(),
                         selections: z.unknown(),
+                        skillsGap: z.array(z.string()).default([]),
                         profileSnapshot: z.unknown().optional(),
                     }),
                 }),

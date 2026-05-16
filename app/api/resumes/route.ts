@@ -6,6 +6,7 @@ import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting } from "@/lib/resumes/posting";
 import { selectBullets, flattenSelections } from "@/lib/resumes/select";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
+import { computeSkillsGap } from "@/lib/resumes/skills-gap";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
 import { renderResumePDF } from "@/lib/resumes/render-pdf";
 import { renderResumeDOCX } from "@/lib/resumes/render-docx";
@@ -145,6 +146,11 @@ export async function POST(req: NextRequest) {
         stage = "rewrite";
         const rewrites = await rewriteBullets(flat, posting);
 
+        // 4b. Skills gap (story 41) — pure, no LLM. Compute against the
+        // FULL profile, not just the selected bullets: even an unselected
+        // bullet counts as coverage for the keyword it mentions.
+        const skillsGap = computeSkillsGap(profile, posting.keywords);
+
         // 5. Render
         stage = "render";
         const format = parsed.data.options?.format ?? "pdf";
@@ -202,6 +208,7 @@ export async function POST(req: NextRequest) {
                         matchedKeywords: s.matchedKeywords,
                         locked: s.locked,
                     }))),
+                    skillsGap: JSON.stringify(skillsGap.missing),
                     templateKey: parsed.data.options?.template ?? "ats-plain",
                     format,
                     status: "ready",
