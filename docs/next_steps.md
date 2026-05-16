@@ -40,26 +40,29 @@ Out of scope until top-of-stack ships: AI Companion prompt tuning, visual polish
 
 ## Immediate next actions (in order)
 
-The full Profile → Import → Generate loop is shipped. Detailed designs in `docs/user-stories-applications.md` §M7 + §M8.
+Full audit on 2026-05-15: **all 🔴 must-haves shipped (16/16); 21/25 🟡; 2/13 🔵.** See `docs/user-stories-applications.md` for the canonical map. Remaining 🟡 + load-bearing 🔵 work, ranked by leverage:
 
-1. ~~**M7 + M7.4 + M8 Phase 1 — full Track C loop.**~~ ✅ Done 2026-05-15. Profile dash with CRUD + bullets, multi-file resume import (PDF / DOCX / TXT / JSON) with LLM-extract + dedupe + append merge, tailored resume generation (paste posting → PDF in ~20s). End-to-end smokes all green (19/19 repo + 17/17 API + 10/10 select + valid 62KB synthetic PDF + 47KB real e2e PDF + multi-file import 14s).
-2. **Use it for a real application.** Upload your existing resumes via the "Import resumes" card on the Profile dash → review the resulting work roles + bullets → paste a real posting into "Generate" → send. Watch for prompt-quality issues (over-generic rewrites, missed terminology, etc.) — those feed into M8 Phase 2 prompt tuning.
-3. **M8 Phase 2 — archival + traceability.** Add `GeneratedResume` table that persists each generation's posting, profile snapshot, selections, and the PDF path. Surface "Why this bullet?" in the UI (story 35). Plan in `docs/user-stories-applications.md` §M8 Phase 2 (M8.8 – M8.10).
-4. **MA — pipeline writes + drill-in.** Once resumes flow, MA gives the kanban write-paths (manual add, drag-to-status, drill-in timeline, notes). Plan in `user-stories-applications.md` §MA.1–MA.6.
+1. **Story 26 — per-watchlist notification preferences (🟡).** Add `notificationMode: 'each' | 'digest'` to `Watchlist`, daily digest scheduler job. Why next: LinkedIn + Workday produce high-volume noisy feeds and there's no quiet mode today.
+2. **Story 37 — second resume template (🟡).** Single-column + two-column variants alongside `ats-plain.tsx`. UI picker on `GenerateResumeCard`. Why next: small surface, immediate visible polish on the artifacts the user actually sends.
+3. **Story 41 — skills-gap report (🔵).** Posting keywords minus the union of profile bullet tags + bullet-text substrings. Surface on `GenerateResumeCard` post-gen. Cheap data-side, complements story 35's trace.
+4. **Story 33 — profile snapshots (🔵).** One `ProfileSnapshot(userId, takenAt, payloadJson)` table + a "Snapshot now" button. Button-press-only — no auto-snapshotting on every edit. Roll-back UX deferred.
+5. **Open 🔵 tail** (not in critical path): 24 comp parsing, 28 quiet hours, 45 suggested portfolio rewrites, 46 README ingestion, 48 resume diff, 50 recruiter contacts. Pick opportunistically.
 
-**Followups inside §M7.4 (not blocking 2):**
+**Genuine MVP-followup TODOs (cross-cutting, not story-numbered):**
 - LLM-judged fuzzy bullet dedup (current dedup is exact-text only — "Built a TS API" and "Built a TypeScript API" both survive).
-- LinkedIn export ZIP support (separate unzip path that reads `Positions.csv` / `Education.csv`).
-- Legacy `.doc` format (mammoth doesn't support it — would need a converter or to skip).
+- LinkedIn export ZIP import support (separate unzip path that reads `Positions.csv` / `Education.csv`).
+- Legacy `.doc` import format (mammoth handles `.docx` only).
 - Per-file progress streaming via SSE so the UI shows "extract → analyze → merge" stages live instead of one long spinner.
 
 ## In-progress work
 
-Nothing active. Negative-filters feature shipped (commit pending) — Watchlist.negativeFilters column, /api/postings GET filtering with ?includeFiltered=true bypass, expandable editor on WatchlistsCard, 18-step hermetic smoke wired into pre-push.
+Nothing active. Story-status audit refreshed 2026-05-15 — `user-stories-applications.md` now carries ✅ / ◐ / ⛔ markers per story. Drift between code and doc is reconciled.
 
 ## Recently completed
 
-- **2026-05-15** — Watchlist negative filters (M: in post-MVP menu). `Watchlist.negativeFilters String?` (JSON array of regex patterns). API serializers parse to `string[]`; PATCH writes empty-array → NULL. /api/postings GET compiles patterns case-insensitively, matches against `title\nsnippet\nlocation`, supports `?includeFiltered=true` debug bypass. Compile cache keyed by raw JSON. UI: expandable "Negative filters" panel per watchlist row (textarea, per-line patterns, regex validation, count chip when collapsed). `scripts/tests/negative-filters-smoke.ts` covers null/empty/malformed/case/multi-haystack/cache — 18/18.
+- **2026-05-15** — Doc audit + status reconciliation (this entry). Walked every 🟡 / 🔵 story against the codebase: 21 🟡 actually shipped vs 25 total; 2 🔵 shipped (23 negative filters, 51 multi-kind). Real open list shrank from ~10 to ~10 (different 10 — 26, 33, 37 are real 🟡 gaps; 24, 28, 41, 45, 46, 48, 50 are real 🔵 gaps).
+- **2026-05-15** — Track-as-application NOTE timeline anchor (`a668dbb`). Story 20 polish. Route body lifted into `lib/postings/track-as-application.ts`; hermetic smoke (18/18) covers cross-user isolation + idempotent re-call + non-duplicating NOTE event. Wired into pre-push (now 10 suites).
+- **2026-05-15** — Watchlist negative filters (story 23, `9da9a2d`). `Watchlist.negativeFilters String?` JSON regex array. `/api/postings` GET filters case-insensitively against title+snippet+location; `?includeFiltered=true` bypass. Expandable editor on WatchlistsCard with regex validation. 18-step hermetic smoke.
 - **2026-05-15** — EMAIL_ENABLED master kill-switch (`90cf9ec`). Single env gate at `lib/email/send.ts` short-circuits Gmail send. 0 in `.env.development` + `scripts/pre-push.sh`, 1 in `.env.production`. Stops test email spam without ripping out the dispatch wiring.
 - **2026-05-15** — Workday + LinkedIn fetchers (`1ec936b`). Workday tenant POST (Boeing + Blue Origin verified live), LinkedIn guest scraper. Workday gotchas locked in: PAGE_SIZE=20 (server cap), per-page AbortSignal, `total` only on first page, Chrome UA mandatory.
 - **2026-05-15** — Stale-app nudge job + portfolio toggle + pre-push hermetic gate (`90398d7`). simple-git-hooks running ~9 suites in 3-5s before every push.

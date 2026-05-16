@@ -26,16 +26,16 @@ Already-implemented work surfaced during review: full Kanban writes (drag-to-sta
 
 Files (load-bearing): `app/api/applications/route.ts`, `app/api/applications/events/route.ts`, `components/views/ApplicationsView.tsx`, `components/overlays/AddApplicationModal.tsx`, `components/overlays/ApplicationDetailOverlay.tsx`.
 
-### MA-followup — Inline edits + document attachment + nudges ⏳
+### MA-followup — Inline edits + document attachment + nudges ✅ (mostly)
 
 Stories: 13, 14, 15, 47, 48 (🟡) · 49, 50 (🟡).
 
-- **MA-f.1** — Inline-edit of company/role/nextSteps on the detail overlay (story 13). Just exposes existing PATCH fields in the UI; no schema work.
-- **MA-f.2** — Delete confirmation UI (story 15). The DELETE endpoint exists.
-- **MA-f.3** — Document attachment (stories 47, 48). Wires `GeneratedResume.applicationId` (added in M8 Phase 2) to render "Resume v2 sent on 2026-XX-XX" rows on the timeline. Diff between two sent versions is a 🔵 follow-up.
-- **MA-f.4** — Follow-up nudges (stories 49, 50). New scheduler job that flags applications with `lastUpdateAt < now - configurableDays` and creates a `Notification(kind='application')` offering to draft a follow-up. Adds optional `Contact` rows per application later.
+- **MA-f.1** ✅ — Inline-edit of company/role/nextSteps on the detail overlay (story 13). `EditingField` state in `ApplicationDetailOverlay.tsx:37`.
+- **MA-f.2** ✅ — Delete confirmation UI (story 15). `Trash2` button + `window.confirm` at line 218 of the overlay.
+- **MA-f.3** ◐ — Document attachment (story 47 resume side). `GeneratedResume.applicationId` link is wired (M8 Phase 2). Diff between two sent versions (story 48) still open 🔵.
+- **MA-f.4** ✅ — Follow-up nudges (story 49). `scheduler/jobs/stale-applications.ts` fires daily, finds apps with `lastUpdateAt < now - STALE_AFTER_DAYS`, emits `Notification(kind='application', payload.type='stale-nudge')` dedup'd against active prior nudges. `scripts/tests/stale-nudge-smoke.ts` covers it.
 
-Blocked-by: M8 Phase 2 for MA-f.3, MB Phase 1 for MA-f.4 (notifications surface).
+**Still open in MA-followup:** story 50 (per-application recruiter contacts), story 48 (resume diff).
 
 ---
 
@@ -242,22 +242,22 @@ New helper `maybeNotifyForApplicationEvent(event, userId, companyHint?)` in `lib
 
 Best-effort: notification failures log to `console.warn` and don't fail the caller's create.
 
-### MB Phase 3b — Polish ⏳
+### MB Phase 3b — Polish ◐ (partial)
 
 Stories: 28 (🔵), 23 (🔵), 24 (🔵).
 
-#### MB-3.2 — Stale-application nudges (overlaps MA-f.4)
+#### MB-3.2 — Stale-application nudges ✅
 
-Daily scheduler job: applications with `lastUpdateAt < now - configurableDays` → `Notification(kind='application')` offering to draft a follow-up.
+Story 49. Shipped as `scheduler/jobs/stale-applications.ts` (see MA-f.4).
 
-#### MB-3.3 — Quiet hours (story 28)
+#### MB-3.3 — Quiet hours (story 28) — open
 
-User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEnd: '08:00', tz }`. Notification dispatcher (the part that delivers to channels) holds delivery until the window opens; in-app stays unaffected. Blocked on email landing — in-app notifications are silent enough on their own that quiet hours aren't needed yet.
+User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEnd: '08:00', tz }`. Notification dispatcher holds delivery until the window opens; in-app stays unaffected. Blocked-by: actual nuisance signal from production.
 
-#### MB-3.4 — Negative filters + compensation parsing (🔵, stories 23 + 24)
+#### MB-3.4 — Negative filters ✅ / compensation parsing (open)
 
-- Negative filters: per-watchlist or global "hide if title/company/snippet matches X". Apply at scheduler-job time (don't even store hidden postings) OR at UI-filter time (store all, hide visually). UI-filter is more discoverable; pick that.
-- Compensation: regex over snippet (matches like `$120k`, `$120,000 - $150,000`, `$60/hr`); store on `JobPosting.compensationRangeMin/Max` if present.
+- ✅ **Negative filters** (story 23, shipped `9da9a2d`): per-watchlist `Watchlist.negativeFilters` JSON regex array. `/api/postings` GET applies case-insensitive matching against `title\nsnippet\nlocation`. `?includeFiltered=true` bypass for debug. UI: expandable editor on `WatchlistsCard` with regex validation + count chip. Hermetic smoke at `scripts/tests/negative-filters-smoke.ts` (18/18).
+- **Compensation** (story 24, still open): regex over snippet (`$120k`, `$120,000 - $150,000`, `$60/hr`); store on `JobPosting.compensationRangeMin/Max` if present.
 
 ---
 
