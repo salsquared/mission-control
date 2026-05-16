@@ -7,12 +7,71 @@ Cross-session running state lives in [`docs/next_steps.md`](./next_steps.md): wh
 ## Status legend
 
 - ✅ Shipped (committed on `main`, smoked end-to-end)
+- ◐ Partial (one half shipped, other half intentionally out-of-scope or pending)
 - 🟢 In progress (active branch / open PR / current session)
 - ⏳ Planned (designed, sequenced, not yet started)
 - 💤 Deferred (intentionally backlogged — story priority is 🟡/🔵 or it's blocked)
-- ❌ Killed (decided against; keep the row so the decision doesn't get re-litigated)
+- ⛔ Declined by user (kept in the doc so the decision doesn't get re-litigated)
+- ❌ Killed (decided against on technical grounds)
 
-Each milestone lists the **user stories** it satisfies (numbers refer to `user-stories-applications.md`).
+Each milestone lists the **user stories** it satisfies (numbers refer to `user-stories-applications.md`). Story priority emoji from that doc: **🔴** = must-have for next ship, **🟡** = important, **🔵** = nice-to-have. Those are *priority*, not status — every 🔴 in this plan is already ✅.
+
+---
+
+## Status snapshot (2026-05-15)
+
+**TL;DR — the "apply ASAP" loop is complete.** Every 🔴 must-have is shipped end-to-end across all three tracks. What remains is 🟡 polish and 🔵 nice-to-haves.
+
+### Coverage by priority
+
+| Priority | Shipped | Open | Declined | Total |
+|---|---|---|---|---|
+| 🔴 must-have | **16** | 0 | 0 | 16 |
+| 🟡 important | **21** | 3 | 0 | 24 (story 47 counted as ◐ partial — resume side shipped, cover-letter side belongs to declined story 40) |
+| 🔵 nice-to-have | **2** | 8 | 1 | 11 (excluding 4 future/OOS items 52–55) |
+
+### Per-track status
+
+| Track | Phase | Status | Notes |
+|---|---|---|---|
+| **A** — Pipeline UX | MA | ✅ | Kanban + drill-in + manual add + delete + inline edit + NOTE composer |
+| A | MA-followup | ✅ (mostly) | Inline edit 13, delete 15, kind toggle 51, stale-app nudges 49 all shipped. Open: recruiter contacts (50), resume-version diff (48) |
+| **B** — Discovery | MB Phase 1 | ✅ | careers-page + greenhouse, in-app notifications, "Track" / "Hide" |
+| B | MB Phase 2a | ✅ | Track→App (story 20), Lever + Ashby, closed-detection |
+| B | MB Phase 2b | ✅ | Workday + LinkedIn fetchers + Gmail OAuth email send |
+| B | MB Phase 3a | ✅ | Application-side notifications via central dispatcher |
+| B | MB Phase 3b | ◐ | Stale nudges (49) ✅, negative filters (23) ✅. Open: comp parsing (24), quiet hours (28) |
+| **C** — Profile + resume + GitHub | M7 | ✅ | Profile spine + cards + bullet UX with lock/exclude/tags |
+| C | M7.4 | ✅ | Multi-resume import (PDF/DOCX/TXT/JSON) → LLM extract → append-merge |
+| C | M8 Phase 1 | ✅ | Tailored generation: posting → keywords → selection → rewrite → PDF |
+| C | M8 Phase 2 | ✅ | Archival + `applicationId` linkage + "Why these bullets?" trace |
+| C | M8 Phase 3 | ◐ | DOCX ✅. Multi-template (37) open. Cover letter (40) ⛔ user-declined. Skills-gap (41) open |
+| C | M9 Phase 1 | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
+| C | M9 Phase 2 | 💤 | Suggested rewrites (45), README ingestion (46) |
+| **Cross-cutting** | Notification dispatcher | ✅ | Tier model (critical/standard/low), global bell, EMAIL_ENABLED kill-switch |
+| Cross-cutting | Backups | ✅ | DB + `data/resumes/` tar to Google Drive via rclone + recovery runbook |
+| Cross-cutting | Pre-push hermetic gate | ✅ | 10 suites, ~4s, simple-git-hooks |
+
+### Open work, by leverage (next-up order)
+
+1. **Story 26 — per-watchlist notification preferences (🟡).** Add `notificationMode: 'each' | 'digest'` on `Watchlist`, plus a daily digest scheduler job. Justification: LinkedIn + Workday feeds are high-volume and there's no per-source mute today.
+2. **Story 37 — second resume template (🟡).** Add a single-column or two-column variant alongside `ats-plain.tsx`, plus a picker on `GenerateResumeCard`. Visible artifact polish.
+3. **Story 41 — skills-gap report (🔵).** Posting keywords minus the union of profile bullet tags + bullet-text substring matches, surfaced on `GenerateResumeCard` post-gen. Cheap data-side, complements the existing trace.
+4. **Story 33 — profile snapshots (🔵).** `ProfileSnapshot(userId, takenAt, payloadJson)` + a "Snapshot now" button. Button-press-only; no auto-snapshotting.
+5. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
+6. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
+7. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
+8. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
+9. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
+10. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
+
+### User-declined
+
+- **Story 40** ⛔ Cover-letter generator. User writes cover letters by hand. By extension, the cover-letter half of story 47 is also out-of-scope; the resume half ships via `GeneratedResume.applicationId`.
+
+### Future / OOS
+
+- Stories 52–55 (browser extension, app-form auto-fill, interview prep tracker, salary research). Not blocking.
 
 ---
 
