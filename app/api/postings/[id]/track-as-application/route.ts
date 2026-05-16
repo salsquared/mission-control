@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
-import { broadcastEvent } from "@/lib/events";
+import { prisma } from "@/lib/prisma";
+import { trackAsApplication } from "@/lib/postings/track-as-application";
 
 export const runtime = "nodejs";
 
@@ -10,17 +10,12 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
     return user?.id && user.id.length > 0 ? user.id : null;
 }
 
-/**
- * Story 20: convert a tracked posting into a draft Application.
- *
- *   POST /api/postings/[id]/track-as-application
- *
- * Idempotent: if an Application already exists with `postingId = <id>`, the
- * existing row is returned and the posting is left in whatever status it was.
- * Otherwise creates an Application with status='INTERESTED' + posting's
- * company/role, links them via Application.postingId, and flips the posting
- * to status='tracked'.
- */
+// Story 20: convert a tracked posting into a draft Application.
+//
+//   POST /api/postings/[id]/track-as-application
+//
+// Auth wrapper; the actual work lives in lib/postings/track-as-application.ts
+// so the hermetic smoke can call it without a session.
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
@@ -29,55 +24,18 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
 
     const { id } = await params;
 
-    const posting = await prisma.jobPosting.findFirst({
-        where: { id, watchlist: { userId } },
-        select: { id: true, company: true, title: true, status: true },
-    });
-    if (!posting) {
-        return NextResponse.json({ error: "Posting not found" }, { status: 404 });
-    }
-
     try {
-        // Defensive: include userId so a future cross-user posting share can't
-        // leak somebody else's Application via the unique-key shortcut. Today
-        // ownership is enforced transitively via watchlist.user above.
-        const existing = await prisma.application.findFirst({ where: { postingId: posting.id, userId } });
-        if (existing) {
-            return NextResponse.json({
-                application: existing,
-                posting: { id: posting.id, status: posting.status },
-                created: false,
-            }, { status: 200 });
+        const result = await trackAsApplication(userId, id);
+        if (!result.ok) {
+            return NextResponse.json({ error: "Posting not found" }, { status: 404 });
         }
-
-        const now = new Date();
-        const result = await prisma.$transaction(async (tx) => {
-            const application = await tx.application.create({
-                data: {
-                    userId,
-                    company: posting.company,
-                    role: posting.title,
-                    status: "INTERESTED",
-                    kind: "job",
-                    postingId: posting.id,
-                    lastUpdateAt: now,
-                },
-            });
-            const updatedPosting = await tx.jobPosting.update({
-                where: { id: posting.id },
-                data: { status: "tracked" },
-                select: { id: true, status: true },
-            });
-            return { application, posting: updatedPosting };
-        });
-
-        broadcastEvent({ model: 'Application', action: 'upsert', id: result.application.id, timestamp: Date.now() });
-        broadcastEvent({ model: 'Posting', action: 'upsert', id: result.posting.id, timestamp: Date.now() });
-
+        // The UI consumes application + posting + created. Hydrate the
+        // application row here so the client gets the full shape.
+        const application = await prisma.application.findUnique({ where: { id: result.applicationId } });
         return NextResponse.json({
-            application: result.application,
-            posting: result.posting,
-            created: true,
+            application,
+            posting: { id, status: result.postingStatus },
+            created: result.created,
         }, { status: 200 });
     } catch (e) {
         console.error(`[postings/${id}/track-as-application] error:`, e);
