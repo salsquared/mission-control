@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle } from "lucide-react";
+import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronDown, ChevronRight } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
@@ -63,6 +63,25 @@ export function WatchlistsCard() {
             queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
         } catch (e) {
             toastStore.push({ message: `Pause toggle failed: ${errMessage(e)}`, type: "error" });
+        } finally {
+            setBusyId(null);
+        }
+    }
+
+    async function saveNegativeFilters(id: string, patterns: string[]) {
+        setBusyId(id);
+        try {
+            await api.watchlists.update(id, { negativeFilters: patterns });
+            toastStore.push({
+                message: patterns.length === 0
+                    ? "Filters cleared"
+                    : `Saved ${patterns.length} filter${patterns.length === 1 ? "" : "s"}`,
+                type: "info",
+            });
+            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
+            queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
+        } catch (e) {
+            toastStore.push({ message: `Filter save failed: ${errMessage(e)}`, type: "error" });
         } finally {
             setBusyId(null);
         }
@@ -162,6 +181,11 @@ export function WatchlistsCard() {
                                         </button>
                                     </div>
                                 </div>
+                                <FiltersEditor
+                                    initial={w.negativeFilters ?? []}
+                                    busy={busy}
+                                    onSave={patterns => saveNegativeFilters(w.id, patterns)}
+                                />
                             </li>
                         );
                     })}
@@ -173,6 +197,98 @@ export function WatchlistsCard() {
                 onClose={() => setAdding(false)}
                 onCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.watchlists })}
             />
+        </div>
+    );
+}
+
+function FiltersEditor({
+    initial,
+    busy,
+    onSave,
+}: {
+    initial: string[];
+    busy: boolean;
+    onSave: (patterns: string[]) => Promise<void>;
+}) {
+    const [expanded, setExpanded] = useState(false);
+    const [text, setText] = useState(initial.join("\n"));
+    // "Reset state on prop change" without useEffect — React's recommended
+    // pattern for derived state. When `initial` shifts (another tab edited
+    // the filters, or the parent refetched), snap local edits back to it.
+    const [lastInitial, setLastInitial] = useState(initial);
+    if (lastInitial !== initial) {
+        setLastInitial(initial);
+        setText(initial.join("\n"));
+    }
+
+    function parse(raw: string): { patterns: string[]; invalid: string[] } {
+        const lines = raw.split("\n").map(l => l.trim()).filter(l => l.length > 0);
+        const invalid: string[] = [];
+        for (const l of lines) {
+            try { new RegExp(l); } catch { invalid.push(l); }
+        }
+        return { patterns: lines, invalid };
+    }
+
+    const { patterns: parsedPatterns, invalid } = parse(text);
+    const dirty = parsedPatterns.join("\n") !== initial.join("\n");
+
+    return (
+        <div className="mt-2 pt-2 border-t border-white/5">
+            <button
+                onClick={() => setExpanded(v => !v)}
+                className="flex items-center gap-1 text-[11px] text-white/50 hover:text-white/80"
+            >
+                {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                <Filter className="w-3 h-3" />
+                <span>Negative filters</span>
+                {initial.length > 0 && (
+                    <span className="text-[10px] text-cyan-300/70 bg-cyan-500/10 px-1.5 py-0.5 rounded">
+                        {initial.length}
+                    </span>
+                )}
+            </button>
+            {expanded && (
+                <div className="mt-2 space-y-1.5">
+                    <p className="text-[10px] text-white/40 leading-tight">
+                        One regex per line (case-insensitive). Postings whose title, snippet, or location
+                        matches any pattern are hidden. Max 20 patterns, 200 chars each.
+                    </p>
+                    <textarea
+                        value={text}
+                        onChange={e => setText(e.target.value)}
+                        placeholder={"intern\nsenior\nNew York"}
+                        rows={Math.max(3, Math.min(8, parsedPatterns.length + 1))}
+                        className="w-full text-[11px] font-mono bg-black/40 border border-white/10 rounded px-2 py-1.5 text-white/90 focus:outline-none focus:border-cyan-400/40"
+                    />
+                    {invalid.length > 0 && (
+                        <p className="text-[10px] text-red-300/80">
+                            Invalid regex: {invalid.slice(0, 3).join(", ")}{invalid.length > 3 ? "…" : ""}
+                        </p>
+                    )}
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={() => onSave(parsedPatterns)}
+                            disabled={busy || !dirty || invalid.length > 0 || parsedPatterns.length > 20}
+                            className="text-[11px] px-2 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/30 text-cyan-100 disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            Save
+                        </button>
+                        {dirty && (
+                            <button
+                                onClick={() => setText(initial.join("\n"))}
+                                disabled={busy}
+                                className="text-[11px] px-2 py-1 rounded text-white/50 hover:text-white/80 disabled:opacity-30"
+                            >
+                                Reset
+                            </button>
+                        )}
+                        {parsedPatterns.length > 20 && (
+                            <span className="text-[10px] text-red-300/80">Too many patterns (max 20)</span>
+                        )}
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

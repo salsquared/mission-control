@@ -34,6 +34,7 @@ SUITES=(
     "scripts/tests/profile-merge-smoke.ts"
     "scripts/tests/email-message-smoke.ts"
     "scripts/tests/watchlist-hermetic-smoke.ts"
+    "scripts/tests/negative-filters-smoke.ts"
     "scripts/tests/notification-dispatch-smoke.ts"
     "scripts/tests/stale-nudge-smoke.ts"
 )

@@ -14,12 +14,13 @@
 ## Last session
 
 - **Date:** 2026-05-15
-- **Branch:** `main`. M7 ✅, M7.4 ✅, M8 Phase 1 ✅. End-to-end verified with PDF + DOCX through the import pipeline. Ready for real-world use.
+- **Branch:** `main`. M7/M7.4/M8 Phase 1+2 ✅, MA ✅, MB Phase 1+2a ✅, M9 ✅. Post-MVP polish in progress — global notification dispatcher, Workday/LinkedIn fetchers, EMAIL_ENABLED kill-switch, and watchlist negative filters all shipped. Hermetic pre-push gate at 9 suites green.
 - **Last commits on main:**
-  - `329d765 feat(profile): M7.4 — multi-resume import with append-to-repository merge`
-  - `b2cbeb6 feat(resume): M8 Phase 1 — tailored resume generation (Gemini + puppeteer-core)`
-  - `e41b6c0 test(profile): add headless API + SSE smoke harness`
-  - `0367263 feat(profile): implement work roles, projects, and education management with bullet functionality`
+  - `90cf9ec fix(email): EMAIL_ENABLED master kill-switch — stop pre-push spam`
+  - `1ec936b feat(discovery): Workday + LinkedIn fetchers + kill M8-3.1/3.2`
+  - `90398d7 feat: stale-app nudges + portfolio toggle UI + pre-push hermetic gate`
+  - `941d3db refactor(notifications): central dispatchNotification API + tier model`
+  - `c5c8905 feat(notifications): global bell + re-enable application-event email dispatch`
 
 ## Umbrella goal
 
@@ -54,14 +55,15 @@ The full Profile → Import → Generate loop is shipped. Detailed designs in `d
 
 ## In-progress work
 
-Nothing active. Track C MVP (profile + import + generation) is end-to-end. Pick from the "Immediate next actions" list above when continuing.
+Nothing active. Negative-filters feature shipped (commit pending) — Watchlist.negativeFilters column, /api/postings GET filtering with ?includeFiltered=true bypass, expandable editor on WatchlistsCard, 18-step hermetic smoke wired into pre-push.
 
 ## Recently completed
 
-- **2026-05-15** — M7.4 multi-resume import shipped (`329d765`). PDF + DOCX + TXT + JSON → LLM-extract via Gemini → deterministic dedup → append-merge into the profile repository (story 30a). End-to-end smoke verified: PDF + DOCX with overlapping content yields 1 work role created (deduped across the two files), 3 bullets deduped, 5 added, 14s. `next.config.ts` got `pdf-parse` / `mammoth` / `puppeteer-core` in `serverExternalPackages` to avoid webpack mangling their CJS exports at runtime.
-- **2026-05-15** — M8 Phase 1 shipped (`b2cbeb6`). Tailored resume generation end-to-end: paste posting → Gemini keyword extraction → deterministic tag-overlap bullet selection → Gemini rewrite (no invented metrics) → React template → puppeteer-core PDF via system Chrome. Real e2e smoke: 47KB PDF in 19.6s. `GOOGLE_GENERATIVE_AI_KEY` powers it.
-- **2026-05-14** — Headless M7 API + SSE smoke harness (`e41b6c0`): 17/17 HTTP CRUD + 9 Profile SSE broadcasts captured. Caught the `__Secure-next-auth.session-token` cookie-name gotcha.
-- **2026-05-14** — M7 Profile dash UI shipped (`0367263`). Cards + view + wiring + lint cleanup + repo smoke harness (19/19).
+- **2026-05-15** — Watchlist negative filters (M: in post-MVP menu). `Watchlist.negativeFilters String?` (JSON array of regex patterns). API serializers parse to `string[]`; PATCH writes empty-array → NULL. /api/postings GET compiles patterns case-insensitively, matches against `title\nsnippet\nlocation`, supports `?includeFiltered=true` debug bypass. Compile cache keyed by raw JSON. UI: expandable "Negative filters" panel per watchlist row (textarea, per-line patterns, regex validation, count chip when collapsed). `scripts/tests/negative-filters-smoke.ts` covers null/empty/malformed/case/multi-haystack/cache — 18/18.
+- **2026-05-15** — EMAIL_ENABLED master kill-switch (`90cf9ec`). Single env gate at `lib/email/send.ts` short-circuits Gmail send. 0 in `.env.development` + `scripts/pre-push.sh`, 1 in `.env.production`. Stops test email spam without ripping out the dispatch wiring.
+- **2026-05-15** — Workday + LinkedIn fetchers (`1ec936b`). Workday tenant POST (Boeing + Blue Origin verified live), LinkedIn guest scraper. Workday gotchas locked in: PAGE_SIZE=20 (server cap), per-page AbortSignal, `total` only on first page, Chrome UA mandatory.
+- **2026-05-15** — Stale-app nudge job + portfolio toggle + pre-push hermetic gate (`90398d7`). simple-git-hooks running ~9 suites in 3-5s before every push.
+- **2026-05-15** — Central notification dispatcher + global bell (`941d3db`, `c5c8905`). Tier-based (critical/standard/low) → channels mapping. Critical-tier pinning + red border in the bell overlay.
 
 ## Known issues / parked TODOs
 

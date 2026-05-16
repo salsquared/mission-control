@@ -291,8 +291,12 @@ model Watchlist {
   id              String    @id @default(cuid())
   userId          String
   name            String
-  kind            String    // "careers-page" (only value for Phase 1)
-  config          String    // JSON: { rootUrl, linkPattern, companyName, location? }
+  kind            String    // "careers-page" | "greenhouse" | "lever" | "ashby" | "workday" | "linkedin"
+  config          String    // JSON: per-kind config (see lib/schemas/watchlists.ts discriminated union)
+  // JSON array of regex patterns. Postings whose (title + snippet + location)
+  // matches any pattern are hidden from the bell / new-postings feed at GET
+  // time. Invalid regexes are silently skipped. NULL = no filtering.
+  negativeFilters String?
   scheduleMinutes Int       @default(30)
   lastRunAt       DateTime?
   lastSuccessAt   DateTime?

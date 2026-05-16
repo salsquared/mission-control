@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { JobPostingStatusSchema } from "@/lib/schemas/watchlists";
+import { compileNegativeFilters, matchesNegativeFilters } from "@/lib/postings/negative-filters";
 
 export const runtime = "nodejs";
 
@@ -45,6 +46,7 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const statusParam = url.searchParams.get("status");
     const watchlistId = url.searchParams.get("watchlistId");
+    const includeFiltered = url.searchParams.get("includeFiltered") === "true";
     const limitRaw = Number(url.searchParams.get("limit") ?? DEFAULT_LIMIT);
     const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.floor(limitRaw)), MAX_LIMIT) : DEFAULT_LIMIT;
 
@@ -60,12 +62,28 @@ export async function GET(req: NextRequest) {
     }
 
     try {
+        // Pull a bit extra so negative-filter culling doesn't routinely starve
+        // the page. Capped at MAX_LIMIT * 2 to keep this bounded.
+        const fetchTake = includeFiltered
+            ? limit
+            : Math.min(MAX_LIMIT * 2, limit * 2);
         const rows = await prisma.jobPosting.findMany({
             where,
             orderBy: { lastSeenAt: "desc" },
-            take: limit,
+            take: fetchTake,
+            include: { watchlist: { select: { negativeFilters: true } } },
         });
-        return NextResponse.json({ postings: rows.map(serialize) }, { status: 200 });
+
+        const filtered = includeFiltered
+            ? rows
+            : rows.filter(r => {
+                const regexes = compileNegativeFilters(r.watchlist.negativeFilters);
+                return !matchesNegativeFilters(r, regexes);
+            });
+
+        return NextResponse.json({
+            postings: filtered.slice(0, limit).map(serialize),
+        }, { status: 200 });
     } catch (e) {
         console.error("[postings GET] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

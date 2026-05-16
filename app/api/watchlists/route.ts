@@ -13,12 +13,21 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
 
 function serialize(w: {
     id: string; userId: string; name: string; kind: string; config: string;
+    negativeFilters: string | null;
     scheduleMinutes: number; lastRunAt: Date | null; lastSuccessAt: Date | null;
     lastError: string | null; active: boolean; createdAt: Date; updatedAt: Date;
 }) {
+    let parsedFilters: string[] = [];
+    if (w.negativeFilters) {
+        try {
+            const arr = JSON.parse(w.negativeFilters);
+            if (Array.isArray(arr)) parsedFilters = arr.filter((x): x is string => typeof x === "string");
+        } catch { /* malformed legacy row — surface empty */ }
+    }
     return {
         ...w,
         config: JSON.parse(w.config),
+        negativeFilters: parsedFilters,
         lastRunAt: w.lastRunAt?.toISOString() ?? null,
         lastSuccessAt: w.lastSuccessAt?.toISOString() ?? null,
         createdAt: w.createdAt.toISOString(),

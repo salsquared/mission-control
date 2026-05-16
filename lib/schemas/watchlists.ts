@@ -80,12 +80,22 @@ export type WatchlistConfig = z.infer<typeof WatchlistConfigSchema>;
 
 // ─── Entity ───────────────────────────────────────────────────────────────
 
+// Negative filters: array of regex patterns. The watchlist hides any
+// posting whose (title + snippet + location) matches any pattern at the
+// /api/postings GET layer.
+const MAX_NEGATIVE_FILTERS = 20;
+const MAX_NEGATIVE_FILTER_LEN = 200;
+export const NegativeFiltersSchema = z.array(
+    z.string().min(1).max(MAX_NEGATIVE_FILTER_LEN),
+).max(MAX_NEGATIVE_FILTERS);
+
 export const WatchlistSchema = z.object({
     id: z.string(),
     userId: z.string(),
     name: z.string(),
     kind: WatchlistKindSchema,
     config: WatchlistConfigSchema,
+    negativeFilters: z.array(z.string()).default([]),
     scheduleMinutes: z.number().int().positive(),
     lastRunAt: z.string().datetime().nullable(),
     lastSuccessAt: z.string().datetime().nullable(),
@@ -129,11 +139,13 @@ export const WatchlistPostSchema = z.object({
 export const WatchlistPatchSchema = z.object({
     name: z.string().min(1).optional(),
     config: WatchlistConfigSchema.optional(),
+    negativeFilters: NegativeFiltersSchema.optional(),
     scheduleMinutes: z.number().int().positive().optional(),
     active: z.boolean().optional(),
 }).refine(d =>
     d.name !== undefined ||
     d.config !== undefined ||
+    d.negativeFilters !== undefined ||
     d.scheduleMinutes !== undefined ||
     d.active !== undefined,
     { message: "At least one mutable field must be provided" },

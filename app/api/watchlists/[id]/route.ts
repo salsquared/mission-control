@@ -13,12 +13,21 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
 
 function serialize(w: {
     id: string; userId: string; name: string; kind: string; config: string;
+    negativeFilters: string | null;
     scheduleMinutes: number; lastRunAt: Date | null; lastSuccessAt: Date | null;
     lastError: string | null; active: boolean; createdAt: Date; updatedAt: Date;
 }) {
+    let parsedFilters: string[] = [];
+    if (w.negativeFilters) {
+        try {
+            const arr = JSON.parse(w.negativeFilters);
+            if (Array.isArray(arr)) parsedFilters = arr.filter((x): x is string => typeof x === "string");
+        } catch { /* malformed legacy row — surface empty */ }
+    }
     return {
         ...w,
         config: JSON.parse(w.config),
+        negativeFilters: parsedFilters,
         lastRunAt: w.lastRunAt?.toISOString() ?? null,
         lastSuccessAt: w.lastSuccessAt?.toISOString() ?? null,
         createdAt: w.createdAt.toISOString(),
@@ -56,6 +65,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         if (parsed.data.scheduleMinutes !== undefined) data.scheduleMinutes = parsed.data.scheduleMinutes;
         if (parsed.data.active !== undefined) data.active = parsed.data.active;
+        if (parsed.data.negativeFilters !== undefined) {
+            // Empty array → NULL so the column reads as "no filtering" rather than "[]".
+            data.negativeFilters = parsed.data.negativeFilters.length > 0
+                ? JSON.stringify(parsed.data.negativeFilters)
+                : null;
+        }
 
         const row = await prisma.watchlist.update({ where: { id }, data });
         broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });
