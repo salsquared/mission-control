@@ -88,7 +88,23 @@ export interface SendResult {
  * Send an email from the user's own Gmail. Requires gmail.send scope on the
  * OAuth grant (already requested in lib/auth.ts).
  */
+/**
+ * Master kill switch for actual Gmail-API emission. When `EMAIL_ENABLED !== "1"`,
+ * sendEmailViaGmail short-circuits and records emailError on the notification row
+ * instead of actually delivering. Production sets `EMAIL_ENABLED=1` in `.env.production`;
+ * dev defaults to muted via `.env.development`. Pre-push smokes inherit the dev
+ * mute through PM2's environment, so the hook doesn't blast the inbox on every run.
+ *
+ * Override for ad-hoc verification: `EMAIL_ENABLED=1 pm2 restart mission-control-dev`.
+ */
+function emailEnabled(): boolean {
+    return process.env.EMAIL_ENABLED === "1";
+}
+
 export async function sendEmailViaGmail(userId: string, msg: EmailMessage): Promise<SendResult> {
+    if (!emailEnabled()) {
+        return { ok: false, error: "Email muted (EMAIL_ENABLED != 1)" };
+    }
     try {
         const auth = await getGoogleAuthClient(userId);
         const gmail = google.gmail({ version: "v1", auth });

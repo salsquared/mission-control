@@ -20,6 +20,11 @@ START=$(date +%s)
 # from a fresh terminal.
 : "${DATABASE_URL:=file:./dev.db}"
 export DATABASE_URL
+# Mute Gmail send for the duration of the hook. PM2 dev also has EMAIL_ENABLED=0
+# in .env.development, so HTTP-driven smokes (notification-bell) inherit it too.
+# Defense in depth: any direct-tsx suite that doesn't go through PM2 picks this
+# value up from the hook's exported env.
+export EMAIL_ENABLED=0
 
 # Suites are listed in dependency order: pure ones first so they fail fast.
 SUITES=(
