@@ -19,6 +19,29 @@ function normalize(s: string): string {
     return s.toLowerCase().trim();
 }
 
+// Escape regex metacharacters so a keyword like "node.js" or "c++" doesn't
+// blow up the RegExp constructor and doesn't match "." as wildcard. Required
+// because posting keywords are user-provided / LLM-extracted.
+function escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Match a keyword as a whole word in the haystack. Word boundaries handle the
+// common case ("AI/ML"-style postings) without false positives like "ai"
+// inside "available" or "go" inside "going". `\b` works against [A-Za-z0-9_]
+// boundaries, which is right for tech terms. For keywords whose own start/end
+// is a non-word char (e.g. "c++"), `\b` would lie about the right edge, so
+// fall back to substring match in that case — they're rare and the substring
+// risk is much smaller for symbol-heavy tokens.
+function matchesWord(keyword: string, haystack: string): boolean {
+    const startsAlnum = /\w/.test(keyword.charAt(0));
+    const endsAlnum = /\w/.test(keyword.charAt(keyword.length - 1));
+    if (startsAlnum && endsAlnum) {
+        return new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(haystack);
+    }
+    return haystack.includes(keyword);
+}
+
 interface CoverageBullet {
     text: string;
     tags: string[];
@@ -45,7 +68,9 @@ export function computeSkillsGap(
     profile: ProfileWire,
     postingKeywords: string[],
 ): SkillsGapResult {
-    const bullets = collectBullets(profile).filter(b => !b.excluded);
+    // Defensive: a bullet whose `excluded` field is missing (legacy JSON
+    // shape from before the field existed) should be treated as included.
+    const bullets = collectBullets(profile).filter(b => b.excluded !== true);
 
     // Lowercased tag set + concatenated text haystack, both built once.
     const tagSet = new Set<string>();
@@ -65,7 +90,10 @@ export function computeSkillsGap(
         if (seen.has(kw)) continue;
         seen.add(kw);
 
-        if (tagSet.has(kw) || haystack.includes(kw)) {
+        // Tag coverage is exact; text coverage uses word boundaries so "ai"
+        // doesn't match "available", "go" doesn't match "going", "ml" doesn't
+        // match "html". This was a real false-positive source pre-fix.
+        if (tagSet.has(kw) || matchesWord(kw, haystack)) {
             covered.push(raw);
         } else {
             missing.push(raw);

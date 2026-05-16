@@ -62,12 +62,13 @@ export async function runDeadlineNudges(): Promise<DeadlineNudgeRunResult> {
     for (const app of candidates) {
         if (!app.decisionDeadline) continue; // narrowing — the where already filtered
 
+        // Cooldown holds even if the user dismissed the prior nudge — the
+        // dismiss means "I saw it," not "send me another tomorrow."
         const recent = await prisma.notification.findFirst({
             where: {
                 userId: app.userId,
                 kind: "application",
                 createdAt: { gte: cooldownCutoff },
-                dismissedAt: null,
                 AND: [
                     { payload: { contains: '"type":"deadline-approaching"' } },
                     { payload: { contains: `"applicationId":"${app.id}"` } },

@@ -268,14 +268,17 @@ function FiltersEditor({
     onSave: (patterns: string[]) => Promise<void>;
 }) {
     const [expanded, setExpanded] = useState(false);
-    const [text, setText] = useState(initial.join("\n"));
-    // "Reset state on prop change" without useEffect — React's recommended
-    // pattern for derived state. When `initial` shifts (another tab edited
-    // the filters, or the parent refetched), snap local edits back to it.
-    const [lastInitial, setLastInitial] = useState(initial);
-    if (lastInitial !== initial) {
-        setLastInitial(initial);
-        setText(initial.join("\n"));
+    const initialJoined = initial.join("\n");
+    const [text, setText] = useState(initialJoined);
+    // Reset on prop change — but compare by serialized content, NOT array
+    // reference, because the parent rebuilds the `initial` array on every
+    // refetch (`w.negativeFilters ?? []` produces a fresh ref). Comparing by
+    // reference would discard the user's in-progress edit on any background
+    // refetch (SSE invalidation, sibling row's busy flag changing, etc.).
+    const [lastInitialJoined, setLastInitialJoined] = useState(initialJoined);
+    if (lastInitialJoined !== initialJoined) {
+        setLastInitialJoined(initialJoined);
+        setText(initialJoined);
     }
 
     function parse(raw: string): { patterns: string[]; invalid: string[] } {
@@ -288,7 +291,7 @@ function FiltersEditor({
     }
 
     const { patterns: parsedPatterns, invalid } = parse(text);
-    const dirty = parsedPatterns.join("\n") !== initial.join("\n");
+    const dirty = parsedPatterns.join("\n") !== initialJoined;
 
     return (
         <div className="mt-2 pt-2 border-t border-white/5">
@@ -333,7 +336,7 @@ function FiltersEditor({
                         </button>
                         {dirty && (
                             <button
-                                onClick={() => setText(initial.join("\n"))}
+                                onClick={() => setText(initialJoined)}
                                 disabled={busy}
                                 className="text-[11px] px-2 py-1 rounded text-white/50 hover:text-white/80 disabled:opacity-30"
                             >

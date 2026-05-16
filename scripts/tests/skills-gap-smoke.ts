@@ -85,6 +85,51 @@ function main() {
         else pass("text substring → 'terraform' missing");
     }
 
+    // ─── word boundaries: short keywords don't false-match inside words ───
+    // Regression for the substring-false-positive bug: "ai" inside
+    // "available", "go" inside "going", "ml" inside "html" must NOT count
+    // as coverage.
+    {
+        const p = mkProfile({
+            workRoles: [mkWorkRole("w1", [
+                mkBullet("b1", "Available for hire; going to ship; built html templates", []),
+            ])],
+        });
+        const r = computeSkillsGap(p, ["ai", "go", "ml"]);
+        if (r.covered.length !== 0) fail("word boundaries: 'ai'/'go'/'ml' should NOT match inside 'available'/'going'/'html'", r);
+        else pass("word boundaries → short kw inside larger word is not coverage");
+        if (!eqStrArr(r.missing, ["ai", "go", "ml"])) fail("word boundaries: all three should be flagged missing", r);
+        else pass("word boundaries → all three kw flagged missing");
+    }
+
+    // ─── word boundaries: keyword as a real word IS coverage ───
+    {
+        const p = mkProfile({
+            workRoles: [mkWorkRole("w1", [
+                mkBullet("b1", "Shipped AI features and Go services for ML pipelines", []),
+            ])],
+        });
+        const r = computeSkillsGap(p, ["ai", "go", "ml"]);
+        if (!eqStrArr(r.covered, ["ai", "go", "ml"])) fail("word boundaries: standalone words should match", r);
+        else pass("word boundaries → standalone short kw matches");
+    }
+
+    // ─── special-char keywords (c++, node.js) don't blow up RegExp ───
+    {
+        const p = mkProfile({
+            workRoles: [mkWorkRole("w1", [
+                mkBullet("b1", "Built backend in c++ and Node.js services", []),
+            ])],
+        });
+        const r = computeSkillsGap(p, ["c++", "node.js", "rust"]);
+        if (!r.covered.includes("c++")) fail("c++ should be covered (substring fallback for symbol-edge kw)", r);
+        else pass("c++ covered (regex-safe path for symbol-edge keywords)");
+        if (!r.covered.includes("node.js")) fail("node.js should be covered", r);
+        else pass("node.js covered (escaped dot, not wildcard)");
+        if (!r.missing.includes("rust")) fail("rust should be missing", r);
+        else pass("rust still missing when not present");
+    }
+
     // ─── case-insensitive ───
     {
         const p = mkProfile({

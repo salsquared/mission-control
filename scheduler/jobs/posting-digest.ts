@@ -49,8 +49,22 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
                 status: { notIn: ["hidden", "closed"] },
             },
             orderBy: { firstSeenAt: "desc" },
-            select: { id: true, company: true, title: true, location: true },
+            select: { id: true, company: true, title: true, location: true, firstSeenAt: true },
         });
+
+        // CRITICAL — slide the window to the MAX firstSeenAt actually
+        // included in this run, not to runAt. Otherwise a posting inserted by
+        // job-watcher between this SELECT and the watchlist UPDATE has
+        // firstSeenAt > since but <= runAt, gets skipped this run, and the
+        // next run's gt:runAt skips it too — permanent loss.
+        // Empty-window case: keep sliding forward to `runAt` so we don't
+        // re-scan yesterday's window on every empty day.
+        const maxIncluded = postings.length > 0
+            ? postings.reduce(
+                (acc, p) => (p.firstSeenAt > acc ? p.firstSeenAt : acc),
+                postings[0].firstSeenAt,
+            )
+            : runAt;
 
         if (postings.length > 0) {
             const preview = postings.slice(0, BODY_PREVIEW_LIMIT)
@@ -81,11 +95,9 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
             }
         }
 
-        // Always slide the window forward, even if zero postings — otherwise
-        // an empty day would let the next run re-count yesterday's window.
         await prisma.watchlist.update({
             where: { id: w.id },
-            data: { lastDigestAt: runAt },
+            data: { lastDigestAt: maxIncluded },
         }).catch(e => console.warn(`[posting-digest] failed to update lastDigestAt for ${w.id}:`, e));
     }
 

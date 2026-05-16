@@ -58,12 +58,13 @@ export async function runStaleApplicationNudges(): Promise<StaleNudgeRunResult> 
         // payload.applicationId is a JSON field — fetch with a contains query
         // (SQLite JSON fields are stored as TEXT, so `contains` works on the
         // stringified payload).
+        // Cooldown holds even if the user dismissed the prior nudge — the
+        // dismiss means "I saw it," not "send me another tomorrow."
         const recent = await prisma.notification.findFirst({
             where: {
                 userId: app.userId,
                 kind: "application",
                 createdAt: { gte: cooldownCutoff },
-                dismissedAt: null,
                 AND: [
                     { payload: { contains: '"type":"stale-nudge"' } },
                     { payload: { contains: `"applicationId":"${app.id}"` } },

@@ -131,6 +131,40 @@ async function main() {
         const r4 = await trackAsApplication(userId, "nonexistent-posting-id");
         if (r4.ok) fail("unknown posting: expected posting-not-found, got ok");
         else pass("unknown posting id: posting-not-found");
+
+        // ─── TOCTOU race: two concurrent calls must NOT both throw P2002 ───
+        // Regression: pre-fix, two parallel trackAsApplication calls on a
+        // fresh posting both pass the findFirst check, both transactions
+        // race to create, and one throws P2002 (surfaces as 500 from the
+        // route). After fix: the loser catches P2002 and resolves to the
+        // winner's row with created=false.
+        const posting2 = await prisma.jobPosting.create({
+            data: {
+                watchlistId: watchlist.id,
+                externalId: `smoke-${tag}-002`,
+                company: "Race Co", title: "Race Engineer",
+                sourceUrl: "https://example.invalid/careers/jobs/002",
+                status: "new", raw: JSON.stringify({}),
+            },
+        });
+        const [ra, rb] = await Promise.all([
+            trackAsApplication(userId, posting2.id),
+            trackAsApplication(userId, posting2.id),
+        ]);
+        if (!ra.ok || !rb.ok) fail(`concurrent race: one call errored — ra=${JSON.stringify(ra)} rb=${JSON.stringify(rb)}`);
+        else pass("concurrent race: both calls returned ok");
+        const createdCount = [ra, rb].filter(r => r.ok && r.created).length;
+        if (createdCount !== 1) fail(`concurrent race: expected exactly 1 created=true, got ${createdCount}`);
+        else pass("concurrent race: exactly one call reports created=true");
+        if (ra.ok && rb.ok && ra.applicationId !== rb.applicationId) {
+            fail("concurrent race: both calls returned different applicationIds — duplicate rows created");
+        } else pass("concurrent race: both calls converged on same applicationId");
+        const dupRowCount = await prisma.application.count({
+            where: { postingId: posting2.id, userId },
+        });
+        if (dupRowCount !== 1) fail(`concurrent race: ${dupRowCount} Application rows for posting (expected 1)`);
+        else pass("concurrent race: exactly 1 Application row in DB");
+        if (ra.ok) applicationIds.push(ra.applicationId);
     } finally {
         for (const id of applicationIds) {
             await prisma.applicationEvent.deleteMany({ where: { applicationId: id } }).catch(() => undefined);

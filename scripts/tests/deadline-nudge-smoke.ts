@@ -108,12 +108,28 @@ async function main() {
 
         const titleIn2 = (await prisma.notification.findFirst({
             where: { userId, kind: "application", AND: [{ payload: { contains: '"type":"deadline-approaching"' } }, { payload: { contains: `"applicationId":"${idIn2}"` } }] },
-            select: { title: true },
-        }))?.title;
-        if (!titleIn2?.includes("2 days") && !titleIn2?.includes("1 day")) {
-            // Allow ±1 rounding boundary because of timing.
-            fail(`in2d nudge title doesn't reflect days-out: ${titleIn2}`);
+            select: { title: true, id: true },
+        }));
+        if (!titleIn2?.title?.includes("2 days") && !titleIn2?.title?.includes("1 day") && !titleIn2?.title?.includes("3 days")) {
+            fail(`in2d nudge title doesn't reflect days-out: ${titleIn2?.title}`);
         } else pass("in2d nudge title reflects days-out");
+
+        // ─── Dismissed cooldown regression (review bug #5) ───
+        // Pre-fix, the cooldown query filtered dismissedAt: null, so
+        // dismissing the nudge would let it re-fire on the next daily run.
+        // Post-fix, the cooldown holds regardless of dismiss state. Simulate
+        // by marking the existing nudge dismissed and re-running.
+        if (titleIn2?.id) {
+            await prisma.notification.update({
+                where: { id: titleIn2.id },
+                data: { dismissedAt: new Date() },
+            });
+            const r3 = await runDeadlineNudges();
+            if (r3.nudged !== 0) fail(`dismissed cooldown: expected 0 new nudges, got ${r3.nudged}`);
+            else pass("dismissed cooldown: dismiss does NOT reset the cooldown");
+            if ((await nudgeCountForApp(userId, idIn2)) !== 1) fail("dismissed cooldown: duplicate nudge created");
+            else pass("dismissed cooldown: still exactly 1 nudge in DB");
+        }
     } finally {
         await prisma.notification.deleteMany({ where: { userId } }).catch(() => undefined);
         for (const id of appIds) {

@@ -43,36 +43,68 @@ export async function trackAsApplication(
     }
 
     const now = new Date();
-    const { application, updatedPosting } = await prisma.$transaction(async (tx) => {
-        const application = await tx.application.create({
-            data: {
-                userId,
-                company: posting.company,
-                role: posting.title,
-                status: "INTERESTED",
-                kind: "job",
-                postingId: posting.id,
-                lastUpdateAt: now,
-            },
+    let application: { id: string };
+    let updatedPosting: { id: string; status: string };
+    try {
+        const txResult = await prisma.$transaction(async (tx) => {
+            const application = await tx.application.create({
+                data: {
+                    userId,
+                    company: posting.company,
+                    role: posting.title,
+                    status: "INTERESTED",
+                    kind: "job",
+                    postingId: posting.id,
+                    lastUpdateAt: now,
+                },
+            });
+            // Anchor the timeline so drill-in shows when/where this came from.
+            // NOTE kind keeps the event-kind enum stable; sourceUrl lives in notes.
+            await tx.applicationEvent.create({
+                data: {
+                    applicationId: application.id,
+                    kind: "NOTE",
+                    title: `Tracked from ${posting.company} posting`,
+                    occurredAt: now,
+                    notes: posting.sourceUrl,
+                },
+            });
+            const updatedPosting = await tx.jobPosting.update({
+                where: { id: posting.id },
+                data: { status: "tracked" },
+                select: { id: true, status: true },
+            });
+            return { application, updatedPosting };
         });
-        // Anchor the timeline so drill-in shows when/where this came from.
-        // NOTE kind keeps the event-kind enum stable; sourceUrl lives in notes.
-        await tx.applicationEvent.create({
-            data: {
-                applicationId: application.id,
-                kind: "NOTE",
-                title: `Tracked from ${posting.company} posting`,
-                occurredAt: now,
-                notes: posting.sourceUrl,
-            },
-        });
-        const updatedPosting = await tx.jobPosting.update({
-            where: { id: posting.id },
-            data: { status: "tracked" },
-            select: { id: true, status: true },
-        });
-        return { application, updatedPosting };
-    });
+        application = txResult.application;
+        updatedPosting = txResult.updatedPosting;
+    } catch (e) {
+        // P2002 = unique constraint violation. Application.postingId is
+        // @unique; two concurrent track calls race past the findFirst check
+        // above and both hit create. The loser lands here. Resolve to the
+        // winner's row and return idempotent created=false, matching the
+        // ordinary re-track path.
+        const code = (e as { code?: string } | null)?.code;
+        if (code === "P2002") {
+            const existing = await prisma.application.findFirst({
+                where: { postingId: posting.id, userId },
+                select: { id: true },
+            });
+            if (existing) {
+                const postingNow = await prisma.jobPosting.findUnique({
+                    where: { id: posting.id },
+                    select: { status: true },
+                });
+                return {
+                    ok: true,
+                    created: false,
+                    applicationId: existing.id,
+                    postingStatus: postingNow?.status ?? posting.status,
+                };
+            }
+        }
+        throw e;
+    }
 
     broadcastEvent({ model: "Application", action: "upsert", id: application.id, timestamp: Date.now() });
     broadcastEvent({ model: "Posting", action: "upsert", id: updatedPosting.id, timestamp: Date.now() });

@@ -178,6 +178,45 @@ async function main() {
         const payload3 = JSON.parse(notifs3[1].payload);
         if (payload3.count !== 1) fail(`third digest count=${payload3.count}, expected 1`);
         else pass("third digest payload.count = 1 (only the new posting)");
+
+        // ─── Window-race regression (review bug #3) ───
+        // Pre-fix, lastDigestAt was set to runAt (a timestamp captured BEFORE
+        // the SELECT). A posting inserted by job-watcher in the interval
+        // [SELECT, UPDATE] had firstSeenAt > since but <= runAt, so the next
+        // run's gt:runAt skipped it permanently. Post-fix, lastDigestAt is
+        // the max firstSeenAt that was actually included this run.
+        //
+        // We simulate the race by FORCING lastDigestAt to a value just after
+        // the most-recent-included posting, then inserting a "racey" posting
+        // whose firstSeenAt sits in the gap, then running again — the racey
+        // posting MUST be picked up.
+        const wDigestAfter3 = await prisma.watchlist.findUnique({ where: { id: wDigest.id } });
+        if (!wDigestAfter3?.lastDigestAt) {
+            fail("window race: lastDigestAt missing after third run");
+        } else {
+            // The most-recent posting we just summarized had its firstSeenAt
+            // set to (approximately) now. lastDigestAt should be >= that.
+            const lastDigestMs = wDigestAfter3.lastDigestAt.getTime();
+            // Insert a posting whose firstSeenAt sits 1ms AFTER lastDigestAt
+            // — i.e. clearly inside the next window. Pre-fix this used to
+            // also be the regression target; with the fix it should be
+            // picked up by the next run.
+            await prisma.jobPosting.create({
+                data: {
+                    watchlistId: wDigest.id,
+                    externalId: `smoke-${tag}-race`,
+                    company: "Race Co",
+                    title: "Race Posting",
+                    sourceUrl: "https://example.invalid/careers/jobs/race",
+                    status: "new",
+                    firstSeenAt: new Date(lastDigestMs + 1),
+                    raw: JSON.stringify({}),
+                },
+            });
+            const rRace = await runPostingDigest();
+            if (rRace.summarized !== 1) fail(`window race: expected 1 summarized for the racey posting, got ${rRace.summarized}`);
+            else pass("window race: racey posting (firstSeenAt = lastDigestAt+1ms) IS picked up");
+        }
     } finally {
         await prisma.notification.deleteMany({ where: { userId } }).catch(() => undefined);
         for (const id of watchlistIds) {
