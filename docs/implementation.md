@@ -27,7 +27,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 | Priority | Shipped | Open | Declined | Total |
 |---|---|---|---|---|
 | 🔴 must-have | **16** | 0 | 0 | 16 |
-| 🟡 important | **21** | 3 | 0 | 24 (story 47 counted as ◐ partial — resume side shipped, cover-letter side belongs to declined story 40) |
+| 🟡 important | **22** | 2 | 0 | 24 (story 47 counted as ◐ partial — resume side shipped, cover-letter side belongs to declined story 40) |
 | 🔵 nice-to-have | **2** | 8 | 1 | 11 (excluding 4 future/OOS items 52–55) |
 
 ### Per-track status
@@ -38,8 +38,8 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 | A | MA-followup | ✅ (mostly) | Inline edit 13, delete 15, kind toggle 51, stale-app nudges 49 all shipped. Open: recruiter contacts (50), resume-version diff (48) |
 | **B** — Discovery | MB Phase 1 | ✅ | careers-page + greenhouse, in-app notifications, "Track" / "Hide" |
 | B | MB Phase 2a | ✅ | Track→App (story 20), Lever + Ashby, closed-detection |
-| B | MB Phase 2b | ✅ | Workday + LinkedIn fetchers + Gmail OAuth email send |
-| B | MB Phase 3a | ✅ | Application-side notifications via central dispatcher |
+| B | MB Phase 2b | ✅ | Workday + LinkedIn fetchers + Gmail OAuth email send + per-watchlist notificationMode (each/digest/silent) + posting-digest daily job |
+| B | MB Phase 3a | ✅ | Application-side notifications via central dispatcher + decision-deadline nudges (story 27 closed) |
 | B | MB Phase 3b | ◐ | Stale nudges (49) ✅, negative filters (23) ✅. Open: comp parsing (24), quiet hours (28) |
 | **C** — Profile + resume + GitHub | M7 | ✅ | Profile spine + cards + bullet UX with lock/exclude/tags |
 | C | M7.4 | ✅ | Multi-resume import (PDF/DOCX/TXT/JSON) → LLM extract → append-merge |
@@ -54,16 +54,15 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-1. **Story 26 — per-watchlist notification preferences (🟡).** Add `notificationMode: 'each' | 'digest'` on `Watchlist`, plus a daily digest scheduler job. Justification: LinkedIn + Workday feeds are high-volume and there's no per-source mute today.
-2. **Story 37 — second resume template (🟡).** Add a single-column or two-column variant alongside `ats-plain.tsx`, plus a picker on `GenerateResumeCard`. Visible artifact polish.
-3. **Story 41 — skills-gap report (🔵).** Posting keywords minus the union of profile bullet tags + bullet-text substring matches, surfaced on `GenerateResumeCard` post-gen. Cheap data-side, complements the existing trace.
-4. **Story 33 — profile snapshots (🔵).** `ProfileSnapshot(userId, takenAt, payloadJson)` + a "Snapshot now" button. Button-press-only; no auto-snapshotting.
-5. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
-6. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
-7. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
-8. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
-9. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
-10. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
+1. **Story 37 — second resume template (🟡).** Add a single-column or two-column variant alongside `ats-plain.tsx`, plus a picker on `GenerateResumeCard`. Visible artifact polish.
+2. **Story 41 — skills-gap report (🔵).** Posting keywords minus the union of profile bullet tags + bullet-text substring matches, surfaced on `GenerateResumeCard` post-gen. Cheap data-side, complements the existing trace.
+3. **Story 33 — profile snapshots (🔵).** `ProfileSnapshot(userId, takenAt, payloadJson)` + a "Snapshot now" button. Button-press-only; no auto-snapshotting.
+4. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
+5. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
+6. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
+7. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
+8. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
+9. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
 
 ### User-declined
 

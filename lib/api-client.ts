@@ -344,7 +344,7 @@ export const api = {
 
     watchlists: {
         list: () => jsonFetch('/api/watchlists', WatchlistsListResponseSchema),
-        create: (input: z.infer<typeof WatchlistPostSchema>) =>
+        create: (input: z.input<typeof WatchlistPostSchema>) =>
             jsonFetch('/api/watchlists', WatchlistMutationResponseSchema, jsonBody('POST', input)),
         update: (id: string, input: z.infer<typeof WatchlistPatchSchema>) =>
             jsonFetch(`/api/watchlists/${encodeURIComponent(id)}`, WatchlistMutationResponseSchema, jsonBody('PATCH', input)),

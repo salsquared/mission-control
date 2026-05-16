@@ -89,6 +89,12 @@ export const NegativeFiltersSchema = z.array(
     z.string().min(1).max(MAX_NEGATIVE_FILTER_LEN),
 ).max(MAX_NEGATIVE_FILTERS);
 
+// Story 26 — per-watchlist notification preference. "each" fires per-posting,
+// "digest" rolls into one summary via the posting-digest scheduler job,
+// "silent" skips notifications entirely (postings still appear in the feed).
+export const WATCHLIST_NOTIFICATION_MODES = ["each", "digest", "silent"] as const;
+export const WatchlistNotificationModeSchema = z.enum(WATCHLIST_NOTIFICATION_MODES);
+
 export const WatchlistSchema = z.object({
     id: z.string(),
     userId: z.string(),
@@ -96,6 +102,8 @@ export const WatchlistSchema = z.object({
     kind: WatchlistKindSchema,
     config: WatchlistConfigSchema,
     negativeFilters: z.array(z.string()).default([]),
+    notificationMode: WatchlistNotificationModeSchema.default("each"),
+    lastDigestAt: z.string().datetime().nullable(),
     scheduleMinutes: z.number().int().positive(),
     lastRunAt: z.string().datetime().nullable(),
     lastSuccessAt: z.string().datetime().nullable(),
@@ -134,18 +142,21 @@ export const WatchlistPostSchema = z.object({
     name: z.string().min(1),
     config: WatchlistConfigSchema,
     scheduleMinutes: z.number().int().positive().default(30),
+    notificationMode: WatchlistNotificationModeSchema.default("each"),
 });
 
 export const WatchlistPatchSchema = z.object({
     name: z.string().min(1).optional(),
     config: WatchlistConfigSchema.optional(),
     negativeFilters: NegativeFiltersSchema.optional(),
+    notificationMode: WatchlistNotificationModeSchema.optional(),
     scheduleMinutes: z.number().int().positive().optional(),
     active: z.boolean().optional(),
 }).refine(d =>
     d.name !== undefined ||
     d.config !== undefined ||
     d.negativeFilters !== undefined ||
+    d.notificationMode !== undefined ||
     d.scheduleMinutes !== undefined ||
     d.active !== undefined,
     { message: "At least one mutable field must be provided" },

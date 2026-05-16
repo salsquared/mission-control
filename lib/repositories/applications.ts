@@ -9,6 +9,7 @@ export interface ApplicationCreate {
     kind?: string | null;
     nextSteps?: string | null;
     dateApplied?: Date;
+    decisionDeadline?: Date;
     lastEmailMsgId?: string | null;
     postingId?: string | null;
     lastUpdateAt?: Date;
@@ -21,6 +22,7 @@ export interface ApplicationUpdate {
     role?: string | null;
     company?: string;
     dateApplied?: Date | null;
+    decisionDeadline?: Date | null;
     lastEmailMsgId?: string | null;
     lastUpdateAt?: Date;
 }

@@ -311,6 +311,21 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                                     ))}
                                 </div>
                                 <div className="mt-3">
+                                    <DecisionDeadlineEditor
+                                        value={app.decisionDeadline ?? null}
+                                        onChange={async (iso) => {
+                                            const prev = optimisticPatch({ decisionDeadline: iso });
+                                            try {
+                                                await api.applications.update({ id: applicationId, decisionDeadline: iso });
+                                                queryClient.invalidateQueries({ queryKey: queryKeys.applications });
+                                            } catch (e) {
+                                                if (prev) queryClient.setQueryData<ApplicationsCache>(queryKeys.applications, prev);
+                                                toastStore.push({ message: `Deadline save failed: ${e instanceof Error ? e.message : String(e)}`, type: "error" });
+                                            }
+                                        }}
+                                    />
+                                </div>
+                                <div className="mt-3">
                                     <span className="text-[10px] uppercase tracking-wider text-white/30">Next steps</span>
                                     {editingField === 'nextSteps' ? (
                                         <textarea
@@ -570,6 +585,59 @@ const ApplicationResumesSection: React.FC<{ applicationId: string; company: stri
                         </button>
                     </div>
                 </div>
+            )}
+        </div>
+    );
+};
+
+// Story 27 — decision-deadline inline editor. Renders as a date input so the
+// underlying ISO datetime is easy to set/clear. Empty value clears the field
+// (sets the column to NULL). Anchored to noon UTC so it doesn't drift across
+// timezone boundaries when displayed.
+// Module-scope so the React compiler doesn't flag the `Date.now()` call as
+// an impure call from within render (same pattern as `fmtRelative` elsewhere).
+function deadlineBadge(value: string | null): { text: string; cls: string } | null {
+    if (!value) return null;
+    const daysOut = Math.round((new Date(value).getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+    if (daysOut < 0) return { text: `${Math.abs(daysOut)}d ago`, cls: "text-rose-300 bg-rose-500/10 border-rose-500/30" };
+    if (daysOut === 0) return { text: "today", cls: "text-amber-300 bg-amber-500/10 border-amber-500/30" };
+    if (daysOut <= 3) return { text: `in ${daysOut}d`, cls: "text-amber-300 bg-amber-500/10 border-amber-500/30" };
+    return { text: `in ${daysOut}d`, cls: "text-white/50 bg-white/5 border-white/10" };
+}
+
+const DecisionDeadlineEditor: React.FC<{
+    value: string | null;
+    onChange: (iso: string | null) => void | Promise<void>;
+}> = ({ value, onChange }) => {
+    const dateStr = value ? value.slice(0, 10) : "";
+    const badge = deadlineBadge(value);
+    return (
+        <div className="flex items-center gap-2">
+            <span className="text-[10px] uppercase tracking-wider text-white/30">Decision deadline</span>
+            <input
+                type="date"
+                value={dateStr}
+                onChange={(e) => {
+                    const raw = e.target.value;
+                    if (!raw) { void onChange(null); return; }
+                    void onChange(new Date(`${raw}T12:00:00.000Z`).toISOString());
+                }}
+                className="bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-xs text-white/80 focus:outline-none focus:border-amber-500/40"
+            />
+            {badge && (
+                <span className={`text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border ${badge.cls}`}>
+                    {badge.text}
+                </span>
+            )}
+            {value && (
+                <button
+                    type="button"
+                    onClick={() => void onChange(null)}
+                    className="text-[10px] text-white/30 hover:text-white/70 underline underline-offset-2"
+                    title="Clear deadline"
+                >
+                    clear
+                </button>
             )}
         </div>
     );

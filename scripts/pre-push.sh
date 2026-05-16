@@ -38,6 +38,8 @@ SUITES=(
     "scripts/tests/track-as-application-smoke.ts"
     "scripts/tests/notification-dispatch-smoke.ts"
     "scripts/tests/stale-nudge-smoke.ts"
+    "scripts/tests/posting-digest-smoke.ts"
+    "scripts/tests/deadline-nudge-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

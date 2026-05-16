@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
-    const { company, role, status, kind, nextSteps, dateApplied } = parsed.data;
+    const { company, role, status, kind, nextSteps, dateApplied, decisionDeadline } = parsed.data;
     const now = new Date();
 
     try {
@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
             kind: kind ?? null,
             nextSteps: nextSteps ?? null,
             dateApplied: dateApplied ? new Date(dateApplied) : undefined,
+            decisionDeadline: decisionDeadline ? new Date(decisionDeadline) : undefined,
             lastUpdateAt: now,
         });
 
@@ -97,7 +98,7 @@ export async function PATCH(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
-    const { id, company, role, status, kind, nextSteps, dateApplied } = parsed.data;
+    const { id, company, role, status, kind, nextSteps, dateApplied, decisionDeadline } = parsed.data;
 
     try {
         const existing = await findApplicationByIdForUser(id, userId);
@@ -112,6 +113,7 @@ export async function PATCH(req: NextRequest) {
         if (kind !== undefined) update.kind = kind;
         if (nextSteps !== undefined) update.nextSteps = nextSteps;
         if (dateApplied !== undefined) update.dateApplied = dateApplied ? new Date(dateApplied) : null;
+        if (decisionDeadline !== undefined) update.decisionDeadline = decisionDeadline ? new Date(decisionDeadline) : null;
 
         const application = await updateApplication(id, update);
 

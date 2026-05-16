@@ -120,6 +120,9 @@ model Application {
   dateApplied     DateTime?
   lastEmailMsgId  String?   // Gmail message id of the last ingested email; used to dedupe re-runs
   postingId       String?   @unique // links back to the JobPosting this app was tracked from, if any
+  // Story 27 — "decision deadline approaching" nudges. NULL means unknown /
+  // no deadline; the deadline-nudges scheduler job fires when within 3 days.
+  decisionDeadline DateTime?
   lastUpdateAt    DateTime  @default(now())
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -297,6 +300,13 @@ model Watchlist {
   // matches any pattern are hidden from the bell / new-postings feed at GET
   // time. Invalid regexes are silently skipped. NULL = no filtering.
   negativeFilters String?
+  // Story 26 — per-watchlist notification preference:
+  //   "each"   — fire one bell notification per new posting (current default)
+  //   "digest" — suppress per-posting; posting-digest scheduler job rolls them
+  //              up into one daily summary and updates lastDigestAt
+  //   "silent" — never notify; postings still appear in the discovery feed
+  notificationMode String    @default("each")
+  lastDigestAt     DateTime?
   scheduleMinutes Int       @default(30)
   lastRunAt       DateTime?
   lastSuccessAt   DateTime?

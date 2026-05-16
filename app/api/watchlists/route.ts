@@ -14,6 +14,8 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
 function serialize(w: {
     id: string; userId: string; name: string; kind: string; config: string;
     negativeFilters: string | null;
+    notificationMode: string;
+    lastDigestAt: Date | null;
     scheduleMinutes: number; lastRunAt: Date | null; lastSuccessAt: Date | null;
     lastError: string | null; active: boolean; createdAt: Date; updatedAt: Date;
 }) {
@@ -28,6 +30,7 @@ function serialize(w: {
         ...w,
         config: JSON.parse(w.config),
         negativeFilters: parsedFilters,
+        lastDigestAt: w.lastDigestAt?.toISOString() ?? null,
         lastRunAt: w.lastRunAt?.toISOString() ?? null,
         lastSuccessAt: w.lastSuccessAt?.toISOString() ?? null,
         createdAt: w.createdAt.toISOString(),
@@ -72,6 +75,7 @@ export async function POST(req: NextRequest) {
                 kind: parsed.data.config.kind,
                 config: JSON.stringify(parsed.data.config),
                 scheduleMinutes: parsed.data.scheduleMinutes,
+                notificationMode: parsed.data.notificationMode,
             },
         });
         broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });

@@ -46,7 +46,7 @@ Working list. Priority emoji matches `docs/todo.md` (🔴 = must-have for next s
 ## 6. Notification pipeline
 
 25. 🔴 ✅ As a user, when the crawler finds a new posting matching a high-priority watchlist, I want a notification (in-app, browser push, optionally email) within minutes — not the next time I open the dashboard.
-26. 🟡 As a user, I want a per-watchlist notification preference (e.g., "Rocket Lab — notify on anything new", "LinkedIn — daily digest only") so I'm not pinged for every fuzzy match.
+26. 🟡 ✅ As a user, I want a per-watchlist notification preference (e.g., "Rocket Lab — notify on anything new", "LinkedIn — daily digest only") so I'm not pinged for every fuzzy match.
 27. 🟡 ✅ As a user, I want notifications for application-side events too — interview scheduled, offer received, no response in N days, decision deadline approaching — using the same delivery mechanism as the crawler.
 28. 🔵 As a user, I want a "quiet hours" window so notifications don't fire while I'm asleep.
 
@@ -104,11 +104,11 @@ Working list. Priority emoji matches `docs/todo.md` (🔴 = must-have for next s
 ## Status snapshot (2026-05-15)
 
 - **All 🔴 must-haves shipped** (16/16). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX — is in production.
-- **🟡 shipped: 21/25.** Still open: **26** (per-watchlist notification preferences), **37** (multi-template picker). *Resume side of **47** shipped; cover-letter side is OOS by user decision.*
+- **🟡 shipped: 22/25.** Still open: **37** (multi-template picker). *Resume side of **47** shipped; cover-letter side is OOS by user decision.*
 - **🔵 shipped: 2/13** (story **23** negative filters; story **51** multi-kind). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **33** (profile snapshots), **41** (skills-gap report), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **50** (recruiter contacts).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **26** per-watchlist mode (`notificationMode: 'each' | 'digest'` on Watchlist + a daily-digest scheduler job); **37** second resume template; **41** skills-gap (posting keywords minus profile tag/keyword coverage); **33** profile snapshots (one extra table, button-triggered).
+**Next-up candidates** (small surface, real leverage): **37** second resume template; **41** skills-gap (posting keywords minus profile tag/keyword coverage); **33** profile snapshots (one extra table, button-triggered); **50** recruiter contacts.
 
 ---
 

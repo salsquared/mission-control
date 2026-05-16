@@ -14,6 +14,8 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
 function serialize(w: {
     id: string; userId: string; name: string; kind: string; config: string;
     negativeFilters: string | null;
+    notificationMode: string;
+    lastDigestAt: Date | null;
     scheduleMinutes: number; lastRunAt: Date | null; lastSuccessAt: Date | null;
     lastError: string | null; active: boolean; createdAt: Date; updatedAt: Date;
 }) {
@@ -28,6 +30,7 @@ function serialize(w: {
         ...w,
         config: JSON.parse(w.config),
         negativeFilters: parsedFilters,
+        lastDigestAt: w.lastDigestAt?.toISOString() ?? null,
         lastRunAt: w.lastRunAt?.toISOString() ?? null,
         lastSuccessAt: w.lastSuccessAt?.toISOString() ?? null,
         createdAt: w.createdAt.toISOString(),
@@ -65,6 +68,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
         if (parsed.data.scheduleMinutes !== undefined) data.scheduleMinutes = parsed.data.scheduleMinutes;
         if (parsed.data.active !== undefined) data.active = parsed.data.active;
+        if (parsed.data.notificationMode !== undefined) data.notificationMode = parsed.data.notificationMode;
         if (parsed.data.negativeFilters !== undefined) {
             // Empty array → NULL so the column reads as "no filtering" rather than "[]".
             data.negativeFilters = parsed.data.negativeFilters.length > 0

@@ -9,6 +9,8 @@ import { runCachePrune } from './jobs/cache-prune';
 import { runDueWatchlists } from './jobs/job-watcher';
 import { runGithubMetrics } from './jobs/github-metrics';
 import { runStaleApplicationNudges } from './jobs/stale-applications';
+import { runDeadlineNudges } from './jobs/deadline-nudges';
+import { runPostingDigest } from './jobs/posting-digest';
 
 interface IntervalJob {
     name: string;
@@ -57,9 +59,28 @@ const JOBS: IntervalJob[] = [
             }
         },
     },
-    // Future: weekly-paper-pick (Mon 09:00), notification-digest (08:00 daily),
-    // fetcher-health-roll (1 min). Add cron-based scheduling when the first
-    // cron job lands.
+    {
+        name: 'deadline-nudges',
+        intervalMs: 24 * 60 * 60 * 1000, // daily — short cooldown (2d) keeps urgent deadlines visible
+        run: async () => {
+            const r = await runDeadlineNudges();
+            if (r.processed > 0) {
+                console.info(`[deadline-nudges] processed ${r.processed} apps with upcoming deadlines — ${r.nudged} nudged, ${r.skippedCooldown} cooled-down`);
+            }
+        },
+    },
+    {
+        name: 'posting-digest',
+        intervalMs: 24 * 60 * 60 * 1000, // daily — covers notificationMode='digest' watchlists
+        run: async () => {
+            const r = await runPostingDigest();
+            if (r.processed > 0) {
+                console.info(`[posting-digest] processed ${r.processed} digest watchlists — ${r.summarized} summarized, ${r.totalPostings} postings rolled up`);
+            }
+        },
+    },
+    // Future: weekly-paper-pick (Mon 09:00), fetcher-health-roll (1 min).
+    // Add cron-based scheduling when the first cron job lands.
 ];
 
 console.info(`[SCHEDULER] starting with ${JOBS.length} job(s): ${JOBS.map(j => j.name).join(', ')}`);

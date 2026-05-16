@@ -1,7 +1,7 @@
 "use client";
 import React, { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronDown, ChevronRight } from "lucide-react";
+import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronDown, ChevronRight, Bell, BellOff, Layers } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
@@ -63,6 +63,18 @@ export function WatchlistsCard() {
             queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
         } catch (e) {
             toastStore.push({ message: `Pause toggle failed: ${errMessage(e)}`, type: "error" });
+        } finally {
+            setBusyId(null);
+        }
+    }
+
+    async function setNotificationMode(id: string, mode: "each" | "digest" | "silent") {
+        setBusyId(id);
+        try {
+            await api.watchlists.update(id, { notificationMode: mode });
+            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
+        } catch (e) {
+            toastStore.push({ message: `Notification mode change failed: ${errMessage(e)}`, type: "error" });
         } finally {
             setBusyId(null);
         }
@@ -155,6 +167,11 @@ export function WatchlistsCard() {
                                         </div>
                                     </div>
                                     <div className="flex items-center gap-1 shrink-0">
+                                        <NotificationModeToggle
+                                            mode={(w.notificationMode as "each" | "digest" | "silent") ?? "each"}
+                                            busy={busy}
+                                            onChange={m => setNotificationMode(w.id, m)}
+                                        />
                                         <button
                                             onClick={() => runNow(w.id)}
                                             disabled={busy || !w.active}
@@ -197,6 +214,46 @@ export function WatchlistsCard() {
                 onClose={() => setAdding(false)}
                 onCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.watchlists })}
             />
+        </div>
+    );
+}
+
+function NotificationModeToggle({
+    mode,
+    busy,
+    onChange,
+}: {
+    mode: "each" | "digest" | "silent";
+    busy: boolean;
+    onChange: (m: "each" | "digest" | "silent") => void;
+}) {
+    const options: Array<{ value: "each" | "digest" | "silent"; label: string; Icon: typeof Bell; title: string }> = [
+        { value: "each", label: "each", Icon: Bell, title: "Notify per new posting" },
+        { value: "digest", label: "digest", Icon: Layers, title: "Roll up new postings into one daily summary" },
+        { value: "silent", label: "silent", Icon: BellOff, title: "No notifications — postings still appear in the feed" },
+    ];
+    return (
+        <div className="flex items-center rounded border border-white/10 bg-black/30 overflow-hidden mr-1">
+            {options.map(({ value, Icon, title }) => {
+                const active = mode === value;
+                return (
+                    <button
+                        key={value}
+                        onClick={() => !active && onChange(value)}
+                        disabled={busy || active}
+                        title={title}
+                        aria-pressed={active}
+                        className={[
+                            "p-1 transition-colors",
+                            active
+                                ? "bg-cyan-500/20 text-cyan-200"
+                                : "text-white/40 hover:text-white/80 hover:bg-white/5 disabled:opacity-30",
+                        ].join(" ")}
+                    >
+                        <Icon className="w-3 h-3" />
+                    </button>
+                );
+            })}
         </div>
     );
 }

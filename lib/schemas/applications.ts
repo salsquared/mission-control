@@ -31,6 +31,7 @@ export const ApplicationSchema = z.object({
     kind: z.string().nullable(),
     nextSteps: z.string().nullable(),
     dateApplied: z.string().datetime().nullable(),
+    decisionDeadline: z.string().datetime().nullable(),
     lastEmailMsgId: z.string().nullable(),
     postingId: z.string().nullable(),
     lastUpdateAt: z.string().datetime(),
@@ -60,6 +61,7 @@ export const ApplicationPostSchema = z.object({
     kind: ApplicationKindSchema.nullable().optional(),
     nextSteps: z.string().nullable().optional(),
     dateApplied: z.string().datetime().nullable().optional(),
+    decisionDeadline: z.string().datetime().nullable().optional(),
 });
 
 export const ApplicationPatchSchema = z.object({
@@ -70,13 +72,15 @@ export const ApplicationPatchSchema = z.object({
     kind: ApplicationKindSchema.nullable().optional(),
     nextSteps: z.string().nullable().optional(),
     dateApplied: z.string().datetime().nullable().optional(),
+    decisionDeadline: z.string().datetime().nullable().optional(),
 }).refine(
     (d) => d.company !== undefined
         || d.role !== undefined
         || d.status !== undefined
         || d.kind !== undefined
         || d.nextSteps !== undefined
-        || d.dateApplied !== undefined,
+        || d.dateApplied !== undefined
+        || d.decisionDeadline !== undefined,
     { message: 'At least one mutable field must be provided' }
 );
 

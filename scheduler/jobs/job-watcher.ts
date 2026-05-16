@@ -127,7 +127,12 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // the feed; just no notification spam.
     const FIRST_RUN_NOTIFY_LIMIT = 20;
     const isFirstRun = watchlist.lastSuccessAt === null;
-    const willNotifyForNew = !isFirstRun || fetchResult.postings.length <= FIRST_RUN_NOTIFY_LIMIT;
+    // Story 26 — per-watchlist notification mode gates per-posting dispatch:
+    //   "each"   — fire per posting (current behavior, subject to first-run digest)
+    //   "digest" — suppress; posting-digest scheduler rolls them up daily
+    //   "silent" — never notify (postings still land in the feed)
+    const modeAllowsPerPosting = watchlist.notificationMode === "each";
+    const willNotifyForNew = modeAllowsPerPosting && (!isFirstRun || fetchResult.postings.length <= FIRST_RUN_NOTIFY_LIMIT);
 
     for (const raw of fetchResult.postings) {
         const externalId = externalIdFor(raw.company, raw.title, raw.sourceUrl);
@@ -238,10 +243,12 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         data: { lastRunAt: runAt, lastSuccessAt: runAt, lastError: null },
     });
 
-    // First-run digest: when we suppressed per-posting notifications, drop a
-    // single summary one so the user still sees the watchlist did something.
+    // First-run digest: when mode='each' but we suppressed per-posting
+    // notifications due to volume, drop a single summary so the user still
+    // sees the watchlist did something. Skipped for 'silent' (user opted out
+    // entirely) and 'digest' (the daily posting-digest job will cover it).
     // Standard tier — single high-value system row, in-app only.
-    if (isFirstRun && !willNotifyForNew && newPostings > 0) {
+    if (isFirstRun && modeAllowsPerPosting && !willNotifyForNew && newPostings > 0) {
         await dispatchNotification({
             userId: watchlist.userId,
             tier: "standard",
