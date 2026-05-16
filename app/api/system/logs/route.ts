@@ -1,9 +1,14 @@
-import { NextResponse } from 'next/server';
 import { getLogs, subscribeToLogs, LogEntry } from '@/lib/logger';
+import { requireSession } from '@/lib/auth-guards';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+    // The ring buffer captures every console.* call including Prisma query
+    // logs (parameter values), posting URLs, etc. Never expose unauthenticated.
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({

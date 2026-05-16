@@ -29,6 +29,7 @@ export EMAIL_ENABLED=0
 # Suites are listed in dependency order: pure ones first so they fail fast.
 SUITES=(
     "scripts/tests/url-guard-smoke.ts"
+    "scripts/tests/route-auth-smoke.ts"
     "scripts/tests/fetcher-unit-smoke.ts"
     "scripts/tests/resume-select-smoke.ts"
     "scripts/tests/skills-gap-smoke.ts"

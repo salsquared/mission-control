@@ -4,13 +4,17 @@ import fs from 'fs';
 import path from 'path';
 import { getCacheStats } from '@/lib/cache';
 import { pingDatabase } from '@/lib/repositories/system';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 
 let cachedMaxMemSysLimitGB: number | null = null;
 
 let lastCpuUsage = process.cpuUsage();
 let lastCpuTime = Date.now();
 
-export async function GET() {
+export async function GET(req: Request) {
+    // Server telemetry — fine on LAN, tunnel requires a session.
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
     try {
         // Process CPU Usage (since last request)
         const currentCpuUsage = process.cpuUsage(lastCpuUsage);

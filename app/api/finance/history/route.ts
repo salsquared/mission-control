@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 
 function getPulsarUrl() {
     const url = process.env.PULSAR_URL;
@@ -66,4 +67,9 @@ function pulsarHost(): string | null {
     try { return new URL(process.env.PULSAR_URL ?? '').hostname || null; } catch { return null; }
 }
 
-export const GET = withCache(getHandler as any, { ttlSeconds: 300, upstreamHost: pulsarHost }); // 5-minute TTL
+const cachedGET = withCache(getHandler as any, { ttlSeconds: 300, upstreamHost: pulsarHost }); // 5-minute TTL
+export const GET = async (req: Request) => {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};

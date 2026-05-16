@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 
 async function getHandler(req: Request) {
     try {
@@ -41,4 +42,9 @@ async function getHandler(req: Request) {
     }
 }
 
-export const GET = withCache(getHandler, { ttlSeconds: 1800, upstreamHost: 'll.thespacedevs.com' });
+const cachedGET = withCache(getHandler, { ttlSeconds: 1800, upstreamHost: 'll.thespacedevs.com' });
+export const GET = async (req: Request) => {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};

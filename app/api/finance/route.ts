@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 
 const SPAM_COIN_IDS = new Set([
     'figure-heloc', 'whitebit', 'whitebit-coin', 'eutbl', 'canton-network',
@@ -85,4 +86,9 @@ function pulsarHost(): string | null {
     try { return new URL(process.env.PULSAR_URL ?? '').hostname || null; } catch { return null; }
 }
 
-export const GET = withCache(getHandler, { ttlSeconds: 300, upstreamHost: pulsarHost }); // 5-minute TTL
+const cachedGET = withCache(getHandler, { ttlSeconds: 300, upstreamHost: pulsarHost }); // 5-minute TTL
+export const GET = async (req: Request) => {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};

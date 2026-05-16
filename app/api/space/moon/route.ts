@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 
 // Constants for lunar calculations
 const LUNAR_MONTH = 29.53058867; // average length of a lunar month in days
@@ -92,4 +93,9 @@ async function getHandler() {
     }
 }
 
-export const GET = withCache(getHandler, 86400); // Cache moon data for 24h
+const cachedGET = withCache(getHandler, 86400); // Cache moon data for 24h
+export const GET = async (req: Request) => {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};

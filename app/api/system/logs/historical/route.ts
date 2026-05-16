@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import { requireSession } from '@/lib/auth-guards';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,6 +13,10 @@ function pm2LogPath(): string {
 }
 
 export async function GET(req: NextRequest) {
+    // Same data class as the live SSE log stream — never unauthenticated.
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     const { searchParams } = new URL(req.url);
     const fromParam = searchParams.get('from');
     const toParam = searchParams.get('to');

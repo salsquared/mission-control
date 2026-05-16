@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 import {
     findCurrentHistoricalPick,
     listPickedHistoricalIds,
@@ -191,4 +192,9 @@ async function getHandler(request: Request) {
 }
 
 // Cache historical responses for an hour. Primary upstream is arXiv (Semantic Scholar enrichment is secondary).
-export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'export.arxiv.org' });
+const cachedGET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'export.arxiv.org' });
+export const GET = async (req: Request) => {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};

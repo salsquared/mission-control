@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 import { ResearchImportSchema } from '@/lib/schemas/research-import';
+import { requireSession } from '@/lib/auth-guards';
 
 const parser = new Parser({
     customFields: {
@@ -40,6 +41,10 @@ function parseInput(input: string): { type: 'arxiv' | 'doi' | 'url' | 'unknown',
 }
 
 export async function POST(request: Request) {
+    // Write-shaped: triggers external API calls (Semantic Scholar, arXiv).
+    // Gate behind a session everywhere.
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
     try {
         const bodyParsed = ResearchImportSchema.safeParse(await request.json());
         if (!bodyParsed.success) {

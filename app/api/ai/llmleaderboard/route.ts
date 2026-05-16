@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import * as cheerio from 'cheerio';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 
 export const revalidate = 3600; // Cache for 1 hour
 
@@ -29,6 +30,8 @@ function resolveOrgName(modelName: string, parsedOrg: string): string {
 }
 
 export async function GET(req: NextRequest) {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
     try {
         const { searchParams } = new URL(req.url);
         const category = searchParams.get('category') || 'text';

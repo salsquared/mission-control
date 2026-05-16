@@ -1,8 +1,15 @@
 import { subscribeToEvents } from '@/lib/events';
+import { requireSession } from '@/lib/auth-guards';
 
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
+    // Tunnel + LAN both require a session — the stream carries cross-row
+    // event ids (Application, Posting, Notification, etc.) and shouldn't be
+    // publicly subscribable from any origin.
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream({

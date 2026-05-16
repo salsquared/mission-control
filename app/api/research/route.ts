@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 import Parser from 'rss-parser';
 
 const parser = new Parser({
@@ -216,4 +217,9 @@ async function getHandler(request: Request) {
 }
 
 // Aggregates HF + arXiv + Semantic Scholar; tag with the primary upstream.
-export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'huggingface.co' });
+const cachedGET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'huggingface.co' });
+export const GET = async (req: Request) => {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};

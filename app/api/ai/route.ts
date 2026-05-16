@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
+import { requireLocalOrSession } from '@/lib/auth-guards';
 import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
 
 // Using Hacker News Algolia Search API for "AI" or "Artificial Intelligence"
@@ -38,4 +39,9 @@ async function getHandler() {
     }
 }
 
-export const GET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'hn.algolia.com' }); // 1 hour TTL
+const cachedGET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'hn.algolia.com' }); // 1 hour TTL
+export const GET = async (req: Request) => {
+    const guard = await requireLocalOrSession(req);
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};
