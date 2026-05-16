@@ -9,8 +9,11 @@ import { z } from "zod";
 //     many YC companies).
 //   - ashby: api.ashbyhq.com/posting-api/job-board/<slug> (Notion, PostHog,
 //     many AI-era companies).
-// Phase 2b will add workday + linkedin.
-export const WATCHLIST_KINDS = ["careers-page", "greenhouse", "lever", "ashby"] as const;
+//   - workday: per-tenant POST to <tenantHost>/wday/cxs/<slug>/<careerSite>/jobs
+//     (Boeing, Blue Origin, most legacy enterprises).
+//   - linkedin: scrapes the public guest jobs-search endpoint with cheerio.
+//     Fragile by design — LinkedIn aggressively bot-detects.
+export const WATCHLIST_KINDS = ["careers-page", "greenhouse", "lever", "ashby", "workday", "linkedin"] as const;
 export const WatchlistKindSchema = z.enum(WATCHLIST_KINDS);
 
 export const CareersPageConfigSchema = z.object({
@@ -42,11 +45,35 @@ export const AshbyConfigSchema = z.object({
     companyName: z.string().min(1),
 });
 
+export const WorkdayConfigSchema = z.object({
+    kind: z.literal("workday"),
+    // e.g. "boeing.wd1.myworkdayjobs.com" or "blueorigin.wd5.myworkdayjobs.com"
+    tenantHost: z.string().min(1).regex(/^[a-z0-9-]+\.wd\d+\.myworkdayjobs\.com$/i, {
+        message: "Expected <tenant>.wd<N>.myworkdayjobs.com (the host of the public Workday careers page)",
+    }),
+    // e.g. "EXTERNAL_CAREERS" (Boeing) or "BlueOrigin" (Blue Origin). The path
+    // segment after the host on the public careers page.
+    careerSite: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
+    companyName: z.string().min(1),
+});
+
+export const LinkedinConfigSchema = z.object({
+    kind: z.literal("linkedin"),
+    // Free-text keyword query (matches what a user would type in LinkedIn's
+    // job search bar).
+    keywords: z.string().min(1).max(200),
+    // Optional location filter (e.g. "Remote", "United States", "New York").
+    location: z.string().max(100).optional(),
+    companyName: z.string().min(1),
+});
+
 export const WatchlistConfigSchema = z.discriminatedUnion("kind", [
     CareersPageConfigSchema,
     GreenhouseConfigSchema,
     LeverConfigSchema,
     AshbyConfigSchema,
+    WorkdayConfigSchema,
+    LinkedinConfigSchema,
 ]);
 
 export type WatchlistConfig = z.infer<typeof WatchlistConfigSchema>;

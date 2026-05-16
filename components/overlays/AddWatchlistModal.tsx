@@ -10,12 +10,14 @@ interface AddWatchlistModalProps {
     onCreated: () => void;
 }
 
-type Kind = "greenhouse" | "lever" | "ashby" | "careers-page";
+type Kind = "greenhouse" | "lever" | "ashby" | "workday" | "linkedin" | "careers-page";
 
 const KIND_HELP: Record<Kind, string> = {
     "greenhouse": "Slug from boards.greenhouse.io/<slug> — e.g. anthropic, stripe, rocketlab, vercel.",
     "lever": "Slug from jobs.lever.co/<slug> — e.g. spotify, leverdemo.",
     "ashby": "Slug from jobs.ashbyhq.com/<slug> — e.g. notion, posthog.",
+    "workday": "Two fields. Tenant host: <tenant>.wd<N>.myworkdayjobs.com (e.g. boeing.wd1.myworkdayjobs.com). Career site: the segment after the host on the public careers page (e.g. EXTERNAL_CAREERS, BlueOrigin).",
+    "linkedin": "Free-text keyword search (matches what you'd type in LinkedIn's job search bar). Fragile by design — LinkedIn DOM-shifts often, expect occasional breakage.",
     "careers-page": "Use only for old-school static-HTML careers pages. Most modern pages are SPAs and won't work here — try one of the aggregator kinds first.",
 };
 
@@ -30,6 +32,12 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     const [boardSlug, setBoardSlug] = useState("");
     const [rootUrl, setRootUrl] = useState("");
     const [linkPattern, setLinkPattern] = useState("/careers/(positions|jobs)/");
+    // Workday-specific
+    const [tenantHost, setTenantHost] = useState("");
+    const [careerSite, setCareerSite] = useState("");
+    // LinkedIn-specific
+    const [keywords, setKeywords] = useState("");
+    const [location, setLocation] = useState("");
     const [scheduleMinutes, setScheduleMinutes] = useState(30);
     const [submitting, setSubmitting] = useState(false);
 
@@ -42,6 +50,10 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         setBoardSlug("");
         setRootUrl("");
         setLinkPattern("/careers/(positions|jobs)/");
+        setTenantHost("");
+        setCareerSite("");
+        setKeywords("");
+        setLocation("");
         setScheduleMinutes(30);
     }
 
@@ -55,8 +67,12 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         e.preventDefault();
         if (submitting) return;
         if (!name.trim() || !companyName.trim()) return;
-        if (kind !== "careers-page" && !boardSlug.trim()) return;
+
+        // Per-kind required-field checks. Server-side schemas re-validate.
+        if ((kind === "greenhouse" || kind === "lever" || kind === "ashby") && !boardSlug.trim()) return;
         if (kind === "careers-page" && (!rootUrl.trim() || !linkPattern.trim())) return;
+        if (kind === "workday" && (!tenantHost.trim() || !careerSite.trim())) return;
+        if (kind === "linkedin" && !keywords.trim()) return;
 
         setSubmitting(true);
         try {
@@ -64,6 +80,18 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 if (kind === "greenhouse") return { kind: "greenhouse" as const, boardSlug: boardSlug.trim(), companyName: companyName.trim() };
                 if (kind === "lever") return { kind: "lever" as const, boardSlug: boardSlug.trim(), companyName: companyName.trim() };
                 if (kind === "ashby") return { kind: "ashby" as const, boardSlug: boardSlug.trim(), companyName: companyName.trim() };
+                if (kind === "workday") return {
+                    kind: "workday" as const,
+                    tenantHost: tenantHost.trim().toLowerCase(),
+                    careerSite: careerSite.trim(),
+                    companyName: companyName.trim(),
+                };
+                if (kind === "linkedin") return {
+                    kind: "linkedin" as const,
+                    keywords: keywords.trim(),
+                    location: location.trim() || undefined,
+                    companyName: companyName.trim(),
+                };
                 return { kind: "careers-page" as const, rootUrl: rootUrl.trim(), linkPattern: linkPattern.trim(), companyName: companyName.trim() };
             })();
             await api.watchlists.create({
@@ -98,7 +126,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 <form onSubmit={handleSubmit} className="p-4 flex flex-col gap-3">
                     <label className="text-[11px] uppercase tracking-wide text-white/40">Source</label>
                     <div className="inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40 w-fit flex-wrap" role="group">
-                        {(["greenhouse", "lever", "ashby", "careers-page"] as const).map(k => (
+                        {(["greenhouse", "lever", "ashby", "workday", "linkedin", "careers-page"] as const).map(k => (
                             <button
                                 key={k}
                                 type="button"
@@ -136,7 +164,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                         className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
                     />
 
-                    {kind === "careers-page" ? (
+                    {kind === "careers-page" && (
                         <>
                             <label className="text-[11px] uppercase tracking-wide text-white/40">Careers page URL</label>
                             <input
@@ -160,7 +188,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 A regex matched against each link&apos;s resolved <code>href</code>. Use the page&apos;s actual job-detail URL shape.
                             </p>
                         </>
-                    ) : (
+                    )}
+                    {(kind === "greenhouse" || kind === "lever" || kind === "ashby") && (
                         <>
                             <label className="text-[11px] uppercase tracking-wide text-white/40">{kind} board slug</label>
                             <input
@@ -168,6 +197,53 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 placeholder={kind === "greenhouse" ? "anthropic" : kind === "lever" ? "spotify" : "notion"}
                                 value={boardSlug}
                                 onChange={(e) => setBoardSlug(e.target.value)}
+                                disabled={submitting}
+                                className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
+                            />
+                        </>
+                    )}
+                    {kind === "workday" && (
+                        <>
+                            <label className="text-[11px] uppercase tracking-wide text-white/40">Tenant host</label>
+                            <input
+                                type="text"
+                                placeholder="boeing.wd1.myworkdayjobs.com"
+                                value={tenantHost}
+                                onChange={(e) => setTenantHost(e.target.value)}
+                                disabled={submitting}
+                                className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40 font-mono"
+                            />
+                            <label className="text-[11px] uppercase tracking-wide text-white/40">Career site</label>
+                            <input
+                                type="text"
+                                placeholder="EXTERNAL_CAREERS"
+                                value={careerSite}
+                                onChange={(e) => setCareerSite(e.target.value)}
+                                disabled={submitting}
+                                className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40 font-mono"
+                            />
+                            <p className="text-[10px] text-white/40 -mt-1">
+                                Examples: Boeing → <code>boeing.wd1.myworkdayjobs.com</code> + <code>EXTERNAL_CAREERS</code>. Blue Origin → <code>blueorigin.wd5.myworkdayjobs.com</code> + <code>BlueOrigin</code>.
+                            </p>
+                        </>
+                    )}
+                    {kind === "linkedin" && (
+                        <>
+                            <label className="text-[11px] uppercase tracking-wide text-white/40">Keywords</label>
+                            <input
+                                type="text"
+                                placeholder="software engineer"
+                                value={keywords}
+                                onChange={(e) => setKeywords(e.target.value)}
+                                disabled={submitting}
+                                className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
+                            />
+                            <label className="text-[11px] uppercase tracking-wide text-white/40">Location (optional)</label>
+                            <input
+                                type="text"
+                                placeholder="Remote, United States, …"
+                                value={location}
+                                onChange={(e) => setLocation(e.target.value)}
                                 disabled={submitting}
                                 className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
                             />

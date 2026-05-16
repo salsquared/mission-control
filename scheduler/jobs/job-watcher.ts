@@ -20,6 +20,8 @@ import { fetchCareersPage } from "@/lib/fetchers/careers-page-fetcher";
 import { fetchGreenhouse } from "@/lib/fetchers/greenhouse-fetcher";
 import { fetchLever } from "@/lib/fetchers/lever-fetcher";
 import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
+import { fetchWorkday } from "@/lib/fetchers/workday-fetcher";
+import { fetchLinkedin } from "@/lib/fetchers/linkedin-fetcher";
 import { WatchlistConfigSchema } from "@/lib/schemas/watchlists";
 import { broadcastEvent } from "@/lib/events";
 import { dispatchNotification } from "@/lib/notifications/dispatch";
@@ -96,9 +98,11 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
 
     const fetchResult = await (() => {
         switch (config.kind) {
-            case "greenhouse": return fetchGreenhouse(config);
-            case "lever":      return fetchLever(config);
-            case "ashby":      return fetchAshby(config);
+            case "greenhouse":   return fetchGreenhouse(config);
+            case "lever":        return fetchLever(config);
+            case "ashby":        return fetchAshby(config);
+            case "workday":      return fetchWorkday(config);
+            case "linkedin":     return fetchLinkedin(config);
             case "careers-page": return fetchCareersPage(config);
         }
     })();

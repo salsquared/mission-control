@@ -206,14 +206,14 @@ Shipped 2026-05-15. Smoke: `scripts/tests/watchlist-phase2-smoke.ts` (10/10 gree
 - **MB-2.1 (partial) Lever + Ashby fetchers** — `lib/fetchers/lever-fetcher.ts` (api.lever.co/v0/postings/<slug>) and `lib/fetchers/ashby-fetcher.ts` (api.ashbyhq.com/posting-api/job-board/<slug>). WATCHLIST_KINDS expanded to `["careers-page", "greenhouse", "lever", "ashby"]`. AddWatchlistModal kind picker shows all four with per-kind help text.
 - **MB-2.4 Closed-posting detection** — at the end of each scheduler tick (skipped on first run), any non-terminal JobPosting whose `externalId` wasn't in the current fetch set AND whose `lastSeenAt < runAt - 6h` flips to `status='closed', removedAt=runAt`. One `Notification(kind='system')` per watchlist summarizing the closures. The 6h grace window prevents transient feed glitches from prematurely marking postings closed. `RunResult.closed` count exposed via `/api/watchlists/[id]/run`.
 
-### MB Phase 2b — Remaining Phase 2 stories ⏳ (deferred — see below)
+### MB Phase 2b — Workday + LinkedIn ✅ / per-watchlist mode 💤
 
-Stories: 18 (Workday), 21 (LinkedIn), 26 (per-watchlist mode) (🟡) · Decision 2 (email). Deferred because each one is a genuinely large undertaking that needs a separate scoping conversation:
+Stories: 18 (Workday), 21 (LinkedIn), 26 (per-watchlist mode) (🟡) · Decision 2 (email — now resolved via OQ1).
 
-- **LinkedIn**: anti-bot detection makes naïve fetching unreliable; needs explicit search-URL input, rate-limited cadence, possibly a user-agent rotation strategy. Worth doing only if Greenhouse/Lever/Ashby coverage proves insufficient.
-- **Workday**: per-tenant URL prefixes mean each company needs hand-configured `{tenantHost, careerSite}` — operationally fiddly. Lower ROI than the aggregators already shipped.
-- **Email delivery**: requires picking a provider (Resend most likely), provisioning an API key, env-var setup, optionally a verified sending domain. Real work, not a one-line config. Defer until in-app notifications prove insufficient.
-- **Per-watchlist `each`/`digest`/`silent` mode**: needs settings UI + a daily-digest scheduler job. Small but blocked on email landing (only `each` and `silent` make sense without email).
+- ✅ **Workday** (shipped 2026-05-15): `lib/fetchers/workday-fetcher.ts`. POST to `<tenantHost>/wday/cxs/<tenantSlug>/<careerSite>/jobs` with paginated `{appliedFacets, limit, offset, searchText}`. **Server caps `limit` at 20** (found empirically; values ≥ 25 return HTTP 400); the fetcher uses PAGE_SIZE=20 + MAX_PAGES=10 = up to 200 postings per crawl. **Total field is only populated on the first page** (offset=0); subsequent pages return `total: 0`, so the "stop when reached total" check is gated on `page === 0`. Real-browser UA required (Cloudflare in front of myworkdayjobs.com rejects bot UAs with HTTP 400). Verified live against Boeing (1,177 jobs, 200 fetched in 8s) and Blue Origin (957 jobs).
+- ✅ **LinkedIn** (shipped 2026-05-15): `lib/fetchers/linkedin-fetcher.ts`. GET against the public guest endpoint `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=X&location=Y&start=N`. Returns HTML chunks; parsed with cheerio via `.base-search-card` selectors. Strips tracking params from `href` so dedup works. Cap PAGE_SIZE=25 × MAX_PAGES=2 = 50 postings/crawl + `f_TPR=r86400` (last 24h) filter to keep volume sane. **Fragile by design** — LinkedIn DOM-shifts often; the comment in the file flags the breakage path. Hourly cadence recommended. Verified live: 10 postings returned for "software engineer / Remote".
+- ✅ **Email delivery** (shipped 2026-05-15 via OQ1): Gmail OAuth send through `lib/email/send.ts`, dispatched via `lib/notifications/dispatch.ts` at `tier='critical'`. See "Track A — Notification dispatcher" / OQ1 below.
+- 💤 **Per-watchlist `each`/`digest`/`silent` mode**: now trivially expressible against the tier system (just override `channels` per watchlist). Defer until the per-posting volume actually feels noisy.
 
 #### MB-2.1b — Workday fetcher (deferred — fiddly per-tenant URLs)
 
@@ -312,13 +312,17 @@ Story 36 (lock/exclude UI surfacing) deferred — toggles already exist; just ne
 
 - ✅ **M8-2.5** — Lock/exclude bullet UI prominence (story 36). Shipped 2026-05-15. Locked bullets get amber border + always-visible lock icon; excluded bullets get rose border + line-through text + always-visible eye-off icon. Tooltips on hover explain "always include" vs "never include". Section description on the Profile dash's Work History section legends the symbols. Locking and excluding are now mutually exclusive (setting one clears the other).
 
-### M8 Phase 3 — Multi-template + cover letter + skills-gap 💤
+### M8 Phase 3 — Multi-template + cover letter + skills-gap
+
+**M8-3.1 (multi-template) — ❌ Killed 2026-05-15.** User decision: every target company runs resumes through an ATS parser first (Boeing, Blue Origin, Greenhouse/Lever/Ashby hosts). Visual-polish gain isn't worth the parsing risk on a non-plain template. ATS-plain is final.
+
+**M8-3.2 (cover letter) — ❌ Killed 2026-05-15.** User writes cover letters by hand.
+
+**M8-3.3 (skills-gap report) — 💤 deferred 🔵.** Still useful (posting keywords minus profile bullet tags), but lower priority now that the rest of the M8 stack is done.
 
 Stories: 37 (🟡 templates), 40 (🔵 cover letter), 41 (🔵 skills-gap).
 
-- **M8-3.1 — Templates** (story 37): a second template (e.g. `two-column`) lives next to `ats-plain` in `lib/resumes/templates/`. Picker on the trigger card. `GeneratedResume.templateKey` already supports it. Watch ATS-friendliness on any non-plain templates.
-- **M8-3.2 — Cover letter** (🔵 story 40): new `lib/resumes/cover-letter.ts` that uses the same Profile + Posting + a different prompt. Output is plain Markdown rendered the same way (PDF via puppeteer, DOCX via html-to-docx).
-- **M8-3.3 — Skills-gap report** (🔵 story 41): `posting.keywords` minus the union of (all profile bullet tags + all profile bullet substring matches). Surfaces "the posting talks about X, your profile doesn't mention X" so the user can fill the gap manually or in the cover letter.
+- **M8-3.3 (skills-gap, deferred)**: `posting.keywords` minus the union of (all profile bullet tags + all profile bullet substring matches). Surfaces "the posting talks about X, your profile doesn't mention X" so the user can fill the gap manually.
 
 ### M9 Phase 1 — GitHub-driven project metrics ✅
 

@@ -11,6 +11,8 @@ import { fetchLever } from "@/lib/fetchers/lever-fetcher";
 import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
 import { fetchCareersPage } from "@/lib/fetchers/careers-page-fetcher";
 import { fetchGithubRepoMetrics } from "@/lib/fetchers/github-public-fetcher";
+import { fetchWorkday } from "@/lib/fetchers/workday-fetcher";
+import { fetchLinkedin } from "@/lib/fetchers/linkedin-fetcher";
 
 let passes = 0;
 let fails = 0;
@@ -338,6 +340,132 @@ async function testGithub() {
     // include for documentation only.
 }
 
+// ─── Workday ─────────────────────────────────────────────────────────────
+
+async function testWorkday() {
+    // Happy — one page of postings, fewer than PAGE_SIZE so the fetcher stops
+    mockNext({ kind: "json", body: {
+        total: 2,
+        jobPostings: [
+            { title: "Senior Engineer", externalPath: "/job/USA-WA/Senior-Engineer_JR1", locationsText: "Seattle, WA", postedOn: "Posted Today", remoteType: "Onsite", bulletFields: ["JR1"] },
+            { title: "Staff PM", externalPath: "/job/Remote/Staff-PM_JR2", locationsText: "Remote", postedOn: "Posted 2 Days Ago", remoteType: "Remote" },
+        ],
+    } });
+    const r = await fetchWorkday({
+        kind: "workday",
+        tenantHost: "boeing.wd1.myworkdayjobs.com",
+        careerSite: "EXTERNAL_CAREERS",
+        companyName: "Boeing",
+    });
+    if (!r.ok) { fail("workday happy: not ok", r); }
+    else {
+        if (r.postings.length !== 2) fail(`workday happy: expected 2 postings, got ${r.postings.length}`);
+        else pass("workday happy: 2 postings");
+        if (r.postings[0].sourceUrl !== "https://boeing.wd1.myworkdayjobs.com/en-US/EXTERNAL_CAREERS/job/USA-WA/Senior-Engineer_JR1") {
+            fail(`workday: sourceUrl wrong (${r.postings[0].sourceUrl})`);
+        } else {
+            pass("workday: sourceUrl constructed from tenantHost + careerSite + externalPath");
+        }
+        if (r.postings[0].company !== "Boeing") fail("workday: company not from config");
+        else pass("workday: company from config");
+        if (r.postings[1].location !== "Remote") fail("workday: location not extracted");
+        else pass("workday: location extracted");
+    }
+    if (lastRequestURL !== "https://boeing.wd1.myworkdayjobs.com/wday/cxs/boeing/EXTERNAL_CAREERS/jobs") {
+        fail(`workday: endpoint wrong (${lastRequestURL})`);
+    } else {
+        pass("workday: endpoint URL derived from tenantHost + careerSite");
+    }
+
+    // Malformed body
+    mockNext({ kind: "json", body: { not_what_workday_returns: true } });
+    const r2 = await fetchWorkday({ kind: "workday", tenantHost: "x.wd1.myworkdayjobs.com", careerSite: "X", companyName: "X" });
+    if (r2.ok) fail("workday malformed: should not be ok");
+    else pass("workday: malformed → error");
+
+    // HTTP 404 on first page
+    mockNext({ kind: "json", status: 404, body: { error: "Not Found" } });
+    const r3 = await fetchWorkday({ kind: "workday", tenantHost: "x.wd1.myworkdayjobs.com", careerSite: "MISSING", companyName: "X" });
+    if (r3.ok) fail("workday 404: should not be ok");
+    else if (!r3.error.includes("404")) fail("workday 404: missing status in error");
+    else pass("workday 404 → error");
+
+    // Empty jobPostings array (legitimate empty board)
+    mockNext({ kind: "json", body: { total: 0, jobPostings: [] } });
+    const r4 = await fetchWorkday({ kind: "workday", tenantHost: "x.wd1.myworkdayjobs.com", careerSite: "X", companyName: "X" });
+    if (!r4.ok) fail("workday empty: should be ok with 0 postings");
+    else if (r4.postings.length !== 0) fail(`workday empty: expected 0, got ${r4.postings.length}`);
+    else pass("workday empty board → ok with 0");
+}
+
+// ─── LinkedIn ────────────────────────────────────────────────────────────
+
+async function testLinkedin() {
+    // Synthetic LinkedIn guest-page chunk. Real HTML is much messier but the
+    // selectors we use are stable.
+    const linkedinHtml = `
+      <li>
+        <div class="base-card base-search-card">
+          <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/software-engineer-at-acme-123?refId=xxx&trackingId=yyy">
+            <span class="sr-only">Software Engineer</span>
+          </a>
+          <h3 class="base-search-card__title">Software Engineer</h3>
+          <h4 class="base-search-card__subtitle">Acme Inc</h4>
+          <span class="job-search-card__location">San Francisco, CA</span>
+          <time datetime="2026-05-15">2 days ago</time>
+        </div>
+      </li>
+      <li>
+        <div class="base-card base-search-card">
+          <a class="base-card__full-link" href="https://www.linkedin.com/jobs/view/senior-pm-at-other-456?refId=zzz">
+            <span class="sr-only">Senior PM</span>
+          </a>
+          <h3 class="base-search-card__title">Senior PM</h3>
+          <h4 class="base-search-card__subtitle">Other Co</h4>
+          <span class="job-search-card__location">Remote</span>
+        </div>
+      </li>
+      <li>
+        <div class="not-a-job-card"><a href="/feed/">Not a job</a></div>
+      </li>`;
+
+    // Happy path
+    mockSequence([
+        { kind: "text", body: linkedinHtml },
+        { kind: "text", body: "" }, // empty 2nd page — fetcher should stop
+    ]);
+    const r = await fetchLinkedin({ kind: "linkedin", keywords: "software engineer", companyName: "LinkedIn search" });
+    if (!r.ok) { fail("linkedin happy: not ok", r); }
+    else {
+        if (r.postings.length !== 2) fail(`linkedin happy: expected 2 postings, got ${r.postings.length}`);
+        else pass("linkedin happy: 2 postings parsed from synthetic chunk");
+        if (r.postings[0].title !== "Software Engineer") fail(`linkedin: title wrong (${r.postings[0].title})`);
+        else pass("linkedin: title extracted");
+        if (!r.postings[0].sourceUrl.includes("/jobs/view/software-engineer-at-acme-123")) fail("linkedin: sourceUrl wrong");
+        else pass("linkedin: sourceUrl canonical (no tracking params)");
+        if (r.postings[0].sourceUrl.includes("refId=")) fail("linkedin: tracking params not stripped");
+        else pass("linkedin: tracking params stripped");
+        if (r.postings[0].company !== "Acme Inc") fail(`linkedin: company should be per-posting subtitle (${r.postings[0].company})`);
+        else pass("linkedin: company from per-posting subtitle (not watchlist name)");
+        if (r.postings[1].location !== "Remote") fail("linkedin: 2nd posting location wrong");
+        else pass("linkedin: location extracted");
+    }
+
+    // 429 rate-limit → explicit error
+    mockNext({ kind: "text", status: 429, body: "" });
+    const r2 = await fetchLinkedin({ kind: "linkedin", keywords: "x", companyName: "x" });
+    if (r2.ok) fail("linkedin 429: should not be ok");
+    else if (!r2.error.toLowerCase().includes("rate")) fail("linkedin 429: error should mention rate limit");
+    else pass("linkedin 429 → rate-limit error");
+
+    // Empty body = no more results
+    mockNext({ kind: "text", body: "" });
+    const r3 = await fetchLinkedin({ kind: "linkedin", keywords: "nonexistent", companyName: "x" });
+    if (!r3.ok) fail("linkedin empty: should be ok");
+    else if (r3.postings.length !== 0) fail(`linkedin empty: expected 0, got ${r3.postings.length}`);
+    else pass("linkedin empty body → ok with 0");
+}
+
 async function main() {
     try {
         await testGreenhouse();
@@ -345,6 +473,8 @@ async function main() {
         await testAshby();
         await testCareersPage();
         await testGithub();
+        await testWorkday();
+        await testLinkedin();
     } finally {
         globalThis.fetch = realFetch;
         console.log(`\n${passes}/${passes + fails} steps passed`);
