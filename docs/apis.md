@@ -45,12 +45,11 @@ These are the Next.js API routes defined in our application (`/app/api/...`), wh
 
 #### Tasks
 - **Route:** `GET|POST|PATCH /api/tasks`
-- **Purpose:** Reads/writes the user's task list. The DB is the source of truth (`Task` table); `docs/todo.md` is a derived view regenerated asynchronously on every mutation by `regenerateMarkdownFromDB()`. External edits to `docs/todo.md` are picked up by the file watcher started in `instrumentation.ts` and synced back via `syncTasksFromFile()`. Mutations broadcast `{ model: 'Task', action: 'upsert' }` over `/api/events`. PATCH/POST are serialized through an in-memory `Mutex`. Both PATCH and POST return 503 while `restart-guard` indicates the server is restarting.
+- **Purpose:** CRUD over the user's task list. The `Task` table is the sole source of truth — the previous markdown-file mirror (`docs/todo.md` + `lib/tasks/parser.ts` / `regenerator.ts` / `watcher.ts`) was removed in the DB-as-source-of-truth cutover; the archived snapshot lives at `docs/archive/todo.archive.md`. Mutations broadcast `{ model: 'Task', action: 'upsert'|'delete' }` over `/api/events`.
 - **Auth:** `requireLocalOrSession`.
-- **Query Parameters (GET):** `?force=true` to force a re-parse from the markdown file before returning DB rows.
 - **Request Body (PATCH):** validated by `TaskPatchSchema` (`lib/schemas/tasks.ts`)
   ```typescript
-  { id: string; status?: TaskStatus; text?: string; dueDate?: string|null; priority?: Priority }
+  { id: string; status?: TaskStatus; text?: string; dueDate?: string|null; priority?: Priority; position?: number; parentId?: string|null }
   ```
 - **Request Body (POST):** validated by `TaskPostSchema`
   ```typescript

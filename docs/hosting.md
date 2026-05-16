@@ -1,45 +1,8 @@
-# Mission Control - Mac Mini Hosting Guide
+# External-caller auth setup
 
-Follow these steps on your Mac mini to host the Mission Control Next.js server 24/7.
+> Process management (PM2 ecosystem, startup, restart, recovery) lives in `CLAUDE.md`. LAN access just works once PM2 is up — open `http://<mac-mini-ip>:3101`. This file only covers the two auth pieces external callers need to configure once: Google Pub/Sub's OIDC webhook signature and the service-token shape for headless callers (Pulsar, scheduler, agents).
 
-## Prerequisites
-1. Ensure Node.js is installed on your Mac mini.
-2. Clone or transfer this `mission-control` repository to the Mac mini.
-3. Open Terminal in the project folder.
-
-## 1. Install Dependencies & Build
-Run the following commands to prepare the production build:
-```bash
-npm install
-npm run build
-```
-
-## 2. Install PM2
-PM2 is a robust process manager that will keep your Next.js app running in the background and automatically restart it if it crashes.
-```bash
-npm install -g pm2
-```
-
-## 3. Start the Server
-Start the Next.js production server using PM2:
-```bash
-pm2 start npm --name "mission-control" -- run start
-```
-You can verify it's running by typing `pm2 status`.
-
-## 4. Enable Auto-Start on Reboot
-To ensure the server starts immediately when you turn on or reboot the Mac mini:
-```bash
-pm2 startup
-```
-*PM2 will output a command starting with `sudo env PATH...`. Copy and paste that entire command into your terminal and press Enter.*
-
-Finally, save the current PM2 list so it remembers to start `mission-control`:
-```bash
-pm2 save
-```
-
-## 5. Google Pub/Sub Webhook Auth (OIDC)
+## 1. Google Pub/Sub Webhook Auth (OIDC)
 
 The Gmail push-notification webhook at `/api/gmail/webhook` verifies a Google-issued OIDC JWT on every request. Pub/Sub signs the token with a configured service account; mission-control checks the signature against Google's JWKS, the issuer (`https://accounts.google.com`), and the audience (the route URL).
 
@@ -53,13 +16,13 @@ The Gmail push-notification webhook at `/api/gmail/webhook` verifies a Google-is
    ```
    PUBSUB_AUDIENCE=https://mc.local/api/gmail/webhook
    ```
-4. Restart the server (`./launch-ms.sh --restart`).
+4. Restart the server (`pm2 restart mission-control`).
 
 Without `PUBSUB_AUDIENCE` set the webhook returns 500. With it set, every request must include a valid OIDC JWT from the configured service account or it returns 401. The legacy `PUBSUB_WEBHOOK_SECRET` env var is no longer used — you can remove it from `.env`.
 
-## 6. Service-Token Auth for Internal Callers (Pulsar, scheduler, etc.)
+## 2. Service-Token Auth for Internal Callers (Pulsar, scheduler, etc.)
 
-Routes like `/api/calendar/event` accept either an interactive NextAuth session (the dashboard) or a configured service token paired with `?onBehalfOf=<userId>`. This lets external services on your machine (Pulsar, the future scheduler process, agents) write to your calendar without an interactive cookie.
+Routes like `/api/calendar/event` accept either an interactive NextAuth session (the dashboard) or a configured service token paired with `?onBehalfOf=<userId>`. This lets external services on your machine (Pulsar, the scheduler process, agents) write to your calendar without an interactive cookie.
 
 To enable Pulsar to call the calendar route on your behalf:
 
@@ -76,10 +39,3 @@ To enable Pulsar to call the calendar route on your behalf:
 4. **Pulsar side**: include `Authorization: Bearer <token>` and `?onBehalfOf=<userId>` on every calendar call.
 
 If either env var is missing, the calendar route falls back to session-only auth (interactive dashboard still works). Anonymous callers get 401; valid token + missing or mismatched `onBehalfOf` gets 403.
-
-## 7. Accessing the App (Windows & Mac)
-Your server is now running on port `3101` (by default).
-1. On your Mac mini, open `System Settings` -> `Network` to find its local IP address (e.g., `192.168.1.10`).
-2. On your Windows PC (or any device on your Wi-Fi), open Chrome or Edge and navigate to:
-   `http://[MAC_MINI_IP_ADDRESS]:3101`
-3. Click the "Install App" icon in the address bar to install it as a standalone PWA!

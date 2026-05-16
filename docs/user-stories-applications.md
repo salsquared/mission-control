@@ -1,6 +1,6 @@
 # Applications — User Stories
 
-Working list. Priority emoji matches `docs/todo.md` (🔴 = must-have for next ship, 🟡 = important, 🔵 = nice-to-have / later). **✅ marks stories shipped end-to-end** (verified against the codebase on 2026-05-15). **◐ marks partial / in-scope-only** (one half shipped, other half explicitly out-of-scope by Decision). **⛔ marks stories the user declined.**
+Working list. Priority emoji: **🔴** must-have for next ship, **🟡** important, **🔵** nice-to-have / later. **✅** = shipped end-to-end (verified against the codebase on 2026-05-15). **◐** = partial / in-scope-only (one half shipped, other half explicitly out-of-scope by Decision). **⛔** = user-declined.
 
 **Implementation status, sub-milestones, file paths, and concrete API/schema shapes live in [`docs/implementation.md`](./implementation.md).** This doc says *what* and *why*; that one says *how* and *in what order*. Cross-session running state lives in [`docs/next_steps.md`](./next_steps.md).
 
