@@ -12,6 +12,17 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
     return user?.id && user.id.length > 0 ? user.id : null;
 }
 
+// RAH-17: minimal in-memory rate limit. EMAIL_ENABLED=1 in prod means each
+// call fires a real Gmail send — a stuck tab refresh-loop or curl loop could
+// blow through the daily Gmail send quota in seconds. 30s/user is plenty for
+// "I clicked the button" verification flows. Persists on globalThis so HMR
+// during dev doesn't reset the gate.
+const RATE_LIMIT_MS = 30_000;
+const testLastSent: Map<string, number> =
+    (globalThis as { __mcNotifTestRateLimit?: Map<string, number> }).__mcNotifTestRateLimit
+    ?? new Map<string, number>();
+(globalThis as { __mcNotifTestRateLimit?: Map<string, number> }).__mcNotifTestRateLimit = testLastSent;
+
 /**
  * POST /api/notifications/test — sends a self-addressed verification email
  * through the Gmail OAuth pipeline so you can confirm the email side-channel
@@ -26,6 +37,17 @@ export async function POST(_req: NextRequest) {
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+
+    const last = testLastSent.get(userId);
+    const now = Date.now();
+    if (last && now - last < RATE_LIMIT_MS) {
+        const retryAfterSec = Math.ceil((RATE_LIMIT_MS - (now - last)) / 1000);
+        return NextResponse.json(
+            { error: `Rate limited — try again in ${retryAfterSec}s` },
+            { status: 429, headers: { "Retry-After": String(retryAfterSec) } },
+        );
+    }
+    testLastSent.set(userId, now);
 
     try {
         // The test endpoint forces email by overriding channels — it doesn't

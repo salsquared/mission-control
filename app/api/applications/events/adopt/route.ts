@@ -40,8 +40,13 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "Application not found" }, { status: 404 });
     }
 
+    // RAH-18: scope the duplicate check to this user. Single-user today, but
+    // a global findFirst({ where: { gcalEventId } }) leaks the moment a second
+    // user logs in — they'd see "already linked" errors for events owned by
+    // another user's calendar (Google calendar IDs aren't globally unique
+    // anyway, but the failure mode is wrong).
     const existing = await prisma.applicationEvent.findFirst({
-        where: { gcalEventId: parsed.data.gcalEventId },
+        where: { gcalEventId: parsed.data.gcalEventId, application: { userId } },
     });
     if (existing) {
         return NextResponse.json({ error: "Gcal event is already linked to an ApplicationEvent" }, { status: 409 });

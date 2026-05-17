@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getServerSession } from "next-auth/next";
 import { google } from "googleapis";
-import { authOptions } from "@/lib/auth";
+import { requireSession } from "@/lib/auth-guards";
 import { findUserByEmail } from "@/lib/repositories/users";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import { broadcastEvent } from "@/lib/events";
@@ -28,10 +27,13 @@ const DEFAULT_MAX = 200;
 export async function POST(req: NextRequest) {
     const started = Date.now();
     try {
-        const session = await getServerSession(authOptions);
-        if (!session?.user?.email) {
-            return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-        }
+        // RAH-24: switched from inline getServerSession to the shared
+        // requireSession helper for consistency with the rest of the API surface.
+        const guard = await requireSession();
+        if ('error' in guard) return guard.error;
+        // requireSession guarantees session.user.email is non-null (it returns
+        // a 401 otherwise) but TS doesn't carry the narrowing — assert.
+        const sessionEmail = guard.session.user!.email!;
 
         const body = await req.json().catch(() => ({}));
         const parsed = BackfillRequestSchema.safeParse(body);
@@ -41,7 +43,7 @@ export async function POST(req: NextRequest) {
         const days = parsed.data.days ?? DEFAULT_DAYS;
         const max = parsed.data.max ?? DEFAULT_MAX;
 
-        const user = await findUserByEmail(session.user.email);
+        const user = await findUserByEmail(sessionEmail);
         if (!user) {
             return NextResponse.json({ error: "User not found" }, { status: 404 });
         }

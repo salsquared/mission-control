@@ -112,11 +112,22 @@ export function invalidateCacheByPrefix(prefix: string): number {
 
 export type UpstreamHost = string | ((req: Request) => string | null | undefined);
 
+// RAH-5: hook for scoping cache entries to a user identity. When provided,
+// the returned value is prepended to the cache key so two users hitting the
+// same route get separate entries. Mission-control is single-user today and
+// all `withCache`-wrapped routes return shared external-data feeds, so no
+// caller passes this yet — but the hook exists so a future caller that wraps
+// a user-specific route can opt in without rewriting the cache layer.
+export type UserCacheKeyFn = (req: Request) => string | null | undefined | Promise<string | null | undefined>;
+
 export interface WithCacheOptions {
     ttlSeconds: number;
     // Upstream host this route ultimately calls. Logged with each cache event so the
     // Internal Systems "Fetcher Health" card can group by real host instead of by route path.
     upstreamHost?: UpstreamHost;
+    // Optional per-user scoping. See UserCacheKeyFn above. If you wrap a route
+    // that returns user-specific data, set this to ensure cache isolation.
+    userKeyFn?: UserCacheKeyFn;
 }
 
 export function withCache(
@@ -125,7 +136,7 @@ export function withCache(
 ) {
     const opts: WithCacheOptions =
         typeof ttlOrOpts === 'number' ? { ttlSeconds: ttlOrOpts } : ttlOrOpts;
-    const { ttlSeconds, upstreamHost } = opts;
+    const { ttlSeconds, upstreamHost, userKeyFn } = opts;
 
     return async function (req: Request) {
         const url = new URL(req.url);
@@ -135,7 +146,18 @@ export function withCache(
 
         let targetSearch = params.toString();
         if (targetSearch) targetSearch = '?' + targetSearch;
-        const cacheKey = url.pathname + targetSearch;
+        // Optional per-user prefix on the cache key. Defensive — see RAH-5
+        // comment on UserCacheKeyFn for the multi-user motivation.
+        let userPrefix = '';
+        if (userKeyFn) {
+            try {
+                const key = await userKeyFn(req);
+                if (key) userPrefix = `u:${key}|`;
+            } catch (e) {
+                console.warn('[CACHE] userKeyFn threw — falling back to shared key:', e);
+            }
+        }
+        const cacheKey = userPrefix + url.pathname + targetSearch;
 
         const host =
             (typeof upstreamHost === 'function' ? upstreamHost(req) : upstreamHost) || null;

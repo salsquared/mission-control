@@ -18,8 +18,24 @@ export async function POST(req: NextRequest) {
     console.error("[GMAIL WEBHOOK] PUBSUB_AUDIENCE not configured");
     return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
   }
+  // RAH-10: verifyPubSubOIDC only validates issuer + audience + signature, so
+  // ANY Google-signed OIDC token with the right `aud` would pass — and the
+  // audience (the webhook URL) is not secret. Assert the signer's service-
+  // account email matches the env-configured one + email_verified is true.
+  // When PUBSUB_SERVICE_ACCOUNT_EMAIL is unset we keep the old behavior (just
+  // log a warning) so existing deployments don't break before the env var is
+  // populated; set it in `.env` after step 1 of docs/hosting.md.
+  const expectedSignerEmail = process.env.PUBSUB_SERVICE_ACCOUNT_EMAIL;
   try {
-    await verifyPubSubOIDC(req, audience);
+    const claims = await verifyPubSubOIDC(req, audience);
+    if (expectedSignerEmail) {
+      if (claims.email !== expectedSignerEmail || claims.email_verified !== true) {
+        console.warn(`[GMAIL WEBHOOK] signer identity mismatch: got ${claims.email} (verified=${claims.email_verified}), expected ${expectedSignerEmail}`);
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+    } else {
+      console.warn("[GMAIL WEBHOOK] PUBSUB_SERVICE_ACCOUNT_EMAIL not set — accepting any Google-signed token (RAH-10 not yet enforced)");
+    }
   } catch (e: any) {
     console.warn(`[GMAIL WEBHOOK] OIDC verification failed: ${e.message}`);
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });

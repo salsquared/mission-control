@@ -1,6 +1,7 @@
 import { getServerSession } from 'next-auth/next';
 import { authOptions } from './auth';
 import { NextResponse } from 'next/server';
+import { timingSafeEqual } from 'node:crypto';
 
 export async function requireSession() {
   const session = await getServerSession(authOptions);
@@ -34,7 +35,12 @@ export function requireServiceToken(req: Request, config: ServiceTokenConfig) {
     return { error: NextResponse.json({ error: 'Missing Bearer token' }, { status: 401 }) } as const;
   }
   const token = auth.slice(7).trim();
-  if (token !== expectedToken) {
+  // Constant-time compare. timingSafeEqual requires equal-length inputs — pad
+  // mismatched lengths via the length pre-check so we still fail fast without
+  // leaking length via timing.
+  const presented = Buffer.from(token);
+  const expected = Buffer.from(expectedToken);
+  if (presented.length !== expected.length || !timingSafeEqual(presented, expected)) {
     return { error: NextResponse.json({ error: 'Invalid service token' }, { status: 401 }) } as const;
   }
 
@@ -70,6 +76,34 @@ export async function requireSessionOrService(req: Request, config: ServiceToken
 // Anything outside this set (e.g. a public tunnel hostname) gets a 403.
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '0.0.0.0', 'mc.local']);
 
+// True for loopback addresses + RFC1918 IPv4 + unique-local/link-local IPv6.
+// Used by requireLocalOrSession's XFF check (RAH-1): if every hop in the
+// X-Forwarded-For chain is a private/loopback address, the request didn't
+// traverse a public network and we can still trust the LAN bypass.
+// Cloudflare tunnel populates the leftmost XFF with the original public
+// client IP, which fails this test.
+function isPrivateOrLoopback(ip: string): boolean {
+  const trimmed = ip.trim();
+  if (!trimmed) return false;
+  if (trimmed === '::1' || trimmed === '127.0.0.1' || trimmed === '0.0.0.0') return true;
+  // IPv4-mapped IPv6 — strip the prefix and recurse on the v4 portion.
+  if (trimmed.startsWith('::ffff:')) return isPrivateOrLoopback(trimmed.slice(7));
+  // RFC1918 IPv4
+  if (trimmed.startsWith('10.')) return true;
+  if (trimmed.startsWith('192.168.')) return true;
+  if (trimmed.startsWith('172.')) {
+    const second = parseInt(trimmed.split('.')[1], 10);
+    return Number.isFinite(second) && second >= 16 && second <= 31;
+  }
+  // 127.0.0.0/8 (covers e.g. 127.0.0.1 already; 127.x for completeness)
+  if (trimmed.startsWith('127.')) return true;
+  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10)
+  const lower = trimmed.toLowerCase();
+  if (lower.startsWith('fc') || lower.startsWith('fd')) return true;
+  if (lower.startsWith('fe80')) return true;
+  return false;
+}
+
 export function requireLocalOrigin(req: Request) {
   const host = (req.headers.get('host') ?? '').split(':')[0].toLowerCase();
   if (!LOCAL_HOSTS.has(host)) {
@@ -80,9 +114,24 @@ export function requireLocalOrigin(req: Request) {
 
 // LAN traffic skips auth (trusted network); anything reaching us through a public
 // hostname (e.g. the Cloudflare tunnel) must present a valid NextAuth session.
+//
+// Defense against Host-header spoofing (RAH-1): we trust the LAN bypass only
+// when (a) the Host header looks local AND (b) every hop in `X-Forwarded-For`
+// is a loopback / RFC1918 / IPv6-private address. Cloudflare tunnel
+// (cloudflared) populates the leftmost XFF entry with the original public
+// client IP — a LAN client connecting directly only ever shows `::1`,
+// `127.0.0.1`, or an RFC1918 address (Next.js dev mode also auto-populates
+// XFF with `::1` for direct loopback hits, which is what motivated the
+// value-check rather than a presence-check). A tunnel client spoofing
+// `Host: localhost` still carries the public XFF hop and falls through to
+// the session check.
 export async function requireLocalOrSession(req: Request) {
   const host = (req.headers.get('host') ?? '').split(':')[0].toLowerCase();
-  if (LOCAL_HOSTS.has(host)) {
+  const forwardedFor = req.headers.get('x-forwarded-for');
+  const xffAllLocal = forwardedFor
+    ? forwardedFor.split(',').every(hop => isPrivateOrLoopback(hop))
+    : true;
+  if (LOCAL_HOSTS.has(host) && xffAllLocal) {
     return { ok: true as const } as const;
   }
   const session = await getServerSession(authOptions);

@@ -4,6 +4,7 @@ import { google } from "googleapis";
 import { requireSessionOrService, type ServiceTokenConfig } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { CalendarEventPostSchema } from "@/lib/schemas/calendar";
+import { USER_TIMEZONE, GCAL_EVENT_TAG } from "@/lib/calendar/sync";
 
 const PULSAR_SERVICE_CONFIG: ServiceTokenConfig = {
   tokenEnv: 'SERVICE_TOKEN_PULSAR',
@@ -61,8 +62,10 @@ export async function POST(req: NextRequest) {
     const event = {
       summary,
       description,
-      start: { dateTime: start, timeZone: "UTC" },
-      end: { dateTime: end, timeZone: "UTC" },
+      // PB-10 (was RAH-15): use the user/server IANA tz instead of "UTC". Mission-control
+      // runs on a single Mac mini, so server tz === user tz.
+      start: { dateTime: start, timeZone: USER_TIMEZONE },
+      end: { dateTime: end, timeZone: USER_TIMEZONE },
     };
 
     if (eventId) {
@@ -103,6 +106,30 @@ export async function DELETE(req: NextRequest) {
 
     const authClient = await getGoogleAuthClient(userId);
     const calendar = google.calendar({ version: "v3", auth: authClient });
+
+    // RAH-20: require the Gcal event carry the mission-control tag before
+    // deleting. Without this check, a service-token caller (Pulsar) with the
+    // right onBehalfOf userId could delete ANY event on the user's primary
+    // calendar — dentist appointments, personal events, the lot. Tag-gating
+    // limits the blast radius to events we created (mirroring the adopt-route
+    // ownership model).
+    let existing;
+    try {
+      existing = await calendar.events.get({ calendarId: "primary", eventId });
+    } catch (err: any) {
+      const status = err?.code ?? err?.response?.status;
+      if (status === 404 || status === 410) {
+        return NextResponse.json({ error: "Calendar event not found" }, { status: 404 });
+      }
+      throw err;
+    }
+    const msTag = existing.data.extendedProperties?.private?.[GCAL_EVENT_TAG];
+    if (!msTag) {
+      return NextResponse.json(
+        { error: "Refusing to delete: event lacks mission-control tag" },
+        { status: 403 },
+      );
+    }
 
     await calendar.events.delete({
       calendarId: "primary",

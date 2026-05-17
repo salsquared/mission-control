@@ -6,6 +6,20 @@ import { prisma } from "@/lib/prisma";
 export const GCAL_EVENT_TAG = "mission-control:appEventId";
 export const GCAL_APPLICATION_TAG = "mission-control:applicationId";
 
+// PB-10 (was RAH-15): resolve once at module load. Gcal needs an IANA zone alongside each
+// dateTime; "UTC" was technically correct (the dateTime is already in UTC via
+// .toISOString()) but ambiguous when the UI sent a naive local-time string
+// that JS Date parsed against the server's local tz. Passing the server's
+// actual zone makes the round-trip unambiguous in both cases — Mac mini is
+// the only host, so the server tz IS the user tz.
+export const USER_TIMEZONE = (() => {
+    try {
+        return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    } catch {
+        return "UTC";
+    }
+})();
+
 export interface GcalSyncContext {
     company?: string;
     role?: string | null;
@@ -43,10 +57,10 @@ export async function syncEventToGcal(
     const requestBody = {
         summary: event.title,
         description: buildDescription(event, ctx),
-        start: { dateTime: event.scheduledAt.toISOString(), timeZone: "UTC" },
+        start: { dateTime: event.scheduledAt.toISOString(), timeZone: USER_TIMEZONE },
         end: {
             dateTime: (event.endsAt ?? new Date(event.scheduledAt.getTime() + 60 * 60 * 1000)).toISOString(),
-            timeZone: "UTC",
+            timeZone: USER_TIMEZONE,
         },
         extendedProperties: {
             private: {

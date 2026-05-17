@@ -16,12 +16,18 @@ const STORAGE_ROOT = join(process.cwd(), "data", "resumes");
 export type ResumeFormat = "pdf" | "docx";
 
 function safeRelative(filename: string): string {
-    // Defense in depth: reject anything that looks like a path traversal or
-    // an absolute path. The id we pass is a cuid (alnum) so this should never
-    // trip in practice — but a single hand-rolled callsite shouldn't be able
-    // to point us at /etc/passwd.
+    // Defense in depth: artifacts are always flat under STORAGE_ROOT, named
+    // by cuid + extension. Reject anything that looks like a path traversal,
+    // an absolute path, OR any embedded path separator — a future hand-rolled
+    // callsite that tries to store "subdir/x.pdf" should fail loudly here
+    // rather than silently writing under STORAGE_ROOT/subdir/.
     const normalized = normalize(filename);
-    if (isAbsolute(normalized) || normalized.includes("..") || normalized.startsWith(sep)) {
+    if (
+        isAbsolute(normalized)
+        || normalized.includes("..")
+        || normalized.startsWith(sep)
+        || normalized.includes(sep)
+    ) {
         throw new Error(`Unsafe artifact filename: ${filename}`);
     }
     return normalized;

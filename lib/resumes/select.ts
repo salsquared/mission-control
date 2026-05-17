@@ -56,6 +56,25 @@ function normalize(s: string): string {
     return s.toLowerCase();
 }
 
+// Escape regex metacharacters so keywords like "node.js" or "c++" don't blow
+// up the RegExp constructor or match "." as wildcard.
+function escapeRegex(s: string): string {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// PB-4 (was RAH-4): parity with lib/resumes/skills-gap.ts — match a keyword as a whole
+// word so "ai" doesn't substring-match inside "available" and "go" doesn't
+// match inside "going". Falls back to substring for symbol-edged tokens
+// (e.g. "c++") where \b would lie about the boundary.
+function matchesWord(keyword: string, haystack: string): boolean {
+    const startsAlnum = /\w/.test(keyword.charAt(0));
+    const endsAlnum = /\w/.test(keyword.charAt(keyword.length - 1));
+    if (startsAlnum && endsAlnum) {
+        return new RegExp(`\\b${escapeRegex(keyword)}\\b`, "i").test(haystack);
+    }
+    return haystack.includes(keyword);
+}
+
 function scoreBullet(
     text: string,
     tags: string[],
@@ -74,7 +93,7 @@ function scoreBullet(
     for (let i = 0; i < keywords.length; i++) {
         const kw = lowerKeywords[i];
         if (kw.length < 2) continue;
-        if (lowerText.includes(kw)) matchedKeywords.push(keywords[i]);
+        if (matchesWord(kw, lowerText)) matchedKeywords.push(keywords[i]);
         else if (lowerTags.includes(kw) && !matchedKeywords.includes(keywords[i])) {
             // already counted via matchedTags — don't double-count
         }

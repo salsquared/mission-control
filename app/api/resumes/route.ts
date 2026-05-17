@@ -10,7 +10,7 @@ import { computeSkillsGap } from "@/lib/resumes/skills-gap";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
 import { renderResumePDF } from "@/lib/resumes/render-pdf";
 import { renderResumeDOCX } from "@/lib/resumes/render-docx";
-import { writeResumeArtifact } from "@/lib/resumes/storage";
+import { writeResumeArtifact, deleteResumeArtifact } from "@/lib/resumes/storage";
 import { AIError } from "@/lib/ai/gemini";
 import type { ProfileWire } from "@/lib/schemas/profile";
 
@@ -216,16 +216,47 @@ export async function POST(req: NextRequest) {
                 select: { id: true },
             });
             resumeId = row.id;
-            const artifactPath = await writeResumeArtifact(resumeId, format, bytes);
-            await prisma.generatedResume.update({
-                where: { id: resumeId },
-                data: { artifactPath },
-            });
+            // PB-9 (was RAH-14): write the file, then update the row. If the update fails
+            // after a successful write, we have to roll back the file write
+            // and mark the row errored — otherwise the FS accumulates orphan
+            // artifacts and the row sits at status="ready" with no path, so
+            // /api/resumes/[id]/download 404s while the row keeps showing up
+            // in the list.
+            let artifactPath: string | null = null;
+            try {
+                artifactPath = await writeResumeArtifact(resumeId, format, bytes);
+                await prisma.generatedResume.update({
+                    where: { id: resumeId },
+                    data: { artifactPath },
+                });
+            } catch (innerErr) {
+                if (artifactPath) {
+                    await deleteResumeArtifact(artifactPath).catch(cleanupErr =>
+                        console.warn(`[resume POST] orphan artifact cleanup failed for ${resumeId}:`, cleanupErr)
+                    );
+                }
+                await prisma.generatedResume.update({
+                    where: { id: resumeId },
+                    data: {
+                        status: "errored",
+                        error: innerErr instanceof Error ? innerErr.message : String(innerErr),
+                    },
+                }).catch(updateErr =>
+                    console.warn(`[resume POST] errored-status update failed for ${resumeId}:`, updateErr)
+                );
+                throw innerErr;
+            }
         } catch (e) {
             // Persistence is best-effort: don't fail the user's generation just
             // because we couldn't archive. The bytes go back to them either way.
             console.warn(`[resume POST] persistence failed (id=${resumeId || "<not created>"}):`, e);
         }
+
+        // PB-12 (was RAH-22): HTTP header values must be ASCII (undici's Headers throws on
+        // non-Latin1 chars). LLM-extracted strings often carry em-dashes,
+        // smart quotes, or accented chars that would 500 the whole response.
+        const asciiHeader = (s: string | null | undefined) =>
+            (s ?? "").replace(/[^\x20-\x7e]/g, "");
 
         return new NextResponse(new Uint8Array(bytes), {
             status: 200,
@@ -234,8 +265,8 @@ export async function POST(req: NextRequest) {
                 "Content-Length": String(bytes.length),
                 "Content-Disposition": `attachment; filename="${filename}"`,
                 "Cache-Control": "no-store",
-                "X-Resume-Title": posting.title ?? "",
-                "X-Resume-Company": posting.company ?? "",
+                "X-Resume-Title": asciiHeader(posting.title),
+                "X-Resume-Company": asciiHeader(posting.company),
                 "X-Resume-Format": format,
                 ...(resumeId ? { "X-Resume-Id": resumeId } : {}),
             },

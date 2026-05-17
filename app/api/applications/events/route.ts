@@ -9,7 +9,6 @@ import {
     APPLICATION_EVENT_KINDS,
 } from "@/lib/schemas/applicationEvents";
 import { syncEventToGcal, deleteEventFromGcal } from "@/lib/calendar/sync";
-import { maybeNotifyForApplicationEvent } from "@/lib/repositories/applicationEvents";
 
 export const runtime = "nodejs";
 
@@ -92,12 +91,13 @@ export async function POST(req: NextRequest) {
         role: event.application.role,
     });
 
-    // MB-3.1 (story 27): fire an in-app Notification for attention-worthy
-    // kinds (INTERVIEW_SCHEDULED / OFFER / REJECTION / ASSESSMENT_REQUESTED).
-    await maybeNotifyForApplicationEvent(event, userId, event.application.company);
+    // PB-11 (was RAH-16): deliberately do NOT call maybeNotifyForApplicationEvent here.
+    // This route is the manual-entry path — when the user clicks "I got an
+    // offer" they don't need a critical-tier self-email about it. Only the
+    // ingest path (Gmail webhook) fires the notification, which is where
+    // dispatch actually makes sense (the user wouldn't otherwise know).
 
     broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, timestamp: Date.now() });
-    broadcastEvent({ model: "Notification", action: "upsert", id: userId, timestamp: Date.now() });
     return NextResponse.json({ event }, { status: 200 });
 }
 
@@ -122,7 +122,10 @@ export async function PATCH(req: NextRequest) {
 
     const data: Record<string, unknown> = { syncSource: "ms" };
     if (parsed.data.title !== undefined) data.title = parsed.data.title;
-    if (parsed.data.kind !== undefined) data.kind = parsed.data.kind;
+    // RAH-19: `kind` is intentionally NOT patchable. Allowing a kind swap let
+    // owners rewrite a REJECTION row into an OFFER (or vice versa) and fabricate
+    // timeline history. The PATCH schema still tolerates the field for backward
+    // compatibility with old clients; we just drop it here.
     if (parsed.data.scheduledAt !== undefined) data.scheduledAt = parsed.data.scheduledAt ? new Date(parsed.data.scheduledAt) : null;
     if (parsed.data.endsAt !== undefined) data.endsAt = parsed.data.endsAt ? new Date(parsed.data.endsAt) : null;
     if (parsed.data.notes !== undefined) data.notes = parsed.data.notes;

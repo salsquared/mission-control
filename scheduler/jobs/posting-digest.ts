@@ -25,7 +25,6 @@ export interface PostingDigestRunResult {
 }
 
 export async function runPostingDigest(): Promise<PostingDigestRunResult> {
-    const runAt = new Date();
     const watchlists = await prisma.watchlist.findMany({
         where: { notificationMode: "digest", active: true },
         select: {
@@ -52,20 +51,28 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
             select: { id: true, company: true, title: true, location: true, firstSeenAt: true },
         });
 
-        // CRITICAL — slide the window to the MAX firstSeenAt actually
-        // included in this run, not to runAt. Otherwise a posting inserted by
-        // job-watcher between this SELECT and the watchlist UPDATE has
-        // firstSeenAt > since but <= runAt, gets skipped this run, and the
-        // next run's gt:runAt skips it too — permanent loss.
-        // Empty-window case: keep sliding forward to `runAt` so we don't
-        // re-scan yesterday's window on every empty day.
+        // PB-2 (was RAH-2): advance the watermark to the MAX firstSeenAt actually
+        // included in this run — not to runAt. Two postings inserted in the
+        // same millisecond (rare but real, especially under load) need the
+        // strict `gt: since` filter to not skip the second one. Advancing to
+        // maxIncluded keeps `gt: maxIncluded` strictly past everything we
+        // already dispatched, while a posting created in the SELECT-UPDATE
+        // window has firstSeenAt > maxIncluded by construction (clock is
+        // monotonic within a single Node process) and gets picked up next run.
+        //
+        // PB-3 (was RAH-3): only advance when dispatch actually succeeded. On empty
+        // windows we leave the watermark alone — re-scanning an empty window
+        // next run is a cheap SELECT returning 0 rows, and not advancing
+        // avoids any boundary collision when a new posting lands with the
+        // same millisecond as the would-be advanced watermark.
         const maxIncluded = postings.length > 0
             ? postings.reduce(
                 (acc, p) => (p.firstSeenAt > acc ? p.firstSeenAt : acc),
                 postings[0].firstSeenAt,
             )
-            : runAt;
+            : null;
 
+        let dispatchedOk = false;
         if (postings.length > 0) {
             const preview = postings.slice(0, BODY_PREVIEW_LIMIT)
                 .map(p => `• ${p.company} — ${p.title}${p.location ? ` (${p.location})` : ""}`)
@@ -88,6 +95,7 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
                         postingIds: postings.map(p => p.id),
                     },
                 });
+                dispatchedOk = true;
                 summarized++;
                 totalPostings += postings.length;
             } catch (e) {
@@ -95,10 +103,12 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
             }
         }
 
-        await prisma.watchlist.update({
-            where: { id: w.id },
-            data: { lastDigestAt: maxIncluded },
-        }).catch(e => console.warn(`[posting-digest] failed to update lastDigestAt for ${w.id}:`, e));
+        if (dispatchedOk && maxIncluded !== null) {
+            await prisma.watchlist.update({
+                where: { id: w.id },
+                data: { lastDigestAt: maxIncluded },
+            }).catch(e => console.warn(`[posting-digest] failed to update lastDigestAt for ${w.id}:`, e));
+        }
     }
 
     return { processed: watchlists.length, summarized, totalPostings };
