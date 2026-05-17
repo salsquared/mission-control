@@ -118,7 +118,17 @@ export const ApplicationsView: React.FC = () => {
         try {
             const result = await api.applications.backfill();
             await invalidateApps();
-            const summary = `Scanned ${result.scanned} · ${result.created} new · ${result.updated} updated · ${result.skipped} skipped`;
+            const parts = [
+                `Scanned ${result.scanned}`,
+                `${result.created} new`,
+                `${result.updated} updated`,
+                `${result.skipped} skipped`,
+            ];
+            // Surface errored count explicitly — otherwise a silent classifier
+            // crash (e.g. missing GEMINI key) reads as "everything was skipped"
+            // and the user never knows the pipeline is broken.
+            if (result.errored > 0) parts.push(`${result.errored} errored`);
+            const summary = parts.join(' · ');
             toastStore.push({
                 message: result.truncated ? `${summary} (truncated — re-run for more)` : summary,
                 type: result.errored > 0 ? 'warning' : 'info',

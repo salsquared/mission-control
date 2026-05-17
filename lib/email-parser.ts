@@ -1,6 +1,34 @@
 import { generateObject } from "ai";
-import { google } from "@ai-sdk/google";
+import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
+
+// `@ai-sdk/google` defaults to reading `GOOGLE_GENERATIVE_AI_API_KEY`. The rest
+// of the codebase (lib/ai/gemini.ts) uses `GOOGLE_GENERATIVE_AI_KEY` and falls
+// back to GOOGLE_GEN_AI_KEY / GEMINI_API_KEY / GOOGLE_API_KEY. Without this
+// shim the email classifier would silently throw on every relevant message —
+// "skipped" counts in the backfill toast hid the real failure.
+function resolveGeminiKey(): string | undefined {
+    return process.env.GOOGLE_GENERATIVE_AI_API_KEY
+        || process.env.GOOGLE_GENERATIVE_AI_KEY
+        || process.env.GOOGLE_GEN_AI_KEY
+        || process.env.GEMINI_API_KEY
+        || process.env.GOOGLE_API_KEY;
+}
+
+let cachedProvider: ReturnType<typeof createGoogleGenerativeAI> | null = null;
+function getProvider() {
+    if (cachedProvider) return cachedProvider;
+    const apiKey = resolveGeminiKey();
+    if (!apiKey) {
+        throw new Error(
+            "No Google GenAI key found. Set GOOGLE_GENERATIVE_AI_KEY (preferred) or one of "
+            + "GOOGLE_GENERATIVE_AI_API_KEY / GOOGLE_GEN_AI_KEY / GEMINI_API_KEY / GOOGLE_API_KEY "
+            + "in .env. Get a free key at https://aistudio.google.com/apikey.",
+        );
+    }
+    cachedProvider = createGoogleGenerativeAI({ apiKey });
+    return cachedProvider;
+}
 
 /**
  * Output of the LLM email classifier.
@@ -86,7 +114,10 @@ export async function parseApplicationEmail(
   const anchor = (sentAt ?? new Date()).toISOString();
 
   const result = await generateObject({
-    model: google("gemini-3.0-flash"),
+    // `gemini-flash-latest` is Google's auto-tracking alias for current stable
+    // Flash. Same model lib/ai/gemini.ts pins. `gemini-3.0-flash` (the previous
+    // value here) doesn't exist on v1beta and threw on every classify call.
+    model: getProvider()("gemini-flash-latest"),
     schema: applicationSchema,
     prompt: `You are classifying an email related to a job, internship, or college/university application.
 
