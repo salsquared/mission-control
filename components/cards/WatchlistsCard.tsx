@@ -244,6 +244,7 @@ export function WatchlistsCard() {
                 open={adding}
                 onClose={() => setAdding(false)}
                 onCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.watchlists })}
+                existingWatchlists={watchlists}
             />
         </div>
     );

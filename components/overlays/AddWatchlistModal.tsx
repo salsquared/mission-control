@@ -6,14 +6,22 @@ import { toastStore } from "@/lib/toast-store";
 import {
     DIRECTORY_TAGS,
     searchDirectory,
+    watchlistConfigKey,
     type CompanyDirectoryEntry,
     type DirectoryTag,
 } from "@/lib/company-directory";
+import type { WatchlistWire } from "@/lib/schemas/watchlists";
 
 interface AddWatchlistModalProps {
     open: boolean;
     onClose: () => void;
     onCreated: () => void;
+    /**
+     * Existing watchlists, used to mark directory entries that are already on
+     * the user's watchlist as "Added." Pass `[]` if you don't have them — the
+     * picker still works, just without the dedup hint.
+     */
+    existingWatchlists?: readonly WatchlistWire[];
 }
 
 // Three top-level modes. Default lands on "find" because the most common
@@ -36,7 +44,7 @@ function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }
 
-export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onClose, onCreated }) => {
+export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onClose, onCreated, existingWatchlists = [] }) => {
     const [mode, setMode] = useState<Mode>("find");
     const [submitting, setSubmitting] = useState(false);
 
@@ -70,6 +78,18 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         () => searchDirectory(companyQuery, companyTagFilter.size > 0 ? companyTagFilter : null),
         [companyQuery, companyTagFilter],
     );
+
+    // Build the set of identity keys for watchlists the user already has.
+    // Directory entries whose key is in this set render disabled with an
+    // "Added" chip — protects against accidental duplicate crawls.
+    const existingKeys = useMemo(() => {
+        const s = new Set<string>();
+        for (const w of existingWatchlists) {
+            const key = watchlistConfigKey(w.config);
+            if (key) s.add(key);
+        }
+        return s;
+    }, [existingWatchlists]);
 
     if (!open) return null;
 
@@ -352,26 +372,38 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 </p>
                             ) : (
                                 directoryResults.map(entry => {
-                                    const selected = selectedDirEntry?.name === entry.name;
+                                    const entryKey = watchlistConfigKey(entry.config);
+                                    const alreadyAdded = entryKey !== null && existingKeys.has(entryKey);
+                                    const selected = !alreadyAdded && selectedDirEntry?.name === entry.name;
                                     return (
                                         <button
                                             key={entry.name}
                                             type="button"
-                                            onClick={() => setSelectedDirEntry(entry)}
-                                            disabled={submitting}
+                                            onClick={() => !alreadyAdded && setSelectedDirEntry(entry)}
+                                            disabled={submitting || alreadyAdded}
+                                            aria-disabled={alreadyAdded}
+                                            title={alreadyAdded ? "Already on your watchlist" : undefined}
                                             className={[
                                                 "flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors",
-                                                selected
-                                                    ? "bg-cyan-500/15 border-cyan-400/50"
-                                                    : "bg-black/30 border-white/10 hover:border-white/30",
+                                                alreadyAdded
+                                                    ? "bg-black/20 border-white/5 opacity-60 cursor-not-allowed"
+                                                    : selected
+                                                        ? "bg-cyan-500/15 border-cyan-400/50"
+                                                        : "bg-black/30 border-white/10 hover:border-white/30",
                                             ].join(" ")}
                                         >
                                             <div className="flex-1 min-w-0">
-                                                <div className="flex items-center gap-2">
+                                                <div className="flex items-center gap-2 flex-wrap">
                                                     <span className="text-sm font-semibold text-white truncate">{entry.name}</span>
                                                     <span className="text-[10px] uppercase tracking-wide text-cyan-300/70 bg-cyan-500/10 px-1.5 py-0.5 rounded">
                                                         {entry.config.kind}
                                                     </span>
+                                                    {alreadyAdded && (
+                                                        <span className="text-[10px] uppercase tracking-wide text-emerald-300/80 bg-emerald-500/10 border border-emerald-400/30 px-1.5 py-0.5 rounded flex items-center gap-1">
+                                                            <Check className="w-3 h-3" />
+                                                            Added
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 {entry.blurb && (
                                                     <div className="text-[11px] text-white/40 mt-0.5">{entry.blurb}</div>

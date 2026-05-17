@@ -37,6 +37,7 @@ export interface CompanyDirectoryEntry {
 }
 
 export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
+    // ─── AI / ML ─────────────────────────────────────────────────────────────
     {
         name: "Anthropic",
         blurb: "AI safety research lab (Claude).",
@@ -44,11 +45,43 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
         config: { kind: "greenhouse", boardSlug: "anthropic", companyName: "Anthropic" },
     },
     {
-        name: "Stripe",
-        blurb: "Payments infrastructure.",
-        tags: ["tech", "finance"],
-        config: { kind: "greenhouse", boardSlug: "stripe", companyName: "Stripe" },
+        name: "OpenAI",
+        blurb: "Frontier AI lab (ChatGPT).",
+        tags: ["ai"],
+        config: { kind: "ashby", boardSlug: "openai", companyName: "OpenAI" },
     },
+    {
+        name: "Perplexity",
+        blurb: "AI answer engine.",
+        tags: ["ai"],
+        config: { kind: "ashby", boardSlug: "perplexity", companyName: "Perplexity" },
+    },
+    {
+        name: "Scale AI",
+        blurb: "ML data labeling + RLHF.",
+        tags: ["ai"],
+        config: { kind: "greenhouse", boardSlug: "scaleai", companyName: "Scale AI" },
+    },
+    {
+        name: "LangChain",
+        blurb: "LLM app framework + LangSmith.",
+        tags: ["ai"],
+        config: { kind: "ashby", boardSlug: "langchain", companyName: "LangChain" },
+    },
+    {
+        name: "Notion",
+        blurb: "Docs + database + AI.",
+        tags: ["ai", "tech"],
+        config: { kind: "ashby", boardSlug: "notion", companyName: "Notion" },
+    },
+    {
+        name: "PostHog",
+        blurb: "Open-source product analytics.",
+        tags: ["ai", "tech"],
+        config: { kind: "ashby", boardSlug: "posthog", companyName: "PostHog" },
+    },
+
+    // ─── Space / Aerospace ───────────────────────────────────────────────────
     {
         name: "Rocket Lab",
         blurb: "Small-launch + spacecraft.",
@@ -59,10 +92,17 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
         config: { kind: "greenhouse", boardSlug: "rocketlab", companyName: "Rocket Lab" },
     },
     {
-        name: "Vercel",
-        blurb: "Frontend cloud (Next.js).",
-        tags: ["tech"],
-        config: { kind: "greenhouse", boardSlug: "vercel", companyName: "Vercel" },
+        name: "Astranis",
+        blurb: "Small geostationary comms sats.",
+        tags: ["space"],
+        config: { kind: "greenhouse", boardSlug: "astranis", companyName: "Astranis" },
+    },
+    {
+        name: "Planet",
+        blurb: "Earth-imaging satellites.",
+        tags: ["space"],
+        // Public name "Planet" but board slug retains the legacy "planetlabs" name.
+        config: { kind: "greenhouse", boardSlug: "planetlabs", companyName: "Planet" },
     },
     {
         name: "Boeing",
@@ -86,6 +126,120 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
             companyName: "Blue Origin",
         },
     },
+
+    // ─── Tech / SaaS ─────────────────────────────────────────────────────────
+    {
+        name: "Stripe",
+        blurb: "Payments infrastructure.",
+        tags: ["tech", "finance"],
+        config: { kind: "greenhouse", boardSlug: "stripe", companyName: "Stripe" },
+    },
+    {
+        name: "Vercel",
+        blurb: "Frontend cloud (Next.js).",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "vercel", companyName: "Vercel" },
+    },
+    {
+        name: "Datadog",
+        blurb: "Observability + monitoring.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "datadog", companyName: "Datadog" },
+    },
+    {
+        name: "Cloudflare",
+        blurb: "Edge network + Workers.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "cloudflare", companyName: "Cloudflare" },
+    },
+    {
+        name: "GitLab",
+        blurb: "DevOps platform.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "gitlab", companyName: "GitLab" },
+    },
+    {
+        name: "Dropbox",
+        blurb: "File sync + collaboration.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "dropbox", companyName: "Dropbox" },
+    },
+    {
+        name: "Discord",
+        blurb: "Real-time chat platform.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "discord", companyName: "Discord" },
+    },
+    {
+        name: "Reddit",
+        blurb: "Social link aggregator.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "reddit", companyName: "Reddit" },
+    },
+    {
+        name: "Figma",
+        blurb: "Collaborative design tool.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "figma", companyName: "Figma" },
+    },
+    {
+        name: "Asana",
+        blurb: "Work management.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "asana", companyName: "Asana" },
+    },
+    {
+        name: "Webflow",
+        blurb: "Visual web builder.",
+        tags: ["tech"],
+        config: { kind: "greenhouse", boardSlug: "webflow", companyName: "Webflow" },
+    },
+    {
+        name: "Linear",
+        blurb: "Issue tracking for engineers.",
+        tags: ["tech"],
+        config: { kind: "ashby", boardSlug: "linear", companyName: "Linear" },
+    },
+    {
+        name: "Spotify",
+        blurb: "Music streaming.",
+        tags: ["tech"],
+        config: { kind: "lever", boardSlug: "spotify", companyName: "Spotify" },
+    },
+
+    // ─── Finance / Crypto ────────────────────────────────────────────────────
+    {
+        name: "Brex",
+        blurb: "Corporate cards + spend mgmt.",
+        tags: ["finance"],
+        config: { kind: "greenhouse", boardSlug: "brex", companyName: "Brex" },
+    },
+    {
+        name: "Robinhood",
+        blurb: "Retail brokerage.",
+        tags: ["finance"],
+        config: { kind: "greenhouse", boardSlug: "robinhood", companyName: "Robinhood" },
+    },
+    {
+        name: "Ramp",
+        blurb: "Corporate cards + automation.",
+        tags: ["finance"],
+        config: { kind: "ashby", boardSlug: "ramp", companyName: "Ramp" },
+    },
+    {
+        name: "Mercury",
+        blurb: "Banking for startups.",
+        tags: ["tech", "finance"],
+        config: { kind: "ashby", boardSlug: "mercury", companyName: "Mercury" },
+    },
+
+    // ─── Biotech ─────────────────────────────────────────────────────────────
+    {
+        name: "Recursion",
+        blurb: "AI-driven drug discovery.",
+        tags: ["biotech"],
+        config: { kind: "greenhouse", boardSlug: "recursionpharmaceuticals", companyName: "Recursion" },
+    },
 ] as const;
 
 export const DIRECTORY_TAGS: readonly DirectoryTag[] = ["ai", "space", "tech", "biotech", "finance"] as const;
@@ -105,4 +259,26 @@ export function searchDirectory(
         }
         return true;
     });
+}
+
+/**
+ * Identity key for a WatchlistConfig — used by the "Watch company" picker to
+ * detect when a directory entry is already on the user's watchlist. Two configs
+ * with the same key target the same job board.
+ *
+ * Returns `null` for kinds we don't dedup (`linkedin` keyword searches and
+ * `careers-page` configs aren't in the directory and shouldn't be compared).
+ */
+export function watchlistConfigKey(config: WatchlistConfig): string | null {
+    switch (config.kind) {
+        case "greenhouse":
+        case "lever":
+        case "ashby":
+            return `${config.kind}:${config.boardSlug.toLowerCase()}`;
+        case "workday":
+            return `workday:${config.tenantHost.toLowerCase()}:${config.careerSite}`;
+        case "linkedin":
+        case "careers-page":
+            return null;
+    }
 }
