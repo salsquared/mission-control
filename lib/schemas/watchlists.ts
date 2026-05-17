@@ -64,6 +64,11 @@ export const LinkedinConfigSchema = z.object({
     keywords: z.string().min(1).max(200),
     // Optional location filter (e.g. "Remote", "United States", "New York").
     location: z.string().max(100).optional(),
+    // Time window for the LinkedIn `f_TPR` filter. Recurring watchlist crawls
+    // default to "24h" (keep deltas small, don't keep re-finding the same
+    // week-old postings). One-shot discovery diagnostics should pass "week"
+    // or wider. Omit to use the fetcher's default ("24h").
+    timeRange: z.enum(["24h", "week", "month", "any"]).optional(),
     companyName: z.string().min(1),
 });
 

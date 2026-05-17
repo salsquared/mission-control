@@ -53,7 +53,10 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
         name: "Rocket Lab",
         blurb: "Small-launch + spacecraft.",
         tags: ["space"],
-        config: { kind: "greenhouse", boardSlug: "rocketlabusa", companyName: "Rocket Lab" },
+        // Verified live 2026-05-17: HTTP 200 with 840 jobs at this slug.
+        // The careers website lives at rocketlabusa.com but the Greenhouse
+        // board slug is just `rocketlab`.
+        config: { kind: "greenhouse", boardSlug: "rocketlab", companyName: "Rocket Lab" },
     },
     {
         name: "Vercel",

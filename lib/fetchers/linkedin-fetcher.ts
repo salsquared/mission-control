@@ -39,12 +39,19 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS * MAX_PAGES);
 
     try {
+        // Map config.timeRange → LinkedIn's f_TPR codes. Default 24h
+        // matches the historical hard-coded value (right for recurring
+        // watchlist crawls — keep deltas small). One-shot discovery
+        // callers can override.
+        const F_TPR_MAP = { "24h": "r86400", "week": "r604800", "month": "r2592000", "any": null } as const;
+        const tpr = F_TPR_MAP[config.timeRange ?? "24h"];
+
         for (let page = 0; page < MAX_PAGES; page++) {
             const params = new URLSearchParams({
                 keywords: config.keywords,
                 start: String(page * PAGE_SIZE),
-                f_TPR: "r86400", // last 24 hours — stay focused on fresh postings
             });
+            if (tpr) params.set("f_TPR", tpr);
             if (config.location) params.set("location", config.location);
             const url = `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?${params.toString()}`;
 
