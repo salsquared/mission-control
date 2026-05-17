@@ -50,7 +50,9 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 | C | M9 Phase 2 | 💤 | Suggested rewrites (45), README ingestion (46) |
 | **Cross-cutting** | Notification dispatcher | ✅ | Tier model (critical/standard/low), global bell, EMAIL_ENABLED kill-switch |
 | Cross-cutting | Backups | ✅ | DB + `data/resumes/` tar to Google Drive via rclone + recovery runbook |
-| Cross-cutting | Pre-push hermetic gate | ✅ | 10 suites, ~4s, simple-git-hooks |
+| Cross-cutting | Pre-push hermetic gate | ✅ | 14 suites, ~5s, simple-git-hooks |
+| Cross-cutting | Route auth hardening | ◐ | 19/19 unguarded routes patched (`requireSession` / `requireLocalOrSession`); RAH-1/5/10/11/17/18/19/20/21/24 ✅ shipped 2026-05-16. **Open ⏳:** RAH-12 (Gemini rate limit), RAH-13 (backup encryption). |
+| Cross-cutting | Polish backlog (PB-N) | ◐ | PB-2/3/4/7/9/10/11/12/13 ✅ shipped 2026-05-16 (correctness/UX/doc fixes that were originally tagged RAH-N — see migration table). **Open ⏳:** PB-1 (company-name normalization), PB-5 (Gmail webhook crash recovery), PB-6 (Pub/Sub messageId dedup), PB-8 (Notification dedup constraint). |
 
 ### Open work, by leverage (next-up order)
 
@@ -400,6 +402,112 @@ Stories: 42, 43, 44 (🟡). Shipped 2026-05-15.
 ---
 
 ## Cross-cutting
+
+### Route auth hardening ◐
+
+Cross-cutting security pass against the public Cloudflare-tunnel surface (`https://ms-prod.salsquared.xyz`). The intended model — "LAN trusts, tunnel requires session" via `lib/auth-guards.ts` — was correctly applied to 21 user-data routes (applications, watchlists, profile, resumes, etc.) but a 2026-05-15 audit found 19 read-side / SSE / external-data routes with no guard at all.
+
+Shipped 2026-05-15 · Commit: `db8a9bf` · Smoke: `scripts/tests/route-auth-smoke.ts` (57/57) · Wired into pre-push (suite 2 of 14).
+
+**✅ Closed routes (19):**
+
+- **`requireSession` — always-on, 4 routes.** Data class is too sensitive even for LAN bypass: SSE event stream + log ring buffer + a write-shaped enrich endpoint.
+  - `/api/events` — streams every `{model, action, id, timestamp}` cross-row event.
+  - `/api/system/logs` — streams the in-memory console ring buffer + new entries.
+  - `/api/system/logs/historical` — reads the PM2 JSON log file.
+  - `/api/research/import` — POST, accepts external IDs and enriches via Semantic Scholar + arXiv.
+- **`requireLocalOrSession` — LAN skip, tunnel requires session, 15 routes.** Read-only external-data passthroughs cached via `withCache`. LAN dev tools / curl from the laptop keep zero friction; tunnel traffic gates against external-API quota drain.
+  - `/api/system`, `/api/research`, `/api/research/historical`, `/api/research/review`, `/api/research/hf`, `/api/company-news`, `/api/ai`, `/api/ai/llmleaderboard`, `/api/finance`, `/api/finance/history`, `/api/space`, `/api/space/solar`, `/api/space/launches`, `/api/space/moon`, `/api/space/satellites`.
+- **`withCache` wrapper pattern.** Routes wrapped in `withCache` use the guard-before-cached-handler pattern so the 401 happens before any external fetch / cache lookup:
+  ```ts
+  const cachedGET = withCache(getHandler, { ttlSeconds, upstreamHost });
+  export const GET = async (req: Request) => {
+      const guard = await requireLocalOrSession(req);
+      if ('error' in guard) return guard.error;
+      return cachedGET(req);
+  };
+  ```
+
+**✅ Verified non-issues** (full grep of `app/api/**/route.ts` for missing guards):
+- `app/api/auth/[...nextauth]/route.ts` — NextAuth itself; can't guard the guard.
+- `app/api/gmail/webhook/route.ts` — verifies a Google-issued OIDC JWT against `PUBSUB_AUDIENCE` instead of a session (see `docs/hosting.md` §1).
+
+**⏳ Follow-up hardening (flagged by second-pass review, user-confirmed OOS for the initial patch — not yet shipped):**
+
+- ✅ **RAH-1 — Host-header spoof defense in `requireLocalOrSession`.** Shipped 2026-05-16. LAN bypass now also requires that every hop in `X-Forwarded-For` is a loopback / RFC1918 / IPv6-private address. Cloudflare tunnel populates the leftmost XFF with the original public client IP — a LAN client (direct or via Next.js's internal proxy, which auto-adds `::1`) only ever shows local hops. New `isPrivateOrLoopback` helper handles IPv4 loopback, RFC1918, IPv4-mapped IPv6, and unique-local / link-local IPv6. Behavioral-tested via curl: LAN direct = 200, `Host: localhost` + `XFF: 8.8.8.8` = 401, LAN client at `192.168.1.5` = 200. `lib/auth-guards.ts:requireLocalOrSession`.
+- ✅ **RAH-5 — `withCache` user-identity hook.** Shipped 2026-05-16. Added an optional `userKeyFn` to `WithCacheOptions` in `lib/cache.ts` — when set, the returned key is prepended to the cache key so per-user routes can opt into isolation. No current callers (all wrapped routes return shared external feeds), but the hook is in place for any future user-specific route.
+
+#### Second-pass review (2026-05-16) — additional findings
+
+Triple-track review on 2026-05-16 (mutating-route auth · data-leak / fs / external-calls · correctness / races / silent failures). All items below were spot-verified against the source before recording — speculative agent findings dropped.
+
+**🔴 High** (real correctness holes — measurable wrong behavior or recovery hole):
+
+**🟡 Medium** (real exploits, narrow impact today — single-user, LAN-trust, or cost-bounded):
+
+- ✅ **RAH-10 — OIDC signer identity check.** Shipped 2026-05-16. After `verifyPubSubOIDC` returns, `app/api/gmail/webhook/route.ts` now asserts `payload.email === process.env.PUBSUB_SERVICE_ACCOUNT_EMAIL && payload.email_verified === true`. When the env var is unset the route logs a warning and accepts (to not break existing deploys before the env is set) — populate it in `.env` per `docs/hosting.md` §1.
+- ✅ **RAH-11 — Service-token bearer constant-time compare.** Shipped 2026-05-16. `lib/auth-guards.ts:requireServiceToken` now uses `crypto.timingSafeEqual` on equal-length buffers (length pre-check still fails fast without leaking length).
+- ⏳ **RAH-12 — No rate limit on Gemini-call routes.** `POST /api/resumes` and `POST /api/profile/import` each spawn 1–N Gemini calls per request with no per-user throttle. A logged-in tab in a loop can drain the GenAI free-tier quota. Fix: shared per-userId token bucket (e.g. 5 generations / 10 min) checked before the first Gemini call.
+- ⏳ **RAH-13 — Backups mirror plaintext refresh tokens.** `scripts/backup-db.sh` tars `prisma/prod.db` straight to `gdrive:backups/mission-control/`. The DB contains `Account.refresh_token` and `access_token` in plaintext — anyone with access to that Drive folder gets Gmail + Calendar equivalence on this account. Fix: pipe through `age -r <pubkey>` or `openssl enc -aes-256-gcm` with the key stored outside Drive (1Password / hardware token), or switch to an rclone `crypt:` remote.
+**🔵 Low** (latent multi-user bugs, defense-in-depth, UX papercuts):
+
+- ✅ **RAH-17 — `/api/notifications/test` rate limit.** Shipped 2026-05-16. 30s in-memory token bucket per userId; `globalThis`-attached so HMR doesn't reset it in dev. Returns 429 with `Retry-After` header.
+- ✅ **RAH-18 — `/api/applications/events/adopt` user-scoped.** Shipped 2026-05-16. Duplicate-check now filters on `application.userId` so cross-user Gcal event IDs don't trigger spurious 409s.
+- ✅ **RAH-19 — `PATCH /api/applications/events` drops `kind`.** Shipped 2026-05-16. The route handler ignores `parsed.data.kind` when building the update; schema still accepts it for client-compat but it's a no-op. Rewriting REJECTION → OFFER is no longer possible.
+- ✅ **RAH-20 — `DELETE /api/calendar/event` requires MS tag.** Shipped 2026-05-16. The DELETE handler does a `calendar.events.get` first and refuses (403) if `extendedProperties.private[GCAL_EVENT_TAG]` is absent. Service-token callers can only delete events mission-control created.
+- ✅ **RAH-21 — `safeRelative` rejects path separators.** Shipped 2026-05-16. `lib/resumes/storage.ts:safeRelative` now also throws on `normalized.includes(path.sep)`. Future callers can't quietly write nested directories under STORAGE_ROOT.
+
+**ℹ️ Info — auth surface housekeeping:**
+
+- ✅ **RAH-24 — `applications/backfill` uses `requireSession`.** Shipped 2026-05-16. Replaced inline `getServerSession` with the shared guard helper for grep-ability.
+
+### Open polish backlog ⏳
+
+Non-security follow-ups that don't fit a story-track milestone. RAH is reserved
+for route-auth / security / abuse-prevention hardening; bug-correctness and UX
+polish items live here. Add new items by appending at the bottom with a `PB-N`
+(polish backlog) id.
+
+**Migration table — old → new ids (2026-05-17 recategorization):**
+
+| Old id | New id | Reason for move |
+|---|---|---|
+| RAH-2 | PB-2 | posting-digest off-by-one — correctness, not auth |
+| RAH-3 | PB-3 | posting-digest fail-retry — correctness, not auth |
+| RAH-4 | PB-4 | Skills-gap word-boundary parity — UX/correctness |
+| RAH-6 | PB-5 | Gmail webhook crash recovery — correctness |
+| RAH-7 | PB-6 | Pub/Sub messageId dedup — correctness |
+| RAH-8 | PB-7 | `findApplicationByCompany` substring → exact — correctness |
+| RAH-9 | PB-8 | Notification dedup unique constraint — correctness/race |
+| RAH-14 | PB-9 | Resume artifact rollback — correctness |
+| RAH-15 | PB-10 | Calendar sync timezone — correctness |
+| RAH-16 | PB-11 | Skip notify on user POST — UX |
+| RAH-22 | PB-12 | ASCII-sanitize headers — UX/correctness |
+| RAH-23 | PB-13 | `middleware.ts` doc drift — documentation |
+
+Source-code comments using `RAH-N` for moved items were updated to the new `PB-N` id in the same change. Commit history retains the original `RAH-N` labels; cross-reference via this table.
+
+**🔴 High — open / unshipped:**
+
+- ⏳ **PB-5 — Gmail webhook crash-recovery hole.** `lib/applications/ingest.ts:86` short-circuits on `existingApp.lastEmailMsgId === msgId` *before* `createApplicationEvents` runs. If a prior run created events but crashed before `maybeNotifyForApplicationEvent` or `syncEventToGcal` completed, the retry skips and the user never gets the OFFER / INTERVIEW notification or Gcal mirror. Fix: track per-event `notifiedAt` / `gcalSyncedAt`, and only short-circuit when those are non-null. Alternative: gate the short-circuit on `insertedEvents.every(e => e.notifiedAt)`.
+- ⏳ **PB-6 — Pub/Sub `messageId` not deduped.** `app/api/gmail/webhook/route.ts` has no record of the Pub/Sub envelope `messageId`, and `lastSyncedHistoryId` isn't persisted per-user. Any at-least-once redelivery (or slow-ACK retry) re-walks `history.list` from the same `historyId`. Combined with PB-5 this can mis-fire events. Fix: small `WebhookDelivery(messageId @id)` table; `INSERT OR IGNORE` first, bail on conflict.
+- ⏳ **PB-8 — Notification dedup is read-then-write, no unique constraint.** `lib/notifications/dispatch.ts` and the three scheduler jobs (`stale-applications`, `deadline-nudges`, `posting-digest`) each do a cooldown SELECT then `notification.create`. Concurrent scheduler ticks, or a manual `/api/notifications/test` colliding with a job, both pass cooldown and both insert → duplicate emails on offer/interview. Fix: add a synthetic `dedupKey` column with `@unique`, key it on `${kind}:${appId|postingId}:${type}:${YYYY-MM-DD}`, catch P2002 silently.
+
+**🟡 Pending (non-urgent) — open:**
+
+- ⏳ **PB-1 — Company-name normalization in the email classifier.** Observed 2026-05-17 in the Bell Smoke Co diagnostic: the LLM classifier returned `"Bell Smoke"` for one email and `"Bell Smoke Co"` for another (same sender, same subject, sent 11 minutes apart). With PB-7's case-insensitive exact match in `findApplicationByCompany`, two real emails about the same employer whose classifier output drifts on suffix wording (`"Acme Corp"` vs `"Acme Corporation"` vs `"Acme"`) will produce DUPLICATE kanban cards. Fix: normalize the classifier output before passing to `findApplicationByCompany` — strip trailing `Inc | Corp | Corporation | LLC | LLP | Co | Company | Limited | Ltd | GmbH` (case-insensitive, with optional period), trim whitespace, collapse internal whitespace. Lives best in `lib/applications/ingest.ts` right after the classifier call. Add a unit smoke that verifies the normalization layer.
+
+**✅ Shipped (historical — kept for traceability):**
+
+- ✅ **PB-2 — posting-digest off-by-one.** Shipped 2026-05-16. Reworked the watermark logic in `scheduler/jobs/posting-digest.ts`: advance `lastDigestAt` to the MAX `firstSeenAt` actually included (not to `runAt`), and don't advance at all on empty windows. Eliminates the boundary collision where a new posting's `now()` could equal the just-advanced watermark and fail `gt: since`.
+- ✅ **PB-3 — posting-digest fail-retry.** Shipped 2026-05-16. `scheduler/jobs/posting-digest.ts` now only updates `lastDigestAt` when `dispatchNotification` succeeds — a thrown dispatch leaves the watermark behind so the next tick re-includes the same window plus new postings.
+- ✅ **PB-4 — Skills-gap word-boundary parity.** Shipped 2026-05-16. Ported the `matchesWord` helper from `lib/resumes/skills-gap.ts` to `lib/resumes/select.ts`. The bullet scorer now uses the same word-boundary regex (with symbol-edge substring fallback) so "ai" no longer score-matches inside "available".
+- ✅ **PB-7 — `findApplicationByCompany` substring → exact.** Shipped 2026-05-16. Switched to `$queryRaw` with `LOWER(company) = LOWER(?)` for case-insensitive equality (SQLite doesn't support Prisma's `mode: "insensitive"`). Short LLM tokens like "AI" no longer match unrelated rows; case-only differences ("acme corp" vs "Acme Corp") still merge correctly.
+- ✅ **PB-9 — Resume artifact rollback.** Shipped 2026-05-16. Inner try/catch around the write + row-update in `app/api/resumes/route.ts`. On update failure after a successful write, the orphan file is `unlink`'d and the row is marked `status="errored"` with the failure message captured.
+- ✅ **PB-10 — Calendar sync uses server IANA timezone.** Shipped 2026-05-16. `lib/calendar/sync.ts` and `app/api/calendar/event/route.ts` now pass `timeZone: USER_TIMEZONE` (resolved once at module load from `Intl.DateTimeFormat().resolvedOptions().timeZone`) instead of hard-coded `"UTC"`. Mission-control runs on one Mac mini, so server tz === user tz.
+- ✅ **PB-11 — User-created events no longer self-mail.** Shipped 2026-05-16. `app/api/applications/events/route.ts POST` no longer calls `maybeNotifyForApplicationEvent` — the ingest path (Gmail webhook) keeps it. Manual "I got an offer" entries don't fire a critical-tier email.
+- ✅ **PB-12 — Resume response headers ASCII-sanitized.** Shipped 2026-05-16. `app/api/resumes/route.ts` filters `[^\x20-\x7e]` from `X-Resume-Title` / `X-Resume-Company` before setting headers. Em-dashes / accented chars no longer 500 the response.
+- ✅ **PB-13 — CLAUDE.md `middleware.ts` claim dropped.** Shipped 2026-05-16. The "API routes + caching" section now correctly describes the observability surface: the in-app log viewer captures every server-side `console.*` (including the per-query `[DATABASE]` lines from the Prisma middleware in `lib/prisma.ts`). No `middleware.ts` exists at the repo root.
 
 ### Prompt tuning ⏳
 

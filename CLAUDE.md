@@ -58,10 +58,11 @@ shadcn/ui is configured (`components.json`, "new-york" style, neutral base, luci
 
 ### API routes + caching
 
-API routes live under `app/api/<feature>/route.ts`. Two cross-cutting wrappers:
+API routes live under `app/api/<feature>/route.ts`. One cross-cutting wrapper:
 
-- **`lib/cache.ts` `withCache(handler, ttlSeconds)`** — process-memory cache keyed on `pathname + sorted query` (the `?v=...` cache-buster is stripped before keying and forces a refresh). On handler error or non-OK response it falls back to the last good payload and rewrites the entry with a 60s retry TTL. Stats are surfaced via `/api/system`. Cache-Control is set to `no-store` in dev so the browser never caches; production sets `max-age` + `stale-while-revalidate`.
-- **`middleware.ts`** — logs every `/api/*` request. The matcher is the only thing keeping middleware off non-API routes, so don't broaden it casually.
+- **`lib/cache.ts` `withCache(handler, ttlSeconds)`** — process-memory cache keyed on `pathname + sorted query` (the `?v=...` cache-buster is stripped before keying and forces a refresh). On handler error or non-OK response it falls back to the last good payload and rewrites the entry with a 60s retry TTL. Stats are surfaced via `/api/system`. Cache-Control is set to `no-store` in dev so the browser never caches; production sets `max-age` + `stale-while-revalidate`. Optional `userKeyFn` opts a route into per-user cache scoping (no current callers — see RAH-5 in `docs/implementation.md`).
+
+Per-request HTTP logging is **not** done via Next middleware. The in-app log viewer captures every server-side `console.*` call (see "Logger ring buffer" below) including the per-query `[DATABASE]` lines the Prisma middleware in `lib/prisma.ts` emits — that's the canonical observability surface. There is no `middleware.ts` at the repo root.
 
 Wrap any route that hits an external API (or does expensive work) in `withCache`. The cache survives HMR by attaching to `globalThis` in dev.
 
