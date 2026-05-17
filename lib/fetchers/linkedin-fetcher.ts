@@ -20,6 +20,7 @@ import * as cheerio from "cheerio";
 import { z } from "zod";
 import type { LinkedinConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
+import { inferEmploymentTypeFromTitle } from "./employment-type";
 
 type LinkedinConfig = z.infer<typeof LinkedinConfigSchema>;
 
@@ -115,6 +116,9 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
                     sourceUrl,
                     location,
                     snippet: postedAt || null,
+                    // LinkedIn's guest cards don't include employment type;
+                    // fall back to title-keyword inference.
+                    employmentType: inferEmploymentTypeFromTitle(title),
                 });
                 pageCount++;
             });

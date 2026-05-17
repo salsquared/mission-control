@@ -13,14 +13,14 @@
 
 ## Last session
 
-- **Date:** 2026-05-15
-- **Branch:** `main`. M7/M7.4/M8 Phase 1+2 ✅, MA ✅, MB Phase 1+2a ✅, M9 ✅. Post-MVP polish in progress — global notification dispatcher, Workday/LinkedIn fetchers, EMAIL_ENABLED kill-switch, and watchlist negative filters all shipped. Hermetic pre-push gate at 9 suites green.
+- **Date:** 2026-05-17
+- **Branch:** `main` (uncommitted — session shipped PA-1 through PC-7 atop the previously shipped PB-N closure). M7/M7.4/M8 Phase 1+2 ✅, MA ✅, MB Phase 1+2a ✅, M9 ✅, full PB-N polish backlog ✅, PA/PB-ext/PC follow-up sweep ✅. Hermetic pre-push gate at 26 suites green. Three migrations applied in dev: `add_watchlist_directory_key`, `add_posting_employment_type`, `pb5_pb6_webhook_recovery`, `pb8_notification_dedup_key`, `pa3_application_normalized_company`.
 - **Last commits on main:**
-  - `90cf9ec fix(email): EMAIL_ENABLED master kill-switch — stop pre-push spam`
-  - `1ec936b feat(discovery): Workday + LinkedIn fetchers + kill M8-3.1/3.2`
-  - `90398d7 feat: stale-app nudges + portfolio toggle UI + pre-push hermetic gate`
-  - `941d3db refactor(notifications): central dispatchNotification API + tier model`
-  - `c5c8905 feat(notifications): global bell + re-enable application-event email dispatch`
+  - `db8a9bf fix(security): close 19 unguarded API routes — tunnel auth patch`
+  - `7ad859b fix: 5 bugs from code-review pass`
+  - `2206981 feat(resume): skills-gap report — surface uncovered posting keywords (story 41)`
+  - `2bda824 feat(notifications): per-watchlist mode (each/digest/silent) + decision-deadline nudges`
+  - `0eaaacb docs: add status snapshot + clarified legend to implementation plan`
 
 ## Umbrella goal
 
@@ -56,19 +56,26 @@ Full audit on 2026-05-15: **all 🔴 must-haves shipped (16/16); 21/25 🟡; 2/1
 
 ## In-progress work
 
-Nothing active. Story-status audit refreshed 2026-05-15 — `user-stories-applications.md` now carries ✅ / ◐ / ⛔ markers per story. Drift between code and doc is reconciled.
+**Uncommitted on `main`** (session of 2026-05-17): all PA-1 → PC-7 work is on-disk only. Schema migrations applied to dev.db. To ship: `git add` the new files + edits, commit, then push. Files of note:
+
+- New: `lib/watchlists/hydrate.ts`, `lib/applications/normalize-company.ts`, `lib/fetchers/employment-type.ts`, `lib/ai/rate-limit.ts`, `scheduler/jobs/webhook-delivery-prune.ts`.
+- New scripts/tests: `watchlist-hydrate-smoke`, `employment-type-smoke`, `webhook-dedup-smoke`, `ingest-retry-smoke`, `normalize-company-smoke`, `notification-dedup-smoke`, `gcal-idempotency-smoke`, `webhook-prune-smoke`, `app-race-dedup-smoke`, `gemini-rate-limit-smoke`, `verify-directory-candidates`, `rocket-lab-slug-check`, `backfill-watchlist-directory-key`, `backfill-app-normalized-company`, `backfill-posting-employment-type`, `job-search-live`, `gmail-inbox-debug`.
+- Touched: `prisma/schema.prisma`, `app/api/watchlists/[id]/route.ts`, `app/api/watchlists/route.ts`, `app/api/gmail/webhook/route.ts`, `app/api/postings/route.ts`, `app/api/postings/[id]/route.ts`, `app/api/notifications/test/route.ts`, `lib/repositories/applications.ts`, `lib/repositories/applicationEvents.ts`, `lib/notifications/dispatch.ts`, `lib/applications/ingest.ts`, `lib/company-directory.ts`, `lib/calendar/sync.ts`, `lib/schemas/watchlists.ts`, `lib/schemas/gmail-webhook.ts`, `lib/fetchers/*` (all six), `components/cards/NewPostingsCard.tsx`, `components/cards/WatchlistsCard.tsx`, `components/overlays/AddWatchlistModal.tsx`, `components/providers/state/index.ts`, `scheduler/index.ts`, `scheduler/jobs/posting-digest.ts`, `scheduler/jobs/stale-applications.ts`, `scheduler/jobs/deadline-nudges.ts`, `scheduler/jobs/job-watcher.ts`, `lib/email-parser.ts`, `lib/ai/gemini.ts`, `scripts/pre-push.sh`, `docs/implementation.md`.
+
+**Unattended UI verifications waiting on user return:**
+- "Watch company" picker shows "Added" chips on directory entries that match existing watchlists.
+- New-postings card filter drawer (employment type / remote / location).
+- Watchlist row for Rocket Lab now hits `rocketlab` slug (not `rocketlabusa`) and returns jobs on "Run now".
+- Gmail webhook + ingest: an OFFER/INTERVIEW email's notification + Gcal mirror should arrive even if ingest crashed mid-pipeline on a prior attempt.
+- Boeing/Blue Origin watchlists should now pull 1,000+ jobs each (was capped at 200).
 
 ## Recently completed
 
-- **2026-05-16** — docs/ cleanup. Moved `whitepaper.md` (abandoned `<!-- PROMPT -->` stub) and `todo.archive.md` (read-only snapshot) into `docs/archive/`. Trimmed `hosting.md` from a stale full-install guide to just the two unique auth-setup sections (Pub/Sub OIDC + service-token shape); install/PM2/recovery now lives only in CLAUDE.md. Fixed stale `docs/todo.md` references in `apis.md` (Task route) and `user-stories-applications.md` (priority legend). Net: 10 active docs → 7; ~350 lines of duplicate/dead content removed.
-- **2026-05-15** — Tunnel auth patch. Closed 19 unguarded API routes. `/api/events`, `/api/system/logs`, `/api/system/logs/historical`, `/api/research/import` → `requireSession` (always-on). `/api/system`, `/api/research/*` (list/historical/review/hf), `/api/company-news`, `/api/ai`, `/api/ai/llmleaderboard`, `/api/finance` (+ history), `/api/space/*` (5 routes) → `requireLocalOrSession` (LAN skip, tunnel requires session). Structural smoke `scripts/tests/route-auth-smoke.ts` (57/57) locks in import + call-site presence so guards can't be silently dropped. Pre-push now 14 suites.
-- **2026-05-15** — Doc audit + status reconciliation (this entry). Walked every 🟡 / 🔵 story against the codebase: 21 🟡 actually shipped vs 25 total; 2 🔵 shipped (23 negative filters, 51 multi-kind). Real open list shrank from ~10 to ~10 (different 10 — 26, 33, 37 are real 🟡 gaps; 24, 28, 41, 45, 46, 48, 50 are real 🔵 gaps).
-- **2026-05-15** — Track-as-application NOTE timeline anchor (`a668dbb`). Story 20 polish. Route body lifted into `lib/postings/track-as-application.ts`; hermetic smoke (18/18) covers cross-user isolation + idempotent re-call + non-duplicating NOTE event. Wired into pre-push (now 10 suites).
-- **2026-05-15** — Watchlist negative filters (story 23, `9da9a2d`). `Watchlist.negativeFilters String?` JSON regex array. `/api/postings` GET filters case-insensitively against title+snippet+location; `?includeFiltered=true` bypass. Expandable editor on WatchlistsCard with regex validation. 18-step hermetic smoke.
-- **2026-05-15** — EMAIL_ENABLED master kill-switch (`90cf9ec`). Single env gate at `lib/email/send.ts` short-circuits Gmail send. 0 in `.env.development` + `scripts/pre-push.sh`, 1 in `.env.production`. Stops test email spam without ripping out the dispatch wiring.
-- **2026-05-15** — Workday + LinkedIn fetchers (`1ec936b`). Workday tenant POST (Boeing + Blue Origin verified live), LinkedIn guest scraper. Workday gotchas locked in: PAGE_SIZE=20 (server cap), per-page AbortSignal, `total` only on first page, Chrome UA mandatory.
-- **2026-05-15** — Stale-app nudge job + portfolio toggle + pre-push hermetic gate (`90398d7`). simple-git-hooks running ~9 suites in 3-5s before every push.
-- **2026-05-15** — Central notification dispatcher + global bell (`941d3db`, `c5c8905`). Tier-based (critical/standard/low) → channels mapping. Critical-tier pinning + red border in the bell overlay.
+- **2026-05-17** — PA + PB-ext + PC follow-up sweep (uncommitted, 7 items). PA-1: Gcal idempotency via sha1(eventId) → events.insert.id; 409 = pre-existing, fetch instead. PA-2: WebhookDelivery retention prune scheduler job (30-day cutoff). PA-3: `Application.normalizedCompany` + `@@unique([userId, normalizedCompany])` schema add + backfill; concurrent createApplication races now resolve via P2002 → update fallthrough. PB-ext-4: backfilled JobPosting.employmentType from titles (with new disqualifier rule that skips "Contract Manager"-style false positives). PB-ext-5: WorkdayConfig.maxPages override (Boeing → 60 pages = 1,200 cap, Blue Origin → 50). PC-6 (RAH-12): process-shared Gemini token bucket (12 req/min default, configurable via `GEMINI_RATE_PER_MIN` / `GEMINI_RATE_BURST`) wrapping both `email-parser` and `lib/ai/gemini.ts`. PC-7: this doc + CLAUDE.md sync. 26/26 hermetic suites green.
+- **2026-05-17** — PB-N polish backlog closure (PB-1, PB-5, PB-6, PB-8 shipped on top of PB-14/15 from the same day). `Notification.dedupKey @unique` (race-safe at-most-once), `WebhookDelivery(messageId @id)` (Pub/Sub redelivery dedup), per-event `notifiedAt`/`gcalSyncedAt` checkpoints (crash recovery), `User.lastSyncedHistoryId` (multi-day outage recovery), `normalizeCompanyName` (Bell Smoke vs Bell Smoke Co convergence). Open PB-N list emptied — status flipped to ✅ in implementation.md.
+- **2026-05-17** — PB-14 + PB-15. `Watchlist.directoryKey` hydrates config from `lib/company-directory.ts` at read time (closes directory→watchlist drift). `JobPosting.employmentType` + filter chips drawer in NewPostingsCard (employment type / remote / location, persisted to useAppStore).
+- **2026-05-17** — Directory expansion (6 → 30 companies). Verified live via `scripts/tests/verify-directory-candidates.ts`. New entries: OpenAI, Perplexity, Scale AI, LangChain, Notion, PostHog, Astranis, Planet, Datadog, Cloudflare, GitLab, Dropbox, Discord, Reddit, Figma, Asana, Webflow, Linear, Spotify, Brex, Robinhood, Ramp, Mercury, Recursion. Stale Rocket Lab slug (`rocketlabusa` → `rocketlab`) fixed in dev DB.
+- **2026-05-16** — docs/ cleanup. Moved `whitepaper.md` and `todo.archive.md` into `docs/archive/`; trimmed `hosting.md`. Net: 10 active docs → 7; ~350 lines removed.
 
 ## Known issues / parked TODOs
 

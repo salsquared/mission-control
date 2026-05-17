@@ -1,6 +1,7 @@
 import { generateObject } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { z } from "zod";
+import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
 
 // `@ai-sdk/google` defaults to reading `GOOGLE_GENERATIVE_AI_API_KEY`. The rest
 // of the codebase (lib/ai/gemini.ts) uses `GOOGLE_GENERATIVE_AI_KEY` and falls
@@ -112,6 +113,11 @@ export async function parseApplicationEmail(
   // signal is in the first ~4k chars (greetings, status, action items).
   const trimmedBody = emailContent.length > 6000 ? emailContent.slice(0, 6000) + "\n…[truncated]" : emailContent;
   const anchor = (sentAt ?? new Date()).toISOString();
+
+  // PC-6 (RAH-12): block on the token bucket BEFORE the API call. A backfill
+  // (or pre-PB-6 redelivery storm) can blow Gemini's free-tier 15/min cap in
+  // seconds otherwise.
+  await acquireGeminiSlot();
 
   const result = await generateObject({
     // `gemini-flash-latest` is Google's auto-tracking alias for current stable

@@ -91,6 +91,11 @@ model User {
   email            String?           @unique
   emailVerified    DateTime?
   image            String?
+  // PB-5 audit finding: persist the Gmail history.list watermark per user so
+  // we can recover from a multi-day scheduler / webhook outage without losing
+  // events. Gmail rejects `history.list?startHistoryId` older than ~7 days
+  // with 404. The webhook updates this on each successful batch.
+  lastSyncedHistoryId String?
   accounts         Account[]
   sessions         Session[]
   applications     Application[]
@@ -113,6 +118,13 @@ model Application {
   id              String    @id @default(cuid())
   userId          String
   company         String
+  // PA-3 (PB-1/7 audit follow-up): the canonical key for dedup. Written by
+  // ingest.ts via normalizeCompanyName(company) — same function used to look
+  // up existing rows. Unique per-user via @@unique below so concurrent
+  // webhook + manual "Scan inbox" can't both create duplicate rows for the
+  // same employer (P2002 → caller falls through to update). Nullable for
+  // legacy rows; backfilled by scripts/tests/backfill-app-normalized-company.ts.
+  normalizedCompany String?
   role            String?
   status          String
   kind            String?   // "job" | "internship" | "college" | "other" — null on legacy rows
@@ -134,6 +146,12 @@ model Application {
 
   @@index([userId, status])
   @@index([userId, kind])
+  // PA-3: race-safe dedup. SQLite allows multiple NULLs in a unique compound
+  // so legacy rows with normalizedCompany=null stay unconstrained until
+  // backfilled. Once both rows for a user have non-null normalizedCompany,
+  // a duplicate insert throws P2002 → ingest catches and falls through to
+  // update.
+  @@unique([userId, normalizedCompany])
 }
 
 model ApplicationEvent {
@@ -152,6 +170,13 @@ model ApplicationEvent {
   gcalEventId    String?   // populated after MS→Gcal sync
   gcalUpdatedAt  DateTime? // Gcal `updated` field at last sync; for last-write-wins
   syncSource     String?   // "ms" | "gcal" — which side originated the last write
+  // PB-5: per-event side-effect checkpoints. NULL = the side-effect has not
+  // completed for this event. Ingest re-fires side-effects on retry only for
+  // events whose checkpoint is still null. Decouples the "did we see this
+  // message?" gate (Application.lastEmailMsgId) from the "did the side-effects
+  // commit?" gate, closing the crash-recovery hole.
+  notifiedAt     DateTime?
+  gcalSyncedAt   DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
@@ -296,6 +321,12 @@ model Watchlist {
   name            String
   kind            String    // "careers-page" | "greenhouse" | "lever" | "ashby" | "workday" | "linkedin"
   config          String    // JSON: per-kind config (see lib/schemas/watchlists.ts discriminated union)
+  // PB-14: when set, the row was created from a COMPANY_DIRECTORY entry whose
+  // `name` matches this value. Reads hydrate `config` from the live directory
+  // entry at fetch time, so slug corrections to lib/company-directory.ts
+  // propagate automatically. NULL = legacy / Advanced-tab row → `config` is
+  // the source of truth.
+  directoryKey    String?
   // JSON array of regex patterns. Postings whose (title + snippet + location)
   // matches any pattern are hidden from the bell / new-postings feed at GET
   // time. Invalid regexes are silently skipped. NULL = no filtering.
@@ -331,6 +362,11 @@ model JobPosting {
   postedAt    DateTime?
   snippet     String?
   sourceUrl   String
+  // PB-15: normalized employment type for the new-postings filter UI.
+  // One of "full-time" | "part-time" | "internship" | "contract" | "temporary"
+  // or NULL when neither the ATS payload nor the title gave a clear signal.
+  // Populated by fetchers via lib/fetchers/employment-type.ts.
+  employmentType String?
   status      String    // "new" | "tracked" | "hidden" | "closed"
   firstSeenAt DateTime  @default(now())
   lastSeenAt  DateTime  @default(now())
@@ -363,11 +399,31 @@ model Notification {
   // dispatched yet. emailError is set when delivery was attempted but failed.
   emailSentAt DateTime?
   emailError  String?
+  // PB-8: dedup key for at-most-once delivery semantics. Caller-supplied,
+  // typically `${kind}:${targetId}:${type}:${YYYY-MM-DD-UTC}`. Concurrent
+  // dispatches with the same key race on the @unique constraint — the loser
+  // catches P2002 and no-ops, eliminating the cooldown-SELECT-then-INSERT
+  // race in stale-applications / deadline-nudges / posting-digest. Nullable
+  // so the in-app `/api/notifications/test` and legacy callers stay
+  // unaffected (SQLite allows multiple NULLs in a unique column).
+  dedupKey    String?   @unique
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([userId, readAt])
+}
+
+// PB-6: Pub/Sub at-least-once dedup. Each Gmail webhook envelope carries a
+// unique `messageId`; we INSERT OR IGNORE on it before any side-effect work
+// so a redelivered envelope no-ops in O(1). Pruned on a daily cadence — Pub/
+// Sub doesn't reuse messageIds, so anything > 30 days old is safe to drop.
+model WebhookDelivery {
+  messageId  String   @id
+  source     String   // "gmail" — leave room for future webhooks
+  receivedAt DateTime @default(now())
+
+  @@index([receivedAt])
 }
 
 // M8 Phase 2 — resume archival + traceability. See docs/implementation.md §M8-2.1.

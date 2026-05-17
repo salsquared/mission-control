@@ -1,3 +1,4 @@
+import { createHash } from "crypto";
 import { google } from "googleapis";
 import type { ApplicationEvent } from "@prisma/client";
 import { getGoogleAuthClient } from "@/lib/googleapis";
@@ -5,6 +6,19 @@ import { prisma } from "@/lib/prisma";
 
 export const GCAL_EVENT_TAG = "mission-control:appEventId";
 export const GCAL_APPLICATION_TAG = "mission-control:applicationId";
+
+/**
+ * PA-1 (PB-5 audit follow-up): derive a Google-compatible idempotency id
+ * from our ApplicationEvent.id so a retry never creates a duplicate Gcal
+ * event. Google requires base32hex (lowercase a-v + digits 0-9), 5-1024
+ * chars. A sha1 hex digest is 40 chars of 0-9a-f — strict subset of the
+ * allowed alphabet, and deterministic for a given eventId.
+ *
+ * Exported so smokes / debug tooling can reproduce the id mapping.
+ */
+export function gcalIdempotencyId(eventId: string): string {
+    return createHash("sha1").update(eventId).digest("hex");
+}
 
 // PB-10 (was RAH-15): resolve once at module load. Gcal needs an IANA zone alongside each
 // dateTime; "UTC" was technically correct (the dateTime is already in UTC via
@@ -85,14 +99,43 @@ export async function syncEventToGcal(
             }
             return event.gcalEventId;
         }
-        const res = await calendar.events.insert({ calendarId: "primary", requestBody });
-        const gcalId = res.data.id ?? null;
+        // PA-1: pass a deterministic id derived from our ApplicationEvent.id.
+        // If a retry hits this code path (network dropped between Google's
+        // insert succeeding and our DB write committing), Google returns 409
+        // and we fetch the already-created event instead of inserting a dup.
+        const idempotencyId = gcalIdempotencyId(event.id);
+        let gcalId: string | null = null;
+        let updatedRaw: string | null | undefined = null;
+        try {
+            const res = await calendar.events.insert({
+                calendarId: "primary",
+                requestBody: { ...requestBody, id: idempotencyId },
+            });
+            gcalId = res.data.id ?? null;
+            updatedRaw = res.data.updated;
+        } catch (insertErr: unknown) {
+            const status = (insertErr as { code?: number; response?: { status?: number } })?.code
+                ?? (insertErr as { response?: { status?: number } })?.response?.status;
+            if (status === 409) {
+                // Already-inserted on a prior run that crashed before our DB
+                // write. Fetch and reconcile — the user-facing event exists.
+                const existing = await calendar.events.get({
+                    calendarId: "primary",
+                    eventId: idempotencyId,
+                });
+                gcalId = existing.data.id ?? idempotencyId;
+                updatedRaw = existing.data.updated;
+                console.info(`[gcal-sync] recovered from 409 for event ${event.id} (idempotencyId=${idempotencyId})`);
+            } else {
+                throw insertErr;
+            }
+        }
         if (gcalId) {
             await prisma.applicationEvent.update({
                 where: { id: event.id },
                 data: {
                     gcalEventId: gcalId,
-                    gcalUpdatedAt: res.data.updated ? new Date(res.data.updated) : null,
+                    gcalUpdatedAt: updatedRaw ? new Date(updatedRaw) : null,
                 },
             });
         }

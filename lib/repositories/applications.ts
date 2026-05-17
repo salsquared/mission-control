@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma';
 import type { Application } from '@prisma/client';
+import { normalizeCompanyName } from '@/lib/applications/normalize-company';
 
 export interface ApplicationCreate {
     userId: string;
@@ -13,6 +14,8 @@ export interface ApplicationCreate {
     lastEmailMsgId?: string | null;
     postingId?: string | null;
     lastUpdateAt?: Date;
+    /** PA-3: optional explicit normalized key. When omitted, derived from `company`. */
+    normalizedCompany?: string;
 }
 
 export interface ApplicationUpdate {
@@ -42,19 +45,19 @@ export async function findApplicationByCompany(
     userId: string,
     company: string
 ): Promise<Application | null> {
-    // PB-7 (was RAH-8): case-insensitive exact match. Previously this used `contains`,
-    // which let a short LLM-classified company like "AI" match any prior row
-    // whose name contained "ai" (e.g. "Sail-AI") and silently update the
-    // wrong app's status — and let "Acme Co" vs "Acme Corp" create duplicates
-    // by being one-directional. Exact equality on the normalized company name
-    // is what we actually want for the dedup identity.
-    //
-    // Prisma's `mode: "insensitive"` is PostgreSQL/MongoDB-only — SQLite
-    // doesn't support it. Use $queryRaw with LOWER() for portable case-fold
-    // equality. Bounded LIMIT 1 + parameterized values (no string concat) keep
-    // the query safe and well-indexed (userId is indexed; LOWER(company)
-    // forces a scan within that user's rows, which is fine at the dozens-of-
-    // applications scale).
+    // PA-3: prefer the indexed `normalizedCompany` lookup when present, falling
+    // back to the legacy LOWER(company) raw query for rows that haven't been
+    // backfilled yet (and as a safety net if normalization itself drifts).
+    const key = normalizeCompanyName(company);
+    if (key) {
+        const row = await prisma.application.findFirst({
+            where: { userId, normalizedCompany: key },
+        });
+        if (row) return row;
+    }
+    // Fallback for legacy rows where normalizedCompany is still null. PB-7
+    // (was RAH-8): case-insensitive exact match — Prisma's `mode:"insensitive"`
+    // is PostgreSQL/MongoDB-only, so we use $queryRaw with LOWER() for SQLite.
     const rows = await prisma.$queryRaw<Application[]>`
         SELECT * FROM "Application"
         WHERE "userId" = ${userId} AND LOWER("company") = LOWER(${company})
@@ -64,11 +67,23 @@ export async function findApplicationByCompany(
 }
 
 export function createApplication(data: ApplicationCreate): Promise<Application> {
-    return prisma.application.create({ data });
+    // PA-3: persist the normalized key alongside the raw company so future
+    // lookups hit the @@unique([userId, normalizedCompany]) index.
+    return prisma.application.create({
+        data: {
+            ...data,
+            normalizedCompany: data.normalizedCompany ?? normalizeCompanyName(data.company),
+        },
+    });
 }
 
 export function updateApplication(id: string, data: ApplicationUpdate): Promise<Application> {
-    return prisma.application.update({ where: { id }, data });
+    // PA-3: if the caller is renaming `company`, keep `normalizedCompany` in
+    // sync so the @@unique index doesn't get out of step with the displayed
+    // name. Other updates pass through unchanged.
+    const sync: Partial<Pick<Application, "normalizedCompany">> = {};
+    if (data.company !== undefined) sync.normalizedCompany = normalizeCompanyName(data.company);
+    return prisma.application.update({ where: { id }, data: { ...data, ...sync } });
 }
 
 export function deleteApplication(id: string): Promise<Application> {

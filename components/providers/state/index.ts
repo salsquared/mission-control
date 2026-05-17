@@ -37,12 +37,34 @@ interface ThemeSlice {
 }
 
 // ---------- DevicePrefs slice (localStorage) ----------
+// PB-15: new-postings feed filter selection. Kept per-device so two laptops
+// can have different default views. `employmentTypes` is empty = no filter.
+export type PostingEmploymentType = "full-time" | "part-time" | "internship" | "contract" | "temporary";
+
+export interface PostingFilters {
+    employmentTypes: PostingEmploymentType[];
+    remoteOnly: boolean;
+    locationContains: string;
+    /** Include postings whose employmentType is null. Defaults to true to
+     *  avoid hiding work-types we couldn't classify. */
+    includeUnspecified: boolean;
+}
+
+const DEFAULT_POSTING_FILTERS: PostingFilters = {
+    employmentTypes: [],
+    remoteOnly: false,
+    locationContains: "",
+    includeUnspecified: true,
+};
+
 interface DevicePrefsSlice {
     autoResearch: boolean;
     aiCompanionEnabled: boolean;
+    postingFilters: PostingFilters;
 
     setAutoResearch: (v: boolean) => void;
     setAiCompanionEnabled: (v: boolean) => void;
+    setPostingFilters: (next: PostingFilters) => void;
 }
 
 // ---------- Combined store ----------
@@ -100,8 +122,10 @@ export const useAppStore = create<AppState>()(
             // ---------- DevicePrefsSlice defaults ----------
             autoResearch: false,
             aiCompanionEnabled: false,
+            postingFilters: DEFAULT_POSTING_FILTERS,
             setAutoResearch: (autoResearch) => set({ autoResearch }),
             setAiCompanionEnabled: (aiCompanionEnabled) => set({ aiCompanionEnabled }),
+            setPostingFilters: (postingFilters) => set({ postingFilters }),
         }),
         {
             name: 'app-state',
@@ -111,13 +135,15 @@ export const useAppStore = create<AppState>()(
                 aiCompanionEnabled: state.aiCompanionEnabled,
                 activeViewId: state.activeViewId,
                 viewScreenshots: state.viewScreenshots,
+                postingFilters: state.postingFilters,
             }),
-            version: 1,
+            version: 2,
             migrate: (persisted: any) => ({
                 autoResearch: persisted.autoResearch ?? false,
                 aiCompanionEnabled: persisted.aiCompanionEnabled ?? persisted.backgroundTasks ?? false,
                 activeViewId: persisted.activeViewId ?? 'rocketry',
                 viewScreenshots: persisted.viewScreenshots ?? {},
+                postingFilters: persisted.postingFilters ?? DEFAULT_POSTING_FILTERS,
             }),
         }
     )

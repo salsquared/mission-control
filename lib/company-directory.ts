@@ -113,6 +113,8 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
             tenantHost: "boeing.wd1.myworkdayjobs.com",
             careerSite: "EXTERNAL_CAREERS",
             companyName: "Boeing",
+            // PB-ext-5: ~1,177 jobs at last count. 60 × 20 = 1,200 posting cap.
+            maxPages: 60,
         },
     },
     {
@@ -124,6 +126,8 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
             tenantHost: "blueorigin.wd5.myworkdayjobs.com",
             careerSite: "BlueOrigin",
             companyName: "Blue Origin",
+            // PB-ext-5: ~957 jobs at last count.
+            maxPages: 50,
         },
     },
 

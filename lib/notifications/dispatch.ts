@@ -35,6 +35,24 @@ export interface DispatchInput {
     payload?: Record<string, unknown>;
     /** Override the default channel set for this tier. Leave undefined to use the default. */
     channels?: string;
+    /**
+     * PB-8: at-most-once delivery key. When non-null and the same key was
+     * already used, the create races on Notification.dedupKey @unique → P2002
+     * → this function returns null (no row created, no email sent). Pattern
+     * the key as `${kind}:${targetId}:${type}:${YYYY-MM-DD-UTC}` for daily
+     * cadence; finer-grained scopes work too.
+     */
+    dedupKey?: string | null;
+}
+
+/**
+ * Stable UTC `YYYY-MM-DD` bucket used by the standard cooldown callers
+ * (stale-applications, deadline-nudges, posting-digest). Exported so callers
+ * compose dedupKeys consistently — using server-local time would shift the
+ * bucket boundary on DST changes and re-fire nudges within a single day.
+ */
+export function utcDateBucket(d: Date = new Date()): string {
+    return d.toISOString().slice(0, 10);
 }
 
 /** Default channel set per tier. Keep in sync with the tier docstring above. */
@@ -48,21 +66,37 @@ function defaultChannelsForTier(tier: NotificationTier): string {
 
 /**
  * Create a Notification + fire any side-channels the tier warrants.
- * Always returns the row (even if the email dispatch had to swallow an error).
+ *
+ * Returns the created row, or NULL when a passed `dedupKey` collided with a
+ * prior dispatch (PB-8 — race-safe at-most-once). Callers that pass dedupKey
+ * MUST handle the null case. Callers that omit dedupKey can rely on a
+ * non-null return.
  */
-export async function dispatchNotification(input: DispatchInput): Promise<Notification> {
+export async function dispatchNotification(input: DispatchInput): Promise<Notification | null> {
     const channels = input.channels ?? defaultChannelsForTier(input.tier);
-    const row = await prisma.notification.create({
-        data: {
-            userId: input.userId,
-            kind: input.kind,
-            tier: input.tier,
-            title: input.title,
-            body: input.body ?? null,
-            payload: JSON.stringify(input.payload ?? {}),
-            channels,
-        },
-    });
+    let row: Notification;
+    try {
+        row = await prisma.notification.create({
+            data: {
+                userId: input.userId,
+                kind: input.kind,
+                tier: input.tier,
+                title: input.title,
+                body: input.body ?? null,
+                payload: JSON.stringify(input.payload ?? {}),
+                channels,
+                dedupKey: input.dedupKey ?? null,
+            },
+        });
+    } catch (e: any) {
+        // PB-8: dedupKey collision. Silently no-op so concurrent callers
+        // converge on a single delivery. The losing caller never sends the
+        // email because the row was never created here.
+        if (e?.code === "P2002" && input.dedupKey) {
+            return null;
+        }
+        throw e;
+    }
 
     if (channels.split(",").map(c => c.trim()).includes("email")) {
         // Lazy import to avoid pulling googleapis into bundles that don't

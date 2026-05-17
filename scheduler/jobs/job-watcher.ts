@@ -23,6 +23,7 @@ import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
 import { fetchWorkday } from "@/lib/fetchers/workday-fetcher";
 import { fetchLinkedin } from "@/lib/fetchers/linkedin-fetcher";
 import { WatchlistConfigSchema } from "@/lib/schemas/watchlists";
+import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
 import { broadcastEvent } from "@/lib/events";
 import { dispatchNotification } from "@/lib/notifications/dispatch";
 
@@ -75,8 +76,10 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
 
     let config: ReturnType<typeof WatchlistConfigSchema.parse>;
     try {
-        const parsed = JSON.parse(watchlist.config);
-        config = WatchlistConfigSchema.parse(parsed);
+        // PB-14: hydrate from COMPANY_DIRECTORY when directoryKey is set, so
+        // slug corrections in lib/company-directory.ts apply at next crawl
+        // without re-creating the row.
+        config = hydrateWatchlistConfig({ config: watchlist.config, directoryKey: watchlist.directoryKey });
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         await prisma.watchlist.update({
@@ -87,13 +90,24 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     }
 
     if (config.kind !== watchlist.kind) {
-        // Defensive — schema migration could leave them out of sync
-        const msg = `kind mismatch (row=${watchlist.kind}, config=${config.kind})`;
-        await prisma.watchlist.update({
-            where: { id: watchlistId },
-            data: { lastRunAt: new Date(), lastError: msg },
-        });
-        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: msg };
+        if (watchlist.directoryKey) {
+            // PB-14: directory entry switched ATS since this row was created.
+            // Trust the directory — silently update the row's `kind` so future
+            // GETs / cross-checks see the live value.
+            await prisma.watchlist.update({
+                where: { id: watchlistId },
+                data: { kind: config.kind },
+            });
+        } else {
+            // No directory backing — defensive bail. Schema migration or
+            // hand-edited config could leave them out of sync.
+            const msg = `kind mismatch (row=${watchlist.kind}, config=${config.kind})`;
+            await prisma.watchlist.update({
+                where: { id: watchlistId },
+                data: { lastRunAt: new Date(), lastError: msg },
+            });
+            return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: msg };
+        }
     }
 
     const fetchResult = await (() => {
@@ -164,6 +178,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                     location: raw.location,
                     snippet: raw.snippet,
                     sourceUrl: raw.sourceUrl,
+                    employmentType: raw.employmentType ?? null,
                     status: "new",
                     firstSeenAt: runAt,
                     lastSeenAt: runAt,
@@ -195,6 +210,8 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                     title: `${raw.company} — ${raw.title}`,
                     body: raw.location ?? null,
                     payload: { postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl },
+                    // PB-8: one notification per posting, ever.
+                    dedupKey: `posting:${created.id}`,
                 });
             } catch (e) {
                 console.warn(`[job-watcher] dispatchNotification failed for posting ${created.id}:`, e);
@@ -227,6 +244,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         if (closed > 0) {
             // Standard tier — important enough to flag in the bell, but no
             // email blast. The user will see it next time they open MC.
+            // PB-8: dedup on watchlist + day so a flapping source can't spam.
             await dispatchNotification({
                 userId: watchlist.userId,
                 tier: "standard",
@@ -234,6 +252,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 title: `${watchlist.name} — ${closed} ${closed === 1 ? "posting" : "postings"} closed`,
                 body: "Removed from the source feed for more than 6 hours.",
                 payload: { watchlistId, closed },
+                dedupKey: `watchlist-closures:${watchlistId}:${runAt.toISOString().slice(0, 10)}`,
             }).catch(e => console.warn(`[job-watcher] closure-summary dispatch failed:`, e));
         }
     }

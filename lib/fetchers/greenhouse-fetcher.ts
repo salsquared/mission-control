@@ -11,6 +11,7 @@
 import { z } from "zod";
 import type { GreenhouseConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
+import { inferEmploymentTypeFromTitle } from "./employment-type";
 
 type GreenhouseConfig = z.infer<typeof GreenhouseConfigSchema>;
 
@@ -69,6 +70,9 @@ export async function fetchGreenhouse(config: GreenhouseConfig): Promise<Fetcher
         sourceUrl: j.absolute_url,
         location: j.location?.name ?? null,
         snippet: j.departments?.map(d => d.name).join(", ") ?? null,
+        // Greenhouse board API doesn't expose employment type — title-keyword
+        // inference is the best we can do without per-job lookups.
+        employmentType: inferEmploymentTypeFromTitle(j.title),
     }));
 
     return { ok: true, postings };

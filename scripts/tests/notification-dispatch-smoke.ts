@@ -24,15 +24,23 @@ async function main() {
     const createdIds: string[] = [];
 
     try {
+        // PB-8: dispatchNotification now returns `Notification | null` to
+        // signal a dedupKey collision. None of these test calls pass a
+        // dedupKey, so non-null is guaranteed — assert it loudly so a future
+        // regression that flips the return for non-dedup paths gets caught.
+        function expectRow<T>(name: string, row: T | null): T {
+            if (!row) { fail(`${name}: dispatch returned null without dedupKey`); process.exit(1); }
+            return row;
+        }
         // ─── critical → channels='in_app,email' ─────────────────────────────
-        const critical = await dispatchNotification({
+        const critical = expectRow("critical", await dispatchNotification({
             userId: user.id,
             tier: "critical",
             kind: "application",
             title: "[dispatch smoke] critical",
             body: "tier=critical, kind=application",
             payload: { test: true },
-        });
+        }));
         createdIds.push(critical.id);
         if (critical.tier !== "critical") fail(`critical: tier wrong (${critical.tier})`);
         else pass("critical: row.tier='critical'");
@@ -42,13 +50,13 @@ async function main() {
         else pass("critical: row.kind preserved");
 
         // ─── standard → in_app only ─────────────────────────────────────────
-        const standard = await dispatchNotification({
+        const standard = expectRow("standard", await dispatchNotification({
             userId: user.id,
             tier: "standard",
             kind: "system",
             title: "[dispatch smoke] standard",
             payload: { test: true },
-        });
+        }));
         createdIds.push(standard.id);
         if (standard.tier !== "standard") fail(`standard: tier wrong`);
         else pass("standard: row.tier='standard'");
@@ -56,13 +64,13 @@ async function main() {
         else pass("standard: row.channels='in_app' (default for tier)");
 
         // ─── low → in_app only ──────────────────────────────────────────────
-        const low = await dispatchNotification({
+        const low = expectRow("low", await dispatchNotification({
             userId: user.id,
             tier: "low",
             kind: "posting",
             title: "[dispatch smoke] low",
             payload: { test: true },
-        });
+        }));
         createdIds.push(low.id);
         if (low.tier !== "low") fail(`low: tier wrong`);
         else pass("low: row.tier='low'");
@@ -70,14 +78,14 @@ async function main() {
         else pass("low: row.channels='in_app' (default for tier)");
 
         // ─── channels override wins over tier default ───────────────────────
-        const overridden = await dispatchNotification({
+        const overridden = expectRow("override", await dispatchNotification({
             userId: user.id,
             tier: "low",
             kind: "system",
             title: "[dispatch smoke] override",
             payload: { test: true },
             channels: "in_app,email", // explicit override even though tier='low'
-        });
+        }));
         createdIds.push(overridden.id);
         if (overridden.channels !== "in_app,email") fail("override: channels not respected");
         else pass("override: caller's `channels` overrides tier default");

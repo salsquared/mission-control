@@ -38,7 +38,9 @@ export interface ApplicationEventDraft {
 // (Story 27.) Things the user MUST see: interviews getting scheduled, offers,
 // rejections, assessments coming in. Skip the noisy/self-initiated kinds
 // (APPLIED, STATUS_CHANGED, EMAIL_RECEIVED, NOTE).
-const NOTIFY_EVENT_KINDS = new Set([
+// Exported (PB-5) so ingest.ts can check whether an event needed notifying
+// before deciding if a re-run can early-exit.
+export const NOTIFY_EVENT_KINDS = new Set([
     "INTERVIEW_SCHEDULED",
     "OFFER",
     "REJECTION",
@@ -78,6 +80,11 @@ export async function maybeNotifyForApplicationEvent(
                 eventId: event.id,
                 eventKind: event.kind,
             },
+            // PB-8: one notification per event, ever. Combined with the PB-5
+            // notifiedAt checkpoint this gives true at-most-once semantics —
+            // even if ingest re-runs after a crash AND PB-5's checkpoint had
+            // not been stamped, the @unique catches it.
+            dedupKey: `event:${event.id}`,
         });
     } catch (e) {
         console.warn(`[applicationEvents] dispatchNotification failed for event ${event.id}:`, e);

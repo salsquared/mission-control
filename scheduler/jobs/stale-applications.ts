@@ -15,7 +15,7 @@
  * doesn't trigger an email (it'd be too noisy weekly).
  */
 import { prisma } from "@/lib/prisma";
-import { dispatchNotification } from "@/lib/notifications/dispatch";
+import { dispatchNotification, utcDateBucket } from "@/lib/notifications/dispatch";
 
 const STALE_AFTER_DAYS = 14;
 const NUDGE_COOLDOWN_DAYS = 7;
@@ -83,7 +83,9 @@ export async function runStaleApplicationNudges(): Promise<StaleNudgeRunResult> 
         const roleLabel = app.role ? `${app.role} at ${app.company}` : app.company;
 
         try {
-            await dispatchNotification({
+            // PB-8: dedupKey races concurrent scheduler ticks on the same app
+            // within the same UTC day → at-most-once nudge per day.
+            const result = await dispatchNotification({
                 userId: app.userId,
                 tier: "standard",
                 kind: "application",
@@ -94,8 +96,10 @@ export async function runStaleApplicationNudges(): Promise<StaleNudgeRunResult> 
                     type: "stale-nudge",
                     daysSinceUpdate,
                 },
+                dedupKey: `stale-nudge:${app.id}:${utcDateBucket()}`,
             });
-            nudged++;
+            if (result) nudged++;
+            else skippedCooldown++; // P2002 from a concurrent tick — count as cooldown for telemetry parity
         } catch (e) {
             console.warn(`[stale-applications] dispatch failed for ${app.id}:`, e);
         }

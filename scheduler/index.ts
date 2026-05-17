@@ -11,6 +11,7 @@ import { runGithubMetrics } from './jobs/github-metrics';
 import { runStaleApplicationNudges } from './jobs/stale-applications';
 import { runDeadlineNudges } from './jobs/deadline-nudges';
 import { runPostingDigest } from './jobs/posting-digest';
+import { runWebhookDeliveryPrune } from './jobs/webhook-delivery-prune';
 
 interface IntervalJob {
     name: string;
@@ -76,6 +77,16 @@ const JOBS: IntervalJob[] = [
             const r = await runPostingDigest();
             if (r.processed > 0) {
                 console.info(`[posting-digest] processed ${r.processed} digest watchlists — ${r.summarized} summarized, ${r.totalPostings} postings rolled up`);
+            }
+        },
+    },
+    {
+        name: 'webhook-delivery-prune',
+        intervalMs: 24 * 60 * 60 * 1000, // daily — PA-2 retention sweep
+        run: async () => {
+            const r = await runWebhookDeliveryPrune();
+            if (r.deleted > 0) {
+                console.info(`[webhook-delivery-prune] deleted ${r.deleted} rows older than ${r.cutoff.toISOString()}`);
             }
         },
     },

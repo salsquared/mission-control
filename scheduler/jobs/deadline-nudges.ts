@@ -16,7 +16,7 @@
  * about to miss a deadline — worth flagging strongly).
  */
 import { prisma } from "@/lib/prisma";
-import { dispatchNotification } from "@/lib/notifications/dispatch";
+import { dispatchNotification, utcDateBucket } from "@/lib/notifications/dispatch";
 
 const DEADLINE_WINDOW_DAYS = 3;
 const NUDGE_COOLDOWN_DAYS = 2;
@@ -94,7 +94,7 @@ export async function runDeadlineNudges(): Promise<DeadlineNudgeRunResult> {
         }
 
         try {
-            await dispatchNotification({
+            const result = await dispatchNotification({
                 userId: app.userId,
                 tier: "standard",
                 kind: "application",
@@ -106,8 +106,10 @@ export async function runDeadlineNudges(): Promise<DeadlineNudgeRunResult> {
                     decisionDeadline: app.decisionDeadline.toISOString(),
                     daysUntil,
                 },
+                dedupKey: `deadline:${app.id}:${utcDateBucket()}`,
             });
-            nudged++;
+            if (result) nudged++;
+            else skippedCooldown++;
         } catch (e) {
             console.warn(`[deadline-nudges] dispatch failed for ${app.id}:`, e);
         }

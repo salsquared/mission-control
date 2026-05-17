@@ -55,6 +55,12 @@ export const WorkdayConfigSchema = z.object({
     // segment after the host on the public careers page.
     careerSite: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
     companyName: z.string().min(1),
+    // PB-ext-5: optional override of the per-crawl page cap. Defaults to 10
+    // (200 postings) — fine for most tenants. Boeing has ~1,177 jobs and
+    // Blue Origin ~957, so directory entries for those bump to 60 (= 1,200
+    // posting cap, room for growth). Bounded [1, 200] so a typo can't
+    // schedule a thousand HTTP round-trips per tick.
+    maxPages: z.number().int().min(1).max(200).optional(),
 });
 
 export const LinkedinConfigSchema = z.object({
@@ -106,6 +112,10 @@ export const WatchlistSchema = z.object({
     name: z.string(),
     kind: WatchlistKindSchema,
     config: WatchlistConfigSchema,
+    // PB-14: when non-null, names a COMPANY_DIRECTORY entry. The config field
+    // is hydrated from that entry at read time. Wire reads only — clients
+    // don't write to this field directly; they pass it on POST.
+    directoryKey: z.string().nullable(),
     negativeFilters: z.array(z.string()).default([]),
     notificationMode: WatchlistNotificationModeSchema.default("each"),
     lastDigestAt: z.string().datetime().nullable(),
@@ -123,6 +133,12 @@ export type WatchlistWire = z.infer<typeof WatchlistSchema>;
 export const JOB_POSTING_STATUSES = ["new", "tracked", "hidden", "closed"] as const;
 export const JobPostingStatusSchema = z.enum(JOB_POSTING_STATUSES);
 
+// PB-15: small fixed enum kept in sync with lib/fetchers/employment-type.ts.
+// Don't import from there to keep this schema independently parseable on the
+// client (the helper module pulls in fetcher-only deps transitively).
+export const EMPLOYMENT_TYPE_VALUES = ["full-time", "part-time", "internship", "contract", "temporary"] as const;
+export const EmploymentTypeSchema = z.enum(EMPLOYMENT_TYPE_VALUES);
+
 export const JobPostingSchema = z.object({
     id: z.string(),
     watchlistId: z.string(),
@@ -133,6 +149,7 @@ export const JobPostingSchema = z.object({
     postedAt: z.string().datetime().nullable(),
     snippet: z.string().nullable(),
     sourceUrl: z.string(),
+    employmentType: EmploymentTypeSchema.nullable(),
     status: JobPostingStatusSchema,
     firstSeenAt: z.string().datetime(),
     lastSeenAt: z.string().datetime(),
@@ -153,6 +170,13 @@ export const WatchlistPostSchema = z.object({
     // structured ATSes do. UI exposes this as an hours-stepper.
     scheduleMinutes: z.number().int().positive().default(240),
     notificationMode: WatchlistNotificationModeSchema.default("each"),
+    // PB-14: when the row originates from the "Watch company" picker, the
+    // client passes the directory entry's `name`. Server hydrates `config`
+    // from that entry on every read so directory edits propagate to existing
+    // rows. Omit for the "Find roles" / "Advanced" tabs. Bounded length is
+    // defense-in-depth: an unmatched key gets normalized to null on resolve,
+    // but we still don't want to persist arbitrarily-large strings.
+    directoryKey: z.string().min(1).max(100).nullable().optional(),
 });
 
 export const WatchlistPatchSchema = z.object({

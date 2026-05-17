@@ -1,7 +1,9 @@
 import type { gmail_v1 } from "googleapis";
+import { prisma } from "@/lib/prisma";
 import { parseApplicationEmail, type ParsedApplicationEmail } from "@/lib/email-parser";
 import { broadcastEvent } from "@/lib/events";
 import { looksRelevant } from "@/lib/applications/relevance";
+import { normalizeCompanyName } from "@/lib/applications/normalize-company";
 import {
     findApplicationByCompany,
     createApplication,
@@ -10,6 +12,7 @@ import {
 import {
     createApplicationEvents,
     maybeNotifyForApplicationEvent,
+    NOTIFY_EVENT_KINDS,
     type ApplicationEventDraft,
 } from "@/lib/repositories/applicationEvents";
 import { syncEventToGcal } from "@/lib/calendar/sync";
@@ -81,10 +84,31 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         return { action: "skipped", reason: "low_confidence" };
     }
 
+    // PB-1: normalize before the lookup AND before the persist so both halves
+    // of the dedup comparison are on the same footing. Drops "Inc"/"Corp"/etc
+    // suffixes, leading "The ", NFKC-normalizes, collapses whitespace.
+    parsed.company = normalizeCompanyName(parsed.company);
+    if (!parsed.company) {
+        return { action: "skipped", reason: "low_confidence" };
+    }
+
     const existingApp = await findApplicationByCompany(userId, parsed.company);
 
+    // PB-5: only early-skip when (a) we've seen this msg AND (b) every event
+    // we created from it has fully committed its side-effects (notifiedAt for
+    // notifiable kinds; gcalSyncedAt for future-scheduled events). A bare
+    // `lastEmailMsgId === msgId` check would skip even when a prior run
+    // crashed mid-pipeline, permanently losing the notification or Gcal mirror.
     if (existingApp && existingApp.lastEmailMsgId === msgId) {
-        return { action: "skipped", reason: "duplicate" };
+        const priorEvents = await prisma.applicationEvent.findMany({
+            where: { applicationId: existingApp.id, emailMsgId: msgId },
+        });
+        if (priorEvents.length > 0 && priorEvents.every(eventFullyCommitted)) {
+            return { action: "skipped", reason: "duplicate" };
+        }
+        // Else fall through — the pipeline below is idempotent on events
+        // (via @@unique([applicationId, emailMsgId, kind])) and on side-effects
+        // (per-event checkpoints), so re-running fills in the gaps.
     }
 
     let appId: string;
@@ -103,19 +127,45 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         appId = existingApp.id;
         action = "updated";
     } else {
-        const newApp = await createApplication({
-            userId,
-            company: parsed.company,
-            role: parsed.role || "Unknown",
-            status: parsed.status,
-            kind: parsed.kind,
-            nextSteps: parsed.nextSteps ?? null,
-            dateApplied: sentAt,
-            lastEmailMsgId: msgId,
-            lastUpdateAt: new Date(),
-        });
-        appId = newApp.id;
-        action = "created";
+        // PA-3: concurrent webhook + manual scan can both find no existing
+        // row and both try createApplication. The @@unique([userId,
+        // normalizedCompany]) makes one of them throw P2002 — catch and
+        // recover by re-reading + updating, just as if `existingApp` had
+        // been found on the first pass.
+        try {
+            const newApp = await createApplication({
+                userId,
+                company: parsed.company,
+                role: parsed.role || "Unknown",
+                status: parsed.status,
+                kind: parsed.kind,
+                nextSteps: parsed.nextSteps ?? null,
+                dateApplied: sentAt,
+                lastEmailMsgId: msgId,
+                lastUpdateAt: new Date(),
+            });
+            appId = newApp.id;
+            action = "created";
+        } catch (err: any) {
+            if (err?.code !== "P2002") throw err;
+            const raced = await findApplicationByCompany(userId, parsed.company);
+            if (!raced) {
+                // The conflict came from somewhere else (different unique
+                // constraint, transient state). Surface so we don't silently
+                // lose the email.
+                return { action: "errored", reason: `P2002 on createApplication but follow-up find returned null` };
+            }
+            await updateApplication(raced.id, {
+                status: parsed.status,
+                kind: parsed.kind ?? raced.kind,
+                nextSteps: parsed.nextSteps ?? null,
+                role: parsed.role || raced.role,
+                lastEmailMsgId: msgId,
+                lastUpdateAt: new Date(),
+            });
+            appId = raced.id;
+            action = "updated";
+        }
     }
 
     const eventDrafts = buildEventDrafts({
@@ -127,33 +177,76 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         action,
         previousStatus,
     });
-    const insertedEvents = await createApplicationEvents(eventDrafts);
+    await createApplicationEvents(eventDrafts);
+
+    // PB-5: re-fetch ALL events for this (appId, msgId) — not just the rows
+    // newly inserted by this run. Side-effects need to fire for any event
+    // whose checkpoint is still null, regardless of whether THIS run created
+    // it or a previous (crashed) run did.
+    const allEventsForMsg = await prisma.applicationEvent.findMany({
+        where: { applicationId: appId, emailMsgId: msgId },
+    });
 
     // Fire in-app notifications for attention-worthy kinds (MB-3.1, story 27).
-    // Best-effort — helper swallows individual failures.
-    for (const ev of insertedEvents) {
-        await maybeNotifyForApplicationEvent(ev, userId, parsed.company);
+    // Best-effort — failure leaves notifiedAt null so the next ingest of this
+    // msg picks it back up.
+    for (const ev of allEventsForMsg) {
+        if (!NOTIFY_EVENT_KINDS.has(ev.kind)) continue;
+        if (ev.notifiedAt) continue; // already stamped on a prior run
+        try {
+            await maybeNotifyForApplicationEvent(ev, userId, parsed.company);
+            await prisma.applicationEvent.update({
+                where: { id: ev.id },
+                data: { notifiedAt: new Date() },
+            });
+        } catch (e) {
+            console.warn(`[ingest] notify side-effect failed for event ${ev.id} — will retry next ingest:`, e);
+        }
     }
 
     // Mirror future-dated events to Gcal. We skip past events because backfill
     // commonly walks 6 months of history — no point creating yesterday's
-    // interview on the user's calendar. Sync is best-effort and won't block
-    // ingest if Gcal is unreachable.
+    // interview on the user's calendar.
     const now = Date.now();
-    for (const ev of insertedEvents) {
+    for (const ev of allEventsForMsg) {
         if (!ev.scheduledAt) continue;
         if (ev.scheduledAt.getTime() < now) continue;
-        await syncEventToGcal(userId, ev, { company: parsed.company, role: parsed.role ?? null });
+        if (ev.gcalSyncedAt) continue; // already mirrored
+        try {
+            await syncEventToGcal(userId, ev, { company: parsed.company, role: parsed.role ?? null });
+            await prisma.applicationEvent.update({
+                where: { id: ev.id },
+                data: { gcalSyncedAt: new Date() },
+            });
+        } catch (e) {
+            console.warn(`[ingest] gcal sync failed for event ${ev.id} — will retry next ingest:`, e);
+        }
     }
 
     if (broadcast) {
         broadcastEvent({ model: "Application", action: "upsert", id: appId, timestamp: Date.now() });
-        if (insertedEvents.length > 0) {
+        if (allEventsForMsg.length > 0) {
             broadcastEvent({ model: "CalendarEvent", action: "invalidate", timestamp: Date.now() });
         }
     }
 
     return action === "created" ? { action: "created", appId } : { action: "updated", appId };
+}
+
+/**
+ * PB-5: an event is "fully committed" when every applicable side-effect has
+ * its checkpoint stamped. Used by the early-skip in the main pipeline.
+ */
+function eventFullyCommitted(ev: {
+    kind: string;
+    scheduledAt: Date | null;
+    notifiedAt: Date | null;
+    gcalSyncedAt: Date | null;
+}): boolean {
+    const notifyOk = !NOTIFY_EVENT_KINDS.has(ev.kind) || ev.notifiedAt !== null;
+    const needsGcal = ev.scheduledAt !== null && ev.scheduledAt.getTime() >= Date.now();
+    const gcalOk = !needsGcal || ev.gcalSyncedAt !== null;
+    return notifyOk && gcalOk;
 }
 
 /**

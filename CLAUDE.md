@@ -76,13 +76,30 @@ Wrap any route that hits an external API (or does expensive work) in `withCache`
 
 Anything that reads/sends Gmail or writes Calendar events depends on these scopes. Adding a new Google scope requires bumping the `scope` string in `authOptions` and re-consenting.
 
+### Gmail webhook + ingest
+
+`app/api/gmail/webhook/route.ts` is OIDC-verified (Google Pub/Sub → service-account JWT, checked by `verifyPubSubOIDC`). The first action on every envelope is `INSERT OR IGNORE` on `WebhookDelivery(messageId)` — P2002 → 200 + `deduped: true` (no history.list call, no ingest run). Then resumes from `min(user.lastSyncedHistoryId, envelope.historyId)`, processes each `messagesAdded` in a per-msg try/catch so one bad email can't abort the batch, and advances `lastSyncedHistoryId` on success.
+
+`lib/applications/ingest.ts:ingestGmailMessage` is idempotent on both events (via `@@unique([applicationId, emailMsgId, kind])`) and side-effects (per-event `notifiedAt` / `gcalSyncedAt` checkpoints). On retry it re-fetches all events for `(applicationId, msgId)` and re-fires notify/gcal only for events whose checkpoint is null. Early `skipped: duplicate` only when every event for the msg is fully checkpointed.
+
+### Gemini rate limiting
+
+`lib/ai/rate-limit.ts:acquireGeminiSlot()` is a process-shared token bucket gating every Gemini API call. Defaults: 12 req/min, burst cap 60. Tunable via `GEMINI_RATE_PER_MIN` / `GEMINI_RATE_BURST` env vars. Both `lib/email-parser.ts:parseApplicationEmail` and `lib/ai/gemini.ts:chatJSON` await it before each attempt — retries pay the rate cost too. New Gemini callers MUST go through one of those two helpers, never call the SDK directly without `await acquireGeminiSlot()`.
+
 ### Prisma + dual SQLite databases
 
 `lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (so it lands in the in-app log viewer). The client is cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by which `.env.{development,production}` Next.js picks up. When debugging prod data issues, point at `prisma/prod.db` explicitly.
 
 When invoking a `tsx` script against the dev DB (e.g. `scripts/tests/*.ts`), pass `DATABASE_URL="file:./dev.db"` — **not** `file:./prisma/dev.db`. Prisma resolves a relative `file:` URL from the schema's directory (`prisma/`), so `file:./prisma/dev.db` silently creates a phantom `prisma/prisma/dev.db` and you'll get empty-DB results.
 
-Schema highlights: standard NextAuth tables (`Account`/`Session`/`User`/`VerificationToken`), `Application` + `ApplicationEvent` (job tracker), `Task` (DB-native, see below), `LifeGoal`, `SavedPaper` + weekly selection tables (`SelectedHistoricalPaper`, `SelectedReviewPaper`), `GlobalSetting` (single row keyed `id="global"`).
+Schema highlights: standard NextAuth tables (`Account`/`Session`/`User`/`VerificationToken`), `Application` + `ApplicationEvent` (job tracker), `Task` (DB-native, see below), `LifeGoal`, `SavedPaper` + weekly selection tables (`SelectedHistoricalPaper`, `SelectedReviewPaper`), `GlobalSetting` (single row keyed `id="global"`), `Watchlist` + `JobPosting` (discovery feed), `Notification` (in-app bell + email dispatcher), `WebhookDelivery` (Pub/Sub messageId dedup), `GeneratedResume`.
+
+Race-safety + dedup invariants baked into the schema (don't paper over by bypassing):
+- `Application.normalizedCompany` + `@@unique([userId, normalizedCompany])` — concurrent `createApplication` for the same employer throws P2002; `lib/applications/ingest.ts` catches and falls through to update. Use `normalizeCompanyName` from `lib/applications/normalize-company.ts` for any new comparison path.
+- `ApplicationEvent.notifiedAt` + `gcalSyncedAt` — per-event checkpoints. Ingest re-fires side-effects only for events whose checkpoint is still null. Don't short-circuit ingest on `lastEmailMsgId === msgId` alone.
+- `Notification.dedupKey String? @unique` — `dispatchNotification` returns `Notification | null`; callers passing dedupKey MUST handle null. Use `utcDateBucket()` from `lib/notifications/dispatch.ts` for date buckets, never `new Date().toLocaleDateString()`.
+- `Watchlist.directoryKey` — when set, `config` is hydrated from `COMPANY_DIRECTORY` at read time via `lib/watchlists/hydrate.ts`. Manual PATCH to `config` clears the key so user overrides stick.
+- `WebhookDelivery(messageId @id)` — Gmail webhook's first action is `INSERT OR IGNORE` on the envelope messageId; P2002 = redelivery → return 200 immediately. Daily prune at 30 days.
 
 ### Task system: DB + UI only
 

@@ -11,6 +11,7 @@ import * as cheerio from "cheerio";
 import type { CareersPageConfigSchema } from "@/lib/schemas/watchlists";
 import { z } from "zod";
 import { assertExternalHttpUrl, assertSafeResponseUrl, UnsafeURLError } from "@/lib/security/url-guard";
+import { inferEmploymentTypeFromTitle } from "./employment-type";
 
 type CareersPageConfig = z.infer<typeof CareersPageConfigSchema>;
 
@@ -20,6 +21,10 @@ export interface RawPosting {
     sourceUrl: string;
     location: string | null;
     snippet: string | null;
+    // PB-15: normalized employment type for the new-postings filter UI.
+    // Fetchers populate from the ATS payload when available, else infer from
+    // the title. Null when neither source had a signal.
+    employmentType?: import("./employment-type").EmploymentType | null;
 }
 
 export type FetcherResult =
@@ -124,6 +129,7 @@ export async function fetchCareersPage(config: CareersPageConfig): Promise<Fetch
             sourceUrl: resolved,
             location,
             snippet: null,
+            employmentType: inferEmploymentTypeFromTitle(title),
         });
     });
 

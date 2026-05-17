@@ -62,7 +62,14 @@ export async function POST(_req: NextRequest) {
             body: "If you're reading this in your inbox, the Gmail OAuth send pipeline is wired correctly. Generated at " + new Date().toISOString() + ".",
             payload: { test: true, sentAt: new Date().toISOString() },
             channels: "in_app,email",
+            // No dedupKey — the test endpoint deliberately fires fresh each
+            // call (subject to the per-user rate limit above).
         });
+        if (!created) {
+            // Defensive: only reachable if a dedupKey collision occurred, but
+            // we didn't pass one. Surface so the user gets a clean error.
+            return NextResponse.json({ error: "Dispatch returned null unexpectedly" }, { status: 500 });
+        }
 
         // Re-fetch to surface emailSentAt / emailError from the dispatch.
         const refreshed = await prisma.notification.findUnique({ where: { id: created.id } });

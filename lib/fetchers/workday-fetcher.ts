@@ -14,6 +14,7 @@
 import { z } from "zod";
 import type { WorkdayConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
+import { inferEmploymentTypeFromTitle } from "./employment-type";
 
 type WorkdayConfig = z.infer<typeof WorkdayConfigSchema>;
 
@@ -35,7 +36,10 @@ const FETCH_TIMEOUT_MS = 10_000;
 // Workday caps `limit` server-side at 20 — anything larger returns HTTP 400.
 // Found empirically against Boeing's tenant; confirmed against Blue Origin's.
 const PAGE_SIZE = 20;
-const MAX_PAGES = 10; // cap each crawl at 200 postings to keep the per-tick budget in check
+// PB-ext-5: default cap is 10 pages (200 postings). Per-watchlist override
+// via WorkdayConfigSchema.maxPages lets Boeing/Blue Origin opt into deeper
+// crawls (they have ~1,000+ jobs each). Bounded [1, 200] at schema layer.
+const DEFAULT_MAX_PAGES = 10;
 // Workday's Cloudflare layer 400s on identifiable bot User-Agents. Use a
 // real-browser UA — this is a personal-use crawler hitting public job boards,
 // not abuse.
@@ -61,9 +65,10 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
     const tenantSlug = tenantSlugFromHost(config.tenantHost);
     const endpoint = `https://${config.tenantHost}/wday/cxs/${tenantSlug}/${config.careerSite}/jobs`;
 
+    const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
     const out: RawPosting[] = [];
     try {
-        for (let page = 0; page < MAX_PAGES; page++) {
+        for (let page = 0; page < maxPages; page++) {
             // Per-page timeout — a single signal across the whole loop would
             // fire after the first ~10s regardless of which iteration we're on,
             // which limits us to 1-2 pages on a slow connection.
@@ -98,6 +103,9 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
                     sourceUrl: buildSourceUrl(config, j.externalPath),
                     location: j.locationsText ?? null,
                     snippet: j.remoteType ?? j.postedOn ?? null,
+                    // Workday doesn't expose employment type on the listing
+                    // endpoint — title heuristic is the cheapest fallback.
+                    employmentType: inferEmploymentTypeFromTitle(j.title),
                 });
             }
             // Stop early when we've drained the listing. We can ONLY trust

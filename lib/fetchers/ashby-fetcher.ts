@@ -7,6 +7,7 @@
 import { z } from "zod";
 import type { AshbyConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
+import { pickEmploymentType } from "./employment-type";
 
 type AshbyConfig = z.infer<typeof AshbyConfigSchema>;
 
@@ -63,6 +64,7 @@ export async function fetchAshby(config: AshbyConfig): Promise<FetcherResult> {
         sourceUrl: j.jobUrl,
         location: j.locationName ?? null,
         snippet: [j.departmentName, j.teamName, j.employmentType].filter(Boolean).join(" · ") || null,
+        employmentType: pickEmploymentType(j.employmentType, j.title),
     }));
 
     return { ok: true, postings };

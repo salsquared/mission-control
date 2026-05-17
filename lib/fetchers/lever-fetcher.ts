@@ -7,6 +7,7 @@
 import { z } from "zod";
 import type { LeverConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
+import { pickEmploymentType } from "./employment-type";
 
 type LeverConfig = z.infer<typeof LeverConfigSchema>;
 
@@ -71,6 +72,7 @@ export async function fetchLever(config: LeverConfig): Promise<FetcherResult> {
             snippet: [j.categories?.department, j.categories?.team, j.categories?.commitment]
                 .filter(Boolean)
                 .join(" · ") || null,
+            employmentType: pickEmploymentType(j.categories?.commitment, j.text as string),
         }));
 
     return { ok: true, postings };

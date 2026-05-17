@@ -171,6 +171,9 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 name: `${selectedDirEntry.name} — jobs`,
                 config: selectedDirEntry.config,
                 scheduleMinutes: scheduleHours * 60,
+                // PB-14: bind to the directory entry so future slug/ATS
+                // corrections in lib/company-directory.ts apply automatically.
+                directoryKey: selectedDirEntry.name,
             });
             toastStore.push({ message: `Watching ${selectedDirEntry.name}`, type: "info" });
             onCreated();

@@ -44,6 +44,16 @@ SUITES=(
     "scripts/tests/deadline-nudge-smoke.ts"
     "scripts/tests/find-app-by-company-smoke.ts"
     "scripts/tests/company-directory-smoke.ts"
+    "scripts/tests/watchlist-hydrate-smoke.ts"
+    "scripts/tests/employment-type-smoke.ts"
+    "scripts/tests/webhook-dedup-smoke.ts"
+    "scripts/tests/ingest-retry-smoke.ts"
+    "scripts/tests/normalize-company-smoke.ts"
+    "scripts/tests/notification-dedup-smoke.ts"
+    "scripts/tests/gcal-idempotency-smoke.ts"
+    "scripts/tests/webhook-prune-smoke.ts"
+    "scripts/tests/app-race-dedup-smoke.ts"
+    "scripts/tests/gemini-rate-limit-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

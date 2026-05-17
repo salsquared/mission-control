@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { WatchlistPatchSchema } from "@/lib/schemas/watchlists";
+import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
 
 export const runtime = "nodejs";
 
@@ -13,6 +14,7 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
 
 function serialize(w: {
     id: string; userId: string; name: string; kind: string; config: string;
+    directoryKey: string | null;
     negativeFilters: string | null;
     notificationMode: string;
     lastDigestAt: Date | null;
@@ -26,9 +28,19 @@ function serialize(w: {
             if (Array.isArray(arr)) parsedFilters = arr.filter((x): x is string => typeof x === "string");
         } catch { /* malformed legacy row — surface empty */ }
     }
+    let hydrated;
+    try {
+        hydrated = hydrateWatchlistConfig({ config: w.config, directoryKey: w.directoryKey });
+    } catch (e) {
+        console.warn(`[watchlists/${w.id} serialize] hydration failed:`, e instanceof Error ? e.message : e);
+        return null;
+    }
     return {
         ...w,
-        config: JSON.parse(w.config),
+        // PB-14: top-level `kind` mirrors hydrated config (see route.ts).
+        kind: hydrated.kind,
+        config: hydrated,
+        directoryKey: w.directoryKey,
         negativeFilters: parsedFilters,
         lastDigestAt: w.lastDigestAt?.toISOString() ?? null,
         lastRunAt: w.lastRunAt?.toISOString() ?? null,
@@ -65,6 +77,10 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             data.config = JSON.stringify(parsed.data.config);
             // Keep the denormalized kind column in sync with config.kind.
             data.kind = parsed.data.config.kind;
+            // PB-14: a manual config PATCH detaches the row from the directory.
+            // Otherwise the next read would re-hydrate from the directory and
+            // throw away the user's override.
+            data.directoryKey = null;
         }
         if (parsed.data.scheduleMinutes !== undefined) data.scheduleMinutes = parsed.data.scheduleMinutes;
         if (parsed.data.active !== undefined) data.active = parsed.data.active;
@@ -78,7 +94,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
         const row = await prisma.watchlist.update({ where: { id }, data });
         broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });
-        return NextResponse.json({ watchlist: serialize(row) }, { status: 200 });
+        const serialized = serialize(row);
+        if (!serialized) {
+            console.error(`[watchlists/${id} PATCH] serialize returned null after our own update`);
+            return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+        }
+        return NextResponse.json({ watchlist: serialized }, { status: 200 });
     } catch (e) {
         console.error(`[watchlists/${id} PATCH] error:`, e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });

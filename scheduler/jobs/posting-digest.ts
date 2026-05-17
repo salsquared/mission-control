@@ -82,7 +82,7 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
                 : "";
 
             try {
-                await dispatchNotification({
+                const result = await dispatchNotification({
                     userId: w.userId,
                     tier: "low",
                     kind: "posting",
@@ -94,10 +94,23 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
                         count: postings.length,
                         postingIds: postings.map(p => p.id),
                     },
+                    // PB-8: key on the BATCH watermark (maxIncluded) rather
+                    // than the calendar day. Two concurrent ticks of this job
+                    // computing the same maxIncluded race on the constraint —
+                    // exactly one wins. A LATER tick whose maxIncluded has
+                    // advanced (new postings arrived) gets a fresh key and
+                    // fires normally, preserving the "second cohort same day"
+                    // behavior the design intends.
+                    dedupKey: `posting-digest:${w.id}:${maxIncluded!.toISOString()}`,
                 });
+                // result === null means a concurrent dispatcher won the race;
+                // treat that the same as a successful dispatch for watermark
+                // purposes — the postings were "delivered" via the other tick.
                 dispatchedOk = true;
-                summarized++;
-                totalPostings += postings.length;
+                if (result) {
+                    summarized++;
+                    totalPostings += postings.length;
+                }
             } catch (e) {
                 console.warn(`[posting-digest] dispatch failed for watchlist ${w.id}:`, e);
             }

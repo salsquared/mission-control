@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import type { z } from "zod";
+import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
 
 // `gemini-flash-latest` is Google's alias that auto-tracks the latest stable
 // Flash model — Gemini 2.5 Flash today, Gemini 3.x Flash whenever Google promotes
@@ -89,8 +90,13 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
     const client = getClient();
     const model = opts.model ?? DEFAULT_MODEL;
 
-    const response = await withRetry(() =>
-        client.models.generateContent({
+    const response = await withRetry(async () => {
+        // PC-6: block on the token bucket BEFORE each attempt — retries
+        // shouldn't bypass the rate gate either. The bucket is process-shared
+        // with lib/email-parser.ts so resume gen + classifier compete fairly
+        // for the same Gemini free-tier quota.
+        await acquireGeminiSlot();
+        return client.models.generateContent({
             model,
             contents: opts.user,
             config: {
@@ -98,8 +104,8 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
                 temperature: opts.temperature ?? 0.4,
                 ...(opts.system ? { systemInstruction: opts.system } : {}),
             },
-        }),
-    ).catch((err: unknown) => {
+        });
+    }).catch((err: unknown) => {
         throw new AIError(`Gemini request failed: ${err instanceof Error ? err.message : String(err)}`, err, "request");
     });
 
