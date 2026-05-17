@@ -20,6 +20,35 @@ function fmtRelative(iso: string | null): string {
     return `${Math.floor(ms / 86400_000)}d ago`;
 }
 
+/**
+ * "next run in 3h 12m" — based on (lastRunAt + scheduleMinutes). Returns
+ * "queued — runs shortly" when the watchlist has never run yet (post-create
+ * auto-run is in flight, or the next scheduler tick will pick it up).
+ * Returns "due now" if we're past the scheduled moment but the scheduler
+ * hasn't caught up.
+ */
+function fmtNextRun(lastRunAtIso: string | null, scheduleMinutes: number): string {
+    if (!lastRunAtIso) return "queued — runs shortly";
+    const nextMs = new Date(lastRunAtIso).getTime() + scheduleMinutes * 60_000;
+    const dt = nextMs - Date.now();
+    if (dt <= 0) return "due now";
+    if (dt < 60_000) return "next run in <1m";
+    const totalMin = Math.floor(dt / 60_000);
+    if (totalMin < 60) return `next run in ${totalMin}m`;
+    const hours = Math.floor(totalMin / 60);
+    const minutes = totalMin % 60;
+    return minutes === 0
+        ? `next run in ${hours}h`
+        : `next run in ${hours}h ${minutes}m`;
+}
+
+function fmtSchedule(scheduleMinutes: number): string {
+    if (scheduleMinutes < 60) return `every ${scheduleMinutes}m`;
+    const hours = Math.floor(scheduleMinutes / 60);
+    const minutes = scheduleMinutes % 60;
+    return minutes === 0 ? `every ${hours}h` : `every ${hours}h ${minutes}m`;
+}
+
 export function WatchlistsCard() {
     const queryClient = useQueryClient();
     const [adding, setAdding] = useState(false);
@@ -115,7 +144,7 @@ export function WatchlistsCard() {
     }
 
     return (
-        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/5 p-4">
+        <div>
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                     <Eye className="w-4 h-4 text-cyan-300" />
@@ -157,7 +186,9 @@ export function WatchlistsCard() {
                                         </div>
                                         <div className="text-[11px] text-white/40 mt-0.5 flex items-center gap-3 flex-wrap">
                                             <span>last run {fmtRelative(w.lastRunAt)}</span>
-                                            <span>every {w.scheduleMinutes}m</span>
+                                            <span title={fmtSchedule(w.scheduleMinutes)}>
+                                                {fmtNextRun(w.lastRunAt, w.scheduleMinutes)}
+                                            </span>
                                             {w.lastError && (
                                                 <span className="flex items-center gap-1 text-red-300/80">
                                                     <AlertCircle className="w-3 h-3" />

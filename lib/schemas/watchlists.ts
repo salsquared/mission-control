@@ -141,7 +141,12 @@ export type JobPostingWire = z.infer<typeof JobPostingSchema>;
 export const WatchlistPostSchema = z.object({
     name: z.string().min(1),
     config: WatchlistConfigSchema,
-    scheduleMinutes: z.number().int().positive().default(30),
+    // 240 = 4 hours. Aggregator APIs (Greenhouse / Lever / Ashby / Workday)
+    // tolerate hourly polling, but real-world posting cadence is daily-ish for
+    // most employers — checking every 4h is plenty without burning quota, and
+    // LinkedIn's guest endpoint bot-detects more aggressively than the
+    // structured ATSes do. UI exposes this as an hours-stepper.
+    scheduleMinutes: z.number().int().positive().default(240),
     notificationMode: WatchlistNotificationModeSchema.default("each"),
 });
 

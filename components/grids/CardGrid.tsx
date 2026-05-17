@@ -18,14 +18,19 @@ interface CardGridProps {
     items: CardItem[];
     className?: string;
     layout?: "grid" | "masonry";
+    columns?: 2 | 3;
 }
 
-export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "grid" }) => {
+export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "grid", columns = 3 }) => {
     return (
         <div className={cn(
             layout === "grid"
-                ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-2 grid-flow-row-dense"
-                : "columns-1 md:columns-2 lg:columns-3 gap-4 p-2",
+                ? columns === 3
+                    ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-2 grid-flow-row-dense"
+                    : "grid grid-cols-1 md:grid-cols-2 gap-4 p-2 grid-flow-row-dense"
+                : columns === 3
+                    ? "columns-1 md:columns-2 lg:columns-3 gap-4 p-2"
+                    : "columns-1 md:columns-2 gap-4 p-2",
             className
         )}>
             {items.map((item) => (

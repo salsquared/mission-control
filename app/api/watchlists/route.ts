@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { WatchlistPostSchema } from "@/lib/schemas/watchlists";
+import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 
 export const runtime = "nodejs";
 
@@ -79,6 +80,16 @@ export async function POST(req: NextRequest) {
             },
         });
         broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });
+
+        // Kick off the first crawl in the background so the user gets postings
+        // within seconds instead of waiting up to scheduleMinutes for the next
+        // scheduler tick. Fire-and-forget — `runWatchlist` handles its own
+        // errors + persists lastRunAt / lastError + broadcasts Watchlist +
+        // Posting SSE events so the UI refreshes when it completes.
+        runWatchlist(row.id).catch((err) =>
+            console.warn(`[watchlists POST] initial runWatchlist failed for ${row.id}:`, err)
+        );
+
         return NextResponse.json({ watchlist: serialize(row) }, { status: 200 });
     } catch (e) {
         console.error("[watchlists POST] error:", e);

@@ -57,7 +57,7 @@ export function NewPostingsCard() {
     }
 
     return (
-        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/5 p-4">
+        <div>
             <div className="flex items-center justify-between mb-3">
                 <div className="flex items-center gap-2">
                     <Newspaper className="w-4 h-4 text-cyan-300" />

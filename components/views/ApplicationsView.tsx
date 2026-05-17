@@ -176,7 +176,7 @@ export const ApplicationsView: React.FC = () => {
         );
     };
 
-    const cards: CardItem[] = [
+    const pipelineCards: CardItem[] = [
         {
             id: "kanban",
             colSpan: 3,
@@ -272,6 +272,11 @@ export const ApplicationsView: React.FC = () => {
         }
     ];
 
+    const discoveryCards: CardItem[] = [
+        { id: "watchlists", content: <WatchlistsCard /> },
+        { id: "new-postings", content: <NewPostingsCard /> },
+    ];
+
     return (
         <Scrollbar className="w-full h-full pb-8">
             <Section title="Applications Pipeline" description="Auto-syncs via Gmail & Pub/Sub API">
@@ -293,15 +298,14 @@ export const ApplicationsView: React.FC = () => {
                     </div>
                 ) : (
                     <div className="mt-4">
-                        <CardGrid items={cards} />
+                        <CardGrid items={pipelineCards} />
                     </div>
                 )}
             </Section>
             {session && (
                 <Section title="Job Discovery" description="Watchlists + new postings — crawled by the scheduler every 10 minutes">
-                    <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-3">
-                        <WatchlistsCard />
-                        <NewPostingsCard />
+                    <div className="mt-4">
+                        <CardGrid items={discoveryCards} columns={2} />
                     </div>
                 </Section>
             )}
