@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from "react";
 import { Trophy, ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
 import { ReloadButton } from "../ui/ReloadButton";
+import { Card } from "../ui/Card";
 
 export interface LLMModelInfo {
     id: string;
@@ -71,19 +72,15 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
     };
 
     return (
-        <div className="flex flex-col flex-1 h-full w-full relative">
-            <div className="flex items-center justify-between gap-4 mb-4">
-                <div className="flex items-center gap-2 text-indigo-400">
-                    <Trophy className="w-4 h-4 shrink-0" />
-                    <span className="text-xs uppercase tracking-wider font-bold">Chatbot Arena Leaderboard (LMSYS)</span>
-                </div>
-                {onRefresh && (
-                    <ReloadButton onReload={onRefresh} />
-                )}
-            </div>
-
+        <Card
+            title="Chatbot Arena Leaderboard (LMSYS)"
+            icon={Trophy}
+            iconColorClass="text-indigo-400"
+            wrapperClassName="relative"
+            action={onRefresh ? <ReloadButton onReload={onRefresh} /> : undefined}
+        >
             {categories && categories.length > 0 && onCategoryChange && (
-                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 pb-scroll">
+                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 pb-scroll shrink-0">
                     {categories.map((cat) => (
                         <button
                             key={cat.id}
@@ -99,7 +96,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                 </div>
             )}
 
-            <div className="flex items-center justify-between gap-4 px-3 pb-2 text-xs font-medium text-white/50 uppercase tracking-wider border-b border-white/10 mb-2">
+            <div className="flex items-center justify-between gap-4 px-3 pb-2 text-xs font-medium text-white/50 uppercase tracking-wider border-b border-white/10 mb-2 shrink-0">
                 <div className="flex-1 min-w-0 flex items-center gap-1 w-20 text-[10px]">
                     <button onClick={() => handleSort('rank')} className="flex items-center group hover:text-white/80 transition-colors shrink-0 mr-4">
                         RANK {getSortIcon("rank")}
@@ -123,7 +120,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                 </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto pr-2 -mr-2 space-y-2 max-h-[400px]">
+            <div className="flex-1 min-h-0 overflow-y-auto pr-2 -mr-2 space-y-2">
                 {sortedModels.map((model) => (
                     <div key={model.id} className="group flex items-center justify-between gap-4 bg-white/5 hover:bg-white/10 py-1.5 px-3 rounded-lg transition-colors border border-white/5">
                         <div className="flex items-center gap-3 min-w-0 flex-1">
@@ -165,6 +162,6 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                     </div>
                 ))}
             </div>
-        </div>
+        </Card>
     );
 };

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 import { ResearchImportSchema } from '@/lib/schemas/research-import';
 import { requireSession } from '@/lib/auth-guards';
+import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
 
 const parser = new Parser({
     customFields: {
@@ -105,6 +106,7 @@ export async function POST(request: Request) {
             console.info(`[EXTERNAL API] Fetching fallback from arXiv for ${paperIdFallback}`);
             try {
                 const arxivApiUrl = `https://export.arxiv.org/api/query?id_list=${paperIdFallback}`;
+                await acquireArxivSlot();
                 const feed = await parser.parseURL(arxivApiUrl);
 
                 if (feed.items && feed.items.length > 0) {

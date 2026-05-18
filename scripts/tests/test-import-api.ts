@@ -1,3 +1,5 @@
+export {}; // make this a module so top-level names don't collide globally
+
 const testImport = async () => {
     // Need to start the nextjs server or just call the function directly?
     // Since we can't easily start the server and wait, I will import the function and mock the Request.

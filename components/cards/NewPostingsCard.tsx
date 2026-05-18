@@ -6,6 +6,7 @@ import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
 import { useAppStore, type PostingEmploymentType } from "@/components/providers/state";
+import { Card } from "../ui/Card";
 
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -74,7 +75,7 @@ export function NewPostingsCard() {
         setPostingFilters({ ...postingFilters, employmentTypes: next });
     }
     function resetFilters() {
-        setPostingFilters({ employmentTypes: [], remoteOnly: false, locationContains: "", includeUnspecified: true });
+        setPostingFilters({ employmentTypes: [], remoteOnly: false, locationContains: "", includeUnspecified: false });
     }
 
     async function trackAsApplication(id: string, title: string) {
@@ -107,12 +108,11 @@ export function NewPostingsCard() {
     }
 
     return (
-        <div>
-            <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center gap-2">
-                    <Newspaper className="w-4 h-4 text-cyan-300" />
-                    <h3 className="text-sm font-semibold text-cyan-200">New postings</h3>
-                </div>
+        <Card
+            title="New postings"
+            icon={Newspaper}
+            iconColorClass="text-cyan-300"
+            action={
                 <div className="flex items-center gap-2">
                     <button
                         onClick={() => setFiltersOpen(o => !o)}
@@ -133,10 +133,10 @@ export function NewPostingsCard() {
                             : `${postings.length}${allPostings.length === LIMIT ? "+" : ""} new`}
                     </span>
                 </div>
-            </div>
-
+            }
+        >
             {filtersOpen && (
-                <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 flex flex-col gap-2">
+                <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 flex flex-col gap-2 shrink-0">
                     <div className="flex items-center justify-between">
                         <span className="text-[10px] uppercase tracking-wide text-white/40">Employment type</span>
                         {activeFilterCount > 0 && (
@@ -214,7 +214,7 @@ export function NewPostingsCard() {
                     <p className="text-xs text-white/40 italic">No new postings. Run a watchlist or wait for the scheduler tick.</p>
                 )
             ) : (
-                <ul className="space-y-1.5 max-h-[28rem] overflow-y-auto pr-1">
+                <ul className="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
                     {postings.map(p => {
                         const busy = busyId === p.id;
                         return (
@@ -273,6 +273,6 @@ export function NewPostingsCard() {
                     })}
                 </ul>
             )}
-        </div>
+        </Card>
     );
 }

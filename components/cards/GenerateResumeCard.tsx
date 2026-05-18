@@ -4,6 +4,7 @@ import { FileText, FileType2, Loader2, Link as LinkIcon, ChevronDown, ChevronRig
 import { useQuery } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys } from "@/lib/api-client";
+import { Card } from "../ui/Card";
 
 type Format = "pdf" | "docx";
 
@@ -149,11 +150,11 @@ export function GenerateResumeCard() {
     }
 
     return (
-        <div className="rounded-2xl border border-purple-400/20 bg-purple-500/5 p-4">
-            <div className="flex items-center gap-2 mb-3">
-                <FileText className="w-4 h-4 text-purple-300" />
-                <h3 className="text-sm font-semibold text-purple-200">Generate tailored resume</h3>
-            </div>
+        <Card
+            title="Generate tailored resume"
+            icon={FileText}
+            iconColorClass="text-purple-300"
+        >
             <p className="text-xs text-white/50 mb-3">
                 Paste a job posting (URL or text). I&apos;ll pick the relevant bullets from your profile,
                 rewrite them to emphasize what the posting cares about, and hand back a PDF or DOCX.
@@ -255,7 +256,7 @@ export function GenerateResumeCard() {
                     )}
                 </div>
             )}
-        </div>
+        </Card>
     );
 }
 

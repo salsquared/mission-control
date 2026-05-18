@@ -45,8 +45,11 @@ export interface PostingFilters {
     employmentTypes: PostingEmploymentType[];
     remoteOnly: boolean;
     locationContains: string;
-    /** Include postings whose employmentType is null. Defaults to true to
-     *  avoid hiding work-types we couldn't classify. */
+    /** Include postings whose employmentType is null. Defaults to false so
+     *  that activating a type chip ("Internship") strictly filters down —
+     *  ATS feeds like Workday/Greenhouse leave most postings unclassified,
+     *  and a `true` default lets them all leak through, making the filter
+     *  look broken. The checkbox in the UI is the escape hatch. */
     includeUnspecified: boolean;
 }
 
@@ -54,7 +57,7 @@ const DEFAULT_POSTING_FILTERS: PostingFilters = {
     employmentTypes: [],
     remoteOnly: false,
     locationContains: "",
-    includeUnspecified: true,
+    includeUnspecified: false,
 };
 
 interface DevicePrefsSlice {
@@ -137,14 +140,23 @@ export const useAppStore = create<AppState>()(
                 viewScreenshots: state.viewScreenshots,
                 postingFilters: state.postingFilters,
             }),
-            version: 2,
-            migrate: (persisted: any) => ({
-                autoResearch: persisted.autoResearch ?? false,
-                aiCompanionEnabled: persisted.aiCompanionEnabled ?? persisted.backgroundTasks ?? false,
-                activeViewId: persisted.activeViewId ?? 'rocketry',
-                viewScreenshots: persisted.viewScreenshots ?? {},
-                postingFilters: persisted.postingFilters ?? DEFAULT_POSTING_FILTERS,
-            }),
+            version: 3,
+            migrate: (persisted: any, fromVersion: number) => {
+                // v2 → v3: flip includeUnspecified to false. Existing users
+                // would otherwise inherit the old `true` default and the
+                // type-chip filter would silently no-op for them.
+                const pf = persisted.postingFilters;
+                const postingFilters: PostingFilters = pf
+                    ? { ...pf, includeUnspecified: fromVersion < 3 ? false : (pf.includeUnspecified ?? false) }
+                    : DEFAULT_POSTING_FILTERS;
+                return {
+                    autoResearch: persisted.autoResearch ?? false,
+                    aiCompanionEnabled: persisted.aiCompanionEnabled ?? persisted.backgroundTasks ?? false,
+                    activeViewId: persisted.activeViewId ?? 'rocketry',
+                    viewScreenshots: persisted.viewScreenshots ?? {},
+                    postingFilters,
+                };
+            },
         }
     )
 );

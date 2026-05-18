@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
 import {
     findCurrentReviewPick,
     listPickedReviewIds,
@@ -30,12 +31,18 @@ async function getHandler(request: Request) {
 
         if (existingSelection) {
             console.info(`[EXTERNAL API] Fetching existing review paper from arXiv: ${existingSelection.paperId}`);
+            await acquireArxivSlot();
             const res = await fetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 
-            if (res.ok) {
+            // Throw on non-ok (e.g. 429 "Rate exceeded.") so withCache STALE-FALLBACKs
+            // to the last good response instead of falling through to a new search,
+            // which would also be throttled AND would overwrite the user's pick.
+            if (!res.ok) {
+                throw new Error(`arXiv responded ${res.status} ${res.statusText} for id_list=${existingSelection.paperId}`);
+            }
+            {
                 const xml = await res.text();
-                // arxiv's rate-limit body is plaintext "Rate exceeded." returned with 200.
-                // Throw so withCache STALE-FALLBACKs instead of silently caching [].
+                // arxiv sometimes returns plaintext "Rate exceeded." with HTTP 200 too.
                 if (!xml.trimStart().startsWith('<')) {
                     throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
                 }
@@ -98,8 +105,12 @@ async function getHandler(request: Request) {
         const fetchUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=50&sortBy=relevance&sortOrder=descending`;
 
         console.info(`[EXTERNAL API] Fetching new review papers from arXiv: ${fullQuery}`);
+        await acquireArxivSlot();
         const res = await fetch(fetchUrl);
-        if (res.ok) {
+        if (!res.ok) {
+            throw new Error(`arXiv responded ${res.status} ${res.statusText} for ${fullQuery}`);
+        }
+        {
             const xml = await res.text();
             if (!xml.trimStart().startsWith('<')) {
                 throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);

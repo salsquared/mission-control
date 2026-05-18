@@ -1,3 +1,4 @@
+export {}; // make this a module so top-level names don't collide globally
 /**
  * Test script to verify Groq's dual-source (blog + newsroom) card extraction.
  * Simulates the custom fetchGroq() logic from company-registry.ts.

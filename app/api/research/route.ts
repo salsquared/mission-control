@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
 import Parser from 'rss-parser';
 
 const parser = new Parser({
@@ -162,6 +163,7 @@ async function getHandler(request: Request) {
             // with plaintext "Rate exceeded." — bypassing rss-parser's normal error
             // path. Throw on that so withCache serves the stale entry instead of
             // freezing an empty result for the full TTL.
+            await acquireArxivSlot();
             const feed = await parser.parseURL(arxivApiUrl);
             initialPapers = feed.items.map(item => {
                 const rawId = item.id || item.link || Math.random().toString();

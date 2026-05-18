@@ -5,6 +5,7 @@
  * Env vars must be set BEFORE the module is imported (the rate constants
  * are captured at module load), so we use a dynamic import.
  */
+export {}; // make this a module so top-level `function check` doesn't collide globally
 process.env.GEMINI_RATE_PER_MIN = "6"; // 1 token per 10s
 process.env.GEMINI_RATE_BURST = "3";
 

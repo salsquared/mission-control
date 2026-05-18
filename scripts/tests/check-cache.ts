@@ -1,3 +1,5 @@
+export {}; // make this a module so top-level names don't collide globally
+
 async function checkCache() {
     try {
         const res = await fetch('http://localhost:4101/api/space/launches');

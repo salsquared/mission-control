@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { Briefcase, Plus, Trash2, ArrowUp, ArrowDown } from "lucide-react";
-import { Card } from "../ui/Card";
+import { Plus, Trash2, ArrowUp, ArrowDown } from "lucide-react";
 import { EditableField } from "../ui/EditableField";
 import { BulletRow } from "../ui/BulletRow";
 import { makeBullet } from "@/lib/profile/bullets";
@@ -57,11 +56,7 @@ export const WorkRoleCard: React.FC<WorkRoleCardProps> = ({
     };
 
     return (
-        <Card
-            icon={Briefcase}
-            iconColorClass="text-purple-400"
-            wrapperClassName="bg-black/40 border border-white/5 hover:border-purple-500/30 transition-colors rounded-2xl p-5"
-        >
+        <div className="bg-white/5 border border-white/5 hover:border-purple-500/20 rounded-md p-3 transition-colors">
             <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0 flex-1">
                     <EditableField
@@ -153,6 +148,6 @@ export const WorkRoleCard: React.FC<WorkRoleCardProps> = ({
                     </button>
                 </div>
             </div>
-        </Card>
+        </div>
     );
 };

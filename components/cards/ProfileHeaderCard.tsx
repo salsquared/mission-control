@@ -31,10 +31,9 @@ export const ProfileHeaderCard: React.FC<ProfileHeaderCardProps> = ({
 }) => {
     return (
         <Card
-            title="Identity"
+            title="Personal info"
             icon={UserIcon}
             iconColorClass="text-purple-400"
-            wrapperClassName="bg-black/40 border border-white/5 hover:border-purple-500/30 transition-colors rounded-2xl p-5"
         >
             <div className="flex flex-col gap-3">
                 <div>

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
 import {
     findCurrentHistoricalPick,
     listPickedHistoricalIds,
@@ -29,15 +30,19 @@ async function getHandler(request: Request) {
         const existingSelection = await findCurrentHistoricalPick(topic.toLowerCase(), weekStart);
 
         if (existingSelection) {
-            // Fetch that specific paper's details from arxiv
-            const baseUrl = process.env.NEXTAUTH_URL || `http://localhost:${process.env.PORT || 3101}`;
             console.info(`[EXTERNAL API] Fetching existing historical paper from arXiv: ${existingSelection.paperId}`);
+            await acquireArxivSlot();
             const res = await fetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 
-            if (res.ok) {
+            // Throw on non-ok (e.g. 429 "Rate exceeded.") so withCache STALE-FALLBACKs
+            // to the last good response instead of falling through to a new search,
+            // which would also be throttled AND would overwrite the user's pick.
+            if (!res.ok) {
+                throw new Error(`arXiv responded ${res.status} ${res.statusText} for id_list=${existingSelection.paperId}`);
+            }
+            {
                 const xml = await res.text();
-                // arxiv's rate-limit body is plaintext "Rate exceeded." returned with 200.
-                // Throw so withCache STALE-FALLBACKs instead of silently caching [].
+                // arxiv sometimes returns plaintext "Rate exceeded." with HTTP 200 too.
                 if (!xml.trimStart().startsWith('<')) {
                     throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
                 }
@@ -102,8 +107,12 @@ async function getHandler(request: Request) {
         const fetchUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=100&sortBy=relevance&sortOrder=descending`;
 
         console.info(`[EXTERNAL API] Fetching new historical papers from arXiv: ${fullQuery}`);
+        await acquireArxivSlot();
         const res2 = await fetch(fetchUrl);
-        if (res2.ok) {
+        if (!res2.ok) {
+            throw new Error(`arXiv responded ${res2.status} ${res2.statusText} for ${fullQuery}`);
+        }
+        {
             const xml = await res2.text();
             if (!xml.trimStart().startsWith('<')) {
                 throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);

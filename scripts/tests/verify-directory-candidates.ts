@@ -1,3 +1,4 @@
+export {}; // make this a module so top-level names don't collide globally
 /**
  * Validates candidate ATS slugs before we add them to lib/company-directory.ts.
  * Hits the real public endpoints (Greenhouse / Lever / Ashby) and reports

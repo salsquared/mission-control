@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Upload, FileText, FilePlus, X } from "lucide-react";
 import { toastStore } from "@/lib/toast-store";
 import { queryKeys } from "@/lib/api-client";
+import { Card } from "../ui/Card";
 
 interface PerFileCounts {
     workRolesAdded: number;
@@ -110,11 +111,11 @@ export function ImportResumesCard() {
     }
 
     return (
-        <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/5 p-4">
-            <div className="flex items-center gap-2 mb-2">
-                <FilePlus className="w-4 h-4 text-cyan-300" />
-                <h3 className="text-sm font-semibold text-cyan-200">Import resumes (append, never overwrite)</h3>
-            </div>
+        <Card
+            title="Import resumes (append, never overwrite)"
+            icon={FilePlus}
+            iconColorClass="text-cyan-300"
+        >
             <p className="text-xs text-white/50 mb-3">
                 Drop one or many resumes (PDF, DOCX, TXT, JSON). Each file is parsed by an LLM and merged into
                 your profile repository — duplicate roles and bullets are de-duped against what you already have.
@@ -200,6 +201,6 @@ export function ImportResumesCard() {
                     )}
                 </div>
             )}
-        </div>
+        </Card>
     );
 }

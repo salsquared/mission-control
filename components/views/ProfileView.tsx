@@ -1,13 +1,14 @@
 import React, { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useSession, signIn } from "next-auth/react";
-import { Loader2, User as UserIcon, Plus, Briefcase, FolderGit, GraduationCap } from "lucide-react";
+import { Loader2, User as UserIcon } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
+import { CardGrid, type CardItem } from "../grids/CardGrid";
 import { ProfileHeaderCard } from "../cards/ProfileHeaderCard";
-import { WorkRoleCard } from "../cards/WorkRoleCard";
-import { ProjectCard } from "../cards/ProjectCard";
-import { EducationCard } from "../cards/EducationCard";
+import { ProfileRolesCard } from "../cards/ProfileRolesCard";
+import { ProfileProjectsCard } from "../cards/ProfileProjectsCard";
+import { ProfileEducationCard } from "../cards/ProfileEducationCard";
 import { GenerateResumeCard } from "../cards/GenerateResumeCard";
 import { ImportResumesCard } from "../cards/ImportResumesCard";
 import { useServerEvents } from "@/hooks/useServerEvents";
@@ -254,103 +255,85 @@ export const ProfileView: React.FC = () => {
         );
     }
 
+    const resumeCards: CardItem[] = [
+        { id: "import-resumes", colSpan: 1, hFit: true, content: <ImportResumesCard /> },
+        { id: "generate-resume", colSpan: 1, hFit: true, content: <GenerateResumeCard /> },
+    ];
+
+    const identityCards: CardItem[] = [
+        {
+            id: "profile-header",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <ProfileHeaderCard
+                    headline={profile.headline}
+                    summary={profile.summary}
+                    location={profile.location}
+                    email={profile.email}
+                    phone={profile.phone}
+                    links={profile.links ?? null}
+                    onSave={handleHeaderSave}
+                />
+            ),
+        },
+        {
+            id: "profile-roles",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <ProfileRolesCard
+                    workRoles={profile.workRoles}
+                    onUpdate={handleWorkRoleUpdate}
+                    onDelete={handleWorkRoleDelete}
+                    onSwap={swapWorkRoles}
+                    onAdd={handleAddWorkRole}
+                />
+            ),
+        },
+        {
+            id: "profile-projects",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <ProfileProjectsCard
+                    projects={profile.projects}
+                    onUpdate={handleProjectUpdate}
+                    onDelete={handleProjectDelete}
+                    onSwap={swapProjects}
+                    onAdd={handleAddProject}
+                />
+            ),
+        },
+        {
+            id: "profile-education",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <ProfileEducationCard
+                    education={profile.education}
+                    onUpdate={handleEducationUpdate}
+                    onDelete={handleEducationDelete}
+                    onSwap={swapEducation}
+                    onAdd={handleAddEducation}
+                />
+            ),
+        },
+    ];
+
     return (
         <Scrollbar className="w-full h-full pb-8">
-            <div className="flex flex-col gap-4 max-w-5xl mx-auto px-2 pt-4">
-                <Section title="Resume">
-                    <div className="mt-4 space-y-3">
-                        <ImportResumesCard />
-                        <GenerateResumeCard />
-                    </div>
-                </Section>
+            <Section title="Resume">
+                <div className="mt-4">
+                    <CardGrid items={resumeCards} columns={2} />
+                </div>
+            </Section>
 
-                <Section title="Identity">
-                    <div className="mt-4">
-                        <ProfileHeaderCard
-                            headline={profile.headline}
-                            summary={profile.summary}
-                            location={profile.location}
-                            email={profile.email}
-                            phone={profile.phone}
-                            links={profile.links ?? null}
-                            onSave={handleHeaderSave}
-                        />
-                    </div>
-                </Section>
-
-                <Section title="Work History" description="Hover a bullet to lock 🔒 (always include) or exclude 🚫 (never include). Tags help the resume generator match the right bullets to a posting.">
-
-                    <div className="mt-4 space-y-3">
-                        {profile.workRoles.length === 0 ? (
-                            <p className="text-sm text-white/40 italic">No roles yet. Click &quot;Add role&quot; below.</p>
-                        ) : (
-                            profile.workRoles.map((role, idx) => (
-                                <WorkRoleCard
-                                    key={role.id}
-                                    role={role}
-                                    onUpdate={(patch) => handleWorkRoleUpdate(role.id, patch)}
-                                    onDelete={() => handleWorkRoleDelete(role.id)}
-                                    onMoveUp={() => swapWorkRoles(idx, -1)}
-                                    onMoveDown={() => swapWorkRoles(idx, 1)}
-                                    canMoveUp={idx > 0}
-                                    canMoveDown={idx < profile.workRoles.length - 1}
-                                />
-                            ))
-                        )}
-                        <button onClick={handleAddWorkRole} className="self-start flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-lg text-xs font-semibold text-purple-300 transition-colors">
-                            <Briefcase className="w-3.5 h-3.5" /> <Plus className="w-3.5 h-3.5" /> Add role
-                        </button>
-                    </div>
-                </Section>
-
-                <Section title="Projects">
-                    <div className="mt-4 space-y-3">
-                        {profile.projects.length === 0 ? (
-                            <p className="text-sm text-white/40 italic">No projects yet.</p>
-                        ) : (
-                            profile.projects.map((pr, idx) => (
-                                <ProjectCard
-                                    key={pr.id}
-                                    project={pr}
-                                    onUpdate={(patch) => handleProjectUpdate(pr.id, patch)}
-                                    onDelete={() => handleProjectDelete(pr.id)}
-                                    onMoveUp={() => swapProjects(idx, -1)}
-                                    onMoveDown={() => swapProjects(idx, 1)}
-                                    canMoveUp={idx > 0}
-                                    canMoveDown={idx < profile.projects.length - 1}
-                                />
-                            ))
-                        )}
-                        <button onClick={handleAddProject} className="self-start flex items-center gap-2 px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 rounded-lg text-xs font-semibold text-cyan-300 transition-colors">
-                            <FolderGit className="w-3.5 h-3.5" /> <Plus className="w-3.5 h-3.5" /> Add project
-                        </button>
-                    </div>
-                </Section>
-
-                <Section title="Education">
-                    <div className="mt-4 space-y-3">
-                        {profile.education.length === 0 ? (
-                            <p className="text-sm text-white/40 italic">No education yet.</p>
-                        ) : (
-                            profile.education.map((ed, idx) => (
-                                <EducationCard
-                                    key={ed.id}
-                                    education={ed}
-                                    onUpdate={(patch) => handleEducationUpdate(ed.id, patch)}
-                                    onDelete={() => handleEducationDelete(ed.id)}
-                                    onMoveUp={() => swapEducation(idx, -1)}
-                                    onMoveDown={() => swapEducation(idx, 1)}
-                                    canMoveUp={idx > 0}
-                                    canMoveDown={idx < profile.education.length - 1}
-                                />
-                            ))
-                        )}
-                        <button onClick={handleAddEducation} className="self-start flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg text-xs font-semibold text-emerald-300 transition-colors">
-                            <GraduationCap className="w-3.5 h-3.5" /> <Plus className="w-3.5 h-3.5" /> Add education
-                        </button>
-                    </div>
-                </Section>
-            </div>
+            <Section title="Identity" description="The building blocks the resume generator pulls from. Hover a bullet to lock 🔒 (always include) or exclude 🚫 (never include). Tags help the generator match the right bullets to a posting.">
+                <div className="mt-4">
+                    <CardGrid items={identityCards} />
+                </div>
+            </Section>
         </Scrollbar>
     );
 };

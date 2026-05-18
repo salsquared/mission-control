@@ -1,3 +1,4 @@
+export {}; // make this a module so top-level names don't collide globally
 const doi = "10.1038/s41586-025-09917-9";
 const url = `https://api.semanticscholar.org/graph/v1/paper/DOI:${doi}?fields=title,authors,abstract,citationCount,year,url,externalIds`;
 

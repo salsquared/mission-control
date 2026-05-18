@@ -156,9 +156,13 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             select: { id: true },
         });
         if (existing) {
+            // Always refresh lastSeenAt; also refresh employmentType so that
+            // improvements to the classifier (or to the company's Greenhouse
+            // metadata configuration) propagate to rows ingested before the
+            // change. Cheap — same row, single UPDATE.
             await prisma.jobPosting.update({
                 where: { id: existing.id },
-                data: { lastSeenAt: runAt },
+                data: { lastSeenAt: runAt, employmentType: raw.employmentType ?? null },
             });
             seenAgain++;
             continue;
@@ -191,7 +195,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             if (code === "P2002") {
                 await prisma.jobPosting.update({
                     where: { watchlistId_externalId: { watchlistId, externalId } },
-                    data: { lastSeenAt: runAt },
+                    data: { lastSeenAt: runAt, employmentType: raw.employmentType ?? null },
                 });
                 seenAgain++;
                 continue;

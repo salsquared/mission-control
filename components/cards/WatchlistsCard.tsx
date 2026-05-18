@@ -6,6 +6,7 @@ import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
 import { AddWatchlistModal } from "../overlays/AddWatchlistModal";
+import { Card } from "../ui/Card";
 
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -144,12 +145,11 @@ export function WatchlistsCard() {
     }
 
     return (
-        <div>
-            <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center gap-2">
-                    <Eye className="w-4 h-4 text-cyan-300" />
-                    <h3 className="text-sm font-semibold text-cyan-200">Watchlists</h3>
-                </div>
+        <Card
+            title="Watchlists"
+            icon={Eye}
+            iconColorClass="text-cyan-300"
+            action={
                 <button
                     onClick={() => setAdding(true)}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/30 text-xs font-semibold text-cyan-100 transition-colors"
@@ -157,8 +157,8 @@ export function WatchlistsCard() {
                     <Plus className="w-3.5 h-3.5" />
                     Add watchlist
                 </button>
-            </div>
-
+            }
+        >
             {isLoading ? (
                 <div className="flex items-center justify-center py-6 text-white/40">
                     <Loader2 className="w-4 h-4 animate-spin" />
@@ -166,7 +166,7 @@ export function WatchlistsCard() {
             ) : watchlists.length === 0 ? (
                 <p className="text-xs text-white/40 italic">No watchlists yet. Add one above to start hunting on your behalf.</p>
             ) : (
-                <ul className="space-y-2">
+                <ul className="flex-1 min-h-0 space-y-2 overflow-y-auto pr-1">
                     {watchlists.map(w => {
                         const busy = busyId === w.id;
                         return (
@@ -246,7 +246,7 @@ export function WatchlistsCard() {
                 onCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.watchlists })}
                 existingWatchlists={watchlists}
             />
-        </div>
+        </Card>
     );
 }
 

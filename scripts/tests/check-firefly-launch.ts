@@ -1,4 +1,4 @@
-
+export {}; // make this a module so top-level names don't collide globally
 
 async function checkLaunch() {
     const url = 'https://ll.thespacedevs.com/2.2.0/launch/upcoming/?limit=100';

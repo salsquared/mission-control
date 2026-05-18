@@ -234,10 +234,10 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={handleClose}>
             <div
-                className="w-full max-w-lg rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl"
+                className="w-full max-w-lg rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl flex flex-col h-[85vh]"
                 onClick={(e) => e.stopPropagation()}
             >
-                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
                     <h2 className="text-sm font-semibold text-white">Add to watchlist</h2>
                     <button onClick={handleClose} className="text-white/40 hover:text-white/80" aria-label="Close">
                         <X className="w-4 h-4" />
@@ -245,7 +245,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 </div>
 
                 {/* Mode tabs */}
-                <div className="flex border-b border-white/10">
+                <div className="flex border-b border-white/10 shrink-0">
                     {[
                         { id: "find" as const, label: "Find roles", Icon: Sparkles, hint: "Search by what you want to do" },
                         { id: "company" as const, label: "Watch company", Icon: Building2, hint: "Pick a known company" },
@@ -273,7 +273,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     })}
                 </div>
 
-                {/* Mode bodies */}
+                {/* Mode bodies — scrollable so tall forms (esp. Advanced) don't push action buttons offscreen */}
+                <div className="flex-1 min-h-0 overflow-y-auto">
                 {mode === "find" && (
                     <form onSubmit={submitFind} className="p-4 flex flex-col gap-3">
                         <p className="text-[11px] text-white/50">
@@ -368,7 +369,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             })}
                         </div>
 
-                        <div className="max-h-[18rem] overflow-y-auto flex flex-col gap-1.5 pr-1">
+                        <div className="flex flex-col gap-1.5 pr-1">
                             {directoryResults.length === 0 ? (
                                 <p className="text-xs text-white/40 italic py-4 text-center">
                                     Nothing matches. Try the &quot;Advanced&quot; tab to add a custom company.
@@ -590,6 +591,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                         </div>
                     </form>
                 )}
+                </div>
             </div>
         </div>
     );
