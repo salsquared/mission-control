@@ -26,6 +26,7 @@ import { WatchlistConfigSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
 import { broadcastEvent } from "@/lib/events";
 import { dispatchNotification } from "@/lib/notifications/dispatch";
+import { classifyEmploymentTypes } from "@/lib/ai/classify-employment-type";
 
 export interface RunResult {
     watchlistId: string;
@@ -148,20 +149,60 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     const modeAllowsPerPosting = watchlist.notificationMode === "each";
     const willNotifyForNew = modeAllowsPerPosting && (!isFirstRun || fetchResult.postings.length <= FIRST_RUN_NOTIFY_LIMIT);
 
-    for (const raw of fetchResult.postings) {
-        const externalId = externalIdFor(raw.company, raw.title, raw.sourceUrl);
+    // Pre-compute externalIds + one bulk existence check. Replaces what used
+    // to be a per-posting findUnique. Two reasons: (1) lets us gate the
+    // Tier-B LLM classifier to brand-new postings only without a second
+    // DB pass, (2) one indexed `in (…)` query is cheaper than N findUniques.
+    // The P2002 fallback below still handles the unique-constraint race
+    // between this lookup and the create.
+    const postingsWithIds = fetchResult.postings.map(raw => ({
+        raw,
+        externalId: externalIdFor(raw.company, raw.title, raw.sourceUrl),
+    }));
+    const existingRows = await prisma.jobPosting.findMany({
+        where: { watchlistId, externalId: { in: postingsWithIds.map(p => p.externalId) } },
+        select: { id: true, externalId: true },
+    });
+    const existingByExternalId = new Map(existingRows.map(r => [r.externalId, r.id]));
+
+    // Tier B (employment-type classifier): for postings that are NEW to this
+    // watchlist AND whose heuristic in lib/fetchers/employment-type.ts returned
+    // null, batch-classify via Gemini Flash. Backfills `raw.employmentType` in
+    // place so the create branch below picks it up. Strictly degrades — any
+    // failure logs and falls through to ingest as Unspecified.
+    const classifyInputs = postingsWithIds
+        .filter(p => !existingByExternalId.has(p.externalId) && p.raw.employmentType == null)
+        .map(p => ({
+            id: p.externalId,
+            company: p.raw.company,
+            title: p.raw.title,
+            snippet: p.raw.snippet,
+            location: p.raw.location,
+        }));
+    if (classifyInputs.length > 0) {
+        try {
+            const classified = await classifyEmploymentTypes(classifyInputs);
+            for (const p of postingsWithIds) {
+                const t = classified.get(p.externalId);
+                if (t !== undefined && p.raw.employmentType == null) {
+                    p.raw.employmentType = t;
+                }
+            }
+        } catch (e) {
+            console.warn(`[job-watcher] employment-type classifier failed; new postings will be ingested as Unspecified:`, e);
+        }
+    }
+
+    for (const { raw, externalId } of postingsWithIds) {
         seenExternalIds.add(externalId);
-        const existing = await prisma.jobPosting.findUnique({
-            where: { watchlistId_externalId: { watchlistId, externalId } },
-            select: { id: true },
-        });
-        if (existing) {
+        const existingId = existingByExternalId.get(externalId);
+        if (existingId) {
             // Always refresh lastSeenAt; also refresh employmentType so that
             // improvements to the classifier (or to the company's Greenhouse
             // metadata configuration) propagate to rows ingested before the
             // change. Cheap — same row, single UPDATE.
             await prisma.jobPosting.update({
-                where: { id: existing.id },
+                where: { id: existingId },
                 data: { lastSeenAt: runAt, employmentType: raw.employmentType ?? null },
             });
             seenAgain++;

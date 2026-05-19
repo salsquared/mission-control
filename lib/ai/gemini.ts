@@ -102,6 +102,15 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
             config: {
                 responseMimeType: "application/json",
                 temperature: opts.temperature ?? 0.4,
+                // Gemini 2.5 Flash defaults to thinking mode, which (a) adds
+                // 30s–2min of latency to what should be sub-10s structured
+                // extraction and (b) eats the output budget so JSON responses
+                // get truncated mid-string. All current callers are mechanical
+                // extraction/transformation — no chain-of-thought needed.
+                thinkingConfig: { thinkingBudget: 0 },
+                // Resume + posting payloads can legitimately be tens of KB of
+                // JSON; the SDK default is too low and silently truncates.
+                maxOutputTokens: 32768,
                 ...(opts.system ? { systemInstruction: opts.system } : {}),
             },
         });
@@ -117,8 +126,20 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
     }
 
     const text = response.text;
+    const finishReason = response.candidates?.[0]?.finishReason;
     if (!text) {
         throw new AIError("Gemini returned an empty response", response, "parse");
+    }
+    // If the model ran out of output budget mid-stream the text will be a
+    // half-finished JSON document — `JSON.parse` will throw a confusing
+    // "Unterminated string". Surface the actual cause so the UI can tell the
+    // user to retry / shrink the input instead of just showing a stack trace.
+    if (finishReason === "MAX_TOKENS") {
+        throw new AIError(
+            "Gemini response was truncated (hit the output-token limit). The input is too large for a single call — try splitting it into smaller files.",
+            response,
+            "parse",
+        );
     }
 
     let parsed: unknown;

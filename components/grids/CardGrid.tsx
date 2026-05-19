@@ -36,7 +36,6 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
             {items.map((item) => (
                 <motion.div
                     key={item.id}
-                    layoutId={item.id}
                     className={cn(
                         "relative rounded-lg overflow-hidden backdrop-blur-sm break-inside-avoid group z-0 hover:z-10",
                         layout === "masonry" ? "mb-4 inline-block w-full" : "",

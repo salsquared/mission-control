@@ -1,6 +1,7 @@
 "use client";
-import React, { useMemo, useState } from "react";
-import { X, Plus, Loader2, Search, Building2, Settings2, Sparkles, Check, Minus } from "lucide-react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import { X, Plus, Loader2, Search, Building2, Settings2, Sparkles, Check, Minus, ArrowUpToLine } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
 import {
@@ -45,6 +46,11 @@ function errMessage(e: unknown): string {
 }
 
 export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onClose, onCreated, existingWatchlists = [] }) => {
+    // SSR gate: createPortal needs document.body, which only exists on the
+    // client. Without this, the modal would crash during server render.
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => { setMounted(true); }, []);
+
     const [mode, setMode] = useState<Mode>("find");
     const [submitting, setSubmitting] = useState(false);
 
@@ -55,7 +61,13 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     // ─── "company" mode (directory picker) ───────────────────────────────────
     const [companyQuery, setCompanyQuery] = useState("");
     const [companyTagFilter, setCompanyTagFilter] = useState<Set<DirectoryTag>>(new Set());
-    const [selectedDirEntry, setSelectedDirEntry] = useState<CompanyDirectoryEntry | null>(null);
+    // Multi-select: holds the `.name` of each chosen directory entry. Submit
+    // fires N create requests in parallel.
+    const [selectedDirKeys, setSelectedDirKeys] = useState<Set<string>>(new Set());
+    // Already-added entries are hidden by default to keep the picker focused
+    // on what's actually addable. Flip this on to reveal them — they'll float
+    // to the top so it's easy to audit what's already on the watchlist.
+    const [showAdded, setShowAdded] = useState(false);
 
     // ─── "advanced" mode (the legacy 6-way picker, unchanged behavior) ──────
     const [advKind, setAdvKind] = useState<AdvancedKind>("greenhouse");
@@ -74,11 +86,6 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     // POST. 4h default — see WatchlistPostSchema for the rationale.
     const [scheduleHours, setScheduleHours] = useState(4);
 
-    const directoryResults = useMemo(
-        () => searchDirectory(companyQuery, companyTagFilter.size > 0 ? companyTagFilter : null),
-        [companyQuery, companyTagFilter],
-    );
-
     // Build the set of identity keys for watchlists the user already has.
     // Directory entries whose key is in this set render disabled with an
     // "Added" chip — protects against accidental duplicate crawls.
@@ -91,7 +98,22 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         return s;
     }, [existingWatchlists]);
 
-    if (!open) return null;
+    const directoryResults = useMemo(() => {
+        const base = searchDirectory(companyQuery, companyTagFilter.size > 0 ? companyTagFilter : null);
+        // Stable partition: split into already-added vs. addable, preserving
+        // relative order within each side. Default behavior hides the added
+        // bucket; toggling `showAdded` reveals it AND pins it to the top.
+        const added: CompanyDirectoryEntry[] = [];
+        const rest: CompanyDirectoryEntry[] = [];
+        for (const e of base) {
+            const key = watchlistConfigKey(e.config);
+            if (key && existingKeys.has(key)) added.push(e);
+            else rest.push(e);
+        }
+        return showAdded ? [...added, ...rest] : rest;
+    }, [companyQuery, companyTagFilter, showAdded, existingKeys]);
+
+    if (!open || !mounted) return null;
 
     function reset() {
         setMode("find");
@@ -99,7 +121,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         setFindLocation("");
         setCompanyQuery("");
         setCompanyTagFilter(new Set());
-        setSelectedDirEntry(null);
+        setSelectedDirKeys(new Set());
+        setShowAdded(false);
         setAdvKind("greenhouse");
         setAdvName("");
         setAdvCompanyName("");
@@ -164,26 +187,68 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     async function submitCompany(e: React.FormEvent) {
         e.preventDefault();
         if (submitting) return;
-        if (!selectedDirEntry) return;
+        if (selectedDirKeys.size === 0) return;
+        // Resolve every selected key against the current directory results.
+        // (We carry only the name in selectedDirKeys; rehydrate to entries
+        // here so the create payload has fresh config — protects against
+        // selection going stale if the directory shifts mid-flow.)
+        const allEntries = searchDirectory("", null);
+        const byName = new Map(allEntries.map(e => [e.name, e] as const));
+        const entries = Array.from(selectedDirKeys)
+            .map(name => byName.get(name))
+            .filter((e): e is CompanyDirectoryEntry => Boolean(e));
+        if (entries.length === 0) return;
         setSubmitting(true);
         try {
-            await api.watchlists.create({
-                name: `${selectedDirEntry.name} — jobs`,
-                config: selectedDirEntry.config,
-                scheduleMinutes: scheduleHours * 60,
-                // PB-14: bind to the directory entry so future slug/ATS
-                // corrections in lib/company-directory.ts apply automatically.
-                directoryKey: selectedDirEntry.name,
-            });
-            toastStore.push({ message: `Watching ${selectedDirEntry.name}`, type: "info" });
+            const results = await Promise.allSettled(entries.map(entry =>
+                api.watchlists.create({
+                    name: `${entry.name} — jobs`,
+                    config: entry.config,
+                    scheduleMinutes: scheduleHours * 60,
+                    // PB-14: bind to the directory entry so future slug/ATS
+                    // corrections in lib/company-directory.ts apply automatically.
+                    directoryKey: entry.name,
+                })
+            ));
+            const okCount = results.filter(r => r.status === "fulfilled").length;
+            const failed = results
+                .map((r, i) => r.status === "rejected" ? entries[i].name : null)
+                .filter((n): n is string => Boolean(n));
+            if (okCount > 0) {
+                toastStore.push({
+                    message: okCount === 1
+                        ? `Watching ${entries.find((_, i) => results[i].status === "fulfilled")?.name}`
+                        : `Watching ${okCount} companies`,
+                    type: "info",
+                });
+            }
+            if (failed.length > 0) {
+                toastStore.push({
+                    message: `Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`,
+                    type: "error",
+                });
+            }
             onCreated();
-            reset();
-            onClose();
+            if (failed.length === 0) {
+                reset();
+                onClose();
+            }
         } catch (err) {
+            // Promise.allSettled doesn't throw, so this catches only programmer
+            // errors (unexpected throws inside the map callback).
             toastStore.push({ message: `Create failed: ${errMessage(err)}`, type: "error" });
         } finally {
             setSubmitting(false);
         }
+    }
+
+    function toggleDirEntry(name: string) {
+        setSelectedDirKeys(prev => {
+            const next = new Set(prev);
+            if (next.has(name)) next.delete(name);
+            else next.add(name);
+            return next;
+        });
     }
 
     async function submitAdvanced(e: React.FormEvent) {
@@ -231,10 +296,10 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         }
     }
 
-    return (
+    return createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={handleClose}>
             <div
-                className="w-full max-w-lg rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl flex flex-col h-[85vh]"
+                className="w-full max-w-lg rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl flex flex-col max-h-[calc(100vh_-_2rem)]"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
@@ -333,7 +398,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 {mode === "company" && (
                     <form onSubmit={submitCompany} className="p-4 flex flex-col gap-3">
                         <p className="text-[11px] text-white/50">
-                            Pick a company from our verified list. We&apos;ll wire up the right job board source for you.
+                            Pick one or more companies from our verified list. We&apos;ll wire up the right job board source for each.
                         </p>
 
                         <input
@@ -346,8 +411,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
                         />
 
-                        {/* Tag filter chips */}
-                        <div className="flex flex-wrap gap-1">
+                        {/* Tag filter chips + pin-added-to-top toggle */}
+                        <div className="flex flex-wrap items-center gap-1">
                             {DIRECTORY_TAGS.map(tag => {
                                 const active = companyTagFilter.has(tag);
                                 return (
@@ -367,6 +432,22 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                     </button>
                                 );
                             })}
+                            <button
+                                type="button"
+                                onClick={() => setShowAdded(v => !v)}
+                                disabled={submitting}
+                                aria-pressed={showAdded}
+                                title="Reveal companies already on your watchlist (pinned to the top of the list)"
+                                className={[
+                                    "ml-1 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wide font-semibold transition-colors",
+                                    showAdded
+                                        ? "bg-emerald-500/25 text-emerald-100 border border-emerald-400/40"
+                                        : "bg-black/40 text-white/40 border border-white/10 hover:text-white/70",
+                                ].join(" ")}
+                            >
+                                <ArrowUpToLine className="w-2.5 h-2.5" />
+                                Show watching
+                            </button>
                         </div>
 
                         <div className="flex flex-col gap-1.5 pr-1">
@@ -378,14 +459,15 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 directoryResults.map(entry => {
                                     const entryKey = watchlistConfigKey(entry.config);
                                     const alreadyAdded = entryKey !== null && existingKeys.has(entryKey);
-                                    const selected = !alreadyAdded && selectedDirEntry?.name === entry.name;
+                                    const selected = !alreadyAdded && selectedDirKeys.has(entry.name);
                                     return (
                                         <button
                                             key={entry.name}
                                             type="button"
-                                            onClick={() => !alreadyAdded && setSelectedDirEntry(entry)}
+                                            onClick={() => !alreadyAdded && toggleDirEntry(entry.name)}
                                             disabled={submitting || alreadyAdded}
                                             aria-disabled={alreadyAdded}
+                                            aria-pressed={selected}
                                             title={alreadyAdded ? "Already on your watchlist" : undefined}
                                             className={[
                                                 "flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors",
@@ -396,6 +478,20 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                                         : "bg-black/30 border-white/10 hover:border-white/30",
                                             ].join(" ")}
                                         >
+                                            {/* Multi-select checkbox affordance (hidden for already-added entries). */}
+                                            {!alreadyAdded && (
+                                                <span
+                                                    aria-hidden
+                                                    className={[
+                                                        "shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                                                        selected
+                                                            ? "bg-cyan-500/40 border-cyan-300"
+                                                            : "bg-black/40 border-white/20",
+                                                    ].join(" ")}
+                                                >
+                                                    {selected && <Check className="w-3 h-3 text-cyan-50" />}
+                                                </span>
+                                            )}
                                             <div className="flex-1 min-w-0">
                                                 <div className="flex items-center gap-2 flex-wrap">
                                                     <span className="text-sm font-semibold text-white truncate">{entry.name}</span>
@@ -413,7 +509,6 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                                     <div className="text-[11px] text-white/40 mt-0.5">{entry.blurb}</div>
                                                 )}
                                             </div>
-                                            {selected && <Check className="w-4 h-4 text-cyan-300 shrink-0" />}
                                         </button>
                                     );
                                 })
@@ -423,6 +518,16 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                         <ScheduleField value={scheduleHours} onChange={setScheduleHours} disabled={submitting} />
 
                         <div className="flex items-center justify-end gap-2 pt-2">
+                            {selectedDirKeys.size > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setSelectedDirKeys(new Set())}
+                                    disabled={submitting}
+                                    className="px-3 py-2 text-xs text-white/50 hover:text-white/80 disabled:opacity-40"
+                                >
+                                    Clear ({selectedDirKeys.size})
+                                </button>
+                            )}
                             <button
                                 type="button"
                                 onClick={handleClose}
@@ -433,11 +538,17 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             </button>
                             <button
                                 type="submit"
-                                disabled={submitting || !selectedDirEntry}
+                                disabled={submitting || selectedDirKeys.size === 0}
                                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-cyan-500/30 hover:bg-cyan-500/40 border border-cyan-400/40 text-xs font-semibold text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                                {submitting ? "Adding…" : selectedDirEntry ? `Watch ${selectedDirEntry.name}` : "Pick a company"}
+                                {submitting
+                                    ? "Adding…"
+                                    : selectedDirKeys.size === 0
+                                        ? "Pick a company"
+                                        : selectedDirKeys.size === 1
+                                            ? `Watch ${Array.from(selectedDirKeys)[0]}`
+                                            : `Watch ${selectedDirKeys.size} companies`}
                             </button>
                         </div>
                     </form>
@@ -593,7 +704,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 )}
                 </div>
             </div>
-        </div>
+        </div>,
+        document.body,
     );
 };
 
