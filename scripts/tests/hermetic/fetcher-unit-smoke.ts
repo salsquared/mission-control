@@ -68,7 +68,7 @@ async function testGreenhouse() {
     else if (r.postings[0].location !== "Remote") { fail("greenhouse happy: location mismatch"); }
     else if (r.postings[0].company !== "Acme") { fail("greenhouse happy: company mismatch"); }
     else pass("greenhouse happy path");
-    if (lastRequestURL !== "https://boards-api.greenhouse.io/v1/boards/acme/jobs") fail(`greenhouse URL: ${lastRequestURL}`);
+    if (lastRequestURL !== "https://boards-api.greenhouse.io/v1/boards/acme/jobs?content=true") fail(`greenhouse URL: ${lastRequestURL}`);
     else pass("greenhouse URL constructed correctly");
 
     // 404 board
