@@ -13,7 +13,7 @@ import type { ProfileWire } from "@/lib/schemas/profile";
 // a bullet from every generated resume, its content shouldn't count toward
 // "you have this covered."
 //
-// Pure / no LLM / unit-testable as scripts/tests/skills-gap-smoke.ts.
+// Pure / no LLM / unit-testable as scripts/tests/hermetic/skills-gap-smoke.ts.
 
 function normalize(s: string): string {
     return s.toLowerCase().trim();

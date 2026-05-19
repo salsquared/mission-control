@@ -79,7 +79,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### MA — Pipeline writes + drill-in ✅
 
-Stories: 5, 6, 7, 8 (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/applications-api-smoke.ts` (10/10 green) · Commit: `7986aed`.
+Stories: 5, 6, 7, 8 (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/integration/applications-api-smoke.ts` (10/10 green) · Commit: `7986aed`.
 
 Already-implemented work surfaced during review: full Kanban writes (drag-to-status with optimistic rollback), manual add modal, drill-in timeline overlay, note composer, applications API CRUD + events. PATCH on status auto-emits a `STATUS_CHANGED` event with correct `fromStatus`/`toStatus`.
 
@@ -92,7 +92,7 @@ Stories: 13, 14, 15, 47, 48 (🟡) · 49, 50 (🟡).
 - **MA-f.1** ✅ — Inline-edit of company/role/nextSteps on the detail overlay (story 13). `EditingField` state in `ApplicationDetailOverlay.tsx:37`.
 - **MA-f.2** ✅ — Delete confirmation UI (story 15). `Trash2` button + `window.confirm` at line 218 of the overlay.
 - **MA-f.3** ◐ — Document attachment (story 47 resume side). `GeneratedResume.applicationId` link is wired (M8 Phase 2). Diff between two sent versions (story 48) still open 🔵.
-- **MA-f.4** ✅ — Follow-up nudges (story 49). `scheduler/jobs/stale-applications.ts` fires daily, finds apps with `lastUpdateAt < now - STALE_AFTER_DAYS`, emits `Notification(kind='application', payload.type='stale-nudge')` dedup'd against active prior nudges. `scripts/tests/stale-nudge-smoke.ts` covers it.
+- **MA-f.4** ✅ — Follow-up nudges (story 49). `scheduler/jobs/stale-applications.ts` fires daily, finds apps with `lastUpdateAt < now - STALE_AFTER_DAYS`, emits `Notification(kind='application', payload.type='stale-nudge')` dedup'd against active prior nudges. `scripts/tests/hermetic/stale-nudge-smoke.ts` covers it.
 
 **Still open in MA-followup:** story 50 (per-application recruiter contacts), story 48 (resume diff).
 
@@ -237,7 +237,7 @@ Notifications surface: inline within the Watchlists card for Phase 1 (recent pos
 
 **Decided 2026-05-15: real URL** (option a). Smoke targets `https://www.rocketlabusa.com/careers/` (listed in story 17). Smoke is intentionally flakier than the others — if Rocket Lab restructures their page, this fails and the linkPattern needs updating. Acceptable trade-off; the user picked it.
 
-`scripts/tests/watchlist-e2e-smoke.ts`:
+`scripts/tests/integration/watchlist-e2e-smoke.ts`:
 1. Forge a NextAuth session.
 2. POST a watchlist with `rootUrl: https://www.rocketlabusa.com/careers/`, a permissive `linkPattern` matching job-detail hrefs, `companyName: 'Rocket Lab'`.
 3. Call `POST /api/watchlists/[id]/run`.
@@ -259,7 +259,7 @@ If Rocket Lab's careers page is unreachable from the test environment (offline, 
 ### MB Phase 2a — Track→App + Lever/Ashby + closed detection ✅
 
 Stories: 18 (Lever/Ashby), 20 (Track→App), 22 (closed detection) — 🟡.
-Shipped 2026-05-15. Smoke: `scripts/tests/watchlist-phase2-smoke.ts` (10/10 green).
+Shipped 2026-05-15. Smoke: `scripts/tests/integration/watchlist-phase2-smoke.ts` (10/10 green).
 
 - **MB-2.3 Track→App** — new `POST /api/postings/[id]/track-as-application` creates `Application(status='INTERESTED', kind='job', postingId, role=posting.title)` in a single Prisma transaction and flips `posting.status='tracked'`. Idempotent on re-call (returns the existing Application + `created:false`). UI: "Track as App" button on NewPostingsCard. ApplicationDetailOverlay shows a "Tracked from: <sourceUrl>" line with a "Closed" badge if the underlying posting transitions to closed. Schema: `INTERESTED` added to `APPLICATION_STATUSES` (placed first so kanban order reads interest → applied → ...); `Application.postingId String? @unique` with `onDelete: SetNull` to JobPosting. Migration `add_interested_status_and_posting_link`.
 - **MB-2.1 (partial) Lever + Ashby fetchers** — `lib/fetchers/lever-fetcher.ts` (api.lever.co/v0/postings/<slug>) and `lib/fetchers/ashby-fetcher.ts` (api.ashbyhq.com/posting-api/job-board/<slug>). WATCHLIST_KINDS expanded to `["careers-page", "greenhouse", "lever", "ashby"]`. AddWatchlistModal kind picker shows all four with per-kind help text.
@@ -315,7 +315,7 @@ User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEn
 
 #### MB-3.4 — Negative filters ✅ / compensation parsing (open)
 
-- ✅ **Negative filters** (story 23, shipped `9da9a2d`): per-watchlist `Watchlist.negativeFilters` JSON regex array. `/api/postings` GET applies case-insensitive matching against `title\nsnippet\nlocation`. `?includeFiltered=true` bypass for debug. UI: expandable editor on `WatchlistsCard` with regex validation + count chip. Hermetic smoke at `scripts/tests/negative-filters-smoke.ts` (18/18).
+- ✅ **Negative filters** (story 23, shipped `9da9a2d`): per-watchlist `Watchlist.negativeFilters` JSON regex array. `/api/postings` GET applies case-insensitive matching against `title\nsnippet\nlocation`. `?includeFiltered=true` bypass for debug. UI: expandable editor on `WatchlistsCard` with regex validation + count chip. Hermetic smoke at `scripts/tests/hermetic/negative-filters-smoke.ts` (18/18).
 - **Compensation** (story 24, still open): regex over snippet (`$120k`, `$120,000 - $150,000`, `$60/hr`); store on `JobPosting.compensationRangeMin/Max` if present.
 
 ---
@@ -324,13 +324,13 @@ User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEn
 
 ### M7 — Profile spine ✅
 
-Stories: 29, 31, 32 (partial) (🔴/🟡) · Shipped 2026-05-14 · Commits: `0367263`, `e41b6c0` · Smokes: `scripts/tests/profile-repo-smoke.ts` (19/19), `scripts/tests/profile-api-smoke.ts` (17/17 + 9 SSE).
+Stories: 29, 31, 32 (partial) (🔴/🟡) · Shipped 2026-05-14 · Commits: `0367263`, `e41b6c0` · Smokes: `scripts/tests/hermetic/profile-repo-smoke.ts` (19/19), `scripts/tests/integration/profile-api-smoke.ts` (17/17 + 9 SSE).
 
 Schema: `Profile`, `WorkRole`, `Project`, `Education` with JSON `bullets` arrays. CRUD API + ProfileView dash + cards (Header / WorkRole / Project / Education / Bullet rows with lock/exclude toggles).
 
 ### M7.4 — Multi-resume import (append-merge) ✅
 
-Stories: 30, 30a (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/profile-import-smoke.ts` (PDF + DOCX → 1 work role created, 3 bullets deduped, 5 added, ~14s) · Commit: `329d765`.
+Stories: 30, 30a (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/integration/profile-import-smoke.ts` (PDF + DOCX → 1 work role created, 3 bullets deduped, 5 added, ~14s) · Commit: `329d765`.
 
 Pipeline: `lib/profile/extract.ts` (PDF via pdf-parse v2, DOCX via mammoth, TXT/MD/JSON inline) → `lib/profile/import-llm.ts` (Gemini structured-output extraction) → `lib/profile/merge.ts` (deterministic dedup + append-merge against existing profile). Append-to-repository semantics enforced — no overwrite. `next.config.ts` carries `pdf-parse / mammoth / puppeteer-core / html-to-docx` in `serverExternalPackages`.
 
@@ -343,19 +343,19 @@ Pipeline: `lib/profile/extract.ts` (PDF via pdf-parse v2, DOCX via mammoth, TXT/
 
 ### M8 Phase 1 — Tailored resume generation ✅
 
-Story 34 (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/resume-e2e-smoke.ts` (47KB PDF in ~11s) · Commit: `b2cbeb6`.
+Story 34 (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/integration/resume-e2e-smoke.ts` (47KB PDF in ~11s) · Commit: `b2cbeb6`.
 
 Pipeline: `lib/resumes/posting.ts` (Gemini keyword extraction) → `lib/resumes/select.ts` (deterministic tag-overlap scoring, locked +Infinity, excluded skipped) → `lib/resumes/rewrite.ts` (single Gemini call with hard guardrails) → `lib/resumes/templates/ats-plain.tsx` → `lib/resumes/render-pdf.ts` (puppeteer-core via system Chrome). `GenerateResumeCard` on the Profile dash.
 
 ### M8 — DOCX export ✅
 
-Story 38's second half (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/resume-docx-smoke.ts` (30KB DOCX, mammoth round-trip verified) · Commit: `12bfa8c`.
+Story 38's second half (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/integration/resume-docx-smoke.ts` (30KB DOCX, mammoth round-trip verified) · Commit: `12bfa8c`.
 
 `?format=docx` on the route; same selection + rewrite pipeline; html-to-docx renderer; PDF/DOCX toggle on the trigger card persisted to localStorage. Also bumped default model from `gemini-2.5-flash` to `gemini-flash-latest` (~30–42% faster).
 
 ### M8 Phase 2 — Archival + traceability + Application linkage ✅
 
-Stories: 35 (🟡 traceability), 39 (🟡 archival). Shipped 2026-05-15. Smoke: `scripts/tests/resume-archival-smoke.ts` (17/17 green).
+Stories: 35 (🟡 traceability), 39 (🟡 archival). Shipped 2026-05-15. Smoke: `scripts/tests/integration/resume-archival-smoke.ts` (17/17 green).
 
 - New `GeneratedResume` Prisma model (userId, applicationId?, postingInput, profileSnapshot, selections, templateKey, format, status, artifactPath?, error). Migration `add_generated_resumes`. Reverse relations on User + Application; `Application.posting onDelete:SetNull` so deleting a posting doesn't nuke the archived resume.
 - `lib/resumes/storage.ts` — filesystem-backed at `data/resumes/<id>.<ext>` (gitignored with `.gitkeep` retained). `safeRelative` rejects traversal.
@@ -407,7 +407,7 @@ Stories: 42, 43, 44 (🟡). Shipped 2026-05-15.
 
 Cross-cutting security pass against the public Cloudflare-tunnel surface (`https://ms-prod.salsquared.xyz`). The intended model — "LAN trusts, tunnel requires session" via `lib/auth-guards.ts` — was correctly applied to 21 user-data routes (applications, watchlists, profile, resumes, etc.) but a 2026-05-15 audit found 19 read-side / SSE / external-data routes with no guard at all.
 
-Shipped 2026-05-15 · Commit: `db8a9bf` · Smoke: `scripts/tests/route-auth-smoke.ts` (57/57) · Wired into pre-push (suite 2 of 14).
+Shipped 2026-05-15 · Commit: `db8a9bf` · Smoke: `scripts/tests/hermetic/route-auth-smoke.ts` (57/57) · Wired into pre-push (suite 2 of 14).
 
 **✅ Closed routes (19):**
 
@@ -502,12 +502,12 @@ Source-code comments using `RAH-N` for moved items were updated to the new `PB-N
 - ✅ **PB-11 — User-created events no longer self-mail.** Shipped 2026-05-16. `app/api/applications/events/route.ts POST` no longer calls `maybeNotifyForApplicationEvent` — the ingest path (Gmail webhook) keeps it. Manual "I got an offer" entries don't fire a critical-tier email.
 - ✅ **PB-12 — Resume response headers ASCII-sanitized.** Shipped 2026-05-16. `app/api/resumes/route.ts` filters `[^\x20-\x7e]` from `X-Resume-Title` / `X-Resume-Company` before setting headers. Em-dashes / accented chars no longer 500 the response.
 - ✅ **PB-13 — CLAUDE.md `middleware.ts` claim dropped.** Shipped 2026-05-16. The "API routes + caching" section now correctly describes the observability surface: the in-app log viewer captures every server-side `console.*` (including the per-query `[DATABASE]` lines from the Prisma middleware in `lib/prisma.ts`). No `middleware.ts` exists at the repo root.
-- ✅ **PB-14 — Directory→watchlist drift closed via `directoryKey` hydration.** Shipped 2026-05-17. Schema migration `20260517171844_add_watchlist_directory_key` adds nullable `Watchlist.directoryKey`. `lib/watchlists/hydrate.ts:hydrateWatchlistConfig` replaces the stored `config` JSON with the live `COMPANY_DIRECTORY` entry on every read (GET serializer + job-watcher fetch path). `resolveCreatePayload` overrides client-submitted config on POST when the key resolves (defense against stale clients). PATCH to `config` clears `directoryKey` so manual overrides stick. `scripts/tests/backfill-watchlist-directory-key.ts` keyed the 2 existing dev rows; hermetic smoke at `scripts/tests/watchlist-hydrate-smoke.ts` (6/6) wired into pre-push.
-- ✅ **PB-1 — Company-name normalizer.** Shipped 2026-05-17. New `lib/applications/normalize-company.ts:normalizeCompanyName` runs NFKC + whitespace collapse + leading "The " strip + iterative trailing-suffix strip (Inc / Corp / LLC / Co / Limited / GmbH / SA / SAS / BV / PLC / PBC / multi-word "Limited Liability Company" etc) + trailing-punct trim. Called in `lib/applications/ingest.ts` after classifier success, before both `findApplicationByCompany` and `createApplication`. Hermetic smoke at `scripts/tests/normalize-company-smoke.ts` (28/28) — Bell Smoke / Bell Smoke Co / Bell Smoke Company / Bell Smoke, Inc. all converge to "Bell Smoke". Idempotent.
-- ✅ **PB-5 — Gmail webhook crash-recovery via per-event checkpoints.** Shipped 2026-05-17. Schema migration `20260517181252_pb5_pb6_webhook_recovery` adds `ApplicationEvent.notifiedAt` + `gcalSyncedAt`. `lib/applications/ingest.ts` no longer hard-skips on `lastEmailMsgId === msgId` — instead re-fetches ALL events for `(applicationId, msgId)` after `createApplicationEvents` and fires notify/gcal only for events whose checkpoint is still null. Early skip preserved only when `events.length > 0 && every(eventFullyCommitted)`. `eventFullyCommitted` accounts for `NOTIFY_EVENT_KINDS` membership + future-vs-past `scheduledAt`. Also: webhook now catches per-msg throws so one bad email doesn't abort the batch. Hermetic smoke at `scripts/tests/ingest-retry-smoke.ts` (7/7).
-- ✅ **PB-6 — Pub/Sub messageId dedup + historyId checkpoint.** Shipped 2026-05-17. Same migration adds `WebhookDelivery(messageId @id, source, receivedAt)` table + `User.lastSyncedHistoryId`. `app/api/gmail/webhook/route.ts` does `INSERT OR IGNORE` on the envelope's messageId BEFORE any side-effect work — duplicate envelope = 200 + `deduped: true` immediately. `PubSubEnvelopeSchema.messageId` is now `.min(1)` required (was optional). Webhook resumes from `min(user.lastSyncedHistoryId, envelope.historyId)` so a multi-day outage doesn't lose messages (within Gmail's 7-day history window), and advances the checkpoint on every successful batch. Hermetic smoke at `scripts/tests/webhook-dedup-smoke.ts` (3/3). Audit found and addressed: bare `messageId` schema being optional; per-msg uncaught throws aborting the batch; missing historyId checkpoint.
-- ✅ **PB-8 — Notification dedupKey @unique.** Shipped 2026-05-17. Migration `20260517182000_pb8_notification_dedup_key` adds `Notification.dedupKey String? @unique`. `dispatchNotification` accepts optional `dedupKey`, catches P2002, returns `Notification | null`. New `utcDateBucket()` helper (UTC-anchored — DST-safe). Callers updated: `stale-applications` → `stale-nudge:${appId}:${YYYY-MM-DD}`; `deadline-nudges` → `deadline:${appId}:${YYYY-MM-DD}`; `posting-digest` → `posting-digest:${watchlistId}:${maxIncluded.toISOString()}` (keyed on batch watermark, not day, so legitimate second-cohort runs still fire); `job-watcher` per-posting → `posting:${postingId}`; per-event notify → `event:${eventId}`; closure-summary → `watchlist-closures:${watchlistId}:${YYYY-MM-DD}`. Hermetic smoke at `scripts/tests/notification-dedup-smoke.ts` (9/9) including a concurrent Promise.all race test that confirms exactly one dispatcher wins. Audit found and addressed: SQLite null-vs-unique semantics, return-type null handling at every caller, posting-digest dedup granularity (day → watermark).
-- ✅ **PB-15 — New-postings filter UI (type / remote / location).** Shipped 2026-05-17. Schema migration `20260517172344_add_posting_employment_type` adds `JobPosting.employmentType String?`. `lib/fetchers/employment-type.ts` exports `normalizeEmploymentType` (ATS field) + `inferEmploymentTypeFromTitle` (word-boundary regex, won't match "intern" in "international") + `pickEmploymentType` (combined). Wired into all six fetchers (Lever/Ashby use ATS field, Greenhouse/Workday/LinkedIn/careers-page use title heuristic). `components/cards/NewPostingsCard.tsx` got a Filters drawer: 5 employment-type chips, "Remote only" toggle, "Location contains…" free-text. Filter state persists on `useAppStore` (per-device via the existing `app-state` zustand persist; bumped version 1→2 with a migrate). Each row now shows its employment-type chip inline next to location. Hermetic smoke at `scripts/tests/employment-type-smoke.ts` (31/31). Note: existing JobPosting rows have `employmentType=null` until next crawl re-extracts them.
+- ✅ **PB-14 — Directory→watchlist drift closed via `directoryKey` hydration.** Shipped 2026-05-17. Schema migration `20260517171844_add_watchlist_directory_key` adds nullable `Watchlist.directoryKey`. `lib/watchlists/hydrate.ts:hydrateWatchlistConfig` replaces the stored `config` JSON with the live `COMPANY_DIRECTORY` entry on every read (GET serializer + job-watcher fetch path). `resolveCreatePayload` overrides client-submitted config on POST when the key resolves (defense against stale clients). PATCH to `config` clears `directoryKey` so manual overrides stick. `scripts/archive/migrations/backfill-watchlist-directory-key.ts` keyed the 2 existing dev rows; hermetic smoke at `scripts/tests/hermetic/watchlist-hydrate-smoke.ts` (6/6) wired into pre-push.
+- ✅ **PB-1 — Company-name normalizer.** Shipped 2026-05-17. New `lib/applications/normalize-company.ts:normalizeCompanyName` runs NFKC + whitespace collapse + leading "The " strip + iterative trailing-suffix strip (Inc / Corp / LLC / Co / Limited / GmbH / SA / SAS / BV / PLC / PBC / multi-word "Limited Liability Company" etc) + trailing-punct trim. Called in `lib/applications/ingest.ts` after classifier success, before both `findApplicationByCompany` and `createApplication`. Hermetic smoke at `scripts/tests/hermetic/normalize-company-smoke.ts` (28/28) — Bell Smoke / Bell Smoke Co / Bell Smoke Company / Bell Smoke, Inc. all converge to "Bell Smoke". Idempotent.
+- ✅ **PB-5 — Gmail webhook crash-recovery via per-event checkpoints.** Shipped 2026-05-17. Schema migration `20260517181252_pb5_pb6_webhook_recovery` adds `ApplicationEvent.notifiedAt` + `gcalSyncedAt`. `lib/applications/ingest.ts` no longer hard-skips on `lastEmailMsgId === msgId` — instead re-fetches ALL events for `(applicationId, msgId)` after `createApplicationEvents` and fires notify/gcal only for events whose checkpoint is still null. Early skip preserved only when `events.length > 0 && every(eventFullyCommitted)`. `eventFullyCommitted` accounts for `NOTIFY_EVENT_KINDS` membership + future-vs-past `scheduledAt`. Also: webhook now catches per-msg throws so one bad email doesn't abort the batch. Hermetic smoke at `scripts/tests/hermetic/ingest-retry-smoke.ts` (7/7).
+- ✅ **PB-6 — Pub/Sub messageId dedup + historyId checkpoint.** Shipped 2026-05-17. Same migration adds `WebhookDelivery(messageId @id, source, receivedAt)` table + `User.lastSyncedHistoryId`. `app/api/gmail/webhook/route.ts` does `INSERT OR IGNORE` on the envelope's messageId BEFORE any side-effect work — duplicate envelope = 200 + `deduped: true` immediately. `PubSubEnvelopeSchema.messageId` is now `.min(1)` required (was optional). Webhook resumes from `min(user.lastSyncedHistoryId, envelope.historyId)` so a multi-day outage doesn't lose messages (within Gmail's 7-day history window), and advances the checkpoint on every successful batch. Hermetic smoke at `scripts/tests/hermetic/webhook-dedup-smoke.ts` (3/3). Audit found and addressed: bare `messageId` schema being optional; per-msg uncaught throws aborting the batch; missing historyId checkpoint.
+- ✅ **PB-8 — Notification dedupKey @unique.** Shipped 2026-05-17. Migration `20260517182000_pb8_notification_dedup_key` adds `Notification.dedupKey String? @unique`. `dispatchNotification` accepts optional `dedupKey`, catches P2002, returns `Notification | null`. New `utcDateBucket()` helper (UTC-anchored — DST-safe). Callers updated: `stale-applications` → `stale-nudge:${appId}:${YYYY-MM-DD}`; `deadline-nudges` → `deadline:${appId}:${YYYY-MM-DD}`; `posting-digest` → `posting-digest:${watchlistId}:${maxIncluded.toISOString()}` (keyed on batch watermark, not day, so legitimate second-cohort runs still fire); `job-watcher` per-posting → `posting:${postingId}`; per-event notify → `event:${eventId}`; closure-summary → `watchlist-closures:${watchlistId}:${YYYY-MM-DD}`. Hermetic smoke at `scripts/tests/hermetic/notification-dedup-smoke.ts` (9/9) including a concurrent Promise.all race test that confirms exactly one dispatcher wins. Audit found and addressed: SQLite null-vs-unique semantics, return-type null handling at every caller, posting-digest dedup granularity (day → watermark).
+- ✅ **PB-15 — New-postings filter UI (type / remote / location).** Shipped 2026-05-17. Schema migration `20260517172344_add_posting_employment_type` adds `JobPosting.employmentType String?`. `lib/fetchers/employment-type.ts` exports `normalizeEmploymentType` (ATS field) + `inferEmploymentTypeFromTitle` (word-boundary regex, won't match "intern" in "international") + `pickEmploymentType` (combined). Wired into all six fetchers (Lever/Ashby use ATS field, Greenhouse/Workday/LinkedIn/careers-page use title heuristic). `components/cards/NewPostingsCard.tsx` got a Filters drawer: 5 employment-type chips, "Remote only" toggle, "Location contains…" free-text. Filter state persists on `useAppStore` (per-device via the existing `app-state` zustand persist; bumped version 1→2 with a migrate). Each row now shows its employment-type chip inline next to location. Hermetic smoke at `scripts/tests/hermetic/employment-type-smoke.ts` (31/31). Note: existing JobPosting rows have `employmentType=null` until next crawl re-extracts them.
 
 ### Prompt tuning ⏳
 

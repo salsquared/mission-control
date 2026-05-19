@@ -191,7 +191,7 @@ Three tier presets (`TTL_STANDARD = 1h`, `TTL_LOW_VOLUME = 24h`, `TTL_VERY_LOW =
 - **Adding a new company is one new file** under `lib/companies/<id>.ts` plus one alphabetical `import` line in `index.ts`. No edits to a central registry table.
 - **Custom fetchers are deliberately *bespoke*** — they're so per-source that abstracting them would be premature; `customAdapter` just hands the fetch function through.
 - **Failure mode is per-source.** A failing scraper doesn't break the view; the route returns whatever succeeds and the `withCache` layer keeps the last-good payload behind it. `lib/fetchers/errors.ts:ScraperBrokenError` (MVP1 Task 2B) lights up the InternalView fetcher-health tile when an adapter returns 0 items from a non-empty response.
-- **Single adapters are unit-testable.** `scripts/tests/test-cerebras-fetcher.ts`, `test-meta-blog.ts`, and `test-mistral.ts` import the per-company default export directly and call `.fetch()` — no need to go through the route or the index.
+- **Single adapters are unit-testable.** `scripts/tests/probes/test-cerebras-fetcher.ts`, `test-meta-blog.ts`, and `test-mistral.ts` import the per-company default export directly and call `.fetch()` — no need to go through the route or the index.
 - The barrel is also consumed by the **frontend** — `AIView` and `SpaceView` import `ADAPTERS` to know what to render and how to group cards. The same file is the catalog for both fetcher dispatch *and* UI grouping.
 
 ---

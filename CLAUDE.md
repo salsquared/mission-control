@@ -29,10 +29,26 @@ Restart / inspect:
 The npm scripts themselves remain useful for one-offs:
 - `npm run build` — production build (webpack). Run before restarting `mission-control` so it picks up new compiled code.
 - `npm run lint` — ESLint (flat config, extends `eslint-config-next`).
+- `npm run test:hermetic` — runs `./scripts/pre-push.sh` (the hermetic suite). Use this to verify before pushing without going through `git push`.
 - `./launch-ms.sh` — convenience launcher that ensures the prod PM2 process is up and opens Chrome in `--app=` mode at `http://localhost:3101`. `./launch-ms.sh --restart` force-kills and recreates the PM2 process.
 - `npx prisma migrate dev` / `npx prisma generate` — schema lives at `prisma/schema.prisma` (SQLite). Dev and prod use **separate DB files** in `prisma/`.
 
-There is no test runner configured. One-off scripts (DB checkers, fetcher experiments, parser tests) belong in `scripts/tests/` as kebab-case `.ts` files and are run with `tsx` (e.g. `npx tsx scripts/tests/check-cache.ts`). This is enforced — do not put experiments in the repo root or `/tmp`.
+### Pre-push hook (mandatory gate before reaching `main`)
+
+`scripts/pre-push.sh` runs the full hermetic suite (every file under `scripts/tests/hermetic/`). It is wired as a **git pre-push hook** via `simple-git-hooks` (config in `package.json: simple-git-hooks.pre-push`) and is installed automatically on `npm install` via the `postinstall` script. This means **every `git push` is gated on the suite passing** — you do not need to run it manually, but you should never reach for `--no-verify` without a specific load-bearing reason (the hook is the only thing keeping `main` green).
+
+Verifying the hook is installed: `ls -la .git/hooks/pre-push` should show a 200-byte script ending in `./scripts/pre-push.sh`. If a fresh clone is missing it, run `npx simple-git-hooks` (or `npm install`) to re-install.
+
+There is **no pre-commit hook** — local commits are unrestricted; the gate is at push time. If you want to dry-run the suite before committing, use `npm run test:hermetic`.
+
+There is no test runner configured. `scripts/tests/` is partitioned by what each script depends on — pick the right subdir when adding a new one:
+
+- **`scripts/tests/hermetic/`** — no network, no PM2, no live external API. Pure logic + in-process Prisma + optional in-process HTTP fixture server. **Every file here is wired into `scripts/pre-push.sh` and runs on every push.** Add new files here only if they're truly hermetic, and append them to the `SUITES` array in `pre-push.sh`.
+- **`scripts/tests/integration/`** — real assertions, but require the dev PM2 process (`mission-control-dev` on :4101) running. E.g. anything that does `fetch(http://localhost:4101/...)`. Not in pre-push; run by hand after `pm2 restart mission-control-dev`.
+- **`scripts/tests/probes/`** — live external API probes (Gemini, LinkedIn, Greenhouse, ATS slug verifiers, etc.). Diagnostic, not regression — exit-zero is not a contract. Run ad-hoc when debugging an outside system.
+- **`scripts/tests/debug/`** — manual exploration / `console.log` dumps (`gmail-inbox-debug`, `check-cache`, `fix-lint`). No assertions; cwd-equivalent of `/tmp` for the repo.
+
+Files run with `tsx` (e.g. `npx tsx scripts/tests/debug/check-cache.ts`). This is enforced — do not put experiments in the repo root or `/tmp`. One-off backfills and already-run migrations live under `scripts/archive/migrations/` (kept for forensic record, not re-runnable).
 
 Node.js LTS is required (project pins to v24.x via nvm). Path alias `@/*` resolves to the repo root.
 
@@ -97,7 +113,7 @@ Anything that reads/sends Gmail or writes Calendar events depends on these scope
 
 `lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (so it lands in the in-app log viewer). The client is cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by which `.env.{development,production}` Next.js picks up. When debugging prod data issues, point at `prisma/prod.db` explicitly.
 
-When invoking a `tsx` script against the dev DB (e.g. `scripts/tests/*.ts`), pass `DATABASE_URL="file:./dev.db"` — **not** `file:./prisma/dev.db`. Prisma resolves a relative `file:` URL from the schema's directory (`prisma/`), so `file:./prisma/dev.db` silently creates a phantom `prisma/prisma/dev.db` and you'll get empty-DB results.
+When invoking a `tsx` script against the dev DB (e.g. `scripts/tests/**/*.ts`), pass `DATABASE_URL="file:./dev.db"` — **not** `file:./prisma/dev.db`. Prisma resolves a relative `file:` URL from the schema's directory (`prisma/`), so `file:./prisma/dev.db` silently creates a phantom `prisma/prisma/dev.db` and you'll get empty-DB results.
 
 Schema highlights: standard NextAuth tables (`Account`/`Session`/`User`/`VerificationToken`), `Application` + `ApplicationEvent` (job tracker), `Task` (DB-native, see below), `LifeGoal`, `SavedPaper` + weekly selection tables (`SelectedHistoricalPaper`, `SelectedReviewPaper`), `GlobalSetting` (single row keyed `id="global"`), `Watchlist` + `JobPosting` (discovery feed), `Notification` (in-app bell + email dispatcher), `WebhookDelivery` (Pub/Sub messageId dedup), `GeneratedResume`.
 

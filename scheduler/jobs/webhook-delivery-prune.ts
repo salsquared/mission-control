@@ -10,7 +10,7 @@
  * Google's end and we'd want to re-walk history.list for it anyway. 30 days
  * is conservative belt-and-suspenders.
  *
- * Exported for the scheduler. The smoke at scripts/tests/webhook-prune-smoke.ts
+ * Exported for the scheduler. The smoke at scripts/tests/hermetic/webhook-prune-smoke.ts
  * exercises this against dev.db with synthetic old rows.
  */
 import { prisma } from "@/lib/prisma";
