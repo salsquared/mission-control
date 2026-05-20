@@ -21,6 +21,11 @@ import { fetchGreenhouse } from "@/lib/fetchers/greenhouse-fetcher";
 import { fetchLever } from "@/lib/fetchers/lever-fetcher";
 import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
 import { fetchWorkday } from "@/lib/fetchers/workday-fetcher";
+import { fetchSmartRecruiters } from "@/lib/fetchers/smartrecruiters-fetcher";
+import { fetchWorkable } from "@/lib/fetchers/workable-fetcher";
+import { fetchRecruitee } from "@/lib/fetchers/recruitee-fetcher";
+import { fetchPersonio } from "@/lib/fetchers/personio-fetcher";
+import { fetchClearCompany } from "@/lib/fetchers/clearcompany-fetcher";
 import { fetchLinkedin } from "@/lib/fetchers/linkedin-fetcher";
 import { WatchlistConfigSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
@@ -113,12 +118,17 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
 
     const fetchResult = await (() => {
         switch (config.kind) {
-            case "greenhouse":   return fetchGreenhouse(config);
-            case "lever":        return fetchLever(config);
-            case "ashby":        return fetchAshby(config);
-            case "workday":      return fetchWorkday(config);
-            case "linkedin":     return fetchLinkedin(config);
-            case "careers-page": return fetchCareersPage(config);
+            case "greenhouse":      return fetchGreenhouse(config);
+            case "lever":           return fetchLever(config);
+            case "ashby":           return fetchAshby(config);
+            case "workday":         return fetchWorkday(config);
+            case "smartrecruiters": return fetchSmartRecruiters(config);
+            case "workable":        return fetchWorkable(config);
+            case "recruitee":       return fetchRecruitee(config);
+            case "personio":        return fetchPersonio(config);
+            case "clearcompany":    return fetchClearCompany(config);
+            case "linkedin":        return fetchLinkedin(config);
+            case "careers-page":    return fetchCareersPage(config);
         }
     })();
     const runAt = new Date();

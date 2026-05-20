@@ -12,6 +12,11 @@ import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
 import { fetchCareersPage } from "@/lib/fetchers/careers-page-fetcher";
 import { fetchGithubRepoMetrics } from "@/lib/fetchers/github-public-fetcher";
 import { fetchWorkday } from "@/lib/fetchers/workday-fetcher";
+import { fetchSmartRecruiters } from "@/lib/fetchers/smartrecruiters-fetcher";
+import { fetchWorkable } from "@/lib/fetchers/workable-fetcher";
+import { fetchRecruitee } from "@/lib/fetchers/recruitee-fetcher";
+import { fetchPersonio } from "@/lib/fetchers/personio-fetcher";
+import { fetchClearCompany } from "@/lib/fetchers/clearcompany-fetcher";
 import { fetchLinkedin } from "@/lib/fetchers/linkedin-fetcher";
 
 let passes = 0;
@@ -396,6 +401,27 @@ async function testWorkday() {
     if (!r4.ok) fail("workday empty: should be ok with 0 postings");
     else if (r4.postings.length !== 0) fail(`workday empty: expected 0, got ${r4.postings.length}`);
     else pass("workday empty board → ok with 0");
+
+    // Mixed page: some valid entries + some missing required fields. The
+    // fetcher should skip malformed entries (with a warn log) and ingest the
+    // valid ones rather than aborting the whole crawl. Regression guard for
+    // 2026-05-19 Boeing failure where one malformed row in a 1,170-job
+    // pagination killed the entire run.
+    mockNext({ kind: "json", body: {
+        total: 4,
+        jobPostings: [
+            { title: "Valid Engineer", externalPath: "/job/valid-1_JR1", locationsText: "Seattle" },
+            { externalPath: "/job/missing-title_JR2" }, // missing title
+            { title: "Missing Path" },                  // missing externalPath
+            { title: "Another Valid", externalPath: "/job/valid-2_JR3" },
+        ],
+    } });
+    const r5 = await fetchWorkday({ kind: "workday", tenantHost: "x.wd1.myworkdayjobs.com", careerSite: "X", companyName: "X" });
+    if (!r5.ok) fail(`workday mixed: should be ok despite malformed rows, got error: ${r5.error}`);
+    else if (r5.postings.length !== 2) fail(`workday mixed: expected 2 ingested, got ${r5.postings.length}`);
+    else if (r5.postings[0].title !== "Valid Engineer" || r5.postings[1].title !== "Another Valid") {
+        fail(`workday mixed: wrong postings ingested — ${r5.postings.map(p => p.title).join(", ")}`);
+    } else pass("workday mixed page: skips malformed rows, ingests valid ones");
 }
 
 // ─── LinkedIn ────────────────────────────────────────────────────────────
@@ -466,6 +492,254 @@ async function testLinkedin() {
     else pass("linkedin empty body → ok with 0");
 }
 
+// ─── SmartRecruiters ────────────────────────────────────────────────────
+
+async function testSmartRecruiters() {
+    // Happy single-page (totalFound matches content.length so the loop stops).
+    mockNext({ kind: "json", body: {
+        offset: 0, limit: 100, totalFound: 2, content: [
+            { id: "744000111", name: "Sr. SW Engineer", location: { fullLocation: "Austin, TX, United States", remote: false, hybrid: true }, department: { label: "Engineering" }, function: { label: "IT" }, typeOfEmployment: { label: "Full-time" } },
+            { id: "744000222", name: "Software Engineering Intern", location: { city: "Foster City", region: "CA", country: "us" }, function: { label: "IT" }, typeOfEmployment: { label: "Internship" } },
+        ],
+    } });
+    const r = await fetchSmartRecruiters({ kind: "smartrecruiters", boardSlug: "Visa", companyName: "Visa" });
+    if (!r.ok) fail("smartrecruiters happy: not ok", r);
+    else if (r.postings.length !== 2) fail(`smartrecruiters happy: expected 2, got ${r.postings.length}`);
+    else if (r.postings[0].sourceUrl !== "https://jobs.smartrecruiters.com/Visa/744000111") fail(`smartrecruiters: URL mismatch (${r.postings[0].sourceUrl})`);
+    else if (r.postings[0].location !== "Austin, TX, United States") fail(`smartrecruiters: fullLocation should win (${r.postings[0].location})`);
+    else if (r.postings[1].location !== "Foster City, CA, us") fail(`smartrecruiters: composed fallback (${r.postings[1].location})`);
+    else if (r.postings[1].employmentType !== "internship") fail(`smartrecruiters: typeOfEmployment internship not classified (${r.postings[1].employmentType})`);
+    else pass("smartrecruiters happy: 2 postings, URL composed, location & type derived");
+
+    // Case-sensitive slug shows up in the URL — verify lowercase is preserved (no auto-cap).
+    if (lastRequestURL && lastRequestURL.includes("/companies/Visa/")) pass("smartrecruiters: slug case preserved in URL");
+    else fail(`smartrecruiters: slug case lost (${lastRequestURL})`);
+
+    // Empty board
+    mockNext({ kind: "json", body: { offset: 0, limit: 100, totalFound: 0, content: [] } });
+    const r2 = await fetchSmartRecruiters({ kind: "smartrecruiters", boardSlug: "empty", companyName: "Empty" });
+    if (!r2.ok || r2.postings.length !== 0) fail("smartrecruiters empty: should be ok with 0");
+    else pass("smartrecruiters empty → ok with 0");
+
+    // Pagination — first page full, second page tail. Tests offset advance + early stop.
+    mockSequence([
+        { kind: "json", body: { offset: 0, limit: 100, totalFound: 101, content: Array.from({length:100}, (_,i) => ({ id: `p${i}`, name: `Job ${i}`, location: { fullLocation: "Remote" } })) } },
+        { kind: "json", body: { offset: 100, limit: 100, totalFound: 101, content: [{ id: "p100", name: "Last One" }] } },
+    ]);
+    const r3 = await fetchSmartRecruiters({ kind: "smartrecruiters", boardSlug: "Big", companyName: "Big" });
+    if (!r3.ok) fail("smartrecruiters paginated: not ok", r3);
+    else if (r3.postings.length !== 101) fail(`smartrecruiters paginated: expected 101, got ${r3.postings.length}`);
+    else pass("smartrecruiters paginated: drains 2 pages, stops on totalFound");
+
+    // Non-OK response
+    resetMocks();
+    mockNext({ kind: "text", status: 404, body: "Not Found" });
+    const r4 = await fetchSmartRecruiters({ kind: "smartrecruiters", boardSlug: "missing", companyName: "x" });
+    if (r4.ok) fail("smartrecruiters 404: should not be ok");
+    else if (!r4.error.includes("404")) fail(`smartrecruiters 404: wrong error (${r4.error})`);
+    else pass("smartrecruiters 404 → error");
+}
+
+// ─── Workable ───────────────────────────────────────────────────────────
+
+async function testWorkable() {
+    // Happy
+    mockNext({ kind: "json", body: { name: "Workable", description: null, jobs: [
+        { title: "Enterprise AE", shortcode: "39441A01CA", code: null, employment_type: "Full-time", telecommuting: false, department: "Revenue", url: "https://apply.workable.com/j/39441A01CA", application_url: "https://apply.workable.com/j/39441A01CA/apply", country: "United Kingdom", city: "London", state: "" },
+        { title: "SRE Intern", shortcode: "ABC123", employment_type: "Internship", telecommuting: true, department: "Engineering", url: "https://apply.workable.com/j/ABC123", city: null, state: null, country: null },
+    ] } });
+    const r = await fetchWorkable({ kind: "workable", boardSlug: "careers", companyName: "Workable" });
+    if (!r.ok) fail("workable happy: not ok", r);
+    else if (r.postings.length !== 2) fail(`workable happy: expected 2, got ${r.postings.length}`);
+    else if (r.postings[0].location !== "London, United Kingdom") fail(`workable: location join (${r.postings[0].location})`);
+    else if (r.postings[1].location !== "Remote") fail(`workable: telecommuting → Remote (${r.postings[1].location})`);
+    else if (r.postings[1].employmentType !== "internship") fail(`workable: intern classification (${r.postings[1].employmentType})`);
+    else pass("workable happy: 2 postings, location/remote/type derived");
+
+    // Empty jobs
+    mockNext({ kind: "json", body: { name: "x", description: null, jobs: [] } });
+    const r2 = await fetchWorkable({ kind: "workable", boardSlug: "empty", companyName: "x" });
+    if (!r2.ok || r2.postings.length !== 0) fail("workable empty: should be ok with 0");
+    else pass("workable empty → ok with 0");
+
+    // Missing url → fallback constructed from shortcode
+    mockNext({ kind: "json", body: { name: "x", description: null, jobs: [
+        { title: "X", shortcode: "ZZZ", employment_type: "Full-time" },
+    ] } });
+    const r3 = await fetchWorkable({ kind: "workable", boardSlug: "x", companyName: "x" });
+    if (!r3.ok) fail("workable shortcode-only: not ok", r3);
+    else if (r3.postings[0].sourceUrl !== "https://apply.workable.com/j/ZZZ") fail(`workable: shortcode fallback URL (${r3.postings[0].sourceUrl})`);
+    else pass("workable: sourceUrl falls back to shortcode permalink");
+
+    // Malformed
+    mockNext({ kind: "json", body: { notJobs: [] } });
+    const r4 = await fetchWorkable({ kind: "workable", boardSlug: "broken", companyName: "x" });
+    if (r4.ok) fail("workable malformed: should not be ok");
+    else pass("workable malformed → error");
+}
+
+// ─── Recruitee ──────────────────────────────────────────────────────────
+
+async function testRecruitee() {
+    // Happy
+    mockNext({ kind: "json", body: { offers: [
+        { id: 2431127, title: "Senior Marketer", slug: "senior-marketer", careers_url: "https://jet.recruitee.com/o/senior-marketer", location: "Amsterdam, Noord-Holland, Netherlands", city: "Amsterdam", country: "Netherlands", remote: false, hybrid: false, employment_type_code: "fulltime_permanent", department: null },
+        { id: 99, title: "Engineering Intern", slug: "eng-intern", careers_url: "https://jet.recruitee.com/o/eng-intern", location: null, city: "Berlin", country: "Germany", remote: true, employment_type_code: "internship" },
+    ] } });
+    const r = await fetchRecruitee({ kind: "recruitee", boardSlug: "jet", companyName: "Jet" });
+    if (!r.ok) fail("recruitee happy: not ok", r);
+    else if (r.postings.length !== 2) fail(`recruitee happy: expected 2, got ${r.postings.length}`);
+    else if (r.postings[0].location !== "Amsterdam, Noord-Holland, Netherlands") fail(`recruitee: location pass-through (${r.postings[0].location})`);
+    else if (r.postings[0].employmentType !== "full-time") fail(`recruitee: fulltime_permanent → full-time (${r.postings[0].employmentType})`);
+    else if (r.postings[1].location !== "Berlin, Germany") fail(`recruitee: city+country fallback (${r.postings[1].location})`);
+    else if (r.postings[1].employmentType !== "internship") fail(`recruitee: internship classification (${r.postings[1].employmentType})`);
+    else if (!r.postings[1].snippet?.includes("Remote")) fail(`recruitee: snippet should include Remote (${r.postings[1].snippet})`);
+    else pass("recruitee happy: 2 postings, types + location derived");
+
+    // Missing careers_url falls back to slug permalink
+    mockNext({ kind: "json", body: { offers: [
+        { id: 1, title: "X", slug: "x-job", employment_type_code: "fulltime_permanent" },
+    ] } });
+    const r2 = await fetchRecruitee({ kind: "recruitee", boardSlug: "co", companyName: "Co" });
+    if (!r2.ok) fail("recruitee slug-only: not ok", r2);
+    else if (r2.postings[0].sourceUrl !== "https://co.recruitee.com/o/x-job") fail(`recruitee: slug fallback URL (${r2.postings[0].sourceUrl})`);
+    else pass("recruitee: sourceUrl falls back to slug permalink");
+
+    // Malformed
+    mockNext({ kind: "json", body: { notOffers: [] } });
+    const r3 = await fetchRecruitee({ kind: "recruitee", boardSlug: "x", companyName: "x" });
+    if (r3.ok) fail("recruitee malformed: should not be ok");
+    else pass("recruitee malformed → error");
+}
+
+// ─── Personio ───────────────────────────────────────────────────────────
+
+async function testPersonio() {
+    // Happy — synthetic but structurally faithful to a real Personio xml.
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<workzag-jobs>
+<position>
+    <id>1834171</id>
+    <office>Munich</office>
+    <additionalOffices><office>Berlin</office></additionalOffices>
+    <department>Product and Tech</department>
+    <name>Staff Software Engineer</name>
+    <employmentType>permanent</employmentType>
+    <schedule>full-time</schedule>
+    <seniority>experienced</seniority>
+</position>
+<position>
+    <id>1834172</id>
+    <office>Dublin</office>
+    <department>Engineering</department>
+    <name>Software Engineering Intern</name>
+    <schedule>internship</schedule>
+</position>
+</workzag-jobs>`;
+    mockNext({ kind: "text", body: xml, headers: { "content-type": "application/xml" } });
+    const r = await fetchPersonio({ kind: "personio", boardSlug: "personio", companyName: "Personio" });
+    if (!r.ok) fail("personio happy: not ok", r);
+    else if (r.postings.length !== 2) fail(`personio happy: expected 2, got ${r.postings.length}`);
+    else if (r.postings[0].sourceUrl !== "https://personio.jobs.personio.com/job/1834171") fail(`personio: URL composed (${r.postings[0].sourceUrl})`);
+    else if (r.postings[0].location !== "Munich / Berlin") fail(`personio: location join (${r.postings[0].location})`);
+    else if (r.postings[0].employmentType !== "full-time") fail(`personio: schedule full-time → full-time (${r.postings[0].employmentType})`);
+    else if (r.postings[1].employmentType !== "internship") fail(`personio: schedule internship → internship (${r.postings[1].employmentType})`);
+    else pass("personio happy: 2 positions parsed, URL + location + type derived");
+
+    // Empty positions
+    mockNext({ kind: "text", body: `<?xml version="1.0"?><workzag-jobs></workzag-jobs>` });
+    const r2 = await fetchPersonio({ kind: "personio", boardSlug: "empty", companyName: "x" });
+    if (!r2.ok || r2.postings.length !== 0) fail("personio empty: should be ok with 0");
+    else pass("personio empty → ok with 0");
+
+    // Malformed root
+    mockNext({ kind: "text", body: `<?xml version="1.0"?><not-personio></not-personio>` });
+    const r3 = await fetchPersonio({ kind: "personio", boardSlug: "x", companyName: "x" });
+    if (r3.ok) fail("personio bad root: should not be ok");
+    else if (!r3.error.includes("workzag-jobs")) fail(`personio bad root: error should mention root (${r3.error})`);
+    else pass("personio missing root → error");
+
+    // Position with no id or name is skipped
+    mockNext({ kind: "text", body: `<?xml version="1.0"?><workzag-jobs><position><id>1</id></position><position><name>X</name></position><position><id>2</id><name>Real</name></position></workzag-jobs>` });
+    const r4 = await fetchPersonio({ kind: "personio", boardSlug: "x", companyName: "x" });
+    if (!r4.ok) fail("personio partial: not ok", r4);
+    else if (r4.postings.length !== 1) fail(`personio partial: incomplete positions should be skipped, expected 1, got ${r4.postings.length}`);
+    else pass("personio: positions missing id or name are dropped");
+}
+
+// ─── ClearCompany ───────────────────────────────────────────────────────
+
+async function testClearCompany() {
+    // Happy single-page (totalCount matches results length so the loop exits).
+    mockNext({ kind: "json", body: {
+        results: [
+            { id: "abc-1", positionTitle: "Senior Software Engineer", departmentName: "Engineering", officeName: "HQ", location: "Cedar Park TX", locations: [{ city: "Cedar Park", subdivision: "TX", country: "US", isRemote: false }], applyLink: "https://example.clearcompany.com/careers/jobs/abc-1", postedDate: "2026-05-11T00:00:00" },
+            { id: "abc-2", positionTitle: "GNC Internship", departmentName: "GNC", location: null, locations: [{ city: "Austin", subdivision: "TX", country: "US", isRemote: true }], applyLink: "https://example.clearcompany.com/careers/jobs/abc-2", postedDate: "2026-05-10T00:00:00" },
+        ],
+        currentPageIndex: 0, currentPageCount: 2, totalCount: 2,
+    } });
+    const r = await fetchClearCompany({ kind: "clearcompany", boardSlug: "00ed92c3-5bfb-7bfb-456d-4d9d77fef9a5", companyName: "Firefly" });
+    if (!r.ok) fail("clearcompany happy: not ok", r);
+    else if (r.postings.length !== 2) fail(`clearcompany happy: expected 2, got ${r.postings.length}`);
+    else if (r.postings[0].location !== "Cedar Park TX") fail(`clearcompany: flat location should win (${r.postings[0].location})`);
+    else if (r.postings[1].location !== "Austin, TX, US") fail(`clearcompany: structured fallback (${r.postings[1].location})`);
+    else if (r.postings[1].employmentType !== "internship") fail(`clearcompany: title-inferred internship (${r.postings[1].employmentType})`);
+    else if (!r.postings[1].snippet?.includes("Remote")) fail(`clearcompany: remote tag in snippet (${r.postings[1].snippet})`);
+    else pass("clearcompany happy: 2 postings, locations + type derived");
+
+    // Pagination — single-shot returned partial (count < total), fetcher should
+    // pull additional pages until total is reached.
+    resetMocks();
+    mockSequence([
+        // pageIndex=0 (implicit) — returns 1 of 3
+        { kind: "json", body: {
+            results: [{ id: "p0", positionTitle: "Job 0", applyLink: "https://x.com/0" }],
+            currentPageIndex: 0, currentPageCount: 1, totalCount: 3,
+        } },
+        // pageIndex=1 — returns 1 more
+        { kind: "json", body: {
+            results: [{ id: "p1", positionTitle: "Job 1", applyLink: "https://x.com/1" }],
+            currentPageIndex: 1, currentPageCount: 1, totalCount: 3,
+        } },
+        // pageIndex=2 — returns last 1
+        { kind: "json", body: {
+            results: [{ id: "p2", positionTitle: "Job 2", applyLink: "https://x.com/2" }],
+            currentPageIndex: 2, currentPageCount: 1, totalCount: 3,
+        } },
+    ]);
+    const r2 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "site-uuid-here-needs-20", companyName: "X" });
+    if (!r2.ok) fail("clearcompany paginated: not ok", r2);
+    else if (r2.postings.length !== 3) fail(`clearcompany paginated: expected 3, got ${r2.postings.length}`);
+    else pass("clearcompany paginated: drains across pages, dedups by id");
+
+    // Empty board
+    mockNext({ kind: "json", body: { results: [], currentPageIndex: 0, currentPageCount: 0, totalCount: 0 } });
+    const r3 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "empty-uuid-12345678901234", companyName: "x" });
+    if (!r3.ok || r3.postings.length !== 0) fail("clearcompany empty: should be ok with 0");
+    else pass("clearcompany empty → ok with 0");
+
+    // Malformed response
+    mockNext({ kind: "json", body: { notResults: [] } });
+    const r4 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "broken-uuid-1234567890123", companyName: "x" });
+    if (r4.ok) fail("clearcompany malformed: should not be ok");
+    else pass("clearcompany malformed → error");
+
+    // Postings without applyLink are filtered out (defensive — applyLink is
+    // marked optional in the schema since other ClearCompany tenants may
+    // disable per-job apply links).
+    mockNext({ kind: "json", body: {
+        results: [
+            { id: "x1", positionTitle: "Has apply", applyLink: "https://x.com/1" },
+            { id: "x2", positionTitle: "No apply", applyLink: null },
+        ],
+        currentPageIndex: 0, currentPageCount: 2, totalCount: 2,
+    } });
+    const r5 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "partial-uuid-1234567890", companyName: "x" });
+    if (!r5.ok) fail("clearcompany filter: not ok", r5);
+    else if (r5.postings.length !== 1) fail(`clearcompany filter: expected 1 (apply-link required), got ${r5.postings.length}`);
+    else pass("clearcompany: postings without applyLink are dropped");
+}
+
 async function main() {
     try {
         await testGreenhouse();
@@ -474,6 +748,11 @@ async function main() {
         await testCareersPage();
         await testGithub();
         await testWorkday();
+        await testSmartRecruiters();
+        await testWorkable();
+        await testRecruitee();
+        await testPersonio();
+        await testClearCompany();
         await testLinkedin();
     } finally {
         globalThis.fetch = realFetch;

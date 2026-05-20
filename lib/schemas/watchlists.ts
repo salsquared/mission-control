@@ -11,9 +11,26 @@ import { z } from "zod";
 //     many AI-era companies).
 //   - workday: per-tenant POST to <tenantHost>/wday/cxs/<slug>/<careerSite>/jobs
 //     (Boeing, Blue Origin, most legacy enterprises).
+//   - smartrecruiters: api.smartrecruiters.com/v1/companies/<slug>/postings,
+//     paginated (Visa, ServiceNow, Ubisoft, Bosch, McDonald's, IKEA).
+//     Slugs are case-sensitive.
+//   - workable: apply.workable.com/api/v1/widget/accounts/<slug>?details=true
+//     (Workable itself, many 50–500-person companies). Returns all jobs in
+//     one shot.
+//   - recruitee: <slug>.recruitee.com/api/offers/ (mostly EU companies).
+//     Returns all offers in one shot.
+//   - personio: <slug>.jobs.personio.com/xml (Personio itself, lots of
+//     European companies). XML sitemap-style feed, no pagination.
+//   - clearcompany: careers-api.clearcompany.com/v1/<siteId> (Firefly
+//     Aerospace and mid-market companies). siteId is a UUID, not a slug.
 //   - linkedin: scrapes the public guest jobs-search endpoint with cheerio.
 //     Fragile by design — LinkedIn aggressively bot-detects.
-export const WATCHLIST_KINDS = ["careers-page", "greenhouse", "lever", "ashby", "workday", "linkedin"] as const;
+export const WATCHLIST_KINDS = [
+    "careers-page", "greenhouse", "lever", "ashby", "workday",
+    "smartrecruiters", "workable", "recruitee", "personio",
+    "clearcompany",
+    "linkedin",
+] as const;
 export const WatchlistKindSchema = z.enum(WATCHLIST_KINDS);
 
 export const CareersPageConfigSchema = z.object({
@@ -63,6 +80,52 @@ export const WorkdayConfigSchema = z.object({
     maxPages: z.number().int().min(1).max(200).optional(),
 });
 
+export const SmartRecruitersConfigSchema = z.object({
+    kind: z.literal("smartrecruiters"),
+    // The company identifier from career-page URLs like
+    // jobs.smartrecruiters.com/<slug> or careers.smartrecruiters.com/<slug>.
+    // Case-sensitive — "Visa" works, "visa" returns 0.
+    boardSlug: z.string().min(1).max(100),
+    companyName: z.string().min(1),
+    // Optional override of the per-crawl page cap. Default 5 (=500 postings at
+    // limit=100). ServiceNow has ~480, Visa ~25 — most fit comfortably.
+    maxPages: z.number().int().min(1).max(50).optional(),
+});
+
+export const WorkableConfigSchema = z.object({
+    kind: z.literal("workable"),
+    // The subdomain on apply.workable.com (e.g. "careers" for Workable's
+    // own board → apply.workable.com/careers).
+    boardSlug: z.string().min(1).max(100),
+    companyName: z.string().min(1),
+});
+
+export const RecruiteeConfigSchema = z.object({
+    kind: z.literal("recruitee"),
+    // The subdomain on recruitee.com (e.g. "jet" → jet.recruitee.com).
+    boardSlug: z.string().min(1).max(100),
+    companyName: z.string().min(1),
+});
+
+export const PersonioConfigSchema = z.object({
+    kind: z.literal("personio"),
+    // The subdomain on jobs.personio.com (e.g. "personio" →
+    // personio.jobs.personio.com).
+    boardSlug: z.string().min(1).max(100),
+    companyName: z.string().min(1),
+});
+
+export const ClearCompanyConfigSchema = z.object({
+    kind: z.literal("clearcompany"),
+    // siteId is a UUID — careers-api.clearcompany.com/v1/<siteId>. Extractable
+    // from the careers page's embedded
+    //   careers-content.clearcompany.com/js/v1/career-site.js?siteId=<uuid>
+    // script tag. Stored as `boardSlug` to mirror every other slug-based
+    // config and keep `watchlistConfigKey` / hydration uniform across kinds.
+    boardSlug: z.string().min(20).max(100),
+    companyName: z.string().min(1),
+});
+
 export const LinkedinConfigSchema = z.object({
     kind: z.literal("linkedin"),
     // Free-text keyword query (matches what a user would type in LinkedIn's
@@ -84,6 +147,11 @@ export const WatchlistConfigSchema = z.discriminatedUnion("kind", [
     LeverConfigSchema,
     AshbyConfigSchema,
     WorkdayConfigSchema,
+    SmartRecruitersConfigSchema,
+    WorkableConfigSchema,
+    RecruiteeConfigSchema,
+    PersonioConfigSchema,
+    ClearCompanyConfigSchema,
     LinkedinConfigSchema,
 ]);
 
