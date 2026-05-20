@@ -1,12 +1,12 @@
 import React, { useState } from "react";
 import { Plus, Trash2, ArrowUp, ArrowDown } from "lucide-react";
-import { EditableField } from "../ui/EditableField";
-import { BulletRow } from "../ui/BulletRow";
+import { EditableField } from "./EditableField";
+import { BulletRow } from "./BulletRow";
 import { makeBullet } from "@/lib/profile/bullets";
 import type { Bullet } from "@/lib/profile/types";
 import type { EducationWire } from "@/lib/schemas/profile";
 
-interface EducationCardProps {
+interface EducationRowProps {
     education: EducationWire;
     onUpdate: (patch: Partial<{
         institution: string;
@@ -29,7 +29,7 @@ const dateToInput = (iso: string | Date | null | undefined): string =>
 const inputToIso = (yyyymmdd: string | null): string | null =>
     yyyymmdd ? new Date(yyyymmdd + 'T00:00:00Z').toISOString() : null;
 
-export const EducationCard: React.FC<EducationCardProps> = ({
+export const EducationRow: React.FC<EducationRowProps> = ({
     education,
     onUpdate,
     onDelete,

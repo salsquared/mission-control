@@ -12,9 +12,9 @@ import {
 } from "lucide-react";
 import { Card } from "../ui/Card";
 import { EditableField } from "../ui/EditableField";
-import { WorkRoleCard } from "./WorkRoleCard";
-import { ProjectCard } from "./ProjectCard";
-import { EducationCard } from "./EducationCard";
+import { WorkRoleRow } from "../ui/WorkRoleRow";
+import { ProjectRow } from "../ui/ProjectRow";
+import { EducationRow } from "../ui/EducationRow";
 import type { Bullet } from "@/lib/profile/types";
 import type { WorkRoleWire, ProjectWire, EducationWire } from "@/lib/schemas/profile";
 import type { ProfileLink } from "@/lib/repositories/profile";
@@ -186,7 +186,7 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                         <p className="text-sm text-white/40 italic">No roles yet. Click &quot;Add role&quot; below.</p>
                     ) : (
                         workRoles.map((role, idx) => (
-                            <WorkRoleCard
+                            <WorkRoleRow
                                 key={role.id}
                                 role={role}
                                 onUpdate={(patch) => onWorkRoleUpdate(role.id, patch)}
@@ -213,7 +213,7 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                         <p className="text-sm text-white/40 italic">No projects yet.</p>
                     ) : (
                         projects.map((pr, idx) => (
-                            <ProjectCard
+                            <ProjectRow
                                 key={pr.id}
                                 project={pr}
                                 onUpdate={(patch) => onProjectUpdate(pr.id, patch)}
@@ -240,7 +240,7 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                         <p className="text-sm text-white/40 italic">No education yet.</p>
                     ) : (
                         education.map((ed, idx) => (
-                            <EducationCard
+                            <EducationRow
                                 key={ed.id}
                                 education={ed}
                                 onUpdate={(patch) => onEducationUpdate(ed.id, patch)}

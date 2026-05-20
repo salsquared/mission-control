@@ -1,12 +1,12 @@
 import React, { useState } from "react";
 import { Plus, Trash2, ArrowUp, ArrowDown } from "lucide-react";
-import { EditableField } from "../ui/EditableField";
-import { BulletRow } from "../ui/BulletRow";
+import { EditableField } from "./EditableField";
+import { BulletRow } from "./BulletRow";
 import { makeBullet } from "@/lib/profile/bullets";
 import type { Bullet } from "@/lib/profile/types";
 import type { WorkRoleWire } from "@/lib/schemas/profile";
 
-interface WorkRoleCardProps {
+interface WorkRoleRowProps {
     role: WorkRoleWire;
     onUpdate: (patch: Partial<{
         company: string;
@@ -29,7 +29,7 @@ const dateToInput = (iso: string | Date | null | undefined): string =>
 const inputToIso = (yyyymmdd: string | null): string | null =>
     yyyymmdd ? new Date(yyyymmdd + 'T00:00:00Z').toISOString() : null;
 
-export const WorkRoleCard: React.FC<WorkRoleCardProps> = ({
+export const WorkRoleRow: React.FC<WorkRoleRowProps> = ({
     role,
     onUpdate,
     onDelete,

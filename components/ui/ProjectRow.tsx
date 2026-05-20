@@ -1,12 +1,12 @@
 import React, { useState } from "react";
 import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink, Github, Star, RefreshCw } from "lucide-react";
-import { EditableField } from "../ui/EditableField";
-import { BulletRow } from "../ui/BulletRow";
+import { EditableField } from "./EditableField";
+import { BulletRow } from "./BulletRow";
 import { makeBullet } from "@/lib/profile/bullets";
 import type { Bullet } from "@/lib/profile/types";
 import type { ProjectWire } from "@/lib/schemas/profile";
 
-interface ProjectCardProps {
+interface ProjectRowProps {
     project: ProjectWire;
     onUpdate: (patch: Partial<{
         name: string;
@@ -24,7 +24,7 @@ interface ProjectCardProps {
     canMoveDown?: boolean;
 }
 
-export const ProjectCard: React.FC<ProjectCardProps> = ({
+export const ProjectRow: React.FC<ProjectRowProps> = ({
     project,
     onUpdate,
     onDelete,
