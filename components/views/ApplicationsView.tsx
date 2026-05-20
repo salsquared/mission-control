@@ -132,7 +132,7 @@ export const ApplicationsView: React.FC = () => {
         {
             id: "kanban",
             colSpan: 3,
-            className: "max-h-[70vh]",
+            className: "max-h-[50vh]",
             content: (
                 <ApplicationsKanbanCard
                     apps={apps}

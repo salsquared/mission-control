@@ -46,7 +46,9 @@ export const NewsCyclingCard: React.FC<NewsCyclingCardProps> = ({ source, articl
 
     if (!articles || articles.length === 0) return null;
 
-    const currentArticle = articles[currentIndex];
+    const safeIndex = currentIndex % articles.length;
+    const currentArticle = articles[safeIndex];
+    if (!currentArticle) return null;
     const dateStr = currentArticle.published_at || currentArticle.publishedAt;
 
     return (
@@ -62,7 +64,7 @@ export const NewsCyclingCard: React.FC<NewsCyclingCardProps> = ({ source, articl
                         {articles.map((_, i) => (
                             <div
                                 key={i}
-                                className={`h-1.5 rounded-full transition-all duration-300 ${i === currentIndex ? 'w-3 bg-cyan-400' : 'w-1.5 bg-white/20'}`}
+                                className={`h-1.5 rounded-full transition-all duration-300 ${i === safeIndex ? 'w-3 bg-cyan-400' : 'w-1.5 bg-white/20'}`}
                             />
                         ))}
                     </div>
