@@ -138,6 +138,7 @@ export interface PostingsListFilter {
     employmentType?: readonly string[];
     includeUnspecified?: boolean;
     companies?: readonly string[];
+    excludeCompanies?: readonly string[];
     remoteOnly?: boolean;
     locations?: readonly string[];
 }
@@ -165,6 +166,7 @@ export const queryKeys = {
     resumes: (filter?: { applicationId?: string }) =>
         ['resumes', filter ?? {}] as const,
     resume: (id: string) => ['resume', id] as const,
+    blacklist: ['blacklist'] as const,
 };
 
 // ─── API surface ───────────────────────────────────────────────────────────
@@ -383,6 +385,9 @@ export const api = {
             if (filter?.companies && filter.companies.length > 0) {
                 params.set('companies', filter.companies.join(','));
             }
+            if (filter?.excludeCompanies && filter.excludeCompanies.length > 0) {
+                params.set('excludeCompanies', filter.excludeCompanies.join(','));
+            }
             if (filter?.remoteOnly) params.set('remoteOnly', 'true');
             if (filter?.locations && filter.locations.length > 0) {
                 // CSV is safe here: the chip input commits on comma, so no
@@ -469,6 +474,47 @@ export const api = {
             ),
         // Returns a direct download URL — UI uses it as href, no fetch needed.
         downloadUrl: (id: string) => `/api/resumes/${encodeURIComponent(id)}/download`,
+    },
+
+    blacklist: {
+        // GET/POST/DELETE /api/blacklist — user-curated companies that must
+        // never be re-suggested in any picker (directory results, Discover
+        // tab, auto-discover sparse-fallback). normalizedName is the dedup
+        // key; if the user adds "Anduril" then "Anduril Industries", the
+        // second add 409s in the DB and we return the existing row.
+        list: () =>
+            jsonFetch(
+                '/api/blacklist',
+                z.object({
+                    entries: z.array(z.object({
+                        id: z.string(),
+                        name: z.string(),
+                        normalizedName: z.string(),
+                        reason: z.string().nullable(),
+                        createdAt: z.string(),
+                    })),
+                }),
+            ),
+        add: (input: { name: string; reason?: string | null }) =>
+            jsonFetch(
+                '/api/blacklist',
+                z.object({
+                    entry: z.object({
+                        id: z.string(),
+                        name: z.string(),
+                        normalizedName: z.string(),
+                        reason: z.string().nullable(),
+                        createdAt: z.string(),
+                    }),
+                }),
+                jsonBody('POST', input),
+            ),
+        remove: (id: string) =>
+            jsonFetch(
+                `/api/blacklist/${encodeURIComponent(id)}`,
+                z.object({ success: z.literal(true), id: z.string() }),
+                { method: 'DELETE' },
+            ),
     },
 
     discovery: {

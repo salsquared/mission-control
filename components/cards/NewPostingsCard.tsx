@@ -44,6 +44,7 @@ export function NewPostingsCard() {
         employmentType: postingFilters.employmentTypes,
         includeUnspecified: postingFilters.includeUnspecified,
         companies: postingFilters.companies,
+        excludeCompanies: postingFilters.excludedCompanies,
         remoteOnly: postingFilters.remoteOnly,
         locations: postingFilters.locations,
     }), [postingFilters]);
@@ -104,7 +105,8 @@ export function NewPostingsCard() {
         (postingFilters.employmentTypes.length > 0 ? 1 : 0) +
         (postingFilters.remoteOnly ? 1 : 0) +
         (postingFilters.locations.length > 0 ? 1 : 0) +
-        (postingFilters.companies.length > 0 ? 1 : 0);
+        (postingFilters.companies.length > 0 ? 1 : 0) +
+        (postingFilters.excludedCompanies.length > 0 ? 1 : 0);
 
     // Partition into on-watchlist (matches a non-LinkedIn watchlist's
     // companyName) vs off-watchlist (everything else — typically employers
@@ -160,7 +162,7 @@ export function NewPostingsCard() {
         setPostingFilters({ ...postingFilters, companies: next });
     }
     function resetFilters() {
-        setPostingFilters({ employmentTypes: [], remoteOnly: false, locations: [], includeUnspecified: false, companies: [] });
+        setPostingFilters({ employmentTypes: [], remoteOnly: false, locations: [], includeUnspecified: false, companies: [], excludedCompanies: [] });
     }
 
     async function trackAsApplication(id: string, title: string) {
@@ -321,9 +323,28 @@ export function NewPostingsCard() {
                             </button>
                         )}
                     </div>
-                    <LocationChipEditor
+                    <ChipTextEditor
                         values={postingFilters.locations}
                         onChange={(next) => setPostingFilters({ ...postingFilters, locations: next })}
+                        theme="cyan"
+                        placeholder="e.g. New York, Remote, United Kingdom"
+                    />
+                    <div className="flex items-center justify-between pt-1">
+                        <span className="text-[10px] uppercase tracking-wide text-white/40">Excluded companies</span>
+                        {postingFilters.excludedCompanies.length > 0 && (
+                            <button
+                                onClick={() => setPostingFilters({ ...postingFilters, excludedCompanies: [] })}
+                                className="text-[10px] text-white/40 hover:text-white/80"
+                            >
+                                Clear
+                            </button>
+                        )}
+                    </div>
+                    <ChipTextEditor
+                        values={postingFilters.excludedCompanies}
+                        onChange={(next) => setPostingFilters({ ...postingFilters, excludedCompanies: next })}
+                        theme="rose"
+                        placeholder="e.g. Lockheed, Northrop — substring match, case-insensitive"
                     />
                 </div>
             )}
@@ -488,24 +509,41 @@ function PostingRow({
     );
 }
 
-const MAX_LOCATION_CHIPS = 20;
-const MAX_LOCATION_LEN = 80;
+const MAX_CHIPS = 20;
+const MAX_CHIP_LEN = 80;
+
+const CHIP_THEMES = {
+    cyan: {
+        chip: "bg-cyan-500/20 text-cyan-100 border-cyan-400/40",
+        chipX: "text-cyan-100/70 hover:text-cyan-50",
+        inputFocus: "focus:border-cyan-400/40",
+    },
+    rose: {
+        chip: "bg-rose-500/20 text-rose-100 border-rose-400/40 line-through decoration-rose-200/40",
+        chipX: "text-rose-100/70 hover:text-rose-50",
+        inputFocus: "focus:border-rose-400/40",
+    },
+} as const;
 
 /**
- * Chip-based location filter — mirrors the GlobalNegativeFiltersEditor UX in
- * WatchlistsCard.tsx, but inclusive (cyan theme, OR semantics: a posting
- * shows if ANY chip is a substring of its location). Comma or Enter commits;
- * Backspace on empty input pops the last chip; blur commits any unsubmitted
- * text. No regex validation — these are literal substrings.
+ * Chip-based string filter — comma/Enter commits, Backspace on empty input
+ * pops the last chip, blur commits any unsubmitted text. No regex; values
+ * are literal substrings matched server-side. Theme controls semantics:
+ * `cyan` for inclusive filters, `rose` (with strikethrough) for exclusion.
  */
-function LocationChipEditor({
+function ChipTextEditor({
     values,
     onChange,
+    theme,
+    placeholder,
 }: {
     values: readonly string[];
     onChange: (next: string[]) => void;
+    theme: keyof typeof CHIP_THEMES;
+    placeholder: string;
 }) {
     const [input, setInput] = useState("");
+    const t = CHIP_THEMES[theme];
 
     function commit() {
         const trimmed = input.trim();
@@ -518,7 +556,7 @@ function LocationChipEditor({
         const existingLower = new Set(values.map(v => v.toLowerCase()));
         const additions: string[] = [];
         for (const p of parts) {
-            if (p.length > MAX_LOCATION_LEN) continue;
+            if (p.length > MAX_CHIP_LEN) continue;
             const lower = p.toLowerCase();
             if (existingLower.has(lower)) continue;
             existingLower.add(lower);
@@ -526,7 +564,7 @@ function LocationChipEditor({
         }
         setInput("");
         if (additions.length === 0) return;
-        const next = [...values, ...additions].slice(0, MAX_LOCATION_CHIPS);
+        const next = [...values, ...additions].slice(0, MAX_CHIPS);
         onChange(next);
     }
 
@@ -539,14 +577,14 @@ function LocationChipEditor({
             {values.map(v => (
                 <span
                     key={v}
-                    className="group inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-cyan-500/20 text-cyan-100 border border-cyan-400/40"
+                    className={`group inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[10px] font-semibold border ${t.chip}`}
                 >
                     <span>{v}</span>
                     <button
                         onClick={() => remove(v)}
                         title={`Remove "${v}"`}
                         aria-label={`Remove ${v}`}
-                        className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-cyan-100/70 hover:text-cyan-50 transition-opacity"
+                        className={`opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity ${t.chipX}`}
                     >
                         <X className="w-2.5 h-2.5" />
                     </button>
@@ -566,9 +604,9 @@ function LocationChipEditor({
                     }
                 }}
                 onBlur={commit}
-                placeholder={values.length === 0 ? "e.g. New York, Remote, United Kingdom" : "add another…"}
-                disabled={values.length >= MAX_LOCATION_CHIPS}
-                className="flex-1 min-w-[8rem] px-2 py-1 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40 disabled:opacity-50"
+                placeholder={values.length === 0 ? placeholder : "add another…"}
+                disabled={values.length >= MAX_CHIPS}
+                className={`flex-1 min-w-[8rem] px-2 py-1 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none disabled:opacity-50 ${t.inputFocus}`}
             />
         </div>
     );

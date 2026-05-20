@@ -74,6 +74,10 @@ export async function GET(req: NextRequest) {
     const companies = companiesRaw
         ? companiesRaw.split(",").map(s => s.trim()).filter(Boolean)
         : [];
+    const excludeCompaniesRaw = url.searchParams.get("excludeCompanies");
+    const excludeCompanies = excludeCompaniesRaw
+        ? excludeCompaniesRaw.split(",").map(s => s.trim()).filter(Boolean)
+        : [];
     const remoteOnly = url.searchParams.get("remoteOnly") === "true";
     const locationsRaw = url.searchParams.get("locations");
     const locations = locationsRaw
@@ -102,6 +106,15 @@ export async function GET(req: NextRequest) {
     }
     if (companies.length > 0) {
         conditions.push({ company: { in: companies } });
+    }
+    if (excludeCompanies.length > 0) {
+        // Substring exclusion (case-insensitive — SQLite LIKE is ASCII-CI by
+        // default) so "lockheed" catches "Lockheed Martin" without the user
+        // having to type the exact display string. Each chip becomes a NOT
+        // LIKE — AND'd together so excluding multiple companies subtracts each.
+        conditions.push({
+            AND: excludeCompanies.map(n => ({ NOT: { company: { contains: n } } })),
+        });
     }
     if (remoteOnly) {
         conditions.push({

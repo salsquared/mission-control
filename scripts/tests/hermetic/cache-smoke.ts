@@ -22,7 +22,10 @@
  * Force CACHE_BACKEND=memory so we never touch SQLite even if dev.db is wired.
  */
 process.env.CACHE_BACKEND = "memory";
-process.env.NODE_ENV = process.env.NODE_ENV ?? "development";
+// @types/node marks NODE_ENV as readonly; cast through Record so we can
+// guarantee a value for code paths that read it.
+(process.env as Record<string, string | undefined>).NODE_ENV =
+    process.env.NODE_ENV ?? "development";
 
 import { NextResponse } from "next/server";
 import {

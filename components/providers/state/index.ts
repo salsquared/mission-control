@@ -64,6 +64,12 @@ export interface PostingFilters {
     /** Company names whitelist. Empty = show all companies. Compared against
      *  `JobPosting.company` (display name from the fetcher, e.g. "Anthropic"). */
     companies: string[];
+    /** Company-name exclude list. Postings whose `company` matches any chip
+     *  (case-insensitive substring) are dropped server-side. Useful for the
+     *  "I've already reviewed every Lockheed posting, don't show me more"
+     *  pattern — strictly subtractive, AND'd against the positive `companies`
+     *  whitelist if both are set. */
+    excludedCompanies: string[];
 }
 
 const DEFAULT_POSTING_FILTERS: PostingFilters = {
@@ -72,6 +78,7 @@ const DEFAULT_POSTING_FILTERS: PostingFilters = {
     locations: [],
     includeUnspecified: false,
     companies: [],
+    excludedCompanies: [],
 };
 
 interface DevicePrefsSlice {
@@ -155,7 +162,7 @@ export const useAppStore = create<AppState>()(
                 viewScreenshots: state.viewScreenshots,
                 postingFilters: state.postingFilters,
             }),
-            version: 5,
+            version: 6,
             migrate: (persisted: any, fromVersion: number) => {
                 // v2 → v3: flip includeUnspecified to false. Existing users
                 // would otherwise inherit the old `true` default and the
@@ -164,6 +171,7 @@ export const useAppStore = create<AppState>()(
                 // v4 → v5: `locationContains: string` → `locations: string[]`.
                 //          Wrap any prior single substring into a 1-chip array
                 //          so users don't lose their saved location filter.
+                // v5 → v6: introduce `excludedCompanies` filter (default []).
                 const pf = persisted.postingFilters;
                 let locations: string[] = [];
                 if (pf) {
@@ -183,6 +191,12 @@ export const useAppStore = create<AppState>()(
                         locations,
                         includeUnspecified: fromVersion < 3 ? false : (pf.includeUnspecified ?? false),
                         companies: Array.isArray(pf.companies) ? pf.companies : [],
+                        excludedCompanies: Array.isArray(pf.excludedCompanies)
+                            ? pf.excludedCompanies
+                                .filter((s: unknown): s is string => typeof s === 'string')
+                                .map((s: string) => s.trim())
+                                .filter((s: string) => s.length > 0)
+                            : [],
                     }
                     : DEFAULT_POSTING_FILTERS;
                 return {

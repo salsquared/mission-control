@@ -6,6 +6,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { cachedValue } from "@/lib/cache";
 import { COMPANY_DIRECTORY, DIRECTORY_TAGS, type DirectoryTag } from "@/lib/company-directory";
 import { suggestCompanies, type SuggestResult } from "@/lib/discovery/suggest";
+import { listBlacklist } from "@/lib/repositories/blacklist";
 
 // 6h is long enough that idle browsing doesn't burn quota, short enough that
 // a paid-tier user gets fresh suggestions within a workday. The exclude hash
@@ -82,9 +83,16 @@ export async function POST(req: NextRequest) {
     const fromWatchlists = watchlistRows
         .map(w => extractCompanyName(w.config))
         .filter((n): n is string => Boolean(n));
+    // User-curated blacklist — companies the user explicitly opted out of.
+    // Feeding these to Gemini's exclude list (rather than just filtering on
+    // the way back) stops the model from burning candidate slots on names
+    // we'd discard anyway.
+    const blacklistRows = await listBlacklist(userId);
+    const fromBlacklist = blacklistRows.map(b => b.name);
     const exclude = Array.from(new Set([
         ...fromDirectory,
         ...fromWatchlists,
+        ...fromBlacklist,
         ...additionalExclude,
     ]));
 

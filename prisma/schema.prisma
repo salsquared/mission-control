@@ -105,6 +105,7 @@ model User {
   watchlists       Watchlist[]
   notifications    Notification[]
   generatedResumes GeneratedResume[]
+  blacklist        BlacklistedCompany[]
 }
 
 model VerificationToken {
@@ -451,4 +452,25 @@ model GeneratedResume {
 
   @@index([userId, createdAt])
   @@index([applicationId])
+}
+
+// User-curated company blacklist. Names entered here are filtered out of every
+// recommendation surface (Watch-company directory results, Discover Gemini
+// suggestions, auto-discover panel) so a company can never be re-suggested
+// once the user has explicitly opted out (e.g. "no Thiel companies", "no
+// defense"). Match key is `normalizedName` — `normalizeCompanyName` output,
+// lowercased — so "Acme" and "Acme, Inc." collapse to one entry. Display key
+// is `name` (what the user actually typed).
+model BlacklistedCompany {
+  id             String   @id @default(cuid())
+  userId         String
+  name           String   // What the user typed — shown back in the editor.
+  normalizedName String   // normalizeCompanyName(name) — comparison key.
+  reason         String?
+  createdAt      DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, normalizedName])
+  @@index([userId])
 }

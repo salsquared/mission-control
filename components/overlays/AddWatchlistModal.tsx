@@ -1,7 +1,7 @@
 "use client";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Plus, Loader2, Search, Building2, Settings2, Sparkles, Check, Minus, ArrowUpToLine, ChevronLeft, ChevronRight, Telescope, RefreshCw, Copy, AlertTriangle } from "lucide-react";
+import { X, Plus, Loader2, Search, Building2, Settings2, Sparkles, Check, Minus, ArrowUpToLine, ChevronLeft, ChevronRight, Telescope, RefreshCw, Copy, AlertTriangle, Ban } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
 import {
@@ -11,7 +11,16 @@ import {
     type CompanyDirectoryEntry,
     type DirectoryTag,
 } from "@/lib/company-directory";
+import { normalizeCompanyName } from "@/lib/applications/normalize-company";
 import type { WatchlistWire } from "@/lib/schemas/watchlists";
+
+interface BlacklistEntry {
+    id: string;
+    name: string;
+    normalizedName: string;
+    reason: string | null;
+    createdAt: string;
+}
 
 interface AddWatchlistModalProps {
     open: boolean;
@@ -170,6 +179,40 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     // POST. 4h default — see WatchlistPostSchema for the rationale.
     const [scheduleHours, setScheduleHours] = useState(4);
 
+    // ─── Blacklist (user-curated "never recommend") ─────────────────────────
+    // Lives in the Advanced tab as an editor, but the filter applies to ALL
+    // recommendation surfaces (directory results, auto-discover panel,
+    // Discover tab). Loaded once per modal-open so adds/removes inside the
+    // session are reflected immediately, and the next open re-syncs.
+    const [blacklistEntries, setBlacklistEntries] = useState<BlacklistEntry[]>([]);
+    const [blacklistAddName, setBlacklistAddName] = useState("");
+    const [blacklistBusy, setBlacklistBusy] = useState(false);
+
+    useEffect(() => {
+        if (!open) return;
+        let cancelled = false;
+        (async () => {
+            try {
+                const result = await api.blacklist.list();
+                if (!cancelled) setBlacklistEntries(result.entries);
+            } catch (err) {
+                if (!cancelled) {
+                    toastStore.push({ message: `Blacklist load failed: ${errMessage(err)}`, type: "error" });
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [open]);
+
+    const blacklistedNormalized = useMemo(
+        () => new Set(blacklistEntries.map(b => b.normalizedName)),
+        [blacklistEntries],
+    );
+    const isBlacklisted = useCallback(
+        (name: string) => blacklistedNormalized.has(normalizeCompanyName(name).toLowerCase()),
+        [blacklistedNormalized],
+    );
+
     // Build the set of identity keys for watchlists the user already has.
     // Directory entries whose key is in this set render disabled with an
     // "Added" chip — protects against accidental duplicate crawls.
@@ -183,7 +226,12 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     }, [existingWatchlists]);
 
     const directoryResults = useMemo(() => {
-        const base = searchDirectory(companyQuery, companyTagFilter.size > 0 ? companyTagFilter : null);
+        // Blacklist filter happens FIRST — blacklisted companies should be
+        // indistinguishable from "not in the directory at all," not surface
+        // under any toggle. (showAdded reveals existing-watchlist entries,
+        // not blacklisted ones — different semantics.)
+        const base = searchDirectory(companyQuery, companyTagFilter.size > 0 ? companyTagFilter : null)
+            .filter(e => !isBlacklisted(e.name));
         // Stable partition: split into already-added vs. addable, preserving
         // relative order within each side. Default behavior hides the added
         // bucket; toggling `showAdded` reveals it AND pins it to the top.
@@ -195,7 +243,19 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
             else rest.push(e);
         }
         return showAdded ? [...added, ...rest] : rest;
-    }, [companyQuery, companyTagFilter, showAdded, existingKeys]);
+    }, [companyQuery, companyTagFilter, showAdded, existingKeys, isBlacklisted]);
+
+    // Blacklist-filtered display lists for the Discover panel + auto-discover
+    // sparse-fallback. Apply at render-time (not at the setter) so adding to
+    // the blacklist mid-session re-filters in place without a refetch.
+    const visibleDiscoverVerified = useMemo(
+        () => discoverVerified.filter(v => !isBlacklisted(v.name)),
+        [discoverVerified, isBlacklisted],
+    );
+    const visibleDiscoverUnverified = useMemo(
+        () => discoverUnverified.filter(u => !isBlacklisted(u.name)),
+        [discoverUnverified, isBlacklisted],
+    );
 
     // Bounce to page 1 when the filter inputs change — page-3-of-unfiltered
     // shouldn't carry over to page-3-of-filtered (likely empty). Render-time
@@ -284,7 +344,63 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         setAdvKeywords("");
         setAdvLocation("");
         setScheduleHours(4);
+        setBlacklistAddName("");
+        // NB: blacklistEntries is server state — we don't clear it on close;
+        // the open-effect refetches on next open.
         lastAutoFiredTopicRef.current = null;
+    }
+
+    async function handleAddToBlacklist(rawName: string) {
+        const name = rawName.trim();
+        if (!name || blacklistBusy) return;
+        const norm = normalizeCompanyName(name).toLowerCase();
+        if (!norm) {
+            toastStore.push({ message: "Company name normalized to empty — try a longer name", type: "error" });
+            return;
+        }
+        setBlacklistBusy(true);
+        try {
+            const result = await api.blacklist.add({ name });
+            // Server is the source of truth — the response carries the canonical
+            // row (with normalizedName), which we slot in (replacing any earlier
+            // dupe by id) and re-sort by createdAt descending to match the GET.
+            setBlacklistEntries(prev => {
+                const next = prev.filter(e => e.id !== result.entry.id);
+                next.unshift(result.entry);
+                return next;
+            });
+            setBlacklistAddName("");
+            // Drop any selection that just became blacklisted so submit can't
+            // create a watchlist for a company the user just opted out of.
+            const drop = (n: string) => normalizeCompanyName(n).toLowerCase() === result.entry.normalizedName;
+            setSelectedDirKeys(prev => {
+                const next = new Set(prev);
+                for (const n of prev) if (drop(n)) next.delete(n);
+                return next;
+            });
+            setDiscoverSelected(prev => {
+                const next = new Set(prev);
+                for (const n of prev) if (drop(n)) next.delete(n);
+                return next;
+            });
+        } catch (err) {
+            toastStore.push({ message: `Blacklist add failed: ${errMessage(err)}`, type: "error" });
+        } finally {
+            setBlacklistBusy(false);
+        }
+    }
+
+    async function handleRemoveFromBlacklist(id: string) {
+        if (blacklistBusy) return;
+        setBlacklistBusy(true);
+        try {
+            await api.blacklist.remove(id);
+            setBlacklistEntries(prev => prev.filter(e => e.id !== id));
+        } catch (err) {
+            toastStore.push({ message: `Blacklist remove failed: ${errMessage(err)}`, type: "error" });
+        } finally {
+            setBlacklistBusy(false);
+        }
     }
 
     function handleClose() {
@@ -347,11 +463,15 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         const byName = new Map(allEntries.map(e => [e.name, e] as const));
         const dirEntries = Array.from(selectedDirKeys)
             .map(name => byName.get(name))
-            .filter((e): e is CompanyDirectoryEntry => Boolean(e));
+            .filter((e): e is CompanyDirectoryEntry => Boolean(e))
+            // Defense in depth — handleAddToBlacklist already drops blacklisted
+            // names from selectedDirKeys, but a stale selection from a race
+            // shouldn't be allowed to resurrect a blacklisted entry.
+            .filter(e => !isBlacklisted(e.name));
         // Auto-discover suggestions selected from the sparse-fallback panel.
         // Only verified hits are wireable; unverified entries don't have a
         // slug/kind to build a config from.
-        const discoverEntries = discoverVerified.filter(v => discoverSelected.has(v.name));
+        const discoverEntries = visibleDiscoverVerified.filter(v => discoverSelected.has(v.name));
         if (dirEntries.length === 0 && discoverEntries.length === 0) return;
         setSubmitting(true);
         try {
@@ -472,7 +592,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     async function submitDiscover(e: React.FormEvent) {
         e.preventDefault();
         if (submitting || discoverSelected.size === 0) return;
-        const entries = discoverVerified.filter(v => discoverSelected.has(v.name));
+        const entries = visibleDiscoverVerified.filter(v => discoverSelected.has(v.name));
         if (entries.length === 0) return;
         setSubmitting(true);
         try {
@@ -742,13 +862,22 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                     const entryKey = watchlistConfigKey(entry.config);
                                     const alreadyAdded = entryKey !== null && existingKeys.has(entryKey);
                                     const selected = !alreadyAdded && selectedDirKeys.has(entry.name);
+                                    const rowDisabled = submitting || alreadyAdded;
+                                    const onActivate = () => { if (!rowDisabled) toggleDirEntry(entry.name); };
                                     return (
-                                        <button
+                                        // div+role="button" instead of <button> so the inner Blacklist
+                                        // <button> can legally nest. Keyboard semantics preserved via
+                                        // onKeyDown (Enter / Space).
+                                        <div
                                             key={entry.name}
-                                            type="button"
-                                            onClick={() => !alreadyAdded && toggleDirEntry(entry.name)}
-                                            disabled={submitting || alreadyAdded}
-                                            aria-disabled={alreadyAdded}
+                                            role="button"
+                                            tabIndex={rowDisabled ? -1 : 0}
+                                            onClick={onActivate}
+                                            onKeyDown={(e) => {
+                                                if (rowDisabled) return;
+                                                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(); }
+                                            }}
+                                            aria-disabled={rowDisabled}
                                             aria-pressed={selected}
                                             title={alreadyAdded ? "Already on your watchlist" : undefined}
                                             className={[
@@ -756,8 +885,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                                 alreadyAdded
                                                     ? "bg-black/20 border-white/5 opacity-60 cursor-not-allowed"
                                                     : selected
-                                                        ? "bg-cyan-500/15 border-cyan-400/50"
-                                                        : "bg-black/30 border-white/10 hover:border-white/30",
+                                                        ? "bg-cyan-500/15 border-cyan-400/50 cursor-pointer"
+                                                        : "bg-black/30 border-white/10 hover:border-white/30 cursor-pointer",
                                             ].join(" ")}
                                         >
                                             {/* Multi-select checkbox affordance (hidden for already-added entries). */}
@@ -791,7 +920,17 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                                     <div className="text-[11px] text-white/40 mt-0.5">{entry.blurb}</div>
                                                 )}
                                             </div>
-                                        </button>
+                                            <button
+                                                type="button"
+                                                onClick={(e) => { e.stopPropagation(); void handleAddToBlacklist(entry.name); }}
+                                                disabled={submitting || blacklistBusy}
+                                                title="Never recommend this company"
+                                                aria-label={`Blacklist ${entry.name}`}
+                                                className="shrink-0 p-1.5 rounded text-rose-300/40 hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                                            >
+                                                <Ban className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
                                     );
                                 })
                             )}
@@ -840,19 +979,26 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 {discoverError && (
                                     <p className="text-[10px] text-red-300/80">{discoverError}</p>
                                 )}
-                                {discoverVerified.length > 0 && (
+                                {visibleDiscoverVerified.length > 0 && (
                                     <div className="flex flex-col gap-1.5">
-                                        {discoverVerified.map(v => {
+                                        {visibleDiscoverVerified.map(v => {
                                             const selected = discoverSelected.has(v.name);
+                                            const rowDisabled = submitting;
+                                            const onActivate = () => { if (!rowDisabled) toggleDiscoverSelected(v.name); };
                                             return (
-                                                <button
+                                                <div
                                                     key={`${v.name}|${v.kind}|${v.slug}`}
-                                                    type="button"
-                                                    onClick={() => toggleDiscoverSelected(v.name)}
-                                                    disabled={submitting}
+                                                    role="button"
+                                                    tabIndex={rowDisabled ? -1 : 0}
+                                                    onClick={onActivate}
+                                                    onKeyDown={(e) => {
+                                                        if (rowDisabled) return;
+                                                        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onActivate(); }
+                                                    }}
+                                                    aria-disabled={rowDisabled}
                                                     aria-pressed={selected}
                                                     className={[
-                                                        "flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors",
+                                                        "flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors cursor-pointer",
                                                         selected
                                                             ? "bg-cyan-500/15 border-cyan-400/50"
                                                             : "bg-black/30 border-white/10 hover:border-white/30",
@@ -875,24 +1021,34 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                                         </div>
                                                         {v.blurb && <div className="text-[11px] text-white/40 mt-0.5">{v.blurb}</div>}
                                                     </div>
-                                                </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={(e) => { e.stopPropagation(); void handleAddToBlacklist(v.name); }}
+                                                        disabled={submitting || blacklistBusy}
+                                                        title="Never recommend this company"
+                                                        aria-label={`Blacklist ${v.name}`}
+                                                        className="shrink-0 p-1.5 rounded text-rose-300/40 hover:text-rose-300 hover:bg-rose-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                                                    >
+                                                        <Ban className="w-3.5 h-3.5" />
+                                                    </button>
+                                                </div>
                                             );
                                         })}
                                     </div>
                                 )}
-                                {discoverUnverified.length > 0 && (
+                                {visibleDiscoverUnverified.length > 0 && (
                                     <details className="text-[10px] text-white/40">
                                         <summary className="cursor-pointer hover:text-white/60 select-none">
-                                            + {discoverUnverified.length} that need custom integration (Workday tenants, self-hosted, …)
+                                            + {visibleDiscoverUnverified.length} that need custom integration (Workday tenants, self-hosted, …)
                                         </summary>
                                         <ul className="mt-1 pl-3 space-y-0.5">
-                                            {discoverUnverified.map(u => (
+                                            {visibleDiscoverUnverified.map(u => (
                                                 <li key={`${u.name}|${u.atsGuess}|${u.careersUrl}`}>• {u.name} <span className="text-white/30">({u.atsGuess})</span></li>
                                             ))}
                                         </ul>
                                     </details>
                                 )}
-                                {!discoverLoading && discoverVerified.length === 0 && discoverUnverified.length === 0 && !discoverError && (
+                                {!discoverLoading && visibleDiscoverVerified.length === 0 && visibleDiscoverUnverified.length === 0 && !discoverError && (
                                     <p className="text-[10px] text-white/40 italic">No Gemini suggestions for &quot;{autoDiscoverTopic}&quot;.</p>
                                 )}
                             </div>
@@ -965,8 +1121,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 disabled={submitting || discoverLoading || !discoverTopic.trim()}
                                 className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/30 hover:bg-cyan-500/40 border border-cyan-400/40 text-xs font-semibold text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
-                                {discoverLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (discoverVerified.length + discoverUnverified.length > 0 ? <RefreshCw className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />)}
-                                {discoverLoading ? "Searching…" : discoverVerified.length + discoverUnverified.length > 0 ? "More" : "Search"}
+                                {discoverLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (visibleDiscoverVerified.length + visibleDiscoverUnverified.length > 0 ? <RefreshCw className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />)}
+                                {discoverLoading ? "Searching…" : visibleDiscoverVerified.length + visibleDiscoverUnverified.length > 0 ? "More" : "Search"}
                             </button>
                         </div>
 
@@ -974,14 +1130,14 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             <p className="text-[11px] text-red-300/80 px-1">{discoverError}</p>
                         )}
 
-                        {discoverVerified.length > 0 && (
+                        {visibleDiscoverVerified.length > 0 && (
                             <>
                                 <div className="text-[10px] uppercase tracking-wide text-emerald-300/80 mt-1 flex items-center gap-1.5">
                                     <Check className="w-3 h-3" />
-                                    Add to watchlist ({discoverVerified.length})
+                                    Add to watchlist ({visibleDiscoverVerified.length})
                                 </div>
                                 <div className="flex flex-col gap-1.5">
-                                    {discoverVerified.map(v => {
+                                    {visibleDiscoverVerified.map(v => {
                                         const selected = discoverSelected.has(v.name);
                                         return (
                                             <button
@@ -1021,17 +1177,17 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             </>
                         )}
 
-                        {discoverUnverified.length > 0 && (
+                        {visibleDiscoverUnverified.length > 0 && (
                             <>
                                 <div className="text-[10px] uppercase tracking-wide text-amber-300/80 mt-2 flex items-center gap-1.5">
                                     <AlertTriangle className="w-3 h-3" />
-                                    Needs custom integration ({discoverUnverified.length})
+                                    Needs custom integration ({visibleDiscoverUnverified.length})
                                 </div>
                                 <p className="text-[10px] text-white/40 -mt-1 leading-tight">
                                     Workday tenants, self-hosted careers pages, or unknown ATSes. Copy the name + URL and bring them to a future Claude session to wire up support.
                                 </p>
                                 <div className="flex flex-col gap-1.5">
-                                    {discoverUnverified.map(u => (
+                                    {visibleDiscoverUnverified.map(u => (
                                         <div
                                             key={`${u.name}|${u.atsGuess}|${u.careersUrl}`}
                                             className="flex items-start gap-3 px-3 py-2 rounded-lg border bg-black/30 border-white/10"
@@ -1069,7 +1225,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             </>
                         )}
 
-                        {(discoverVerified.length > 0 || discoverUnverified.length > 0) && (
+                        {(visibleDiscoverVerified.length > 0 || visibleDiscoverUnverified.length > 0) && (
                             <ScheduleField value={scheduleHours} onChange={setScheduleHours} disabled={submitting} />
                         )}
 
@@ -1237,6 +1393,68 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                         )}
 
                         <ScheduleField value={scheduleHours} onChange={setScheduleHours} disabled={submitting} />
+
+                        {/* Blacklist editor — companies here are filtered out of EVERY
+                            recommendation surface (directory results, Discover Gemini
+                            suggestions, auto-discover panel) and added to the Gemini
+                            exclude list server-side so they can never be re-suggested. */}
+                        <div className="mt-2 pt-3 border-t border-white/10 flex flex-col gap-2">
+                            <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wide text-rose-300/80">
+                                <Ban className="w-3 h-3" />
+                                <span>Blacklist ({blacklistEntries.length})</span>
+                            </div>
+                            <p className="text-[10px] text-white/40 -mt-1 leading-tight">
+                                Companies the system should never recommend, no matter who suggests them. Names are matched by normalized form, so &quot;Acme&quot; and &quot;Acme, Inc.&quot; collapse to one entry.
+                            </p>
+                            <div className="flex items-center gap-2">
+                                <input
+                                    type="text"
+                                    placeholder="Company to blacklist…"
+                                    value={blacklistAddName}
+                                    onChange={(e) => setBlacklistAddName(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === "Enter") {
+                                            e.preventDefault();
+                                            void handleAddToBlacklist(blacklistAddName);
+                                        }
+                                    }}
+                                    disabled={submitting || blacklistBusy}
+                                    className="flex-1 px-3 py-1.5 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-rose-400/40"
+                                />
+                                <button
+                                    type="button"
+                                    onClick={() => void handleAddToBlacklist(blacklistAddName)}
+                                    disabled={submitting || blacklistBusy || !blacklistAddName.trim()}
+                                    title="Add to blacklist"
+                                    className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 border border-rose-400/30 text-xs font-semibold text-rose-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {blacklistBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Ban className="w-3.5 h-3.5" />}
+                                    Block
+                                </button>
+                            </div>
+                            {blacklistEntries.length > 0 && (
+                                <div className="flex flex-wrap gap-1.5">
+                                    {blacklistEntries.map(b => (
+                                        <span
+                                            key={b.id}
+                                            title={b.reason ?? `Blacklisted ${new Date(b.createdAt).toLocaleDateString()}`}
+                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] bg-rose-500/10 border border-rose-400/30 text-rose-100"
+                                        >
+                                            {b.name}
+                                            <button
+                                                type="button"
+                                                onClick={() => void handleRemoveFromBlacklist(b.id)}
+                                                disabled={submitting || blacklistBusy}
+                                                title="Remove from blacklist"
+                                                className="ml-0.5 text-rose-200/70 hover:text-white disabled:opacity-40"
+                                            >
+                                                <X className="w-3 h-3" />
+                                            </button>
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
 
                         <div className="flex items-center justify-end gap-2 pt-2">
                             <button
