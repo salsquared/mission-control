@@ -109,9 +109,12 @@ export async function parseApplicationEmail(
   from?: string,
   sentAt?: Date
 ): Promise<ParsedApplicationEmail> {
-  // Trim long bodies — Gemini Flash can handle the full thing but most
-  // signal is in the first ~4k chars (greetings, status, action items).
-  const trimmedBody = emailContent.length > 6000 ? emailContent.slice(0, 6000) + "\n…[truncated]" : emailContent;
+  // Trim long bodies — application emails put the signal up top (greeting,
+  // status verb, action ask). 3KB captures the meaningful portion; the rest
+  // is signature blocks, legal boilerplate, and forwarded threads. Tightened
+  // from 6KB on 2026-05-19 alongside the model swap to flash-lite — see
+  // docs/llm-calls.md.
+  const trimmedBody = emailContent.length > 3000 ? emailContent.slice(0, 3000) + "\n…[truncated]" : emailContent;
   const anchor = (sentAt ?? new Date()).toISOString();
 
   // PC-6 (RAH-12): block on the token bucket BEFORE the API call. A backfill
@@ -120,10 +123,13 @@ export async function parseApplicationEmail(
   await acquireGeminiSlot();
 
   const result = await generateObject({
-    // `gemini-flash-latest` is Google's auto-tracking alias for current stable
-    // Flash. Same model lib/ai/gemini.ts pins. `gemini-3.0-flash` (the previous
-    // value here) doesn't exist on v1beta and threw on every classify call.
-    model: getProvider()("gemini-flash-latest"),
+    // Pinned to Gemini 3.1 Flash-lite — the highest-volume caller in the
+    // app (one call per inbound Gmail message + backfill). Mechanical
+    // extraction (relevance gate + a handful of structured fields) doesn't
+    // need full Flash. Kept in sync with `MODEL_LITE` in lib/ai/gemini.ts;
+    // there's no shared symbol because the Vercel AI SDK wraps the model
+    // name into a provider call inline. See docs/llm-calls.md.
+    model: getProvider()("gemini-3.1-flash-lite"),
     schema: applicationSchema,
     prompt: `You are classifying an email related to a job, internship, or college/university application.
 

@@ -20,7 +20,7 @@
  * easy.
  */
 import { z } from "zod";
-import { chatJSON } from "@/lib/ai/gemini";
+import { chatJSON, MODEL_LITE_CHEAP } from "@/lib/ai/gemini";
 import { EMPLOYMENT_TYPES, type EmploymentType } from "@/lib/fetchers/employment-type";
 
 export interface ClassifyInput {
@@ -81,6 +81,13 @@ async function classifyOneBatch(
         user: buildUserPrompt(items),
         schema: ResultSchema,
         temperature: 0.1,
+        // Pure enum picker — output space is { full-time | part-time |
+        // internship | contract | temporary | null } per item. Cheapest
+        // model is invisible-quality here. See docs/llm-calls.md.
+        model: MODEL_LITE_CHEAP,
+        // 50-item batch × ~30 output tokens per row = ~1.5k worst case.
+        // 4k leaves headroom for the array wrapping + a few longer ids.
+        maxOutputTokens: 4096,
     });
     const elapsed = Date.now() - start;
     const out = new Map<string, EmploymentType | null>();

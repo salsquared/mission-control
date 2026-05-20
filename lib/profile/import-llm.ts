@@ -96,5 +96,11 @@ export async function extractProfileFromText(text: string, filename: string): Pr
         user: buildUserPrompt(text, filename),
         schema: ExtractedProfileSchema,
         temperature: 0.1,
+        // Inherits MODEL_LITE default — resume parsing is structured
+        // extraction with no judgment calls; flash-lite is sufficient.
+        // 32k output budget retained because nested bullet arrays across
+        // many roles + projects + education can legitimately need it.
+        // See docs/llm-calls.md.
+        maxOutputTokens: 32_768,
     });
 }

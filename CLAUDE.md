@@ -105,9 +105,11 @@ Anything that reads/sends Gmail or writes Calendar events depends on these scope
 
 `lib/applications/ingest.ts:ingestGmailMessage` is idempotent on both events (via `@@unique([applicationId, emailMsgId, kind])`) and side-effects (per-event `notifiedAt` / `gcalSyncedAt` checkpoints). On retry it re-fetches all events for `(applicationId, msgId)` and re-fires notify/gcal only for events whose checkpoint is null. Early `skipped: duplicate` only when every event for the msg is fully checkpointed.
 
-### Gemini rate limiting
+### Gemini rate limiting + model fleet
 
 `lib/ai/rate-limit.ts:acquireGeminiSlot()` is a process-shared token bucket gating every Gemini API call. Defaults: 12 req/min, burst cap 60. Tunable via `GEMINI_RATE_PER_MIN` / `GEMINI_RATE_BURST` env vars. Both `lib/email-parser.ts:parseApplicationEmail` and `lib/ai/gemini.ts:chatJSON` await it before each attempt — retries pay the rate cost too. New Gemini callers MUST go through one of those two helpers, never call the SDK directly without `await acquireGeminiSlot()`.
+
+Three-tier model fleet (`MODEL_FLASH` / `MODEL_LITE` / `MODEL_LITE_CHEAP`) — per-callsite model + token-cap rationale lives in [`docs/llm-calls.md`](./docs/llm-calls.md). Default is the lite model; reach for `MODEL_FLASH` only on quality-sensitive paths (resume bullet rewrite is currently the only one). Add a row to that doc when you wire a new Gemini caller.
 
 ### Prisma + dual SQLite databases
 

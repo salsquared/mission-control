@@ -2,11 +2,27 @@ import { GoogleGenAI } from "@google/genai";
 import type { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
 
-// `gemini-flash-latest` is Google's alias that auto-tracks the latest stable
-// Flash model — Gemini 2.5 Flash today, Gemini 3.x Flash whenever Google promotes
-// it. Pinning to the alias is the right default for resume-tier reasoning;
-// override with `model: '<exact-name>'` if you need a specific version.
-const DEFAULT_MODEL = "gemini-flash-latest";
+// Three-tier model fleet. See `docs/llm-calls.md` for the per-callsite
+// rationale; the short version:
+//
+//   MODEL_FLASH      — full Flash. Quality-sensitive paths only (resume bullet
+//                       rewrite is the only current caller). Most expensive.
+//   MODEL_LITE       — cheap-but-capable Flash-lite. Default for mechanical
+//                       extraction at moderate volume (email classifier,
+//                       posting parse, profile import, discovery suggest).
+//   MODEL_LITE_CHEAP — outright cheapest. Pure-enum / picker tasks where the
+//                       output space is tiny and quality drop is invisible
+//                       (employment-type classifier).
+//
+// All three are pinned explicitly. Bump these constants — not the
+// `*-latest` aliases — when Google ships a new generation; that way model
+// changes are deliberate code changes and the cost/quality tradeoff stays
+// auditable.
+export const MODEL_FLASH = "gemini-3.5-flash";
+export const MODEL_LITE = "gemini-3.1-flash-lite";
+export const MODEL_LITE_CHEAP = "gemini-2.5-flash-lite";
+
+const DEFAULT_MODEL = MODEL_LITE;
 
 export class AIError extends Error {
     constructor(
@@ -45,6 +61,14 @@ interface ChatJSONOptions<T> {
     schema: z.ZodSchema<T>;
     model?: string;
     temperature?: number;
+    /**
+     * Hard cap on output tokens for this call. Default 4096 — fine for the
+     * vast majority of structured-extraction outputs (a few hundred tokens of
+     * JSON). Bump explicitly per-call for prompts that legitimately need a
+     * larger window (profile import with nested bullets is the canonical
+     * case; see docs/llm-calls.md).
+     */
+    maxOutputTokens?: number;
 }
 
 interface RetryConfig {
@@ -108,9 +132,13 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
                 // get truncated mid-string. All current callers are mechanical
                 // extraction/transformation — no chain-of-thought needed.
                 thinkingConfig: { thinkingBudget: 0 },
-                // Resume + posting payloads can legitimately be tens of KB of
-                // JSON; the SDK default is too low and silently truncates.
-                maxOutputTokens: 32768,
+                // Per-call cap. Defaults to 4096 — enough for typical
+                // structured extraction. Profile import passes 32768
+                // explicitly because nested bullet arrays legitimately need
+                // it. Tightening this defends against a runaway response
+                // burning the output budget and surfaces a MAX_TOKENS error
+                // (caught below) instead of silently returning truncated JSON.
+                maxOutputTokens: opts.maxOutputTokens ?? 4096,
                 ...(opts.system ? { systemInstruction: opts.system } : {}),
             },
         });

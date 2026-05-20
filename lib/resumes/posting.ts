@@ -26,7 +26,11 @@ const PostingExtractSchema = z.object({
     keywords: z.array(z.string()).min(1).max(40),
 });
 
-const MAX_INPUT_CHARS = 12_000;
+// Job postings have their signal up top — title, must-haves, tech stack.
+// The tail is benefits/equal-opportunity/legal boilerplate. 8KB captures
+// the meaningful portion; tightened from 12KB on 2026-05-19 alongside the
+// model swap to flash-lite. See docs/llm-calls.md.
+const MAX_INPUT_CHARS = 8_000;
 
 function clean(s: string): string {
     return s.replace(/[ \s]+/g, " ").trim();
@@ -105,6 +109,9 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
         ].join("\n"),
         schema: PostingExtractSchema,
         temperature: 0.2,
+        // Inherits MODEL_LITE default — keyword extraction is mechanical.
+        // Output is ~5 short fields + 10–25 keyword strings; 2k is plenty.
+        maxOutputTokens: 2048,
     });
 
     return {

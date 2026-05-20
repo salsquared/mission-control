@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { chatJSON, AIError } from "@/lib/ai/gemini";
+import { chatJSON, AIError, MODEL_FLASH } from "@/lib/ai/gemini";
 import type { BulletSelection } from "@/lib/resumes/select";
 import type { ParsedPosting } from "@/lib/resumes/posting";
 
@@ -66,6 +66,13 @@ export async function rewriteBullets(
         user: userPrompt,
         schema: RewriteResponseSchema,
         temperature: 0.4,
+        // Quality-sensitive — this output directly shapes what the user
+        // sends to employers. Full Flash, NOT the lite default. See
+        // docs/llm-calls.md for the rationale.
+        model: MODEL_FLASH,
+        // ≤25 bullets × ~50 tokens of rewrittenText + matchedKeywords each
+        // ≈ 1.5k. 4k caps a runaway response without clipping legit output.
+        maxOutputTokens: 4096,
     });
 
     const inputIds = new Set(selections.map(s => s.bulletId));
