@@ -56,12 +56,13 @@ type AdvancedKind =
     | "workable"
     | "recruitee"
     | "personio"
+    | "clearcompany"
     | "linkedin"
     | "careers-page";
 
 // Kinds that take a single boardSlug + companyName (the most common shape).
 // Used to keep render conditions / submit dispatch concise.
-const SLUG_KINDS = ["greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "personio"] as const satisfies readonly AdvancedKind[];
+const SLUG_KINDS = ["greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "personio", "clearcompany"] as const satisfies readonly AdvancedKind[];
 type SlugKind = (typeof SLUG_KINDS)[number];
 function isSlugKind(k: AdvancedKind): k is SlugKind {
     return (SLUG_KINDS as readonly AdvancedKind[]).includes(k);
@@ -78,6 +79,7 @@ const ADVANCED_KIND_HELP: Record<AdvancedKind, string> = {
     "workable": "Subdomain on apply.workable.com — e.g. \"careers\" → apply.workable.com/careers. Most ~50–500-person companies.",
     "recruitee": "Subdomain on recruitee.com — e.g. \"jet\" → jet.recruitee.com. Mostly EU companies.",
     "personio": "Subdomain on jobs.personio.com — e.g. \"personio\" → personio.jobs.personio.com. Lots of European companies.",
+    "clearcompany": "siteId (UUID) from careers-api.clearcompany.com/v1/<siteId>. Find it in the careers page's <script src=\"careers-content.clearcompany.com/js/v1/career-site.js?siteId=...\"> tag. Firefly Aerospace and other mid-market companies.",
     "linkedin": "Free-text keyword search (matches what you'd type in LinkedIn's job search bar). Fragile by design — LinkedIn DOM-shifts often, expect occasional breakage.",
     "careers-page": "Use only for old-school static-HTML careers pages. Most modern pages are SPAs and won't work here — try one of the aggregator kinds first.",
 };
@@ -90,10 +92,28 @@ const ADVANCED_SLUG_PLACEHOLDER: Record<SlugKind, string> = {
     "workable": "careers",
     "recruitee": "jet",
     "personio": "personio",
+    "clearcompany": "00ed92c3-5bfb-7bfb-456d-4d9d77fef9a5",
 };
 
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+}
+
+// Dedup discover suggestions by name (case-insensitive). Gemini occasionally
+// returns the same company twice in one response — without this, the React
+// list-key collision shows up as a "two children with the same key" warning
+// and the second instance gets clobbered. First occurrence wins so the
+// preserved entry is whichever the model ranked higher.
+function uniqByName<T extends { name: string }>(items: readonly T[]): T[] {
+    const seen = new Set<string>();
+    const out: T[] = [];
+    for (const it of items) {
+        const k = it.name.trim().toLowerCase();
+        if (!k || seen.has(k)) continue;
+        seen.add(k);
+        out.push(it);
+    }
+    return out;
 }
 
 export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onClose, onCreated, existingWatchlists = [] }) => {
@@ -402,8 +422,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 topic,
                 additionalExclude: exclude,
             });
-            setDiscoverVerified(result.verified);
-            setDiscoverUnverified(result.unverified);
+            setDiscoverVerified(uniqByName(result.verified));
+            setDiscoverUnverified(uniqByName(result.unverified));
             setDiscoverSelected(new Set());
             // Accumulate seen names for the next refresh click.
             setDiscoverSeen(prev => Array.from(new Set([
@@ -826,7 +846,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                             const selected = discoverSelected.has(v.name);
                                             return (
                                                 <button
-                                                    key={v.name}
+                                                    key={`${v.name}|${v.kind}|${v.slug}`}
                                                     type="button"
                                                     onClick={() => toggleDiscoverSelected(v.name)}
                                                     disabled={submitting}
@@ -867,7 +887,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                         </summary>
                                         <ul className="mt-1 pl-3 space-y-0.5">
                                             {discoverUnverified.map(u => (
-                                                <li key={u.name}>• {u.name} <span className="text-white/30">({u.atsGuess})</span></li>
+                                                <li key={`${u.name}|${u.atsGuess}|${u.careersUrl}`}>• {u.name} <span className="text-white/30">({u.atsGuess})</span></li>
                                             ))}
                                         </ul>
                                     </details>
@@ -1013,7 +1033,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 <div className="flex flex-col gap-1.5">
                                     {discoverUnverified.map(u => (
                                         <div
-                                            key={u.name}
+                                            key={`${u.name}|${u.atsGuess}|${u.careersUrl}`}
                                             className="flex items-start gap-3 px-3 py-2 rounded-lg border bg-black/30 border-white/10"
                                         >
                                             <AlertTriangle className="w-3.5 h-3.5 text-amber-300/70 mt-0.5 shrink-0" />
@@ -1098,7 +1118,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
 
                         <label className="text-[11px] uppercase tracking-wide text-white/40">Source</label>
                         <div className="flex rounded-lg overflow-hidden border border-white/10 bg-black/40 flex-wrap" role="group">
-                            {(["greenhouse", "lever", "ashby", "workday", "smartrecruiters", "workable", "recruitee", "personio", "linkedin", "careers-page"] as const).map(k => (
+                            {(["greenhouse", "lever", "ashby", "workday", "smartrecruiters", "workable", "recruitee", "personio", "clearcompany", "linkedin", "careers-page"] as const).map(k => (
                                 <button
                                     key={k}
                                     type="button"
