@@ -310,6 +310,12 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                                         </button>
                                     ))}
                                 </div>
+                                <div className="mt-3 flex items-center gap-2">
+                                    <span className="text-[10px] uppercase tracking-wider text-white/30">Created</span>
+                                    <span className="text-xs text-white/70">
+                                        {new Date(app.dateApplied ?? app.createdAt).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}
+                                    </span>
+                                </div>
                                 <div className="mt-3">
                                     <DecisionDeadlineEditor
                                         value={app.decisionDeadline ?? null}
