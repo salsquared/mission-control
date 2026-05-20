@@ -53,6 +53,11 @@ export async function POST(req: NextRequest) {
     const now = new Date();
 
     try {
+        // lastUpdateAt = dateApplied when provided, else now. The kanban
+        // displays this as the status-change date; for a manual create the
+        // initial status was reached on the apply date, not on the day the
+        // user happened to log into the dashboard to record it.
+        const initialAppliedDate = dateApplied ? new Date(dateApplied) : null;
         const application = await createApplication({
             userId,
             company,
@@ -60,9 +65,9 @@ export async function POST(req: NextRequest) {
             status,
             kind: kind ?? null,
             nextSteps: nextSteps ?? null,
-            dateApplied: dateApplied ? new Date(dateApplied) : undefined,
+            dateApplied: initialAppliedDate ?? undefined,
             decisionDeadline: decisionDeadline ? new Date(decisionDeadline) : undefined,
-            lastUpdateAt: now,
+            lastUpdateAt: initialAppliedDate ?? now,
         });
 
         // If the caller provided a dateApplied, record an APPLIED event so the
@@ -106,7 +111,13 @@ export async function PATCH(req: NextRequest) {
             return NextResponse.json({ error: "Application not found" }, { status: 404 });
         }
 
-        const update: ApplicationUpdate = { lastUpdateAt: new Date() };
+        // lastUpdateAt tracks the LAST STATUS CHANGE (not metadata edits like
+        // notes, role, decisionDeadline) — kanban displays it as the
+        // "this app's status moved on …" date. Only bump when status actually
+        // differs from the stored value (2026-05-20 semantic change).
+        const statusChanged = status !== undefined && status !== existing.status;
+        const update: ApplicationUpdate = {};
+        if (statusChanged) update.lastUpdateAt = new Date();
         if (company !== undefined) update.company = company;
         if (role !== undefined) update.role = role;
         if (status !== undefined) update.status = status;

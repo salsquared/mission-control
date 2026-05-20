@@ -234,21 +234,49 @@ async function main() {
         check("rescan (stale): lastEmailMsgId DID update (idempotency marker)",
             afterRescan?.lastEmailMsgId === `older-offer-msg-${tag}`);
 
-        // Inverse scenario: a NEWER email DOES update status.
+        // Inverse scenario: a NEWER email DOES update status. lastUpdateAt
+        // gets bumped to the email's sentAt (NOT new Date()) — kanban needs
+        // to reflect the date the status actually changed, not the moment
+        // we happened to run the ingest.
         const futureEmailSentAt = new Date(now.getTime() + 60 * 1000); // 1 minute ahead
         const stale2 = isStaleEmail(csulbAnchor, futureEmailSentAt);
         check("rescan: 1-minute-future email vs today's ACCEPTED → stale=false", stale2 === false);
+        const csulbBeforeNewer = await prisma.application.findUnique({ where: { id: csulb.id } });
+        const statusChanged2 = !stale2 && "REJECTED" !== csulbBeforeNewer?.status;
         await updateApplication(csulb.id, {
             kind: "college",
             lastEmailMsgId: `newer-rej-msg-${tag}`,
-            ...(stale2 ? {} : {
-                status: "REJECTED",
-                lastUpdateAt: new Date(),
-            }),
+            ...(stale2 ? {} : { status: "REJECTED" }),
+            ...(statusChanged2 ? { lastUpdateAt: futureEmailSentAt } : {}),
         });
         const afterRescan2 = await prisma.application.findUnique({ where: { id: csulb.id } });
         check("rescan (newer email): Application.status updated to REJECTED",
             afterRescan2?.status === "REJECTED");
+        check("rescan (newer email): lastUpdateAt = email.sentAt (NOT new Date())",
+            afterRescan2?.lastUpdateAt.getTime() === futureEmailSentAt.getTime(),
+            `got ${afterRescan2?.lastUpdateAt.toISOString()} expected ${futureEmailSentAt.toISOString()}`);
+
+        // Third scenario: a NEWER email arrives but the LLM classifies the
+        // SAME status as already stored — no status change → lastUpdateAt
+        // must NOT bump (it's a "metadata refresh" email, not a transition).
+        const evenLaterEmailSentAt = new Date(now.getTime() + 2 * 60 * 1000); // 2 min ahead
+        const csulbBeforeNoChange = await prisma.application.findUnique({ where: { id: csulb.id } });
+        const statusChanged3 = "REJECTED" !== csulbBeforeNoChange?.status;
+        check("scenario: LLM reclassifies to SAME status → statusChanged=false",
+            statusChanged3 === false);
+        await updateApplication(csulb.id, {
+            kind: "college",
+            lastEmailMsgId: `same-status-refresh-${tag}`,
+            status: "REJECTED", // identical to current
+            nextSteps: "Updated next-steps text",
+            ...(statusChanged3 ? { lastUpdateAt: evenLaterEmailSentAt } : {}),
+        });
+        const afterNoChange = await prisma.application.findUnique({ where: { id: csulb.id } });
+        check("rescan (same-status refresh): lastUpdateAt NOT bumped",
+            afterNoChange?.lastUpdateAt.getTime() === futureEmailSentAt.getTime(),
+            `lastUpdateAt drifted: was ${futureEmailSentAt.toISOString()}, now ${afterNoChange?.lastUpdateAt.toISOString()}`);
+        check("rescan (same-status refresh): nextSteps still updated (metadata can move freely)",
+            afterNoChange?.nextSteps === "Updated next-steps text");
 
         // ─── Cross-app isolation ───────────────────────────────────────────
         const csulbAnchorAgain = await findLatestStatusAnchor(csulb.id);

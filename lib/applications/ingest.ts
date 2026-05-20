@@ -184,10 +184,14 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         // Only stamp senderDomain when extraction yielded something — null
         // means "ATS-routed / unparseable", which shouldn't blow away a
         // previously captured good domain.
-        // When staleStatusUpdate is set, status/role/nextSteps are skipped
-        // and lastUpdateAt is left alone (no user-visible change happened);
-        // we still bump lastEmailMsgId (idempotency marker) and senderDomain
-        // (so future emails from that root can still match).
+        // lastUpdateAt semantics (2026-05-20): the kanban displays this as
+        // "when did this application's STATUS last change?" — so we only
+        // bump it when parsed.status differs from the stored status, AND we
+        // set it to the EMAIL's sentAt (not "now"), so re-ingesting an old
+        // status-change email doesn't make the card look like fresh activity.
+        // Notes / role / nextSteps refreshes don't qualify as status changes.
+        // When staleStatusUpdate is set the whole branch is skipped anyway.
+        const statusChanged = !staleStatusUpdate && parsed.status !== existingApp.status;
         await updateApplication(existingApp.id, {
             kind: parsed.kind ?? existingApp.kind,
             lastEmailMsgId: msgId,
@@ -195,8 +199,8 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 status: parsed.status,
                 nextSteps: parsed.nextSteps ?? null,
                 role: parsed.role || existingApp.role,
-                lastUpdateAt: new Date(),
             }),
+            ...(statusChanged ? { lastUpdateAt: sentAt } : {}),
             ...(senderDomain ? { senderDomain } : {}),
         });
         appId = existingApp.id;
@@ -217,7 +221,11 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 nextSteps: parsed.nextSteps ?? null,
                 dateApplied: sentAt,
                 lastEmailMsgId: msgId,
-                lastUpdateAt: new Date(),
+                // lastUpdateAt = sentAt, NOT new Date(). The initial status
+                // was established when this email was sent, not when we
+                // happened to ingest it (kanban displays this as the
+                // status-change date).
+                lastUpdateAt: sentAt,
                 senderDomain: senderDomain ?? null,
             });
             appId = newApp.id;
@@ -239,6 +247,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             if (racedAnchor && racedAnchor.occurredAt.getTime() > sentAt.getTime()) {
                 staleStatusUpdate = true;
             }
+            const statusChanged = !staleStatusUpdate && parsed.status !== raced.status;
             await updateApplication(raced.id, {
                 kind: parsed.kind ?? raced.kind,
                 lastEmailMsgId: msgId,
@@ -246,8 +255,8 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                     status: parsed.status,
                     nextSteps: parsed.nextSteps ?? null,
                     role: parsed.role || raced.role,
-                    lastUpdateAt: new Date(),
                 }),
+                ...(statusChanged ? { lastUpdateAt: sentAt } : {}),
                 ...(senderDomain ? { senderDomain } : {}),
             });
             appId = raced.id;
