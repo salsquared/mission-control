@@ -47,11 +47,13 @@ All three constants live in `lib/ai/gemini.ts` and are passed through `chatJSON(
 
 ## Rate limiting
 
-`lib/ai/rate-limit.ts:acquireGeminiSlot()` is a process-shared token bucket: **12 req/min, burst 60**. Every Gemini call MUST go through `chatJSON` or `parseApplicationEmail` — both block on the bucket before hitting the API. Bypass = quota drain risk.
+`lib/ai/rate-limit.ts:acquireGeminiSlot()` is a process-shared token bucket. Code default is **12 req/min, burst 60** (free-tier safe). Every Gemini call MUST go through `chatJSON` or `parseApplicationEmail` — both block on the bucket before hitting the API. Bypass = quota drain risk.
 
-Env overrides (rarely needed):
-- `GEMINI_RATE_PER_MIN` (default 12)
+Env overrides:
+- `GEMINI_RATE_PER_MIN` (default 12, **prod ships 60** via `.env.production` — paid-tier headroom for backfill bursts)
 - `GEMINI_RATE_BURST` (default 60)
+
+Practical ceiling: ingest is sequential, so RPM above ~120 stops mattering — Gemini's own response latency (~1-2 s/call) dominates past that. Raising the bucket only helps when the bucket itself is the bottleneck.
 
 ---
 
