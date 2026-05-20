@@ -20,6 +20,11 @@ interface ThemeSlice {
     dashTitles: Record<string, string>;
     defaultDashTitles: Record<string, string>;
     viewScreenshots: Record<string, string>;
+    // Cross-device global negative filters (regex patterns). Hydrated from
+    // /api/settings GET alongside the theme fields. Excluded from
+    // ThemeProvider's auto-sync diff (it has its own explicit Save UX in
+    // WatchlistsCard); writes update both this field and `version` directly.
+    globalNegativeFilters: string[];
     // Optimistic-concurrency counter. Hydrated from /api/settings GET, sent
     // back as If-Match on POST, bumped on successful save. Deliberately
     // excluded from the synced-state diff so updating it doesn't trigger a
@@ -44,20 +49,29 @@ export type PostingEmploymentType = "full-time" | "part-time" | "internship" | "
 export interface PostingFilters {
     employmentTypes: PostingEmploymentType[];
     remoteOnly: boolean;
-    locationContains: string;
+    /** Location chip allow-list — case-insensitive substring match against
+     *  `JobPosting.location`. Empty = no location filter. Multiple chips are
+     *  OR'd ("show postings in NYC OR Boston OR Remote"). Replaced the prior
+     *  single-string `locationContains` so users can mix multiple cities /
+     *  states / countries without having to pick one. */
+    locations: string[];
     /** Include postings whose employmentType is null. Defaults to false so
      *  that activating a type chip ("Internship") strictly filters down —
      *  ATS feeds like Workday/Greenhouse leave most postings unclassified,
      *  and a `true` default lets them all leak through, making the filter
      *  look broken. The checkbox in the UI is the escape hatch. */
     includeUnspecified: boolean;
+    /** Company names whitelist. Empty = show all companies. Compared against
+     *  `JobPosting.company` (display name from the fetcher, e.g. "Anthropic"). */
+    companies: string[];
 }
 
 const DEFAULT_POSTING_FILTERS: PostingFilters = {
     employmentTypes: [],
     remoteOnly: false,
-    locationContains: "",
+    locations: [],
     includeUnspecified: false,
+    companies: [],
 };
 
 interface DevicePrefsSlice {
@@ -96,6 +110,7 @@ export const useAppStore = create<AppState>()(
             dashTitles: {},
             defaultDashTitles: DEFAULT_DASH_TITLES,
             viewScreenshots: {},
+            globalNegativeFilters: [],
             version: 0,
 
             setViewHuesEnabled: (viewHuesEnabled) => set({ viewHuesEnabled }),
@@ -140,14 +155,35 @@ export const useAppStore = create<AppState>()(
                 viewScreenshots: state.viewScreenshots,
                 postingFilters: state.postingFilters,
             }),
-            version: 3,
+            version: 5,
             migrate: (persisted: any, fromVersion: number) => {
                 // v2 → v3: flip includeUnspecified to false. Existing users
                 // would otherwise inherit the old `true` default and the
                 // type-chip filter would silently no-op for them.
+                // v3 → v4: introduce `companies` filter (default []).
+                // v4 → v5: `locationContains: string` → `locations: string[]`.
+                //          Wrap any prior single substring into a 1-chip array
+                //          so users don't lose their saved location filter.
                 const pf = persisted.postingFilters;
+                let locations: string[] = [];
+                if (pf) {
+                    if (Array.isArray(pf.locations)) {
+                        locations = pf.locations
+                            .filter((s: unknown): s is string => typeof s === 'string')
+                            .map((s: string) => s.trim())
+                            .filter((s: string) => s.length > 0);
+                    } else if (typeof pf.locationContains === 'string' && pf.locationContains.trim()) {
+                        locations = [pf.locationContains.trim()];
+                    }
+                }
                 const postingFilters: PostingFilters = pf
-                    ? { ...pf, includeUnspecified: fromVersion < 3 ? false : (pf.includeUnspecified ?? false) }
+                    ? {
+                        employmentTypes: Array.isArray(pf.employmentTypes) ? pf.employmentTypes : [],
+                        remoteOnly: !!pf.remoteOnly,
+                        locations,
+                        includeUnspecified: fromVersion < 3 ? false : (pf.includeUnspecified ?? false),
+                        companies: Array.isArray(pf.companies) ? pf.companies : [],
+                    }
                     : DEFAULT_POSTING_FILTERS;
                 return {
                     autoResearch: persisted.autoResearch ?? false,

@@ -55,6 +55,7 @@ SUITES=(
     "scripts/tests/hermetic/webhook-prune-smoke.ts"
     "scripts/tests/hermetic/app-race-dedup-smoke.ts"
     "scripts/tests/hermetic/gemini-rate-limit-smoke.ts"
+    "scripts/tests/hermetic/location-expansion-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

@@ -128,6 +128,20 @@ function jsonBody(method: string, body: unknown): RequestInit {
     };
 }
 
+// Filter shape shared by the postings query-key factory and the `list()`
+// caller — same fields, so React Query's key changes whenever a server-side
+// filter param changes and the cache properly partitions per filter set.
+export interface PostingsListFilter {
+    status?: string;
+    watchlistId?: string;
+    limit?: number;
+    employmentType?: readonly string[];
+    includeUnspecified?: boolean;
+    companies?: readonly string[];
+    remoteOnly?: boolean;
+    locations?: readonly string[];
+}
+
 // ─── Query keys (TanStack tuples) ──────────────────────────────────────────
 // Keep these stable — useServerEvents callbacks invalidate by these keys.
 export const queryKeys = {
@@ -143,7 +157,7 @@ export const queryKeys = {
         ['saved-papers', filter ?? {}] as const,
     profile: ['profile'] as const,
     watchlists: ['watchlists'] as const,
-    postings: (filter?: { status?: string; watchlistId?: string }) =>
+    postings: (filter?: PostingsListFilter) =>
         ['postings', filter ?? {}] as const,
     posting: (id: string) => ['posting', id] as const,
     notifications: (filter?: { unread?: boolean }) =>
@@ -357,11 +371,25 @@ export const api = {
     },
 
     postings: {
-        list: (filter?: { status?: string; watchlistId?: string; limit?: number }) => {
+        list: (filter?: PostingsListFilter) => {
             const params = new URLSearchParams();
             if (filter?.status) params.set('status', filter.status);
             if (filter?.watchlistId) params.set('watchlistId', filter.watchlistId);
             if (filter?.limit) params.set('limit', String(filter.limit));
+            if (filter?.employmentType && filter.employmentType.length > 0) {
+                params.set('employmentType', filter.employmentType.join(','));
+            }
+            if (filter?.includeUnspecified) params.set('includeUnspecified', 'true');
+            if (filter?.companies && filter.companies.length > 0) {
+                params.set('companies', filter.companies.join(','));
+            }
+            if (filter?.remoteOnly) params.set('remoteOnly', 'true');
+            if (filter?.locations && filter.locations.length > 0) {
+                // CSV is safe here: the chip input commits on comma, so no
+                // chip can ever contain one. SQLite LIKE %x% is case-
+                // insensitive for ASCII, so we don't need lowercasing.
+                params.set('locations', filter.locations.join(','));
+            }
             const qs = params.toString();
             return jsonFetch(`/api/postings${qs ? '?' + qs : ''}`, PostingsListResponseSchema);
         },
@@ -441,5 +469,37 @@ export const api = {
             ),
         // Returns a direct download URL — UI uses it as href, no fetch needed.
         downloadUrl: (id: string) => `/api/resumes/${encodeURIComponent(id)}/download`,
+    },
+
+    discovery: {
+        // POST /api/discovery/suggest — Gemini-suggested companies for a topic,
+        // each probed live against Greenhouse/Lever/Ashby. Returns two buckets:
+        // `verified` (addable as watchlists) and `unverified` (workday /
+        // self-hosted / probe failed — surfaced to the user for manual flagging).
+        suggest: (input: { topic: string; additionalExclude?: string[] }) =>
+            jsonFetch(
+                '/api/discovery/suggest',
+                z.object({
+                    topic: z.string(),
+                    verified: z.array(z.object({
+                        name: z.string(),
+                        blurb: z.string(),
+                        kind: z.enum(['greenhouse', 'lever', 'ashby']),
+                        slug: z.string(),
+                        companyName: z.string(),
+                        jobCount: z.number().int(),
+                    })),
+                    unverified: z.array(z.object({
+                        name: z.string(),
+                        blurb: z.string(),
+                        careersUrl: z.string(),
+                        atsGuess: z.string(),
+                        reason: z.string(),
+                    })),
+                    excludedCount: z.number().int(),
+                    totalSuggested: z.number().int(),
+                }),
+                jsonBody('POST', input),
+            ),
     },
 };
