@@ -28,6 +28,43 @@ if (process.env.NODE_ENV !== 'production') {
 
 const useSQLite = () => process.env.CACHE_BACKEND === 'sqlite';
 
+// `[CACHE HIT]` / `[CACHE MISS]` fire on every withCache route call. In dev
+// that's high-volume noise into the SSE log fan-out (see lib/logger.ts) —
+// every line walks the patched console + ring buffer + every subscriber.
+// Prod keeps these on because the in-app log viewer is the canonical
+// observability surface (CLAUDE.md). DEBUG_VERBOSE_LOG=1 re-enables them
+// in dev for active debugging of cache behavior.
+const LOG_VERBOSE =
+    process.env.NODE_ENV === 'production' || process.env.DEBUG_VERBOSE_LOG === '1';
+
+// Sweep expired L1 entries every 5 min. Without this, expired-but-not-
+// revisited keys stay in the map indefinitely, each holding its full
+// response body (company news feeds, arXiv listings, etc.). For a single-
+// node dev process this is a slow leak; for a long-uptime prod process
+// it's load-bearing. HMR-safe via globalThis.
+const L1_PRUNE_INTERVAL_MS = 5 * 60 * 1000;
+function pruneExpiredL1(): number {
+    const now = Date.now();
+    let pruned = 0;
+    for (const [key, entry] of globalCache) {
+        if (entry.expiry <= now) {
+            globalCache.delete(key);
+            pruned++;
+        }
+    }
+    if (pruned > 0 && LOG_VERBOSE) {
+        console.info(`[CACHE] L1 pruned ${pruned} expired entries`);
+    }
+    return pruned;
+}
+if (!(globalThis as any).__apiCachePruner) {
+    (globalThis as any).__apiCachePruner = setInterval(pruneExpiredL1, L1_PRUNE_INTERVAL_MS);
+    // Don't let the timer hold the event loop open at shutdown.
+    if (typeof (globalThis as any).__apiCachePruner?.unref === 'function') {
+        (globalThis as any).__apiCachePruner.unref();
+    }
+}
+
 export function getCacheStats() {
     const activeEntries = Array.from(globalCache.entries()).map(([key, entry]) => ({
         key,
@@ -226,8 +263,10 @@ export function withCache(
             const entry = globalCache.get(cacheKey)!;
             if (Date.now() < entry.expiry) {
                 cacheStats.hits++;
-                const remaining = Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000));
-                console.info(`[CACHE HIT] ${hostTag}${cacheKey} (TTL: ${remaining}s remaining)`);
+                if (LOG_VERBOSE) {
+                    const remaining = Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000));
+                    console.info(`[CACHE HIT] ${hostTag}${cacheKey} (TTL: ${remaining}s remaining)`);
+                }
                 return NextResponse.json(entry.data, {
                     headers: {
                         'X-Cache': 'HIT',
@@ -245,8 +284,10 @@ export function withCache(
             if (l2) {
                 cacheStats.hits++;
                 globalCache.set(cacheKey, l2);
-                const remaining = Math.max(0, Math.floor((l2.expiry - Date.now()) / 1000));
-                console.info(`[CACHE HIT L2] ${hostTag}${cacheKey} (TTL: ${remaining}s remaining)`);
+                if (LOG_VERBOSE) {
+                    const remaining = Math.max(0, Math.floor((l2.expiry - Date.now()) / 1000));
+                    console.info(`[CACHE HIT L2] ${hostTag}${cacheKey} (TTL: ${remaining}s remaining)`);
+                }
                 return NextResponse.json(l2.data, {
                     headers: {
                         'X-Cache': 'HIT',
@@ -257,7 +298,9 @@ export function withCache(
         }
 
         cacheStats.misses++;
-        console.info(`[CACHE MISS] ${hostTag}${cacheKey} - Fetching fresh data (TTL: ${ttlSeconds}s)`);
+        if (LOG_VERBOSE) {
+            console.info(`[CACHE MISS] ${hostTag}${cacheKey} - Fetching fresh data (TTL: ${ttlSeconds}s)`);
+        }
 
         // In-flight dedup: if another request for the same key is already running, await it.
         if (inFlight.has(cacheKey)) {

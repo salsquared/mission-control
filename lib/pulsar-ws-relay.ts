@@ -10,7 +10,14 @@ import { broadcastEvent } from './events';
 // reused — http(s):// is rewritten to ws(s):// and /ws/prices is appended.
 
 const RECONNECT_BASE_MS = 1000;
+// Short cap for the first ~5 min of failures so a transient Pulsar restart
+// re-attaches quickly. Once we're in "Pulsar is genuinely offline" territory
+// we extend the cap so we don't allocate a new WebSocket + log 3 lines per
+// 30s indefinitely. Mission-control runs for weeks; uncapped 30s reconnects
+// against a dead service is ~360 log entries/hr through the SSE fan-out.
 const RECONNECT_CAP_MS = 30_000;
+const RECONNECT_LONG_CAP_MS = 5 * 60 * 1000;
+const RECONNECT_LONG_AFTER_ATTEMPTS = 10;
 const ASSET_IDS = ['bitcoin', 'ethereum', 'solana'];
 
 let currentSocket: WebSocket | null = null;
@@ -67,7 +74,10 @@ function connect() {
     socket.addEventListener('close', () => {
         if (currentSocket === socket) currentSocket = null;
         if (stopped) return;
-        const delay = Math.min(RECONNECT_CAP_MS, RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts));
+        const cap = reconnectAttempts >= RECONNECT_LONG_AFTER_ATTEMPTS
+            ? RECONNECT_LONG_CAP_MS
+            : RECONNECT_CAP_MS;
+        const delay = Math.min(cap, RECONNECT_BASE_MS * Math.pow(2, reconnectAttempts));
         reconnectAttempts++;
         console.info(`[PULSAR WS] reconnecting in ${delay}ms (attempt ${reconnectAttempts})`);
         reconnectTimer = setTimeout(connect, delay);
