@@ -20,7 +20,7 @@ import { dispatchNotification, utcDateBucket } from "@/lib/notifications/dispatc
 const STALE_AFTER_DAYS = 14;
 const NUDGE_COOLDOWN_DAYS = 7;
 // Terminal statuses we never nudge for — the user already has closure.
-const TERMINAL_STATUSES = ["REJECTED", "OFFER"];
+const TERMINAL_STATUSES = ["REJECTED", "OFFER", "ACCEPTED", "DECLINED"];
 
 export interface StaleNudgeRunResult {
     processed: number;

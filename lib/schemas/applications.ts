@@ -12,6 +12,8 @@ export const APPLICATION_STATUSES = [
     'INTERVIEW_REQUESTED',
     'INTERVIEW',
     'OFFER',
+    'ACCEPTED',
+    'DECLINED',
     'REJECTED',
 ] as const;
 export const ApplicationStatusSchema = z.enum(APPLICATION_STATUSES);

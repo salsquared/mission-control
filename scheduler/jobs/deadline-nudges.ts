@@ -21,7 +21,7 @@ import { dispatchNotification, utcDateBucket } from "@/lib/notifications/dispatc
 const DEADLINE_WINDOW_DAYS = 3;
 const NUDGE_COOLDOWN_DAYS = 2;
 const PAST_GRACE_DAYS = 1;
-const TERMINAL_STATUSES = ["REJECTED", "OFFER"];
+const TERMINAL_STATUSES = ["REJECTED", "OFFER", "ACCEPTED", "DECLINED"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface DeadlineNudgeRunResult {

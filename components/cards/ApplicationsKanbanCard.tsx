@@ -21,7 +21,9 @@ const pipelineColumns: AppKanbanColumnDef[] = [
     { id: "assessment", title: "Assessment", statuses: ["ASSESSMENT"], filterFn: (app) => ["ASSESSMENT"].includes(app.status), defaultTargetStatus: "ASSESSMENT", colorClass: "bg-purple-500/20 text-purple-400 border border-purple-500/20" },
     { id: "interviewing", title: "Interviewing", statuses: ["INTERVIEW_REQUESTED", "INTERVIEW"], filterFn: (app) => ["INTERVIEW_REQUESTED", "INTERVIEW"].includes(app.status), defaultTargetStatus: "INTERVIEW", colorClass: "bg-amber-500/20 text-amber-500 border border-amber-500/20" },
     { id: "offer", title: "Offer", statuses: ["OFFER"], filterFn: (app) => ["OFFER"].includes(app.status), defaultTargetStatus: "OFFER", colorClass: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20" },
-    { id: "archive", title: "Archive", statuses: ["REJECTED"], filterFn: (app) => ["REJECTED"].includes(app.status), defaultTargetStatus: "REJECTED", colorClass: "bg-slate-500/20 text-slate-400 border border-slate-500/20" }
+    { id: "accepted", title: "Accepted", statuses: ["ACCEPTED"], filterFn: (app) => ["ACCEPTED"].includes(app.status), defaultTargetStatus: "ACCEPTED", colorClass: "bg-green-500/20 text-green-400 border border-green-500/20" },
+    { id: "declined", title: "Declined", statuses: ["DECLINED"], filterFn: (app) => ["DECLINED"].includes(app.status), defaultTargetStatus: "DECLINED", colorClass: "bg-orange-500/20 text-orange-400 border border-orange-500/20" },
+    { id: "rejected", title: "Rejected", statuses: ["REJECTED"], filterFn: (app) => ["REJECTED"].includes(app.status), defaultTargetStatus: "REJECTED", colorClass: "bg-slate-500/20 text-slate-400 border border-slate-500/20" }
 ];
 
 interface ApplicationsKanbanCardProps {
