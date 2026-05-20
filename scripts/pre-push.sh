@@ -50,6 +50,7 @@ SUITES=(
     "scripts/tests/hermetic/webhook-dedup-smoke.ts"
     "scripts/tests/hermetic/ingest-retry-smoke.ts"
     "scripts/tests/hermetic/normalize-company-smoke.ts"
+    "scripts/tests/hermetic/sender-domain-smoke.ts"
     "scripts/tests/hermetic/notification-dedup-smoke.ts"
     "scripts/tests/hermetic/gcal-idempotency-smoke.ts"
     "scripts/tests/hermetic/webhook-prune-smoke.ts"

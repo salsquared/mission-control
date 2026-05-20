@@ -16,6 +16,8 @@ export interface ApplicationCreate {
     lastUpdateAt?: Date;
     /** PA-3: optional explicit normalized key. When omitted, derived from `company`. */
     normalizedCompany?: string;
+    /** Layered-dedup fallback (2026-05-20). See Application.senderDomain. */
+    senderDomain?: string | null;
 }
 
 export interface ApplicationUpdate {
@@ -28,6 +30,7 @@ export interface ApplicationUpdate {
     decisionDeadline?: Date | null;
     lastEmailMsgId?: string | null;
     lastUpdateAt?: Date;
+    senderDomain?: string | null;
 }
 
 export function findApplicationsByUser(userId: string): Promise<Application[]> {
@@ -39,6 +42,27 @@ export function findApplicationsByUser(userId: string): Promise<Application[]> {
 
 export function findApplicationByIdForUser(id: string, userId: string): Promise<Application | null> {
     return prisma.application.findFirst({ where: { id, userId } });
+}
+
+/**
+ * Layered-dedup fallback (2026-05-20). Look up an existing Application by the
+ * sender domain stamped on prior ingests. Used by ingest.ts only AFTER
+ * `findApplicationByCompany` returns null — the LLM classifier drifted on the
+ * company name (e.g. Cal State Long Beach / CSULB / California State
+ * University Long Beach all referring to the same school).
+ *
+ * Caller is responsible for blocklisting multi-tenant ATS roots
+ * (extractSenderDomain returns null for those, so this never gets called
+ * with `greenhouse.io` / `commonapp.org` / etc.).
+ */
+export function findApplicationBySenderDomain(
+    userId: string,
+    senderDomain: string
+): Promise<Application | null> {
+    return prisma.application.findFirst({
+        where: { userId, senderDomain },
+        orderBy: { lastUpdateAt: "desc" },
+    });
 }
 
 export async function findApplicationByCompany(

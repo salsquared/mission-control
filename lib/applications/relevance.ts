@@ -57,7 +57,14 @@ const PHRASES: readonly string[] = [
     "transcript",
 ];
 
-const SENDER_DOMAINS: readonly string[] = [
+// Multi-tenant ATS / admissions platforms. Two callers:
+//   - relevance pre-filter: a `from:` clause on any of these is a positive signal.
+//   - sender-domain dedup (lib/applications/sender-domain.ts): an extracted
+//     registrable-root match against this list is BLOCKED — multiple distinct
+//     employers/schools share each of these roots, so the sender domain is
+//     not a reliable identity signal for them.
+// Exported so both callers stay in sync.
+export const SENDER_DOMAINS: readonly string[] = [
     // ATS platforms
     "greenhouse.io",
     "lever.co",

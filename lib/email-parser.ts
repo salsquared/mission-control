@@ -51,7 +51,11 @@ export const applicationSchema = z.object({
     "What type of application. 'college' covers undergraduate/graduate admissions, university programs, and bootcamps with an admissions process. 'internship' for explicitly internship/co-op roles. 'job' for full-time, part-time, or contract employment. 'other' for anything that's still application-related but doesn't fit (scholarships, fellowships, grants, residencies, etc.)."
   ),
   company: z.string().describe(
-    "The name of the company, university, or institution. Strip suffixes like 'LLC', 'Inc.', 'Corp.', 'Recruiting', 'Careers'. For colleges, use the canonical name (e.g. 'Massachusetts Institute of Technology', not 'MIT Office of Admissions')."
+    "The name of the company, university, or institution. Strip suffixes like 'LLC', 'Inc.', 'Corp.', 'Recruiting', 'Careers', 'Office of Admissions'. " +
+    "For colleges/universities, ALWAYS use the FULL OFFICIAL name without abbreviation and without internal commas — examples: 'Massachusetts Institute of Technology' (NOT 'MIT', NOT 'MIT Office of Admissions'); " +
+    "'California State University Long Beach' (NOT 'CSULB', NOT 'Cal State Long Beach', NOT 'California State University, Long Beach'); " +
+    "'University of California Berkeley' (NOT 'UC Berkeley', NOT 'Cal'). " +
+    "Be deterministic — every email from the same school MUST produce the exact same string."
   ),
   role: z.string().optional().describe(
     "Job title, program name, or role applied for. For colleges, use the program/major (e.g. 'Computer Science BS'). Leave empty if truly not mentioned."

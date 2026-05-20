@@ -127,6 +127,14 @@ model Application {
   // same employer (P2002 → caller falls through to update). Nullable for
   // legacy rows; backfilled by scripts/tests/backfill-app-normalized-company.ts.
   normalizedCompany String?
+  // Layered-dedup fallback (CSULB drift, 2026-05-20). Registrable root of
+  // the most recent sender's email domain (e.g. "csulb.edu"). NULL when
+  // the sender was on a multi-tenant ATS / admissions platform (Greenhouse,
+  // Lever, Common App, …) — those roots can't identify a single employer.
+  // Written by ingest.ts via extractSenderDomain(fromHeader). Used as a
+  // secondary lookup when normalizedCompany doesn't match (LLM drift across
+  // emails from the same school/employer).
+  senderDomain    String?
   role            String?
   status          String
   kind            String?   // "job" | "internship" | "college" | "other" — null on legacy rows
@@ -148,6 +156,8 @@ model Application {
 
   @@index([userId, status])
   @@index([userId, kind])
+  // Fallback dedup lookup (see senderDomain field comment).
+  @@index([userId, senderDomain])
   // PA-3: race-safe dedup. SQLite allows multiple NULLs in a unique compound
   // so legacy rows with normalizedCompany=null stay unconstrained until
   // backfilled. Once both rows for a user have non-null normalizedCompany,

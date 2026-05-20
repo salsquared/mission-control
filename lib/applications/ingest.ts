@@ -4,8 +4,10 @@ import { parseApplicationEmail, type ParsedApplicationEmail } from "@/lib/email-
 import { broadcastEvent } from "@/lib/events";
 import { looksRelevant } from "@/lib/applications/relevance";
 import { normalizeCompanyName } from "@/lib/applications/normalize-company";
+import { extractSenderDomain } from "@/lib/applications/sender-domain";
 import {
     findApplicationByCompany,
+    findApplicationBySenderDomain,
     createApplication,
     updateApplication,
 } from "@/lib/repositories/applications";
@@ -92,7 +94,24 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         return { action: "skipped", reason: "low_confidence" };
     }
 
-    const existingApp = await findApplicationByCompany(userId, parsed.company);
+    // Layered dedup (CSULB drift, 2026-05-20). Try the LLM's company name
+    // first; if that misses, fall back to the sender's registrable domain.
+    // `extractSenderDomain` returns null for multi-tenant ATS / admissions
+    // platforms — those can't identify a single employer, so we don't fall
+    // back to them.
+    const senderDomain = extractSenderDomain(from);
+    let existingApp = await findApplicationByCompany(userId, parsed.company);
+    if (!existingApp && senderDomain) {
+        const byDomain = await findApplicationBySenderDomain(userId, senderDomain);
+        if (byDomain) {
+            existingApp = byDomain;
+            console.info(
+                `[ingest] sender-domain fallback matched msg=${msgId} ` +
+                `domain=${senderDomain} → app=${byDomain.id} ` +
+                `(LLM=${JSON.stringify(parsed.company)} vs stored=${JSON.stringify(byDomain.company)})`,
+            );
+        }
+    }
 
     // PB-5: only early-skip when (a) we've seen this msg AND (b) every event
     // we created from it has fully committed its side-effects (notifiedAt for
@@ -116,6 +135,13 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     const previousStatus = existingApp?.status ?? null;
 
     if (existingApp) {
+        // Don't rewrite `company` here. When matchedVia === "senderDomain",
+        // the LLM's name disagrees with the stored one (that's why we fell
+        // through to the domain fallback) — preserving the stored name keeps
+        // the display stable across LLM drift on subsequent emails.
+        // Only stamp senderDomain when extraction yielded something — null
+        // means "ATS-routed / unparseable", which shouldn't blow away a
+        // previously captured good domain.
         await updateApplication(existingApp.id, {
             status: parsed.status,
             kind: parsed.kind ?? existingApp.kind,
@@ -123,6 +149,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             role: parsed.role || existingApp.role,
             lastEmailMsgId: msgId,
             lastUpdateAt: new Date(),
+            ...(senderDomain ? { senderDomain } : {}),
         });
         appId = existingApp.id;
         action = "updated";
@@ -143,6 +170,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 dateApplied: sentAt,
                 lastEmailMsgId: msgId,
                 lastUpdateAt: new Date(),
+                senderDomain: senderDomain ?? null,
             });
             appId = newApp.id;
             action = "created";
@@ -162,6 +190,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 role: parsed.role || raced.role,
                 lastEmailMsgId: msgId,
                 lastUpdateAt: new Date(),
+                ...(senderDomain ? { senderDomain } : {}),
             });
             appId = raced.id;
             action = "updated";
