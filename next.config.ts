@@ -24,6 +24,26 @@ const nextConfig: NextConfig = {
   // via Node's runtime require instead. `jose` was the most recent addition
   // (Phase A1 OIDC); `googleapis` was already pulling undici in.
   serverExternalPackages: ['jose', 'googleapis', 'googleapis-common', 'pdf-parse', 'mammoth', 'puppeteer-core', 'html-to-docx'],
+  // Transform barrel imports (`import { Foo, Bar } from 'lucide-react'`) into
+  // per-icon path imports at compile time so the dev worker doesn't have to
+  // parse the entire 3,800+ icon barrel for every file that touches it.
+  // Same treatment for the Radix primitives and framer-motion, which are
+  // also heavy barrels touched by many files. Next 14+ feature, stable in
+  // Next 16.
+  experimental: {
+    optimizePackageImports: [
+      'lucide-react',
+      'framer-motion',
+      '@radix-ui/react-accordion',
+      '@radix-ui/react-avatar',
+      '@radix-ui/react-checkbox',
+      '@radix-ui/react-dialog',
+      '@radix-ui/react-dropdown-menu',
+      '@radix-ui/react-label',
+      '@radix-ui/react-popover',
+      '@radix-ui/react-scroll-area',
+    ],
+  },
   webpack: (config, { dev, isServer, nextRuntime }) => {
     if (dev && !isServer) {
       let ignored = [];

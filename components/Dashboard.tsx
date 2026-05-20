@@ -1,24 +1,39 @@
 "use client";
 
 import React, { useState } from "react";
-import { SpaceView } from "./views/SpaceView";
-import { InternalView } from "./views/InternalView";
-import { FinanceView } from "./views/FinanceView";
-import { AIView } from "./views/AIView";
-import { PhysicsView } from "./views/PhysicsView";
-import { ApplicationsView } from "./views/ApplicationsView";
-import { ProfileView } from "./views/ProfileView";
-import { PlanningView } from "./views/PlanningView";
+import dynamic from "next/dynamic";
 import { AICompanion } from "./AICompanion";
 import { SavedPapersOverlay } from "./overlays/SavedPapersOverlay";
 import { cn } from "@/lib/utils";
-import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare, Library } from "lucide-react";
+import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare, Library, Loader2 } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
 import { LaunchpadOverlay } from "./overlays/LaunchpadOverlay";
 import { NotificationBell } from "./overlays/NotificationBell";
 import { useEffect } from "react";
+
+// Lazy-load every dash via next/dynamic so the dev worker only compiles
+// the active view — not all 8 upfront. Each dash is its own webpack chunk;
+// swiping to a new one triggers an on-demand compile (visible as a brief
+// spinner the first time, then HMR-cached). This is the biggest single
+// lever against the ~920 MB dev-floor footprint identified in the perf
+// audit (docs/perf-profile.md): a Next dev worker holds every parsed
+// module in memory, so the more we can defer parsing, the lower the
+// floor.
+const DashLoading = () => (
+    <div className="flex-1 flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-white/40" />
+    </div>
+);
+const SpaceView = dynamic(() => import("./views/SpaceView").then(m => m.SpaceView), { ssr: false, loading: DashLoading });
+const InternalView = dynamic(() => import("./views/InternalView").then(m => m.InternalView), { ssr: false, loading: DashLoading });
+const FinanceView = dynamic(() => import("./views/FinanceView").then(m => m.FinanceView), { ssr: false, loading: DashLoading });
+const AIView = dynamic(() => import("./views/AIView").then(m => m.AIView), { ssr: false, loading: DashLoading });
+const PhysicsView = dynamic(() => import("./views/PhysicsView").then(m => m.PhysicsView), { ssr: false, loading: DashLoading });
+const ApplicationsView = dynamic(() => import("./views/ApplicationsView").then(m => m.ApplicationsView), { ssr: false, loading: DashLoading });
+const ProfileView = dynamic(() => import("./views/ProfileView").then(m => m.ProfileView), { ssr: false, loading: DashLoading });
+const PlanningView = dynamic(() => import("./views/PlanningView").then(m => m.PlanningView), { ssr: false, loading: DashLoading });
 
 export interface DashConfig {
     id: string;

@@ -25,31 +25,26 @@ const SPACE_CATEGORIES = [
     'Government Agencies',
 ];
 
-// (Previous imports and helper functions remain exactly the same...)
-import {
-    WiMoonNew,
-    WiMoonWaxingCrescent3,
-    WiMoonFirstQuarter,
-    WiMoonWaxingGibbous3,
-    WiMoonFull,
-    WiMoonWaningGibbous3,
-    WiMoonThirdQuarter,
-    WiMoonWaningCrescent3
-} from "react-icons/wi";
-
-const getMoonIcon = (phase: string) => {
-    switch (phase) {
-        case "New Moon": return <WiMoonNew className="w-6 h-6" />;
-        case "Waxing Crescent": return <WiMoonWaxingCrescent3 className="w-6 h-6" />;
-        case "First Quarter": return <WiMoonFirstQuarter className="w-6 h-6" />;
-        case "Waxing Gibbous": return <WiMoonWaxingGibbous3 className="w-6 h-6" />;
-        case "Full Moon": return <WiMoonFull className="w-6 h-6" />;
-        case "Waning Gibbous": return <WiMoonWaningGibbous3 className="w-6 h-6" />;
-        case "Last Quarter": return <WiMoonThirdQuarter className="w-6 h-6" />;
-        case "Waning Crescent": return <WiMoonWaningCrescent3 className="w-6 h-6" />;
-        default: return <WiMoonFull className="w-6 h-6" />;
-    }
+// Unicode moon-phase glyphs (U+1F311 – U+1F318). Native to OS fonts on all
+// modern platforms — drops the 83 MB `react-icons` dependency that was only
+// being used here. Sized via text classes so they scale with surrounding
+// type and inherit color.
+const MOON_GLYPHS: Record<string, string> = {
+    'New Moon':         '\u{1F311}',
+    'Waxing Crescent':  '\u{1F312}',
+    'First Quarter':    '\u{1F313}',
+    'Waxing Gibbous':   '\u{1F314}',
+    'Full Moon':        '\u{1F315}',
+    'Waning Gibbous':   '\u{1F316}',
+    'Last Quarter':     '\u{1F317}',
+    'Waning Crescent':  '\u{1F318}',
 };
+
+const getMoonIcon = (phase: string) => (
+    <span className="text-2xl leading-none select-none" aria-label={phase}>
+        {MOON_GLYPHS[phase] ?? MOON_GLYPHS['Full Moon']}
+    </span>
+);
 
 export interface SpaceArticle {
     id: string | number;
