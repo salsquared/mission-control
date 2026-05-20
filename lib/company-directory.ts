@@ -130,6 +130,121 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
             maxPages: 50,
         },
     },
+    {
+        name: "Axiom Space",
+        blurb: "Commercial space stations + private astronaut missions.",
+        tags: ["space"],
+        // Verified 2026-05-19: careers page embeds the Workday tenant
+        // axiomspace.wd5.myworkdayjobs.com/External_Career_Site.
+        config: {
+            kind: "workday",
+            tenantHost: "axiomspace.wd5.myworkdayjobs.com",
+            careerSite: "External_Career_Site",
+            companyName: "Axiom Space",
+        },
+    },
+    {
+        name: "LeoLabs",
+        blurb: "Low-Earth-orbit radar tracking + space domain awareness.",
+        tags: ["space"],
+        // Verified 2026-05-19: careers page embeds Greenhouse with for=leolabsinc;
+        // boards-api.greenhouse.io/v1/boards/leolabsinc/jobs returns 200.
+        config: { kind: "greenhouse", boardSlug: "leolabsinc", companyName: "LeoLabs" },
+    },
+    {
+        name: "Relativity Space",
+        blurb: "3D-printed rockets — Terran R reusable medium-lift launch vehicle.",
+        tags: ["space"],
+        // Verified 2026-05-19: their marketing /careers page is a Squarespace
+        // SPA with no ATS marker, but /jobs embeds Greenhouse with
+        // for=relativity. boards-api returns 287 jobs at this slug.
+        config: { kind: "greenhouse", boardSlug: "relativity", companyName: "Relativity Space" },
+    },
+    {
+        name: "Stoke Space",
+        blurb: "Fully reusable second stage — Nova rocket development.",
+        tags: ["space"],
+        // Verified 2026-05-19: /careers landing page is decorative; the real
+        // openings live at /careers/current-openings/, which embeds
+        // Greenhouse with for=stokespacetechnologies. 46 jobs at the slug.
+        config: { kind: "greenhouse", boardSlug: "stokespacetechnologies", companyName: "Stoke Space" },
+    },
+    {
+        name: "Firefly Aerospace",
+        blurb: "Alpha small launch vehicle, Blue Ghost lunar lander.",
+        tags: ["space"],
+        // Verified 2026-05-19: WordPress-fronted careers page embeds
+        // ClearCompany via <script src="…/career-site.js?siteId=…">.
+        // careers-api.clearcompany.com/v1/<siteId> returns 135 jobs.
+        config: {
+            kind: "clearcompany",
+            boardSlug: "00ed92c3-5bfb-7bfb-456d-4d9d77fef9a5",
+            companyName: "Firefly Aerospace",
+        },
+    },
+    // ─── Space discoveries from the ats-sniff probe sweep, 2026-05-19 ────────
+    {
+        name: "True Anomaly",
+        blurb: "Space security + autonomous orbital vehicles.",
+        tags: ["space"],
+        config: { kind: "greenhouse", boardSlug: "trueanomalyinc", companyName: "True Anomaly" },
+    },
+    {
+        name: "Apex Space",
+        blurb: "Standardized satellite bus manufacturing.",
+        tags: ["space"],
+        // Ashby slug is "apex-technology-inc" (the corporate name); display
+        // remains "Apex Space" to match how candidates refer to them.
+        config: { kind: "ashby", boardSlug: "apex-technology-inc", companyName: "Apex Space" },
+    },
+    {
+        name: "Saronic",
+        blurb: "Autonomous surface vessels + maritime defense.",
+        tags: ["space"],
+        config: { kind: "ashby", boardSlug: "saronic", companyName: "Saronic" },
+    },
+    {
+        name: "Slingshot Aerospace",
+        blurb: "Space domain awareness + sat-tracking simulations.",
+        tags: ["space"],
+        config: { kind: "greenhouse", boardSlug: "slingshotaerospace", companyName: "Slingshot Aerospace" },
+    },
+    {
+        name: "Hadrian",
+        blurb: "Robotic precision-component factories for aerospace + defense.",
+        tags: ["space"],
+        config: { kind: "ashby", boardSlug: "hadrian-automation", companyName: "Hadrian" },
+    },
+    {
+        name: "Hermeus",
+        blurb: "Hypersonic aircraft — Quarterhorse + Darkhorse.",
+        tags: ["space"],
+        config: { kind: "lever", boardSlug: "hermeus", companyName: "Hermeus" },
+    },
+    {
+        name: "Loft Orbital",
+        blurb: "Turnkey satellite missions for hosted payloads.",
+        tags: ["space"],
+        config: { kind: "lever", boardSlug: "loftorbital", companyName: "Loft Orbital" },
+    },
+    {
+        name: "ispace",
+        blurb: "Lunar landers + exploration — HAKUTO-R missions.",
+        tags: ["space"],
+        config: { kind: "lever", boardSlug: "ispace-inc", companyName: "ispace" },
+    },
+    {
+        name: "Maxar",
+        blurb: "Earth-imaging satellites + space infrastructure (rebranding to Vantor).",
+        tags: ["space"],
+        // Verified 2026-05-19: maxar.wd1.myworkdayjobs.com/Vantor.
+        config: {
+            kind: "workday",
+            tenantHost: "maxar.wd1.myworkdayjobs.com",
+            careerSite: "Vantor",
+            companyName: "Maxar",
+        },
+    },
 
     // ─── Tech / SaaS ─────────────────────────────────────────────────────────
     {
@@ -278,7 +393,18 @@ export function watchlistConfigKey(config: WatchlistConfig): string | null {
         case "greenhouse":
         case "lever":
         case "ashby":
+        case "workable":
+        case "recruitee":
+        case "personio":
             return `${config.kind}:${config.boardSlug.toLowerCase()}`;
+        case "smartrecruiters":
+            // Case-sensitive slug on SmartRecruiters' side; keep case to avoid
+            // collapsing distinct boards (Visa vs visa1, etc.).
+            return `smartrecruiters:${config.boardSlug}`;
+        case "clearcompany":
+            // siteId is a UUID — case-fold for consistency since UUIDs are
+            // canonically lowercase but some sources mix case.
+            return `clearcompany:${config.boardSlug.toLowerCase()}`;
         case "workday":
             return `workday:${config.tenantHost.toLowerCase()}:${config.careerSite}`;
         case "linkedin":
