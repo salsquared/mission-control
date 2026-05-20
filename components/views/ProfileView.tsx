@@ -5,10 +5,7 @@ import { Loader2, User as UserIcon } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { CardGrid, type CardItem } from "../grids/CardGrid";
-import { ProfileHeaderCard } from "../cards/ProfileHeaderCard";
-import { ProfileRolesCard } from "../cards/ProfileRolesCard";
-import { ProfileProjectsCard } from "../cards/ProfileProjectsCard";
-import { ProfileEducationCard } from "../cards/ProfileEducationCard";
+import { ProfileIdentityCard } from "../cards/ProfileIdentityCard";
 import { GenerateResumeCard } from "../cards/GenerateResumeCard";
 import { ImportResumesCard } from "../cards/ImportResumesCard";
 import { useServerEvents } from "@/hooks/useServerEvents";
@@ -262,60 +259,33 @@ export const ProfileView: React.FC = () => {
 
     const identityCards: CardItem[] = [
         {
-            id: "profile-header",
+            id: "profile-identity",
             colSpan: 3,
             hFit: true,
             content: (
-                <ProfileHeaderCard
+                <ProfileIdentityCard
                     headline={profile.headline}
                     summary={profile.summary}
                     location={profile.location}
                     email={profile.email}
                     phone={profile.phone}
                     links={profile.links ?? null}
-                    onSave={handleHeaderSave}
-                />
-            ),
-        },
-        {
-            id: "profile-roles",
-            colSpan: 3,
-            hFit: true,
-            content: (
-                <ProfileRolesCard
+                    onHeaderSave={handleHeaderSave}
                     workRoles={profile.workRoles}
-                    onUpdate={handleWorkRoleUpdate}
-                    onDelete={handleWorkRoleDelete}
-                    onSwap={swapWorkRoles}
-                    onAdd={handleAddWorkRole}
-                />
-            ),
-        },
-        {
-            id: "profile-projects",
-            colSpan: 3,
-            hFit: true,
-            content: (
-                <ProfileProjectsCard
+                    onWorkRoleUpdate={handleWorkRoleUpdate}
+                    onWorkRoleDelete={handleWorkRoleDelete}
+                    onWorkRoleSwap={swapWorkRoles}
+                    onAddWorkRole={handleAddWorkRole}
                     projects={profile.projects}
-                    onUpdate={handleProjectUpdate}
-                    onDelete={handleProjectDelete}
-                    onSwap={swapProjects}
-                    onAdd={handleAddProject}
-                />
-            ),
-        },
-        {
-            id: "profile-education",
-            colSpan: 3,
-            hFit: true,
-            content: (
-                <ProfileEducationCard
+                    onProjectUpdate={handleProjectUpdate}
+                    onProjectDelete={handleProjectDelete}
+                    onProjectSwap={swapProjects}
+                    onAddProject={handleAddProject}
                     education={profile.education}
-                    onUpdate={handleEducationUpdate}
-                    onDelete={handleEducationDelete}
-                    onSwap={swapEducation}
-                    onAdd={handleAddEducation}
+                    onEducationUpdate={handleEducationUpdate}
+                    onEducationDelete={handleEducationDelete}
+                    onEducationSwap={swapEducation}
+                    onAddEducation={handleAddEducation}
                 />
             ),
         },
