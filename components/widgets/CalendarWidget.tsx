@@ -1,5 +1,5 @@
 import React, { useState, useCallback, useMemo } from "react";
-import { Trash2, Clock, Loader2, Briefcase, Link2 } from "lucide-react";
+import { Trash2, Clock, Loader2, Link2 } from "lucide-react";
 import { useSession } from "next-auth/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api-client";
@@ -25,12 +25,26 @@ const KIND_LABEL: Record<ApplicationEventKind, string> = {
     NOTE: "Note",
 };
 
+// Mirrors the pipeline kanban color motif so the calendar tiles read as
+// the same "stage" badges users already recognize on the kanban.
+const KIND_ACCENT: Record<ApplicationEventKind, { bar: string; text: string }> = {
+    INTERVIEW_SCHEDULED: { bar: "bg-amber-500/20", text: "text-amber-500" },
+    ASSESSMENT_REQUESTED: { bar: "bg-purple-500/20", text: "text-purple-400" },
+    APPLIED: { bar: "bg-blue-500/20", text: "text-blue-400" },
+    OFFER: { bar: "bg-emerald-500/20", text: "text-emerald-400" },
+    REJECTION: { bar: "bg-slate-500/20", text: "text-slate-400" },
+    STATUS_CHANGED: { bar: "bg-slate-500/20", text: "text-slate-400" },
+    EMAIL_RECEIVED: { bar: "bg-slate-500/20", text: "text-slate-400" },
+    NOTE: { bar: "bg-slate-500/20", text: "text-slate-400" },
+};
+
 interface CalendarWidgetProps {
     isAdding: boolean;
     setIsAdding: (val: boolean) => void;
+    isEditing?: boolean;
 }
 
-export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsAdding }) => {
+export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsAdding, isEditing = false }) => {
     const { data: session } = useSession();
     const userId = (session?.user as { id?: string } | undefined)?.id ?? null;
     const queryClient = useQueryClient();
@@ -153,7 +167,7 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsA
 
     return (
         <div className="flex flex-col h-full w-full">
-            <div className="overflow-y-auto flex-1 custom-scrollbar pr-2 space-y-3">
+            <div className="overflow-y-auto flex-1 custom-scrollbar pr-2">
                 {isAdding && (
                     <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700 space-y-3 mb-4">
                         <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 w-fit">
@@ -262,34 +276,42 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsA
                 ) : sortedEvents.length === 0 ? (
                     <div className="text-center text-sm text-slate-500 py-10">No upcoming pipeline events.</div>
                 ) : (
-                    sortedEvents.map((ev) => {
-                        const sd = ev.scheduledAt ? new Date(ev.scheduledAt) : null;
-                        const company = ev.application?.company;
-                        return (
-                            <div key={ev.id} className="group relative bg-slate-800 border border-slate-700/50 rounded-xl p-3 hover:border-blue-500/30 transition-all flex justify-between items-start">
-                                <div className="min-w-0">
-                                    <h5 className="text-sm font-semibold text-slate-200 truncate">{ev.title}</h5>
-                                    <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-widest text-blue-400/80 mt-1">
-                                        <Briefcase className="w-3 h-3" />
-                                        <span className="truncate">{company ?? 'Unknown'} · {KIND_LABEL[ev.kind]}</span>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {sortedEvents.map((ev) => {
+                            const sd = ev.scheduledAt ? new Date(ev.scheduledAt) : null;
+                            const company = ev.application?.company;
+                            const accent = KIND_ACCENT[ev.kind];
+                            return (
+                                <div key={ev.id} className="group relative bg-black/40 border border-white/5 rounded-xl px-3 py-2 shadow-xl hover:border-white/20 hover:bg-black/60 transition-all overflow-hidden">
+                                    <div className={`absolute top-0 left-0 w-1 h-full ${accent.bar} opacity-50`}></div>
+                                    <div className="flex justify-between items-start gap-2">
+                                        <h5 className="text-sm font-semibold text-slate-100 truncate flex-1 leading-tight">{ev.title}</h5>
+                                        <span className="text-xs text-slate-400 truncate shrink-0 max-w-[45%] text-right leading-tight">{company ?? 'Unknown'}</span>
                                     </div>
-                                    {sd && (
-                                        <div className="flex items-center gap-1.5 text-xs text-slate-400 mt-1.5">
-                                            <Clock className="w-3.5 h-3.5" />
-                                            <span>{sd.toLocaleDateString()} at {sd.toLocaleTimeString([], { timeStyle: 'short' })}</span>
+                                    <div className="flex items-center justify-between gap-2 mt-1.5">
+                                        {sd ? (
+                                            <div className="flex items-center gap-1.5 text-xs text-slate-400 min-w-0">
+                                                <Clock className="w-3.5 h-3.5 shrink-0" />
+                                                <span className="truncate">{sd.toLocaleDateString()} at {sd.toLocaleTimeString([], { timeStyle: 'short' })}</span>
+                                            </div>
+                                        ) : <span />}
+                                        <div className="flex items-center gap-2 shrink-0">
+                                            {isEditing && (
+                                                <button
+                                                    onClick={() => handleDelete(ev.id)}
+                                                    className="p-1 -m-1 text-slate-500 hover:text-red-400 transition-colors cursor-pointer"
+                                                    title="Delete event"
+                                                >
+                                                    <Trash2 className="w-3.5 h-3.5" />
+                                                </button>
+                                            )}
+                                            <span className={`${accent.text} text-[10px] uppercase tracking-widest font-bold`}>{KIND_LABEL[ev.kind]}</span>
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
-                                <button
-                                    onClick={() => handleDelete(ev.id)}
-                                    className="opacity-0 group-hover:opacity-100 p-1.5 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-md transition-all shrink-0 cursor-pointer"
-                                    title="Delete event"
-                                >
-                                    <Trash2 className="w-4 h-4" />
-                                </button>
-                            </div>
-                        );
-                    })
+                            );
+                        })}
+                    </div>
                 )}
             </div>
         </div>

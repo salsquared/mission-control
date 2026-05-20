@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Section } from "../Section";
-import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, RotateCw } from "lucide-react";
+import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, RotateCw, Pencil } from "lucide-react";
 import { useSession, signIn } from "next-auth/react";
 import { CalendarWidget } from "../widgets/CalendarWidget";
 import { CardGrid, CardItem } from "../grids/CardGrid";
@@ -19,6 +19,7 @@ import { ApplicationsKanbanCard, AppRecord } from "../cards/ApplicationsKanbanCa
 export const ApplicationsView: React.FC = () => {
     const { data: session, status } = useSession();
     const [isCalendarAdding, setIsCalendarAdding] = useState(false);
+    const [isCalendarEditing, setIsCalendarEditing] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isAdding, setIsAdding] = useState(false);
@@ -146,23 +147,33 @@ export const ApplicationsView: React.FC = () => {
         {
             id: "calendar",
             colSpan: 2,
+            className: "max-h-[40vh]",
             content: (
                 <Card
                     title="Upcoming Interviews"
                     icon={CalendarIcon}
                     iconColorClass="text-emerald-400"
                     action={
-                        <button
-                            onClick={() => setIsCalendarAdding(!isCalendarAdding)}
-                            className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-colors cursor-pointer"
-                            title="Add Event"
-                        >
-                            <Plus className="w-4 h-4" />
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                            <button
+                                onClick={() => setIsCalendarEditing(!isCalendarEditing)}
+                                className={`p-1.5 rounded-lg transition-colors cursor-pointer ${isCalendarEditing ? "bg-amber-500/20 text-amber-300" : "bg-amber-500/10 hover:bg-amber-500/20 text-amber-400"}`}
+                                title={isCalendarEditing ? "Done editing" : "Edit events"}
+                            >
+                                <Pencil className="w-4 h-4" />
+                            </button>
+                            <button
+                                onClick={() => setIsCalendarAdding(!isCalendarAdding)}
+                                className="p-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg transition-colors cursor-pointer"
+                                title="Add Event"
+                            >
+                                <Plus className="w-4 h-4" />
+                            </button>
+                        </div>
                     }
                     withInnerContainer
                 >
-                    <CalendarWidget isAdding={isCalendarAdding} setIsAdding={setIsCalendarAdding} />
+                    <CalendarWidget isAdding={isCalendarAdding} setIsAdding={setIsCalendarAdding} isEditing={isCalendarEditing} />
                 </Card>
             )
         },
@@ -176,28 +187,28 @@ export const ApplicationsView: React.FC = () => {
                     iconColorClass="text-purple-400"
                 >
                     <div className="flex flex-col gap-3">
-                        <div className="flex items-center gap-3 bg-black/20 p-4 border border-white/5 rounded-xl">
+                        <div className="flex items-center gap-2.5 bg-black/20 px-3 py-2 border border-white/5 rounded-xl">
                             {session?.user?.image ? (
-                                <img src={session.user.image} className="w-10 h-10 rounded-full border border-slate-700/50" alt="avatar" />
+                                <img src={session.user.image} className="w-8 h-8 rounded-full border border-slate-700/50" alt="avatar" />
                             ) : (
-                                <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
-                                    <Mail className="w-5 h-5 text-slate-400" />
+                                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
+                                    <Mail className="w-4 h-4 text-slate-400" />
                                 </div>
                             )}
                             <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-semibold text-slate-200 truncate">{session?.user?.name || "Connected User"}</span>
-                                <span className="text-xs text-slate-500 truncate">{session?.user?.email}</span>
+                                <span className="text-sm font-semibold text-slate-200 truncate leading-tight">{session?.user?.name || "Connected User"}</span>
+                                <span className="text-xs text-slate-500 truncate leading-tight">{session?.user?.email}</span>
                             </div>
                         </div>
-                        <div className="flex flex-col gap-2">
-                            <button onClick={scanInbox} disabled={isScanning} className="flex items-center justify-center gap-2 px-4 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
-                                <Inbox className={`w-3.5 h-3.5 ${isScanning ? "animate-pulse" : ""}`} /> {isScanning ? "Scanning…" : "Scan Inbox"}
+                        <div className="flex flex-row gap-2">
+                            <button onClick={scanInbox} disabled={isScanning} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
+                                <Inbox className={`w-3.5 h-3.5 shrink-0 ${isScanning ? "animate-pulse" : ""}`} /> <span className="truncate">{isScanning ? "Scanning…" : "Scan Inbox"}</span>
                             </button>
-                            <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex items-center justify-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
-                                <RotateCw className={`w-3.5 h-3.5 ${isSyncing ? "animate-spin" : ""}`} /> {isSyncing ? "Syncing…" : "Sync Gcal"}
+                            <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
+                                <RotateCw className={`w-3.5 h-3.5 shrink-0 ${isSyncing ? "animate-spin" : ""}`} /> <span className="truncate">{isSyncing ? "Syncing…" : "Sync Gcal"}</span>
                             </button>
-                            <button onClick={() => invalidateApps()} disabled={loading} className="flex items-center justify-center gap-2 px-4 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50">
-                                <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} /> Ping Status
+                            <button onClick={() => invalidateApps()} disabled={loading} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50" title="Refresh application list">
+                                <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${loading ? "animate-spin" : ""}`} /> <span className="truncate">Ping Status</span>
                             </button>
                         </div>
                     </div>
