@@ -41,8 +41,12 @@ const EMPLOYMENT_TYPE_LOOKUP: Record<string, EmploymentType> = {
     coop: "internship",
     apprentice: "internship",
     apprenticeship: "internship",
-    fellow: "internship",
-    fellowship: "internship",
+    // Fellowships at modern labs (Anthropic Fellows, Scale's Human Frontier
+    // Collective Fellows, etc.) are paid 6-12mo W-2 roles, not student
+    // internships. Map to full-time so the chip filter doesn't sweep them
+    // into the wrong bucket. See backfill on 2026-05-19.
+    fellow: "full-time",
+    fellowship: "full-time",
     contract: "contract",
     contracts: "contract",
     contractor: "contract",
@@ -98,16 +102,16 @@ export function inferEmploymentTypeFromTitle(title: string): EmploymentType | nu
     if (bracketed) return bracketed;
 
     const s = title.toLowerCase();
-    // "Fellows Program" / "Anthropic Fellows" is an internship-class role
-    // (cohort-based, fixed-term, mentor-supervised). Match standalone too:
-    // "AI Safety Fellow", "Research Fellow".
-    if (/\b(intern(ship)?s?|co-?op|apprentice(ship)?|fellows?(\s+program)?)\b/.test(s)) {
+    if (/\b(intern(ship)?s?|co-?op|apprentice(ship)?)\b/.test(s)) {
         if (ROLE_DISQUALIFIERS.test(s)) return null;
         return "internship";
     }
     // "Summer 2026 SWE", "Fall 2026 Quant" — season + year strongly implies
     // an internship class. Year window kept open-ended (\d{4}) so this stays
-    // forward-compatible.
+    // forward-compatible. NOTE: this also catches "Summer 2026 Fellow", which
+    // is intentionally an internship-class fellowship (student cohort, summer-
+    // term); the bare "Research Fellow" / "Anthropic Fellows" case is left
+    // null here and labeled full-time by the Tier-B Gemini classifier.
     if (/\b(spring|summer|fall|autumn|winter)\s+20\d{2}\b/.test(s)) return "internship";
     if (/\b(contract(or)?|freelance)\b/.test(s)) {
         if (ROLE_DISQUALIFIERS.test(s)) return null;

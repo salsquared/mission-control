@@ -59,6 +59,20 @@ check("'Intern Program Manager' → null (disqualifier)",          inferEmployme
 check("'Recruiting Coordinator [contract]' → contract (bracket wins)", inferEmploymentTypeFromTitle("Recruiting Coordinator [contract]") === "contract");
 check("'Software Engineer (Internship)' → internship (paren wins)",   inferEmploymentTypeFromTitle("Software Engineer (Internship)") === "internship");
 
+// Fellowship policy (decided 2026-05-19): structured ATS "Fellowship" values
+// land in full-time (modern lab fellowships are paid 6-12mo W-2 roles, not
+// student internships). Tier-A's title regex no longer claims a bare "Fellow"
+// / "Fellows Program" as internship — those abstain (null) and Tier-B
+// decides. A summer-cohort fellowship still hits the season+year regex here
+// and lands in internship before Tier-B sees it.
+check("'Anthropic Fellow' → null (title heuristic abstains)",       inferEmploymentTypeFromTitle("Anthropic Fellow") === null);
+check("'Research Fellow' → null (title heuristic abstains)",        inferEmploymentTypeFromTitle("Research Fellow") === null);
+check("'Anthropic Fellows Program' → null",                         inferEmploymentTypeFromTitle("Anthropic Fellows Program") === null);
+check("'Summer 2026 Research Fellow' → internship (season+year)",   inferEmploymentTypeFromTitle("Summer 2026 Research Fellow") === "internship");
+// Structured ATS string → full-time (modern lab fellowship policy):
+check("normalize 'Fellowship' → full-time",                         normalizeEmploymentType("Fellowship") === "full-time");
+check("normalize 'Fellow' → full-time",                             normalizeEmploymentType("Fellow") === "full-time");
+
 // ─── pickEmploymentType ────────────────────────────────────────────────────
 check("structured wins over title",                            pickEmploymentType("FullTime", "Intern Engineer") === "full-time");
 check("falls back to title when structured is null",           pickEmploymentType(null, "Software Engineering Intern") === "internship");

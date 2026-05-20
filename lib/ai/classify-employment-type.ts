@@ -48,9 +48,9 @@ const BATCH_SIZE = 50;
 const SYSTEM_PROMPT = `You classify job postings by employment type.
 
 For each posting, choose exactly one of:
-- "full-time": salaried permanent role (Engineer, Manager, Director, Senior X, Staff X, etc.). DEFAULT when the title implies a typical permanent position at a normal company.
+- "full-time": salaried permanent role (Engineer, Manager, Director, Senior X, Staff X, etc.). DEFAULT when the title implies a typical permanent position at a normal company. Also INCLUDES paid fellowship programs at companies / labs (Anthropic Fellows, Scale AI's Human Frontier Collective Fellows, OpenAI Residency, Google Brain Resident, "Research Fellow", "AI Safety Fellow"). These are typically 6-12mo W-2 roles for experienced or post-graduate hires, not student programs.
 - "part-time": explicitly part-time hourly role.
-- "internship": interns, co-ops, apprenticeships, fellowships, seasonal student programs (Summer 2026 SWE, Anthropic Fellows Program).
+- "internship": interns, co-ops, apprenticeships, seasonal student programs (Summer 2026 SWE). A summer-term "Fellowship" tied to a student cohort still counts here, but the unqualified "Fellow" / "Fellows Program" title goes to full-time.
 - "contract": 1099, freelance, fixed-term consulting. Does NOT include "Contract Manager" / "Contract Specialist" / "Contract Negotiator" — those are permanent roles administering contracts. Only when the WORKER is hired on contract.
 - "temporary": seasonal or short-term hourly work, temp positions.
 
