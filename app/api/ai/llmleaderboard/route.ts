@@ -100,6 +100,25 @@ export async function GET(req: NextRequest) {
             }
         });
 
+        // Dedupe by id. lmarena.ai's leaderboard page sometimes lists the
+        // same model in multiple stacked sub-leaderboards (overall +
+        // filtered views) inside the same <tbody> we scrape, which would
+        // otherwise produce duplicate React keys downstream. Keep the
+        // highest-Elo occurrence per id so the result is deterministic
+        // regardless of source ordering. Logs once per crawl when the
+        // page yields duplicates so future structural changes upstream
+        // are visible in the in-app log viewer.
+        const beforeDedupe = allModels.length;
+        const byId = new Map<string, any>();
+        for (const m of allModels) {
+            const prev = byId.get(m.id);
+            if (!prev || m.eloScore > prev.eloScore) byId.set(m.id, m);
+        }
+        allModels = Array.from(byId.values());
+        if (allModels.length < beforeDedupe) {
+            console.warn(`[LLM LEADERBOARD] deduped ${beforeDedupe - allModels.length} duplicate rows from ${url}`);
+        }
+
         // Sort descending by ELO Score just to be safe
         allModels.sort((a, b) => b.eloScore - a.eloScore);
 

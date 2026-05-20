@@ -121,8 +121,8 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto pr-2 -mr-2 space-y-2">
-                {sortedModels.map((model) => (
-                    <div key={model.id} className="group flex items-center justify-between gap-4 bg-white/5 hover:bg-white/10 py-1.5 px-3 rounded-lg transition-colors border border-white/5">
+                {sortedModels.map((model, idx) => (
+                    <div key={`${model.rank}-${model.id}-${idx}`} className="group flex items-center justify-between gap-4 bg-white/5 hover:bg-white/10 py-1.5 px-3 rounded-lg transition-colors border border-white/5">
                         <div className="flex items-center gap-3 min-w-0 flex-1">
                             <span className="text-white/40 font-mono text-sm inline-block w-6 shrink-0 text-right">
                                 #{model.rank}
