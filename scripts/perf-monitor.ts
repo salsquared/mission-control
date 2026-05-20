@@ -40,12 +40,58 @@ type Sample = {
     ts: string;
     label: string;
     pm2_id: number | null;
+    // PM2 reports the npm wrapper, not the next-server worker. We walk the
+    // process tree from the PM2-tracked PID and sum descendant RSS so the
+    // numbers actually match what /api/system shows in the UI. `rss_bytes`
+    // is the SUM (npm + next dev + next-server), which is the right number
+    // for "service load". `worker_rss_bytes` and `worker_cpu_pct` are just
+    // the next-server worker, which is what dominates and what the dash
+    // displays.
     rss_bytes: number | null;
+    worker_rss_bytes: number | null;
     cpu_pct: number | null;
+    worker_cpu_pct: number | null;
+    descendant_count: number | null;
     uptime_s: number | null;
     restarts: number | null;
     status: string | null;
 };
+
+type PsRow = { pid: number; ppid: number; rss: number; cpu: number; cmd: string };
+
+async function readPsTree(): Promise<Map<number, PsRow>> {
+    const { stdout } = await exec('ps', ['-eo', 'pid=,ppid=,rss=,pcpu=,command=']);
+    const map = new Map<number, PsRow>();
+    for (const line of stdout.split('\n')) {
+        const m = line.match(/^\s*(\d+)\s+(\d+)\s+(\d+)\s+([\d.]+)\s+(.+)$/);
+        if (!m) continue;
+        map.set(+m[1], {
+            pid: +m[1],
+            ppid: +m[2],
+            rss: +m[3] * 1024,
+            cpu: +m[4],
+            cmd: m[5],
+        });
+    }
+    return map;
+}
+
+function walkTree(rootPid: number, ps: Map<number, PsRow>): PsRow[] {
+    const byParent = new Map<number, PsRow[]>();
+    for (const row of ps.values()) {
+        if (!byParent.has(row.ppid)) byParent.set(row.ppid, []);
+        byParent.get(row.ppid)!.push(row);
+    }
+    const out: PsRow[] = [];
+    const queue = [rootPid];
+    while (queue.length) {
+        const pid = queue.shift()!;
+        const node = ps.get(pid);
+        if (node) out.push(node);
+        for (const k of byParent.get(pid) ?? []) queue.push(k.pid);
+    }
+    return out;
+}
 
 const samples: Sample[] = [];
 let currentLabel = process.argv[2] ?? 'baseline';
@@ -53,34 +99,46 @@ let stopping = false;
 
 async function readPm2(): Promise<Sample | null> {
     const now = new Date().toISOString();
+    const nullSample: Sample = {
+        ts: now, label: currentLabel, pm2_id: null,
+        rss_bytes: null, worker_rss_bytes: null,
+        cpu_pct: null, worker_cpu_pct: null,
+        descendant_count: null, uptime_s: null, restarts: null, status: null,
+    };
     try {
-        const { stdout } = await exec('pm2', ['jlist']);
-        const list = JSON.parse(stdout);
+        const [{ stdout: pmStdout }, ps] = await Promise.all([
+            exec('pm2', ['jlist']),
+            readPsTree(),
+        ]);
+        const list = JSON.parse(pmStdout);
         const proc = list.find((p: any) => p.name === PROCESS_NAME);
-        if (!proc) {
-            return {
-                ts: now, label: currentLabel,
-                pm2_id: null, rss_bytes: null, cpu_pct: null,
-                uptime_s: null, restarts: null, status: 'missing',
-            };
-        }
+        if (!proc) return { ...nullSample, status: 'missing' };
+
+        const rootPid = proc.pid;
+        const tree = rootPid ? walkTree(rootPid, ps) : [];
+        const totalRss = tree.reduce((s, r) => s + r.rss, 0) || null;
+        const totalCpu = tree.length ? tree.reduce((s, r) => s + r.cpu, 0) : null;
+        // The next-server worker is the leaf that actually serves HTTP. Fall
+        // back to the deepest descendant if "next-server" isn't in the cmd
+        // string (different Next version, etc).
+        const worker = tree.find(r => /next-server/.test(r.cmd)) ?? tree[tree.length - 1] ?? null;
+
         const uptimeMs = proc.pm2_env?.pm_uptime ? Date.now() - proc.pm2_env.pm_uptime : null;
         return {
             ts: now,
             label: currentLabel,
             pm2_id: proc.pm_id ?? null,
-            rss_bytes: proc.monit?.memory ?? null,
-            cpu_pct: proc.monit?.cpu ?? null,
+            rss_bytes: totalRss,
+            worker_rss_bytes: worker?.rss ?? null,
+            cpu_pct: totalCpu,
+            worker_cpu_pct: worker?.cpu ?? null,
+            descendant_count: tree.length,
             uptime_s: uptimeMs != null ? Math.round(uptimeMs / 1000) : null,
             restarts: proc.pm2_env?.restart_time ?? null,
             status: proc.pm2_env?.status ?? null,
         };
     } catch (e: any) {
-        return {
-            ts: now, label: currentLabel,
-            pm2_id: null, rss_bytes: null, cpu_pct: null,
-            uptime_s: null, restarts: null, status: `error: ${e?.message ?? e}`,
-        };
+        return { ...nullSample, status: `error: ${e?.message ?? e}` };
     }
 }
 
@@ -100,7 +158,7 @@ function pct(arr: number[], p: number) {
 function summarize() {
     const byLabel = new Map<string, Sample[]>();
     for (const s of samples) {
-        if (s.rss_bytes == null) continue;
+        if (s.worker_rss_bytes == null && s.rss_bytes == null) continue;
         if (!byLabel.has(s.label)) byLabel.set(s.label, []);
         byLabel.get(s.label)!.push(s);
     }
@@ -110,20 +168,23 @@ function summarize() {
     }
     let md = `# perf-monitor summary\n\n`;
     md += `Process: \`${PROCESS_NAME}\`  ·  interval: ${INTERVAL_MS}ms  ·  total samples: ${samples.length}\n\n`;
-    md += `| Label | n | RSS median | RSS p95 | RSS max | CPU median | CPU p95 | CPU max |\n`;
-    md += `| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n`;
+    md += `RSS / CPU columns are the **next-server worker** (the real HTTP server, what /api/system shows in the UI). Tree-total numbers (npm + next dev + worker) follow in parens.\n\n`;
+    md += `| Label | n | Worker RSS median | p95 | max | Worker CPU median | p95 | max | Tree RSS max |\n`;
+    md += `| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n`;
     console.log('\n--- perf-monitor summary ---');
     for (const [label, rows] of byLabel) {
-        const rss = rows.map(r => r.rss_bytes!).filter(x => x != null);
-        const cpu = rows.map(r => r.cpu_pct!).filter(x => x != null);
-        const rssMed = pct(rss, 0.5);
-        const rssP95 = pct(rss, 0.95);
-        const rssMax = Math.max(...rss);
-        const cpuMed = cpu.length ? pct(cpu, 0.5) : 0;
-        const cpuP95 = cpu.length ? pct(cpu, 0.95) : 0;
-        const cpuMax = cpu.length ? Math.max(...cpu) : 0;
-        md += `| ${label} | ${rows.length} | ${fmtBytes(rssMed)} | ${fmtBytes(rssP95)} | ${fmtBytes(rssMax)} | ${cpuMed.toFixed(0)}% | ${cpuP95.toFixed(0)}% | ${cpuMax.toFixed(0)}% |\n`;
-        console.log(`  ${label.padEnd(22)} n=${String(rows.length).padStart(4)}  RSS med ${fmtBytes(rssMed)}  p95 ${fmtBytes(rssP95)}  max ${fmtBytes(rssMax)}   CPU med ${cpuMed.toFixed(0)}%  p95 ${cpuP95.toFixed(0)}%  max ${cpuMax.toFixed(0)}%`);
+        const wrss = rows.map(r => r.worker_rss_bytes!).filter(x => x != null) as number[];
+        const wcpu = rows.map(r => r.worker_cpu_pct!).filter(x => x != null) as number[];
+        const trss = rows.map(r => r.rss_bytes!).filter(x => x != null) as number[];
+        const rssMed = pct(wrss, 0.5);
+        const rssP95 = pct(wrss, 0.95);
+        const rssMax = wrss.length ? Math.max(...wrss) : 0;
+        const cpuMed = wcpu.length ? pct(wcpu, 0.5) : 0;
+        const cpuP95 = wcpu.length ? pct(wcpu, 0.95) : 0;
+        const cpuMax = wcpu.length ? Math.max(...wcpu) : 0;
+        const tRssMax = trss.length ? Math.max(...trss) : 0;
+        md += `| ${label} | ${rows.length} | ${fmtBytes(rssMed)} | ${fmtBytes(rssP95)} | ${fmtBytes(rssMax)} | ${cpuMed.toFixed(1)}% | ${cpuP95.toFixed(1)}% | ${cpuMax.toFixed(1)}% | ${fmtBytes(tRssMax)} |\n`;
+        console.log(`  ${label.padEnd(22)} n=${String(rows.length).padStart(4)}  worker RSS med ${fmtBytes(rssMed)}  p95 ${fmtBytes(rssP95)}  max ${fmtBytes(rssMax)}   CPU med ${cpuMed.toFixed(1)}%  p95 ${cpuP95.toFixed(1)}%  max ${cpuMax.toFixed(1)}%`);
     }
     console.log('----------------------------\n');
     return md;
@@ -156,11 +217,14 @@ async function main() {
         samples.push(s);
         await handle.write(JSON.stringify(s) + '\n');
         const stamp = new Date(s.ts).toLocaleTimeString();
-        const rss = fmtBytes(s.rss_bytes).padStart(7);
-        const cpu = String(s.cpu_pct ?? '?').padStart(3);
+        const wrss = fmtBytes(s.worker_rss_bytes).padStart(7);
+        const trss = fmtBytes(s.rss_bytes).padStart(7);
+        const wcpu = (s.worker_cpu_pct ?? 0).toFixed(1).padStart(4);
+        const tcpu = (s.cpu_pct ?? 0).toFixed(1).padStart(4);
         const up = s.uptime_s != null ? `${s.uptime_s}s` : '?';
         const restarts = s.restarts != null ? `${s.restarts}` : '?';
-        console.log(`[${stamp}] ${s.label.padEnd(22)} RSS=${rss}  CPU=${cpu}%  up=${up}  restarts=${restarts}  ${s.status ?? ''}`);
+        const procs = s.descendant_count ?? '?';
+        console.log(`[${stamp}] ${s.label.padEnd(22)} worker=${wrss} ${wcpu}%  tree=${trss} ${tcpu}% (${procs} procs)  up=${up} ↺${restarts}`);
     };
 
     const handler = async () => {

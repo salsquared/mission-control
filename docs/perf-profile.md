@@ -8,11 +8,12 @@ Measured baseline (idle browser tab on Space dash, dev server up ~13 min, no act
 | --- | --- | --- |
 | Dev process RSS | **1.13 GB / 2 GB max-old-space-size** | `/api/system` |
 | Reported CPU % | 100 (saturated) | `/api/system` |
-| PM2 `mem` column | ~1.06 GB | `pm2 list` |
 | `.next-dev/dev` build cache | 195 MB on disk (138 MB in `cache/`) | `du -sh` |
 | Dependencies | 50 deps + 17 devDeps; Next 16.1.1, React 19.2.3 | `package.json` |
 
-For context, the **prod** PM2 process (`mission-control`, same git state, no HMR, same SSE work) is sitting at **48.2 MB**. Dev is **~22× heavier** at idle, well past "dev mode should be higher than prod". That gap is mostly **client-side polling/streaming overhead amplified by HMR + React Strict Mode**, not Next's build cost.
+**Important: `pm2 list` / `pm2 jlist` see only the npm wrapper, not the actual worker.** The PM2-managed entry is `npm run dev`, which forks `next dev`, which forks the `next-server` worker. Only the worker holds the HTTP state — EventSources, React tree, query cache, etc. The wrapper sits idle at ~54 MB regardless of how loaded the worker is. So **don't trust `pm2 list` to gauge dev-server load**: it'll say "50 MB" while the worker is at "1 GB". Use `/api/system` (in-process, reads the worker) or `scripts/perf-monitor.ts` (which walks the process tree to the worker — corrected 2026-05-20).
+
+For context, the **prod** PM2 process is sitting at ~50 MB in its npm wrapper; its worker has not been measured separately but the same wrapper-vs-worker caveat applies.
 
 ---
 
