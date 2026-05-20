@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { BookOpen, User, Quote, ArrowUp, RefreshCw } from "lucide-react";
+import { BookOpen, User, Quote, ArrowUp, RefreshCw, AlertTriangle } from "lucide-react";
 import { CarouselControls } from "../ui/CarouselControls";
 import { PaperActions } from "../ui/PaperActions";
 import { api } from "@/lib/api-client";
@@ -26,9 +26,11 @@ interface ResearchPaperCardProps {
     subject: string;
     papers: Paper[];
     onRefresh?: () => void;
+    isRefreshing?: boolean;
+    errorMessage?: string;
 }
 
-export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, papers, onRefresh }) => {
+export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, papers, onRefresh, isRefreshing, errorMessage }) => {
     const [currentIndex, setCurrentIndex] = useState(0);
 
     useEffect(() => {
@@ -56,6 +58,7 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
     const [localStatuses, setLocalStatuses] = useState<Record<string, string>>({});
 
     if (!papers || papers.length === 0) {
+        const hasError = !!errorMessage;
         return (
             <Card
                 title={`arXiv • ${subject}`}
@@ -63,15 +66,23 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
                 iconColorClass="text-purple-400"
                 wrapperClassName="min-h-[160px]"
             >
-                <div className="flex-1 flex flex-col items-center justify-center text-white/40 text-sm gap-2 mt-4">
-                    <span>No papers found for this period.</span>
+                <div className="flex-1 flex flex-col items-center justify-center text-white/40 text-sm gap-2 mt-4 px-4 text-center">
+                    {hasError ? (
+                        <div className="flex items-start gap-2 text-amber-400/80">
+                            <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                            <span>{errorMessage}</span>
+                        </div>
+                    ) : (
+                        <span>No papers found for this period.</span>
+                    )}
                     {onRefresh && (
                         <button
                             onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRefresh(); }}
-                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 hover:text-white transition-colors text-xs cursor-pointer"
+                            disabled={isRefreshing}
+                            className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 hover:bg-white/10 hover:text-white transition-colors text-xs cursor-pointer disabled:opacity-60 disabled:cursor-wait"
                         >
-                            <RefreshCw className="w-3.5 h-3.5" />
-                            <span>Refresh</span>
+                            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
+                            <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
                         </button>
                     )}
                 </div>

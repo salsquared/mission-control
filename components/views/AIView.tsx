@@ -32,16 +32,24 @@ function useCompanyNews(companies: typeof AI_COMPANIES) {
 export const AIView: React.FC = () => {
     const [llmCategory, setLlmCategory] = useState("text");
 
-    const { data: hackerNews } = useQuery<any[]>({ queryKey: ['ai', 'hn'], queryFn: () => fetcher('/api/ai') });
-    const { data: arxivYesterday, refetch: refetchY } = useQuery<any[]>({ queryKey: ['research', 'ai', 'yesterday'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=yesterday&limit=5') });
-    const { data: arxivLastWeek, refetch: refetchW } = useQuery<any[]>({ queryKey: ['research', 'ai', 'week'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=week&limit=5') });
-    const { data: arxivReview, refetch: refetchRev } = useQuery<any[]>({ queryKey: ['research', 'ai', 'review'], queryFn: () => fetcher('/api/research/review?topic=ai') });
-    const { data: arxivHistorical, refetch: refetchHist } = useQuery<any[]>({ queryKey: ['research', 'ai', 'historical'], queryFn: () => fetcher('/api/research/historical?topic=ai') });
+    const qHN = useQuery<any[]>({ queryKey: ['ai', 'hn'], queryFn: () => fetcher('/api/ai') });
+    const qY = useQuery<any[]>({ queryKey: ['research', 'ai', 'yesterday'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=yesterday&limit=5') });
+    const qW = useQuery<any[]>({ queryKey: ['research', 'ai', 'week'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=week&limit=5') });
+    const qRev = useQuery<any[]>({ queryKey: ['research', 'ai', 'review'], queryFn: () => fetcher('/api/research/review?topic=ai') });
+    const qHist = useQuery<any[]>({ queryKey: ['research', 'ai', 'historical'], queryFn: () => fetcher('/api/research/historical?topic=ai') });
+    const { data: hackerNews } = qHN;
+    const { data: arxivYesterday, refetch: refetchY } = qY;
+    const { data: arxivLastWeek, refetch: refetchW } = qW;
+    const { data: arxivReview, refetch: refetchRev } = qRev;
+    const { data: arxivHistorical, refetch: refetchHist } = qHist;
     const { data: llmLeaderboard, refetch: refetchLLM } = useQuery<LLMModelInfo[]>({ queryKey: ['ai', 'llmleaderboard', llmCategory], queryFn: () => fetcher(`/api/ai/llmleaderboard?category=${llmCategory}`) });
 
     const { newsMap: companyNews, isLoading: companyLoading } = useCompanyNews(AI_COMPANIES);
 
-    const loading = !hackerNews || !arxivYesterday;
+    // Spinner only while every query is still pending. Once any settle (data
+    // OR error), surface the cards so failed ones expose a manual refresh.
+    const newsLoading = qHN.isPending;
+    const researchLoading = qY.isPending && qW.isPending && qRev.isPending && qHist.isPending;
 
     const buildCompanyGroups = () => {
         if (companyLoading) return [];
@@ -53,16 +61,16 @@ export const AIView: React.FC = () => {
         }).filter(Boolean) as { label: string; items: CardItem[] }[];
     };
 
-    const hnCards: CardItem[] = loading ? [{ id: "loading-news", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-emerald-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
+    const hnCards: CardItem[] = newsLoading ? [{ id: "loading-news", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-emerald-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
         : (hackerNews ?? []).length > 0 ? [{ id: "ai-news-hn", colSpan: 1, hFit: true, content: <NewsCyclingCard source="Hacker News" articles={hackerNews!} /> }]
         : [];
 
-    const researchCards: CardItem[] = loading ? [{ id: "loading-research", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-purple-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
+    const researchCards: CardItem[] = researchLoading ? [{ id: "loading-research", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-purple-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
         : [
-            { id: "ai-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} /> },
-            { id: "ai-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} /> },
-            { id: "ai-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} /> },
-            { id: "ai-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} /> }
+            { id: "ai-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} isRefreshing={qY.isFetching} errorMessage={qY.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+            { id: "ai-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} isRefreshing={qW.isFetching} errorMessage={qW.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+            { id: "ai-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} isRefreshing={qRev.isFetching} errorMessage={qRev.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+            { id: "ai-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} isRefreshing={qHist.isFetching} errorMessage={qHist.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> }
         ];
 
     const leaderboardCategories = [

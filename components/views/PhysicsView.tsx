@@ -10,12 +10,18 @@ import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 import { fetcher } from "@/lib/fetcher-client";
 
 export const PhysicsView: React.FC = () => {
-    const { data: arxivYesterday, refetch: refetchY } = useQuery<any[]>({ queryKey: ['research', 'physics', 'yesterday'], queryFn: () => fetcher('/api/research?topic=physics&timeframe=yesterday&limit=5') });
-    const { data: arxivLastWeek, refetch: refetchW } = useQuery<any[]>({ queryKey: ['research', 'physics', 'week'], queryFn: () => fetcher('/api/research?topic=physics&timeframe=week&limit=5') });
-    const { data: arxivReview, refetch: refetchRev } = useQuery<any[]>({ queryKey: ['research', 'physics', 'review'], queryFn: () => fetcher('/api/research/review?topic=physics') });
-    const { data: arxivHistorical, refetch: refetchHist } = useQuery<any[]>({ queryKey: ['research', 'physics', 'historical'], queryFn: () => fetcher('/api/research/historical?topic=physics') });
+    const qY = useQuery<any[]>({ queryKey: ['research', 'physics', 'yesterday'], queryFn: () => fetcher('/api/research?topic=physics&timeframe=yesterday&limit=5') });
+    const qW = useQuery<any[]>({ queryKey: ['research', 'physics', 'week'], queryFn: () => fetcher('/api/research?topic=physics&timeframe=week&limit=5') });
+    const qRev = useQuery<any[]>({ queryKey: ['research', 'physics', 'review'], queryFn: () => fetcher('/api/research/review?topic=physics') });
+    const qHist = useQuery<any[]>({ queryKey: ['research', 'physics', 'historical'], queryFn: () => fetcher('/api/research/historical?topic=physics') });
+    const { data: arxivYesterday, refetch: refetchY } = qY;
+    const { data: arxivLastWeek, refetch: refetchW } = qW;
+    const { data: arxivReview, refetch: refetchRev } = qRev;
+    const { data: arxivHistorical, refetch: refetchHist } = qHist;
 
-    const loading = !arxivYesterday && !arxivLastWeek && !arxivReview && !arxivHistorical;
+    // Spinner only while every query is still pending. Once any settle (data
+    // OR error), surface the cards so failed ones expose a manual refresh.
+    const loading = qY.isPending && qW.isPending && qRev.isPending && qHist.isPending;
 
     const researchCards: CardItem[] = loading ? [
         { id: "loading-research", colSpan: 3, content: (
@@ -24,10 +30,10 @@ export const PhysicsView: React.FC = () => {
             </div>
         )}
     ] : [
-        { id: "physics-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} /> },
-        { id: "physics-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} /> },
-        { id: "physics-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} /> },
-        { id: "physics-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Physics Paper" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} /> }
+        { id: "physics-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} isRefreshing={qY.isFetching} errorMessage={qY.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+        { id: "physics-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top Physics Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} isRefreshing={qW.isFetching} errorMessage={qW.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+        { id: "physics-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} isRefreshing={qRev.isFetching} errorMessage={qRev.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+        { id: "physics-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Physics Paper" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} isRefreshing={qHist.isFetching} errorMessage={qHist.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> }
     ];
 
     return (
