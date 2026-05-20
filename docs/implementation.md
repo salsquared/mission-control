@@ -520,7 +520,7 @@ Not a milestone; an ongoing concern. Needs real user data (real resume + real po
 
 The five canonical decisions live in `user-stories-applications.md`. Implementation has revealed two extra:
 
-- **Gemini default model = `gemini-flash-latest`** (2026-05-15). Auto-tracks Google's strongest stable Flash. Measured 30–42% faster than pinning `gemini-2.5-flash`. Override per-call by passing `model` to `chatJSON`.
+- **Gemini default model = `gemini-3.5-flash`** (2026-05-19). Explicitly pinned to the version released today. Previously used the `gemini-flash-latest` alias (2026-05-15 → 2026-05-19), which was 30–42% faster than the prior `gemini-2.5-flash` pin. Switched to explicit pin so future model bumps are deliberate code changes rather than silent shifts in behavior + free-tier quota class. Override per-call by passing `model` to `chatJSON`.
 - **DOCX converter = `html-to-docx`** (2026-05-15). Considered `docx` (lower-level builder) and `mammoth` (reverse direction). Picked html-to-docx so the same React template HTML feeds both PDF and DOCX with zero divergence.
 
 ### Smoke matrix

@@ -106,7 +106,7 @@ The codebase uses **five distinct data-flow patterns**, each appropriate to a di
 2. **External + DB ledger** — `selectedReviewPaper` and `selectedHistoricalPaper` deduplicate weekly picks, and the historical/review endpoints check DB first before re-querying arXiv. The DB is a *commitment log*, not a cache.
 3. **Pulsar-fronted financial data** — `/api/finance` and `/api/finance/history` proxy to a sibling PM2 process (`salsquared/pulsar`) over REST; `lib/pulsar-ws-relay.ts` keeps a long-lived WebSocket open against `${PULSAR_URL}/ws/prices` and rebroadcasts each tick as a `FinanceTick` SSE event so connected clients invalidate their `'finance'` query within seconds. Pulsar owns ingestion (CoinGecko, Mempool, Yahoo, FRED, ExchangeRate); mission-control owns no crypto state itself.
 4. **DB-native CRUD + SSE invalidation** — `Task`, `LifeGoal`, `Application`/`ApplicationEvent`, etc. The route writes the DB and immediately broadcasts a typed `ServerEvent` on the in-process bus; connected SSE clients invalidate the matching TanStack query and refetch. No file-side projection or watcher to keep in sync.
-5. **External event-driven** — Google Cloud Pub/Sub pushes Gmail history events to `/api/gmail/webhook`, which decodes the base64 envelope, calls `gmail.users.history.list`, fetches new messages, and runs them through `parseApplicationEmail` (Gemini 3.0 Flash via `@ai-sdk/google`) to upsert `Application` rows. This is the only inbound integration.
+5. **External event-driven** — Google Cloud Pub/Sub pushes Gmail history events to `/api/gmail/webhook`, which decodes the base64 envelope, calls `gmail.users.history.list`, fetches new messages, and runs them through `parseApplicationEmail` (Gemini 3.5 Flash via `@ai-sdk/google`) to upsert `Application` rows. This is the only inbound integration.
 
 Pattern 1 is the dominant one: **most endpoints are stateless cache-fronted external proxies.**
 
@@ -297,7 +297,7 @@ Adding a new Google scope requires bumping the `scope` string in `authOptions` a
 
 ### 8.4 LLM-driven email parsing
 
-`lib/email-parser.ts:parseApplicationEmail()` calls `generateObject` from `ai` with `google("gemini-3.0-flash")` and a Zod schema (`applicationSchema`). The schema enforces the canonical fields the dashboard needs (`company`, `role?`, `status` ∈ APPLIED/UPDATED/ASSESSMENT/INTERVIEW_REQUESTED/INTERVIEW/OFFER/REJECTED, `nextSteps?`, `extractedDates[]?`). The Gmail webhook only invokes this if the subject contains "application" or "interview" — a cheap heuristic to avoid wasting LLM calls on every inbound email.
+`lib/email-parser.ts:parseApplicationEmail()` calls `generateObject` from `ai` with `google("gemini-3.5-flash")` and a Zod schema (`applicationSchema`). The schema enforces the canonical fields the dashboard needs (`company`, `role?`, `status` ∈ APPLIED/UPDATED/ASSESSMENT/INTERVIEW_REQUESTED/INTERVIEW/OFFER/REJECTED, `nextSteps?`, `extractedDates[]?`). The Gmail webhook only invokes this if the subject contains "application" or "interview" — a cheap heuristic to avoid wasting LLM calls on every inbound email.
 
 This is the **only LLM call in the system**. The author-facing AICompanion is a stub.
 
