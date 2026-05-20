@@ -28,7 +28,7 @@ All three constants live in `lib/ai/gemini.ts` and are passed through `chatJSON(
 | File | Model | maxOutputTokens | Input cap | Notes |
 |---|---|---|---|---|
 | `lib/email-parser.ts` (parseApplicationEmail) | `MODEL_LITE` | n/a (Vercel SDK) | **3 KB** body | Highest-volume caller. One call per inbound Gmail message + every backfill. Pinned inline because Vercel AI SDK wraps the model name into a provider call. |
-| `lib/ai/classify-employment-type.ts` (classifyEmploymentTypes) | `MODEL_LITE_CHEAP` | 4096 | 50 items/batch | Pure 5-class enum picker per posting. Cheapest model is invisible-quality. |
+| `lib/ai/classify-employment-type.ts` (classifyEmploymentTypes) | `MODEL_LITE_CHEAP` | **1024** | 50 items/batch | Pure 5-class enum picker per posting. Cheapest model is invisible-quality. Positional output (`{"types":[…]}` array, no id echoing) — see 2026-05-20 change log entry. |
 | `lib/discovery/suggest.ts` (suggestCompanies) | `MODEL_LITE` *(default)* | 4096 | small | User-triggered "Discover companies". Temp 0.9 for exploration. |
 | `lib/resumes/posting.ts` (parsePosting) | `MODEL_LITE` *(default)* | 2048 | **8 KB** posting | Keyword extraction from job posting HTML/text. |
 | `lib/resumes/rewrite.ts` (rewriteBullets) | **`MODEL_FLASH`** | 4096 | small | **Only full-Flash caller.** Output directly becomes resume bullets the user sends to employers. |
@@ -70,6 +70,7 @@ Env overrides (rarely needed):
 
 ## Change log
 
+- **2026-05-20** — Employment-type classifier call shape rewrite. Switched to positional output (no external-id echoing — those Workday/Lever UUIDs were ~70 % of the output budget), pipe-delimited single-line-per-item input (was pretty-printed JSON), dropped `snippet/department` field (title is the load-bearing signal), tightened system prompt. `maxOutputTokens` 4096 → 1024. Measured drop from ~10 k tokens / batch to ~1.2 k tokens / batch (≈ 8× reduction). Same model.
 - **2026-05-19** — Three-tier model split landed. `MODEL_FLASH` reserved for resume rewrite only; `MODEL_LITE_CHEAP` for employment-type classifier; `MODEL_LITE` default for everything else. Per-call `maxOutputTokens` introduced (default dropped from 32k → 4k). Email-parser input cap 6 KB → 3 KB; posting parser input cap 12 KB → 8 KB.
 - **2026-05-19** — `DEFAULT_MODEL` pinned to `gemini-3.5-flash` (released same day). Superseded by the three-tier split above.
 - **2026-05-15** — Switched from `gemini-2.5-flash` to `gemini-flash-latest` for ~30–42% latency improvement on resume generation.

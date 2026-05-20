@@ -40,22 +40,32 @@ function makeItem(i: number, overrides: Partial<{ title: string; snippet: string
     };
 }
 
-function makeMockChat(planner: (callIdx: number, parsedUserInputs: any[]) => { items: { id: string; employmentType: string | null }[] }): { chatFn: ChatJSONFn; calls: CallRecord[] } {
+interface ParsedRow { i: number; company: string; title: string; location: string }
+
+// The new user prompt is "Classify each line below ...\n\n<lines>" where each
+// line is `index|company|title|location`. Parse it back into ParsedRow[] so
+// the planner can reason about what the classifier sent.
+function parseUserPrompt(user: string): ParsedRow[] {
+    const lines = user.split("\n\n").slice(1).join("\n\n").split("\n").filter(Boolean);
+    return lines.map(line => {
+        const [idx, company, title, location] = line.split("|");
+        return { i: Number(idx), company: company ?? "", title: title ?? "", location: location ?? "" };
+    });
+}
+
+function makeMockChat(planner: (callIdx: number, parsedUserInputs: ParsedRow[]) => { types: (string | null)[] }): { chatFn: ChatJSONFn; calls: CallRecord[] } {
     const calls: CallRecord[] = [];
     const chatFn = (async (opts: any) => {
         calls.push({ user: opts.user, system: opts.system });
-        // The user prompt is "Classify each of these postings.\n\n<json>" — parse out the JSON.
-        const jsonStart = opts.user.indexOf("[");
-        const parsed = JSON.parse(opts.user.slice(jsonStart));
+        const parsed = parseUserPrompt(opts.user);
         const callIdx = calls.length - 1;
-        const out = planner(callIdx, parsed);
-        return out;
+        return planner(callIdx, parsed);
     }) as unknown as ChatJSONFn;
     return { chatFn, calls };
 }
 
 async function testEmpty() {
-    const { chatFn, calls } = makeMockChat(() => ({ items: [] }));
+    const { chatFn, calls } = makeMockChat(() => ({ types: [] }));
     const result = await classifyEmploymentTypes([], chatFn);
     if (result.size !== 0) fail(`empty: expected empty Map, got ${result.size} entries`);
     else if (calls.length !== 0) fail(`empty: chatFn called ${calls.length} times, expected 0`);
@@ -65,7 +75,7 @@ async function testEmpty() {
 async function testSingleBatchHappy() {
     const items = Array.from({ length: 10 }, (_, i) => makeItem(i));
     const { chatFn, calls } = makeMockChat((_idx, parsed) => ({
-        items: parsed.map((p: any) => ({ id: p.id, employmentType: "full-time" })),
+        types: parsed.map(() => "full-time"),
     }));
     const result = await classifyEmploymentTypes(items, chatFn);
     if (calls.length !== 1) fail(`single batch: expected 1 chatFn call, got ${calls.length}`);
@@ -79,7 +89,7 @@ async function testMultiBatch() {
     const sizes: number[] = [];
     const { chatFn, calls } = makeMockChat((_idx, parsed) => {
         sizes.push(parsed.length);
-        return { items: parsed.map((p: any) => ({ id: p.id, employmentType: "full-time" })) };
+        return { types: parsed.map(() => "full-time") };
     });
     const result = await classifyEmploymentTypes(items, chatFn);
     if (calls.length !== 3) fail(`multi: expected 3 batches, got ${calls.length}`);
@@ -90,9 +100,10 @@ async function testMultiBatch() {
 
 async function testDroppedItems() {
     const items = Array.from({ length: 10 }, (_, i) => makeItem(i));
-    // Model only returns answers for the first 5 — the other 5 are silently dropped.
+    // Model only returns the first 5 entries — positional alignment means
+    // items[0..4] get a type, items[5..9] fall through to the null default.
     const { chatFn } = makeMockChat((_idx, parsed) => ({
-        items: parsed.slice(0, 5).map((p: any) => ({ id: p.id, employmentType: "full-time" })),
+        types: parsed.slice(0, 5).map(() => "full-time"),
     }));
     const result = await classifyEmploymentTypes(items, chatFn);
     if (result.size !== 10) fail(`dropped: expected all 10 ids in map, got ${result.size}`);
@@ -103,9 +114,9 @@ async function testDroppedItems() {
         else pass("dropped items: model returns 5/10, map has all 10 (5 classified + 5 null)");
     }
 
-    // Specific dropped ids should be null in the map (not missing).
+    // Specific dropped position (the trailing items) should be null.
     if (result.get("posting-9") !== null) fail("dropped: expected dropped id to map to null");
-    else pass("dropped item: missing-from-response id maps to null (not absent)");
+    else pass("dropped item: position past response length maps to null (not absent)");
 }
 
 async function testInvalidEmploymentType() {
@@ -115,7 +126,7 @@ async function testInvalidEmploymentType() {
     // bubbles up. We model the model returning an out-of-enum value by having
     // the mock throw (representing the schema-validation failure in chatJSON).
     const { chatFn } = makeMockChat(() => {
-        throw new Error("Gemini response failed schema validation: items.0.employmentType: Invalid enum value");
+        throw new Error("Gemini response failed schema validation: types.0: Invalid enum value");
     });
     let threw = false;
     try {
@@ -133,7 +144,7 @@ async function testPromptShape() {
         makeItem(1, { title: "Summer 2026 SWE Intern", snippet: null, location: null, company: "Acme" }),
     ];
     const { chatFn, calls } = makeMockChat((_idx, parsed) => ({
-        items: parsed.map((p: any) => ({ id: p.id, employmentType: p.title.includes("Intern") ? "internship" : "full-time" })),
+        types: parsed.map(p => p.title.includes("Intern") ? "internship" : "full-time"),
     }));
     await classifyEmploymentTypes(items, chatFn);
 
@@ -142,18 +153,19 @@ async function testPromptShape() {
         return;
     }
     const call = calls[0];
-    if (!call.system || !call.system.includes("classify job postings")) fail("prompt: system prompt missing or wrong");
+    if (!call.system || !call.system.includes("Classify each posting")) fail("prompt: system prompt missing or wrong");
     else pass("system prompt is the classifier system prompt");
 
-    // The user prompt should contain id, company, title, department (from snippet), location.
-    const jsonStart = call.user.indexOf("[");
-    const parsed = JSON.parse(call.user.slice(jsonStart));
+    // The user prompt is `index|company|title|location` lines. No id/snippet —
+    // ids are positional, snippet was dropped (title is the load-bearing signal).
+    const parsed = parseUserPrompt(call.user);
     if (parsed.length !== 2) fail(`prompt: expected 2 input rows, got ${parsed.length}`);
-    else if (parsed[0].id !== "posting-0" || parsed[1].id !== "posting-1") fail("prompt: ids missing/wrong");
-    else if (parsed[0].department !== "Platform · Core · Full-time") fail(`prompt: snippet→department mapping wrong (${parsed[0].department})`);
-    else if (parsed[1].department !== null) fail("prompt: null snippet should become null department");
-    else if (parsed[1].location !== null) fail("prompt: null location should serialize as null");
-    else pass("user prompt shape: {id, company, title, department, location}");
+    else if (parsed[0].i !== 0 || parsed[1].i !== 1) fail("prompt: positional indices missing/wrong");
+    else if (parsed[0].title !== "Senior Backend Engineer" || parsed[1].title !== "Summer 2026 SWE Intern") fail("prompt: titles wrong");
+    else if (parsed[0].company !== "Acme") fail(`prompt: company mapping wrong (${parsed[0].company})`);
+    else if (parsed[0].location !== "NYC") fail(`prompt: location mapping wrong (${parsed[0].location})`);
+    else if (parsed[1].location !== "") fail("prompt: null location should serialize as empty string");
+    else pass("user prompt shape: positional `index|company|title|location` lines");
 }
 
 async function testSequentialDispatch() {
@@ -162,9 +174,8 @@ async function testSequentialDispatch() {
     const chatFn = (async (opts: any) => {
         callTimestamps.push(Date.now());
         await new Promise(r => setTimeout(r, 80));
-        const jsonStart = opts.user.indexOf("[");
-        const parsed = JSON.parse(opts.user.slice(jsonStart));
-        return { items: parsed.map((p: any) => ({ id: p.id, employmentType: "full-time" })) };
+        const parsed = parseUserPrompt(opts.user);
+        return { types: parsed.map(() => "full-time") };
     }) as unknown as ChatJSONFn;
 
     await classifyEmploymentTypes(items, chatFn);

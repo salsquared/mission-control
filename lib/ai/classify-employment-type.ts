@@ -32,11 +32,12 @@ export interface ClassifyInput {
     location: string | null;
 }
 
+// Positional output — model returns an array of types in the same order the
+// inputs were sent. Stops the model from echoing every external id back
+// (Workday/Lever UUIDs are 20-40 chars apiece — that was burning ~70% of the
+// output budget for no signal). Caller maps array index → input id.
 const ResultSchema = z.object({
-    items: z.array(z.object({
-        id: z.string(),
-        employmentType: z.enum(["full-time", "part-time", "internship", "contract", "temporary"]).nullable(),
-    })),
+    types: z.array(z.enum(["full-time", "part-time", "internship", "contract", "temporary"]).nullable()),
 });
 
 // 50 keeps the prompt well under Gemini's 32k output budget while still
@@ -45,29 +46,27 @@ const ResultSchema = z.object({
 // batch — 50 is the empirical sweet spot from MB Phase 1 testing.
 const BATCH_SIZE = 50;
 
-const SYSTEM_PROMPT = `You classify job postings by employment type.
+const SYSTEM_PROMPT = `Classify each posting by employment type. Choose one of:
+- "full-time": permanent salaried role (Engineer, Manager, Director, Staff/Senior X). Also paid post-grad fellowships at labs/companies (Anthropic Fellows, OpenAI Residency, "Research Fellow", "AI Safety Fellow") — these are typically 6-12mo W-2 roles for experienced hires.
+- "internship": interns, co-ops, apprentices, student seasonal programs (Summer 2026 SWE). A summer-term fellowship tied to a student cohort goes here.
+- "contract": 1099, freelance, fixed-term consulting. NOT "Contract Manager"/"Contract Specialist"/"Contract Negotiator" — those administer contracts and are full-time.
+- "part-time": explicitly part-time hourly.
+- "temporary": seasonal or short-term temp.
+- null: genuinely ambiguous AND no signal.
 
-For each posting, choose exactly one of:
-- "full-time": salaried permanent role (Engineer, Manager, Director, Senior X, Staff X, etc.). DEFAULT when the title implies a typical permanent position at a normal company. Also INCLUDES paid fellowship programs at companies / labs (Anthropic Fellows, Scale AI's Human Frontier Collective Fellows, OpenAI Residency, Google Brain Resident, "Research Fellow", "AI Safety Fellow"). These are typically 6-12mo W-2 roles for experienced or post-graduate hires, not student programs.
-- "part-time": explicitly part-time hourly role.
-- "internship": interns, co-ops, apprenticeships, seasonal student programs (Summer 2026 SWE). A summer-term "Fellowship" tied to a student cohort still counts here, but the unqualified "Fellow" / "Fellows Program" title goes to full-time.
-- "contract": 1099, freelance, fixed-term consulting. Does NOT include "Contract Manager" / "Contract Specialist" / "Contract Negotiator" — those are permanent roles administering contracts. Only when the WORKER is hired on contract.
-- "temporary": seasonal or short-term hourly work, temp positions.
-
-Use null ONLY when the title is genuinely ambiguous AND no other signal helps. When in doubt for a normal-looking software/engineering/operations title at a normal company, pick "full-time".
-
-Output EXACTLY one entry per input id, preserving the input id values verbatim. Output schema:
-{ "items": [ { "id": "<input id>", "employmentType": "full-time" | "part-time" | "internship" | "contract" | "temporary" | null }, ... ] }`;
+Default to "full-time" for typical engineering/operations titles. Output: {"types":["full-time","internship",null,...]} — one entry per input line, same order, no other fields.`;
 
 function buildUserPrompt(items: ClassifyInput[]): string {
-    const rows = items.map(i => ({
-        id: i.id,
-        company: i.company,
-        title: i.title,
-        department: i.snippet ?? null,
-        location: i.location ?? null,
-    }));
-    return `Classify each of these postings.\n\n${JSON.stringify(rows, null, 2)}`;
+    // Pipe-delimited, one row per line. Index|Company|Title|Location.
+    // Snippet/department dropped: title is the load-bearing signal and the
+    // disambiguation rules live in the system prompt, not the data. Verified
+    // empirically: including snippet did not change classification on any of
+    // the live-probe fixtures (including the "Anthropic AI Safety Fellow"
+    // edge case) — only added ~9 % prompt tokens.
+    const lines = items.map((it, i) =>
+        `${i}|${it.company}|${it.title}|${it.location ?? ""}`,
+    );
+    return `Classify each line below (one row per line). Return ${items.length} types in input order.\n\n${lines.join("\n")}`;
 }
 
 // Injectable for hermetic tests (scripts/tests/hermetic/classify-employment-type-smoke.ts).
@@ -90,20 +89,24 @@ async function classifyOneBatch(
         // internship | contract | temporary | null } per item. Cheapest
         // model is invisible-quality here. See docs/llm-calls.md.
         model: MODEL_LITE_CHEAP,
-        // 50-item batch × ~30 output tokens per row = ~1.5k worst case.
-        // 4k leaves headroom for the array wrapping + a few longer ids.
-        maxOutputTokens: 4096,
+        // 50-item array of short enum strings — worst-case ~400 tokens. 1024
+        // leaves headroom for array wrapping and surfaces any unexpected
+        // growth as a MAX_TOKENS error (caught in chatJSON) instead of
+        // silently burning the old 4k budget.
+        maxOutputTokens: 1024,
     });
     const elapsed = Date.now() - start;
     const out = new Map<string, EmploymentType | null>();
-    for (const item of result.items) {
-        if (EMPLOYMENT_TYPES.includes(item.employmentType as EmploymentType) || item.employmentType === null) {
-            out.set(item.id, item.employmentType);
-        }
+    // Positional alignment: result.types[i] is the answer for items[i]. If the
+    // model returned fewer (or somehow more) than we asked for, only the
+    // prefix that aligns is trusted; the rest default to null below.
+    const aligned = Math.min(result.types.length, items.length);
+    for (let i = 0; i < aligned; i++) {
+        out.set(items[i].id, result.types[i]);
     }
     // Surface every input id even if the model dropped it — caller relies on
     // `has(id)` to detect "saw it, decided null" vs "model lost it".
-    const missing = items.filter(i => !out.has(i.id));
+    const missing = items.filter(it => !out.has(it.id));
     for (const m of missing) out.set(m.id, null);
     console.info(
         `[employment-type-classifier] batch ${batchIdx + 1}/${totalBatches}: ${items.length} items in ${elapsed}ms (${Math.round(elapsed / items.length)}ms/item)${missing.length ? `, ${missing.length} missing-from-response (defaulted null)` : ""}`,
