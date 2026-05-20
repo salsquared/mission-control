@@ -63,10 +63,16 @@ public/swe-worker-*.js
 /prisma/*.db-journal
 /prisma/*.db-shm
 /prisma/*.db-wal
+# Backup snapshots written by scripts/backup-db.sh and pre-migration
+# rollback safety copies (e.g. prod.db.bak-pre-migrate-20260520-112849).
+# The `*.db` glob above doesn't match these because the timestamp tail
+# pushes the filename past the `.db` extension.
+/prisma/*.db.bak*
 *.db
 *.db-journal
 *.db-shm
 *.db-wal
+*.db.bak*
 .restart-flag
 
 # Generated resume artifacts (M8 Phase 2). The DB row points at the path;
