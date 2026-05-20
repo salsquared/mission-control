@@ -1,7 +1,7 @@
 "use client";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { X, Plus, Loader2, Search, Building2, Settings2, Sparkles, Check, Minus, ArrowUpToLine } from "lucide-react";
+import { X, Plus, Loader2, Search, Building2, Settings2, Sparkles, Check, Minus, ArrowUpToLine, ChevronLeft, ChevronRight, Telescope, RefreshCw, Copy, AlertTriangle } from "lucide-react";
 import { api } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
 import {
@@ -28,17 +28,68 @@ interface AddWatchlistModalProps {
 // Three top-level modes. Default lands on "find" because the most common
 // workflow is "I want a kind of job, find me matches" — not "I know Anthropic
 // uses Greenhouse with slug `anthropic`, plug it in."
-type Mode = "find" | "company" | "advanced";
+type Mode = "find" | "company" | "discover" | "advanced";
 
-type AdvancedKind = "greenhouse" | "lever" | "ashby" | "workday" | "linkedin" | "careers-page";
+type DiscoverVerified = {
+    name: string;
+    blurb: string;
+    kind: "greenhouse" | "lever" | "ashby";
+    slug: string;
+    companyName: string;
+    jobCount: number;
+};
+
+type DiscoverUnverified = {
+    name: string;
+    blurb: string;
+    careersUrl: string;
+    atsGuess: string;
+    reason: string;
+};
+
+type AdvancedKind =
+    | "greenhouse"
+    | "lever"
+    | "ashby"
+    | "workday"
+    | "smartrecruiters"
+    | "workable"
+    | "recruitee"
+    | "personio"
+    | "linkedin"
+    | "careers-page";
+
+// Kinds that take a single boardSlug + companyName (the most common shape).
+// Used to keep render conditions / submit dispatch concise.
+const SLUG_KINDS = ["greenhouse", "lever", "ashby", "smartrecruiters", "workable", "recruitee", "personio"] as const satisfies readonly AdvancedKind[];
+type SlugKind = (typeof SLUG_KINDS)[number];
+function isSlugKind(k: AdvancedKind): k is SlugKind {
+    return (SLUG_KINDS as readonly AdvancedKind[]).includes(k);
+}
+
+const COMPANY_PAGE_SIZE = 10;
 
 const ADVANCED_KIND_HELP: Record<AdvancedKind, string> = {
     "greenhouse": "Slug from boards.greenhouse.io/<slug> — e.g. anthropic, stripe, rocketlab, vercel.",
     "lever": "Slug from jobs.lever.co/<slug> — e.g. spotify, leverdemo.",
     "ashby": "Slug from jobs.ashbyhq.com/<slug> — e.g. notion, posthog.",
     "workday": "Two fields. Tenant host: <tenant>.wd<N>.myworkdayjobs.com (e.g. boeing.wd1.myworkdayjobs.com). Career site: the segment after the host on the public careers page (e.g. EXTERNAL_CAREERS, BlueOrigin).",
+    "smartrecruiters": "Slug from jobs.smartrecruiters.com/<slug> — e.g. Visa, ServiceNow, Ubisoft. Case-sensitive: \"Visa\" ≠ \"visa\".",
+    "workable": "Subdomain on apply.workable.com — e.g. \"careers\" → apply.workable.com/careers. Most ~50–500-person companies.",
+    "recruitee": "Subdomain on recruitee.com — e.g. \"jet\" → jet.recruitee.com. Mostly EU companies.",
+    "personio": "Subdomain on jobs.personio.com — e.g. \"personio\" → personio.jobs.personio.com. Lots of European companies.",
     "linkedin": "Free-text keyword search (matches what you'd type in LinkedIn's job search bar). Fragile by design — LinkedIn DOM-shifts often, expect occasional breakage.",
     "careers-page": "Use only for old-school static-HTML careers pages. Most modern pages are SPAs and won't work here — try one of the aggregator kinds first.",
+};
+
+const ADVANCED_SLUG_PLACEHOLDER: Record<SlugKind, string> = {
+    "greenhouse": "anthropic",
+    "lever": "spotify",
+    "ashby": "notion",
+    "smartrecruiters": "Visa",
+    "workable": "careers",
+    "recruitee": "jet",
+    "personio": "personio",
 };
 
 function errMessage(e: unknown): string {
@@ -68,6 +119,19 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     // on what's actually addable. Flip this on to reveal them — they'll float
     // to the top so it's easy to audit what's already on the watchlist.
     const [showAdded, setShowAdded] = useState(false);
+    const [companyPage, setCompanyPage] = useState(0);
+
+    // ─── "discover" mode (Gemini-suggested + slug-probe) ────────────────────
+    const [discoverTopic, setDiscoverTopic] = useState("");
+    const [discoverLoading, setDiscoverLoading] = useState(false);
+    const [discoverError, setDiscoverError] = useState<string | null>(null);
+    const [discoverVerified, setDiscoverVerified] = useState<DiscoverVerified[]>([]);
+    const [discoverUnverified, setDiscoverUnverified] = useState<DiscoverUnverified[]>([]);
+    // Names the user has seen across "Refresh suggestions" clicks this session,
+    // fed back to the server so Gemini keeps digging instead of looping the
+    // same canonical answers (see memory[feedback-llm-anti-repetition]).
+    const [discoverSeen, setDiscoverSeen] = useState<string[]>([]);
+    const [discoverSelected, setDiscoverSelected] = useState<Set<string>>(new Set());
 
     // ─── "advanced" mode (the legacy 6-way picker, unchanged behavior) ──────
     const [advKind, setAdvKind] = useState<AdvancedKind>("greenhouse");
@@ -113,6 +177,65 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         return showAdded ? [...added, ...rest] : rest;
     }, [companyQuery, companyTagFilter, showAdded, existingKeys]);
 
+    // Bounce to page 1 when the filter inputs change — page-3-of-unfiltered
+    // shouldn't carry over to page-3-of-filtered (likely empty). Render-time
+    // adjustment to avoid useEffect+setState (lint-flagged elsewhere in this
+    // repo). Selections (`selectedDirKeys`) intentionally NOT in the key so
+    // checking a box doesn't bounce you back to page 1 mid-selection.
+    const companyFilterKey = `${companyQuery}|${Array.from(companyTagFilter).sort().join(",")}|${showAdded}`;
+    const [lastCompanyFilterKey, setLastCompanyFilterKey] = useState(companyFilterKey);
+    if (lastCompanyFilterKey !== companyFilterKey) {
+        setLastCompanyFilterKey(companyFilterKey);
+        setCompanyPage(0);
+    }
+
+    const companyPageCount = Math.max(1, Math.ceil(directoryResults.length / COMPANY_PAGE_SIZE));
+    const safeCompanyPage = Math.min(companyPage, companyPageCount - 1);
+    const companyPageStart = safeCompanyPage * COMPANY_PAGE_SIZE;
+    const pagedDirectoryResults = directoryResults.slice(companyPageStart, companyPageStart + COMPANY_PAGE_SIZE);
+
+    // Auto-discover: when the user narrows the Watch-company picker to a
+    // tag (or text query) but the directory has < 3 matches, kick off the
+    // same Gemini-suggest path that the Discover tab uses, and surface the
+    // verified hits inline so the user can add them in the same flow.
+    //
+    // Topic string is "<tag1> <tag2> … <query>". Tags are the dominant signal;
+    // the search text just refines it. The discovery API treats it as a
+    // free-text natural-language topic.
+    const SPARSE_THRESHOLD = 3;
+    const autoDiscoverTopic = useMemo(() => {
+        const tagsStr = Array.from(companyTagFilter).join(" ");
+        const queryStr = companyQuery.trim();
+        return [tagsStr, queryStr].filter(Boolean).join(" ").trim();
+    }, [companyTagFilter, companyQuery]);
+    const directoryIsSparse = directoryResults.length < SPARSE_THRESHOLD;
+    const shouldAutoDiscover = mode === "company" && autoDiscoverTopic.length > 0 && directoryIsSparse;
+
+    // Fire once per (topic, sparse-state) transition. Guarded by a ref so
+    // toggling unrelated state (selecting an entry, switching tabs) doesn't
+    // re-fire the API call for the same topic. A ref (vs useState) sidesteps
+    // the `react-hooks/set-state-in-effect` lint rule — this is pure
+    // bookkeeping that doesn't drive render.
+    const lastAutoFiredTopicRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (shouldAutoDiscover && lastAutoFiredTopicRef.current !== autoDiscoverTopic) {
+            lastAutoFiredTopicRef.current = autoDiscoverTopic;
+            // Mirror the topic into the Discover tab's input so switching tabs
+            // shows context; pass [] for exclude because this is a fresh topic
+            // and we don't want excludes from a prior topic to leak in.
+            setDiscoverTopic(autoDiscoverTopic);
+            setDiscoverSeen([]);
+            void runDiscoverFor(autoDiscoverTopic, []);
+        } else if (!shouldAutoDiscover && lastAutoFiredTopicRef.current !== null) {
+            lastAutoFiredTopicRef.current = null;
+        }
+    // runDiscoverFor closes over `discoverLoading`, but firing while loading is
+    // already guarded inside the function. Excluding it (and other state-setter
+    // closures) from the dep list is intentional — they'd otherwise re-fire
+    // the useEffect on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [shouldAutoDiscover, autoDiscoverTopic]);
+
     if (!open || !mounted) return null;
 
     function reset() {
@@ -123,6 +246,13 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         setCompanyTagFilter(new Set());
         setSelectedDirKeys(new Set());
         setShowAdded(false);
+        setCompanyPage(0);
+        setDiscoverTopic("");
+        setDiscoverError(null);
+        setDiscoverVerified([]);
+        setDiscoverUnverified([]);
+        setDiscoverSeen([]);
+        setDiscoverSelected(new Set());
         setAdvKind("greenhouse");
         setAdvName("");
         setAdvCompanyName("");
@@ -134,6 +264,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         setAdvKeywords("");
         setAdvLocation("");
         setScheduleHours(4);
+        lastAutoFiredTopicRef.current = null;
     }
 
     function handleClose() {
@@ -187,37 +318,50 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     async function submitCompany(e: React.FormEvent) {
         e.preventDefault();
         if (submitting) return;
-        if (selectedDirKeys.size === 0) return;
+        if (selectedDirKeys.size === 0 && discoverSelected.size === 0) return;
         // Resolve every selected key against the current directory results.
         // (We carry only the name in selectedDirKeys; rehydrate to entries
         // here so the create payload has fresh config — protects against
         // selection going stale if the directory shifts mid-flow.)
         const allEntries = searchDirectory("", null);
         const byName = new Map(allEntries.map(e => [e.name, e] as const));
-        const entries = Array.from(selectedDirKeys)
+        const dirEntries = Array.from(selectedDirKeys)
             .map(name => byName.get(name))
             .filter((e): e is CompanyDirectoryEntry => Boolean(e));
-        if (entries.length === 0) return;
+        // Auto-discover suggestions selected from the sparse-fallback panel.
+        // Only verified hits are wireable; unverified entries don't have a
+        // slug/kind to build a config from.
+        const discoverEntries = discoverVerified.filter(v => discoverSelected.has(v.name));
+        if (dirEntries.length === 0 && discoverEntries.length === 0) return;
         setSubmitting(true);
         try {
-            const results = await Promise.allSettled(entries.map(entry =>
+            const dirPromises = dirEntries.map(entry =>
                 api.watchlists.create({
-                    name: `${entry.name} — jobs`,
+                    name: entry.name,
                     config: entry.config,
                     scheduleMinutes: scheduleHours * 60,
                     // PB-14: bind to the directory entry so future slug/ATS
                     // corrections in lib/company-directory.ts apply automatically.
                     directoryKey: entry.name,
                 })
-            ));
+            );
+            const discoverPromises = discoverEntries.map(entry =>
+                api.watchlists.create({
+                    name: entry.name,
+                    config: { kind: entry.kind, boardSlug: entry.slug, companyName: entry.companyName },
+                    scheduleMinutes: scheduleHours * 60,
+                })
+            );
+            const allEntriesOrdered = [...dirEntries, ...discoverEntries];
+            const results = await Promise.allSettled([...dirPromises, ...discoverPromises]);
             const okCount = results.filter(r => r.status === "fulfilled").length;
             const failed = results
-                .map((r, i) => r.status === "rejected" ? entries[i].name : null)
+                .map((r, i) => r.status === "rejected" ? allEntriesOrdered[i].name : null)
                 .filter((n): n is string => Boolean(n));
             if (okCount > 0) {
                 toastStore.push({
                     message: okCount === 1
-                        ? `Watching ${entries.find((_, i) => results[i].status === "fulfilled")?.name}`
+                        ? `Watching ${allEntriesOrdered.find((_, i) => results[i].status === "fulfilled")?.name}`
                         : `Watching ${okCount} companies`,
                     type: "info",
                 });
@@ -242,6 +386,122 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         }
     }
 
+    // Pure-topic variant — pulled out so the Watch-company tab's auto-discover
+    // (when the directory is sparse for a tag/query) can call it directly
+    // without faking a form event. `exclude` is parameterized for the same
+    // reason: auto-discover fires with [] (fresh) on every topic change, while
+    // the manual "More" button passes the cumulative `discoverSeen` to keep
+    // digging.
+    async function runDiscoverFor(rawTopic: string, exclude: string[]) {
+        const topic = rawTopic.trim();
+        if (!topic || discoverLoading) return;
+        setDiscoverLoading(true);
+        setDiscoverError(null);
+        try {
+            const result = await api.discovery.suggest({
+                topic,
+                additionalExclude: exclude,
+            });
+            setDiscoverVerified(result.verified);
+            setDiscoverUnverified(result.unverified);
+            setDiscoverSelected(new Set());
+            // Accumulate seen names for the next refresh click.
+            setDiscoverSeen(prev => Array.from(new Set([
+                ...prev,
+                ...result.verified.map(v => v.name),
+                ...result.unverified.map(u => u.name),
+            ])));
+            if (result.verified.length === 0 && result.unverified.length === 0) {
+                setDiscoverError("Gemini didn't return any candidates. Try a more specific topic, or click Refresh.");
+            }
+        } catch (err) {
+            setDiscoverError(errMessage(err));
+        } finally {
+            setDiscoverLoading(false);
+        }
+    }
+
+    async function runDiscover(e?: React.FormEvent) {
+        e?.preventDefault();
+        await runDiscoverFor(discoverTopic, discoverSeen);
+    }
+
+    // Resets the cumulative "seen" memory when the user changes topic — so
+    // moving from "space" → "biotech" doesn't carry the space companies into
+    // the biotech exclude list.
+    function setDiscoverTopicFresh(t: string) {
+        if (t.trim().toLowerCase() !== discoverTopic.trim().toLowerCase()) {
+            setDiscoverSeen([]);
+            setDiscoverVerified([]);
+            setDiscoverUnverified([]);
+            setDiscoverSelected(new Set());
+            setDiscoverError(null);
+        }
+        setDiscoverTopic(t);
+    }
+
+    function toggleDiscoverSelected(name: string) {
+        setDiscoverSelected(prev => {
+            const next = new Set(prev);
+            if (next.has(name)) next.delete(name);
+            else next.add(name);
+            return next;
+        });
+    }
+
+    async function submitDiscover(e: React.FormEvent) {
+        e.preventDefault();
+        if (submitting || discoverSelected.size === 0) return;
+        const entries = discoverVerified.filter(v => discoverSelected.has(v.name));
+        if (entries.length === 0) return;
+        setSubmitting(true);
+        try {
+            const results = await Promise.allSettled(entries.map(entry =>
+                api.watchlists.create({
+                    name: entry.name,
+                    config: { kind: entry.kind, boardSlug: entry.slug, companyName: entry.companyName },
+                    scheduleMinutes: scheduleHours * 60,
+                })
+            ));
+            const okCount = results.filter(r => r.status === "fulfilled").length;
+            const failed = results
+                .map((r, i) => r.status === "rejected" ? entries[i].name : null)
+                .filter((n): n is string => Boolean(n));
+            if (okCount > 0) {
+                toastStore.push({
+                    message: okCount === 1
+                        ? `Watching ${entries[0].name}`
+                        : `Watching ${okCount} companies`,
+                    type: "info",
+                });
+            }
+            if (failed.length > 0) {
+                toastStore.push({
+                    message: `Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`,
+                    type: "error",
+                });
+            }
+            onCreated();
+            if (failed.length === 0) {
+                reset();
+                onClose();
+            }
+        } catch (err) {
+            toastStore.push({ message: `Create failed: ${errMessage(err)}`, type: "error" });
+        } finally {
+            setSubmitting(false);
+        }
+    }
+
+    async function copyToClipboard(text: string, label: string) {
+        try {
+            await navigator.clipboard.writeText(text);
+            toastStore.push({ message: `Copied ${label}`, type: "info" });
+        } catch {
+            toastStore.push({ message: "Copy failed — your browser blocked clipboard access", type: "error" });
+        }
+    }
+
     function toggleDirEntry(name: string) {
         setSelectedDirKeys(prev => {
             const next = new Set(prev);
@@ -255,7 +515,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         e.preventDefault();
         if (submitting) return;
         if (!advName.trim() || !advCompanyName.trim()) return;
-        if ((advKind === "greenhouse" || advKind === "lever" || advKind === "ashby") && !advBoardSlug.trim()) return;
+        if (isSlugKind(advKind) && !advBoardSlug.trim()) return;
         if (advKind === "careers-page" && (!advRootUrl.trim() || !advLinkPattern.trim())) return;
         if (advKind === "workday" && (!advTenantHost.trim() || !advCareerSite.trim())) return;
         if (advKind === "linkedin" && !advKeywords.trim()) return;
@@ -263,9 +523,10 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         setSubmitting(true);
         try {
             const config = (() => {
-                if (advKind === "greenhouse") return { kind: "greenhouse" as const, boardSlug: advBoardSlug.trim(), companyName: advCompanyName.trim() };
-                if (advKind === "lever") return { kind: "lever" as const, boardSlug: advBoardSlug.trim(), companyName: advCompanyName.trim() };
-                if (advKind === "ashby") return { kind: "ashby" as const, boardSlug: advBoardSlug.trim(), companyName: advCompanyName.trim() };
+                // SmartRecruiters slugs are case-sensitive on the server side
+                // (Visa works, visa doesn't). Don't lowercase the trim.
+                if (advKind === "smartrecruiters") return { kind: "smartrecruiters" as const, boardSlug: advBoardSlug.trim(), companyName: advCompanyName.trim() };
+                if (isSlugKind(advKind)) return { kind: advKind, boardSlug: advBoardSlug.trim(), companyName: advCompanyName.trim() };
                 if (advKind === "workday") return {
                     kind: "workday" as const,
                     tenantHost: advTenantHost.trim().toLowerCase(),
@@ -299,7 +560,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     return createPortal(
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={handleClose}>
             <div
-                className="w-full max-w-lg rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl flex flex-col max-h-[calc(100vh_-_2rem)]"
+                className="w-full max-w-lg rounded-2xl border border-white/10 bg-neutral-950 shadow-2xl flex flex-col max-h-[60vh]"
                 onClick={(e) => e.stopPropagation()}
             >
                 <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
@@ -314,6 +575,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     {[
                         { id: "find" as const, label: "Find roles", Icon: Sparkles, hint: "Search by what you want to do" },
                         { id: "company" as const, label: "Watch company", Icon: Building2, hint: "Pick a known company" },
+                        { id: "discover" as const, label: "Discover", Icon: Telescope, hint: "Find more companies in a topic via Gemini" },
                         { id: "advanced" as const, label: "Advanced", Icon: Settings2, hint: "Hand-config a custom source" },
                     ].map(({ id, label, Icon, hint }) => {
                         const active = mode === id;
@@ -456,7 +718,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                     Nothing matches. Try the &quot;Advanced&quot; tab to add a custom company.
                                 </p>
                             ) : (
-                                directoryResults.map(entry => {
+                                pagedDirectoryResults.map(entry => {
                                     const entryKey = watchlistConfigKey(entry.config);
                                     const alreadyAdded = entryKey !== null && existingKeys.has(entryKey);
                                     const selected = !alreadyAdded && selectedDirKeys.has(entry.name);
@@ -515,17 +777,118 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             )}
                         </div>
 
+                        {companyPageCount > 1 && (
+                            <div className="flex items-center justify-between pt-1">
+                                <button
+                                    type="button"
+                                    onClick={() => setCompanyPage(p => Math.max(0, p - 1))}
+                                    disabled={submitting || safeCompanyPage === 0}
+                                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-white/60 hover:text-white/90 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                    <ChevronLeft className="w-3.5 h-3.5" />
+                                    Prev
+                                </button>
+                                <span className="text-[11px] text-white/40 tabular-nums">
+                                    {companyPageStart + 1}–{Math.min(companyPageStart + COMPANY_PAGE_SIZE, directoryResults.length)} of {directoryResults.length} · page {safeCompanyPage + 1}/{companyPageCount}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => setCompanyPage(p => Math.min(companyPageCount - 1, p + 1))}
+                                    disabled={submitting || safeCompanyPage >= companyPageCount - 1}
+                                    className="flex items-center gap-1 px-2 py-1 rounded text-[11px] text-white/60 hover:text-white/90 hover:bg-white/5 disabled:opacity-30 disabled:cursor-not-allowed"
+                                >
+                                    Next
+                                    <ChevronRight className="w-3.5 h-3.5" />
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Auto-discover fallback: directory is sparse (< 3 matches)
+                            for the current tag/query, so pull Gemini suggestions for
+                            the same topic and let the user add them right here. */}
+                        {shouldAutoDiscover && (
+                            <div className="mt-2 pt-2 border-t border-white/5 space-y-2">
+                                <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wide text-cyan-300/80">
+                                    <Telescope className="w-3 h-3" />
+                                    <span>
+                                        {directoryResults.length === 0
+                                            ? `No directory match for "${autoDiscoverTopic}" — Gemini suggestions:`
+                                            : `Only ${directoryResults.length} known — more via Gemini:`}
+                                    </span>
+                                    {discoverLoading && <Loader2 className="w-3 h-3 animate-spin text-white/40 ml-1" />}
+                                </div>
+                                {discoverError && (
+                                    <p className="text-[10px] text-red-300/80">{discoverError}</p>
+                                )}
+                                {discoverVerified.length > 0 && (
+                                    <div className="flex flex-col gap-1.5">
+                                        {discoverVerified.map(v => {
+                                            const selected = discoverSelected.has(v.name);
+                                            return (
+                                                <button
+                                                    key={v.name}
+                                                    type="button"
+                                                    onClick={() => toggleDiscoverSelected(v.name)}
+                                                    disabled={submitting}
+                                                    aria-pressed={selected}
+                                                    className={[
+                                                        "flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors",
+                                                        selected
+                                                            ? "bg-cyan-500/15 border-cyan-400/50"
+                                                            : "bg-black/30 border-white/10 hover:border-white/30",
+                                                    ].join(" ")}
+                                                >
+                                                    <span
+                                                        aria-hidden
+                                                        className={[
+                                                            "shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                                                            selected ? "bg-cyan-500/40 border-cyan-300" : "bg-black/40 border-white/20",
+                                                        ].join(" ")}
+                                                    >
+                                                        {selected && <Check className="w-3 h-3 text-cyan-50" />}
+                                                    </span>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 flex-wrap">
+                                                            <span className="text-sm font-semibold text-white truncate">{v.name}</span>
+                                                            <span className="text-[10px] uppercase tracking-wide text-cyan-300/70 bg-cyan-500/10 px-1.5 py-0.5 rounded">{v.kind}</span>
+                                                            <span className="text-[10px] text-white/40 tabular-nums">{v.jobCount} jobs</span>
+                                                        </div>
+                                                        {v.blurb && <div className="text-[11px] text-white/40 mt-0.5">{v.blurb}</div>}
+                                                    </div>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                                {discoverUnverified.length > 0 && (
+                                    <details className="text-[10px] text-white/40">
+                                        <summary className="cursor-pointer hover:text-white/60 select-none">
+                                            + {discoverUnverified.length} that need custom integration (Workday tenants, self-hosted, …)
+                                        </summary>
+                                        <ul className="mt-1 pl-3 space-y-0.5">
+                                            {discoverUnverified.map(u => (
+                                                <li key={u.name}>• {u.name} <span className="text-white/30">({u.atsGuess})</span></li>
+                                            ))}
+                                        </ul>
+                                    </details>
+                                )}
+                                {!discoverLoading && discoverVerified.length === 0 && discoverUnverified.length === 0 && !discoverError && (
+                                    <p className="text-[10px] text-white/40 italic">No Gemini suggestions for &quot;{autoDiscoverTopic}&quot;.</p>
+                                )}
+                            </div>
+                        )}
+
                         <ScheduleField value={scheduleHours} onChange={setScheduleHours} disabled={submitting} />
 
                         <div className="flex items-center justify-end gap-2 pt-2">
-                            {selectedDirKeys.size > 0 && (
+                            {(selectedDirKeys.size + discoverSelected.size) > 0 && (
                                 <button
                                     type="button"
-                                    onClick={() => setSelectedDirKeys(new Set())}
+                                    onClick={() => { setSelectedDirKeys(new Set()); setDiscoverSelected(new Set()); }}
                                     disabled={submitting}
                                     className="px-3 py-2 text-xs text-white/50 hover:text-white/80 disabled:opacity-40"
                                 >
-                                    Clear ({selectedDirKeys.size})
+                                    Clear ({selectedDirKeys.size + discoverSelected.size})
                                 </button>
                             )}
                             <button
@@ -538,17 +901,190 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             </button>
                             <button
                                 type="submit"
-                                disabled={submitting || selectedDirKeys.size === 0}
+                                disabled={submitting || (selectedDirKeys.size + discoverSelected.size) === 0}
+                                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-cyan-500/30 hover:bg-cyan-500/40 border border-cyan-400/40 text-xs font-semibold text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                                {(() => {
+                                    if (submitting) return "Adding…";
+                                    const total = selectedDirKeys.size + discoverSelected.size;
+                                    if (total === 0) return "Pick a company";
+                                    if (total === 1) {
+                                        const name = selectedDirKeys.size === 1
+                                            ? Array.from(selectedDirKeys)[0]
+                                            : Array.from(discoverSelected)[0];
+                                        return `Watch ${name}`;
+                                    }
+                                    return `Watch ${total} companies`;
+                                })()}
+                            </button>
+                        </div>
+                    </form>
+                )}
+
+                {mode === "discover" && (
+                    <form onSubmit={submitDiscover} className="p-4 flex flex-col gap-3">
+                        <p className="text-[11px] text-white/50">
+                            Type a topic — we&apos;ll ask Gemini for companies in that space and live-probe each against Greenhouse / Lever / Ashby. Excludes anything already in your directory + watchlists; click Refresh to keep digging.
+                        </p>
+
+                        <div className="flex items-center gap-2">
+                            <input
+                                type="text"
+                                placeholder="e.g. space, climate tech, defense, biotech, fintech"
+                                value={discoverTopic}
+                                onChange={(e) => setDiscoverTopicFresh(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); runDiscover(); } }}
+                                disabled={submitting || discoverLoading}
+                                autoFocus
+                                className="flex-1 px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => runDiscover()}
+                                disabled={submitting || discoverLoading || !discoverTopic.trim()}
+                                className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-cyan-500/30 hover:bg-cyan-500/40 border border-cyan-400/40 text-xs font-semibold text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {discoverLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : (discoverVerified.length + discoverUnverified.length > 0 ? <RefreshCw className="w-3.5 h-3.5" /> : <Search className="w-3.5 h-3.5" />)}
+                                {discoverLoading ? "Searching…" : discoverVerified.length + discoverUnverified.length > 0 ? "More" : "Search"}
+                            </button>
+                        </div>
+
+                        {discoverError && (
+                            <p className="text-[11px] text-red-300/80 px-1">{discoverError}</p>
+                        )}
+
+                        {discoverVerified.length > 0 && (
+                            <>
+                                <div className="text-[10px] uppercase tracking-wide text-emerald-300/80 mt-1 flex items-center gap-1.5">
+                                    <Check className="w-3 h-3" />
+                                    Add to watchlist ({discoverVerified.length})
+                                </div>
+                                <div className="flex flex-col gap-1.5">
+                                    {discoverVerified.map(v => {
+                                        const selected = discoverSelected.has(v.name);
+                                        return (
+                                            <button
+                                                key={v.name}
+                                                type="button"
+                                                onClick={() => toggleDiscoverSelected(v.name)}
+                                                disabled={submitting}
+                                                aria-pressed={selected}
+                                                className={[
+                                                    "flex items-center gap-3 px-3 py-2 rounded-lg border text-left transition-colors",
+                                                    selected
+                                                        ? "bg-cyan-500/15 border-cyan-400/50"
+                                                        : "bg-black/30 border-white/10 hover:border-white/30",
+                                                ].join(" ")}
+                                            >
+                                                <span
+                                                    aria-hidden
+                                                    className={[
+                                                        "shrink-0 w-4 h-4 rounded border flex items-center justify-center transition-colors",
+                                                        selected ? "bg-cyan-500/40 border-cyan-300" : "bg-black/40 border-white/20",
+                                                    ].join(" ")}
+                                                >
+                                                    {selected && <Check className="w-3 h-3 text-cyan-50" />}
+                                                </span>
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                        <span className="text-sm font-semibold text-white truncate">{v.name}</span>
+                                                        <span className="text-[10px] uppercase tracking-wide text-cyan-300/70 bg-cyan-500/10 px-1.5 py-0.5 rounded">{v.kind}</span>
+                                                        <span className="text-[10px] text-white/40 tabular-nums">{v.jobCount} jobs</span>
+                                                    </div>
+                                                    {v.blurb && <div className="text-[11px] text-white/40 mt-0.5">{v.blurb}</div>}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </>
+                        )}
+
+                        {discoverUnverified.length > 0 && (
+                            <>
+                                <div className="text-[10px] uppercase tracking-wide text-amber-300/80 mt-2 flex items-center gap-1.5">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    Needs custom integration ({discoverUnverified.length})
+                                </div>
+                                <p className="text-[10px] text-white/40 -mt-1 leading-tight">
+                                    Workday tenants, self-hosted careers pages, or unknown ATSes. Copy the name + URL and bring them to a future Claude session to wire up support.
+                                </p>
+                                <div className="flex flex-col gap-1.5">
+                                    {discoverUnverified.map(u => (
+                                        <div
+                                            key={u.name}
+                                            className="flex items-start gap-3 px-3 py-2 rounded-lg border bg-black/30 border-white/10"
+                                        >
+                                            <AlertTriangle className="w-3.5 h-3.5 text-amber-300/70 mt-0.5 shrink-0" />
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="text-sm font-semibold text-white truncate">{u.name}</span>
+                                                    <span className="text-[10px] uppercase tracking-wide text-amber-300/70 bg-amber-500/10 px-1.5 py-0.5 rounded">{u.atsGuess}</span>
+                                                </div>
+                                                {u.blurb && <div className="text-[11px] text-white/40 mt-0.5">{u.blurb}</div>}
+                                                {u.careersUrl && (
+                                                    <a
+                                                        href={u.careersUrl}
+                                                        target="_blank"
+                                                        rel="noopener noreferrer"
+                                                        className="text-[11px] text-cyan-300/70 hover:text-cyan-200 underline break-all"
+                                                    >
+                                                        {u.careersUrl}
+                                                    </a>
+                                                )}
+                                                <div className="text-[10px] text-white/40 mt-0.5">{u.reason}</div>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => copyToClipboard(`${u.name}${u.careersUrl ? ` — ${u.careersUrl}` : ""}`, u.name)}
+                                                title="Copy name + URL to clipboard"
+                                                className="shrink-0 p-1.5 rounded text-white/50 hover:text-white/90 hover:bg-white/5"
+                                            >
+                                                <Copy className="w-3.5 h-3.5" />
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </>
+                        )}
+
+                        {(discoverVerified.length > 0 || discoverUnverified.length > 0) && (
+                            <ScheduleField value={scheduleHours} onChange={setScheduleHours} disabled={submitting} />
+                        )}
+
+                        <div className="flex items-center justify-end gap-2 pt-2">
+                            {discoverSelected.size > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setDiscoverSelected(new Set())}
+                                    disabled={submitting}
+                                    className="px-3 py-2 text-xs text-white/50 hover:text-white/80 disabled:opacity-40"
+                                >
+                                    Clear ({discoverSelected.size})
+                                </button>
+                            )}
+                            <button
+                                type="button"
+                                onClick={handleClose}
+                                disabled={submitting}
+                                className="px-4 py-2 text-xs text-white/60 hover:text-white/90 disabled:opacity-40"
+                            >
+                                Cancel
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={submitting || discoverSelected.size === 0}
                                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-cyan-500/30 hover:bg-cyan-500/40 border border-cyan-400/40 text-xs font-semibold text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
                                 {submitting
                                     ? "Adding…"
-                                    : selectedDirKeys.size === 0
-                                        ? "Pick a company"
-                                        : selectedDirKeys.size === 1
-                                            ? `Watch ${Array.from(selectedDirKeys)[0]}`
-                                            : `Watch ${selectedDirKeys.size} companies`}
+                                    : discoverSelected.size === 0
+                                        ? "Pick a verified company"
+                                        : discoverSelected.size === 1
+                                            ? `Watch ${Array.from(discoverSelected)[0]}`
+                                            : `Watch ${discoverSelected.size} companies`}
                             </button>
                         </div>
                     </form>
@@ -561,8 +1097,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                         </p>
 
                         <label className="text-[11px] uppercase tracking-wide text-white/40">Source</label>
-                        <div className="inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40 w-fit flex-wrap" role="group">
-                            {(["greenhouse", "lever", "ashby", "workday", "linkedin", "careers-page"] as const).map(k => (
+                        <div className="flex rounded-lg overflow-hidden border border-white/10 bg-black/40 flex-wrap" role="group">
+                            {(["greenhouse", "lever", "ashby", "workday", "smartrecruiters", "workable", "recruitee", "personio", "linkedin", "careers-page"] as const).map(k => (
                                 <button
                                     key={k}
                                     type="button"
@@ -622,12 +1158,12 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 />
                             </>
                         )}
-                        {(advKind === "greenhouse" || advKind === "lever" || advKind === "ashby") && (
+                        {isSlugKind(advKind) && (
                             <>
                                 <label className="text-[11px] uppercase tracking-wide text-white/40">{advKind} board slug</label>
                                 <input
                                     type="text"
-                                    placeholder={advKind === "greenhouse" ? "anthropic" : advKind === "lever" ? "spotify" : "notion"}
+                                    placeholder={ADVANCED_SLUG_PLACEHOLDER[advKind]}
                                     value={advBoardSlug}
                                     onChange={(e) => setAdvBoardSlug(e.target.value)}
                                     disabled={submitting}
