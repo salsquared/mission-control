@@ -11,6 +11,50 @@ let cachedMaxMemSysLimitGB: number | null = null;
 let lastCpuUsage = process.cpuUsage();
 let lastCpuTime = Date.now();
 
+// The Internal Systems dash polls /api/system every 5 s. Without caching,
+// each tick runs a Prisma ping (fans out through the [DATABASE] / SSE log
+// loop when DEBUG_PRISMA=1) AND a pulsar HTTP fetch with a 2 s timeout
+// (pulsar is offline today, so every call eats the full timeout). 15 s
+// TTL keeps the "Database / Pulsar" status pills fresh enough without
+// driving the self-feeding telemetry loop. Module-level state resets on
+// HMR in dev, which is fine.
+const CHECK_TTL_MS = 15000;
+let cachedDbPing: { ts: number; ok: boolean } | null = null;
+let cachedPulsarPing: { ts: number; ok: boolean } | null = null;
+
+async function getCachedDbConnected(): Promise<boolean> {
+    const now = Date.now();
+    if (cachedDbPing && (now - cachedDbPing.ts) < CHECK_TTL_MS) {
+        return cachedDbPing.ok;
+    }
+    const ok = await pingDatabase();
+    cachedDbPing = { ts: now, ok };
+    return ok;
+}
+
+async function getCachedPulsarOnline(): Promise<boolean> {
+    const now = Date.now();
+    if (cachedPulsarPing && (now - cachedPulsarPing.ts) < CHECK_TTL_MS) {
+        return cachedPulsarPing.ok;
+    }
+    const pulsarUrl = process.env.PULSAR_URL;
+    if (!pulsarUrl) {
+        cachedPulsarPing = { ts: now, ok: false };
+        return false;
+    }
+    let ok = false;
+    try {
+        const res = await fetch(`${pulsarUrl}/api/prices/latest`, {
+            signal: AbortSignal.timeout(2000),
+        });
+        ok = res.status < 500;
+    } catch {
+        ok = false;
+    }
+    cachedPulsarPing = { ts: now, ok };
+    return ok;
+}
+
 export async function GET(req: Request) {
     // Server telemetry — fine on LAN, tunnel requires a session.
     const guard = await requireLocalOrSession(req);
@@ -77,20 +121,10 @@ export async function GET(req: Request) {
         if (hours > 0) uptimeFormatted += `${hours}h `;
         uptimeFormatted += `${minutes}m`;
 
-        const dbConnected = await pingDatabase();
-
-        let pulsarOnline = false;
-        const pulsarUrl = process.env.PULSAR_URL;
-        if (pulsarUrl) {
-            try {
-                const res = await fetch(`${pulsarUrl}/api/prices/latest`, {
-                    signal: AbortSignal.timeout(2000),
-                });
-                pulsarOnline = res.status < 500;
-            } catch {
-                pulsarOnline = false;
-            }
-        }
+        const [dbConnected, pulsarOnline] = await Promise.all([
+            getCachedDbConnected(),
+            getCachedPulsarOnline(),
+        ]);
 
         const cache = getCacheStats();
 

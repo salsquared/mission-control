@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { api, queryKeys } from "@/lib/api-client";
@@ -10,6 +10,16 @@ import { Scrollbar } from "../ui/Scrollbar";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
+
+// Soft cap on the in-memory log buffer. The SSE stream pushes one entry per
+// server-side console.* call, so under load this fills quickly. computeHealth
+// runs O(n) over this array; capping prevents the per-log work from growing
+// unbounded. Lowered from 500 — we display the most recent ~100 anyway.
+const LOG_BUFFER_CAP = 200;
+const LOG_DISPLAY_CAP = 100;
+// computeHealth used to run per-log-push, which was the dominant client-side
+// cost on the Internal Systems dash. Now it runs on a fixed interval.
+const HEALTH_RECOMPUTE_INTERVAL_MS = 5000;
 
 const formatLogMessage = (message: string) => {
     const regex = /\b(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|[2345]\d{2})\b/g;
@@ -73,7 +83,7 @@ export const InternalView: React.FC = () => {
     const [fetcherHealth, setFetcherHealth] = useState<HealthMap>({});
     const logsRef = useRef(sysLogs);
 
-    const computeHealth = (logs: { level: string; message: string; timestamp: string }[]) => {
+    const computeHealth = useCallback((logs: { level: string; message: string; timestamp: string }[]) => {
         const cutoff = Date.now() - 60 * 60 * 1000;
         const map: HealthMap = {};
         for (const log of logs) {
@@ -93,9 +103,9 @@ export const InternalView: React.FC = () => {
             else map[host].ok++;
         }
         return map;
-    };
+    }, []);
 
-    const loadOlderLogs = async () => {
+    const loadOlderLogs = useCallback(async () => {
         setLoadingOlder(true);
         try {
             const res = await fetch('/api/system/logs/historical');
@@ -108,24 +118,29 @@ export const InternalView: React.FC = () => {
         } finally {
             setLoadingOlder(false);
         }
-    };
+    }, []);
 
     useEffect(() => {
-        // Set up SSE for logs
+        // Set up SSE for logs. The handler used to call computeHealth on every
+        // single log push (an O(n) walk + regex). With the dev server emitting
+        // a console.* per Prisma query, cache hit, fetcher call, etc., that was
+        // the dominant client-side cost on this dash. computeHealth now runs
+        // on a fixed interval (see the effect below) reading from logsRef.
         const eventSource = new EventSource('/api/system/logs');
 
         eventSource.onmessage = (event) => {
             try {
                 const data = JSON.parse(event.data);
                 if (data.type === 'initial') {
-                    setSysLogs(data.logs || []);
-                    setFetcherHealth(computeHealth(data.logs || []));
+                    const initial = (data.logs || []).slice(-LOG_BUFFER_CAP);
+                    logsRef.current = initial;
+                    setSysLogs(initial);
                 } else if (data.type === 'new') {
                     setSysLogs((prevLogs) => {
-                        const nextLogs = [...prevLogs, data.log];
-                        if (nextLogs.length > 500) nextLogs.shift();
+                        const nextLogs = prevLogs.length >= LOG_BUFFER_CAP
+                            ? [...prevLogs.slice(prevLogs.length - LOG_BUFFER_CAP + 1), data.log]
+                            : [...prevLogs, data.log];
                         logsRef.current = nextLogs;
-                        setFetcherHealth(computeHealth(nextLogs));
                         return nextLogs;
                     });
                 }
@@ -144,6 +159,17 @@ export const InternalView: React.FC = () => {
         };
     }, []);
 
+    // Recompute fetcher health on a fixed interval rather than per log push.
+    // Reads from logsRef (always current) so this effect doesn't need to
+    // re-subscribe whenever sysLogs changes.
+    useEffect(() => {
+        setFetcherHealth(computeHealth(logsRef.current));
+        const id = setInterval(() => {
+            setFetcherHealth(computeHealth(logsRef.current));
+        }, HEALTH_RECOMPUTE_INTERVAL_MS);
+        return () => clearInterval(id);
+    }, [computeHealth]);
+
     // Persisted settings store
     const { autoResearch, setAutoResearch, aiCompanionEnabled, setAiCompanionEnabled } = useSettingsStore();
 
@@ -161,21 +187,25 @@ export const InternalView: React.FC = () => {
         { name: "Blue", hue: 220, color: "bg-blue-500" },
     ];
 
-    const currentOrder = Array.from(new Set([...dashOrder, ...Object.keys(defaultDashTitles)]));
+    const views = useMemo(() => {
+        const currentOrder = Array.from(new Set([...dashOrder, ...Object.keys(defaultDashTitles)]));
+        return currentOrder.map(id => {
+            const fallbackName = id.charAt(0).toUpperCase() + id.slice(1);
+            return {
+                id,
+                name: dashTitles[id] || defaultDashTitles[id] || fallbackName,
+            };
+        });
+    }, [dashOrder, dashTitles, defaultDashTitles]);
 
-    const views = currentOrder.map(id => {
-        const fallbackName = id.charAt(0).toUpperCase() + id.slice(1);
-        return {
-            id,
-            name: dashTitles[id] || defaultDashTitles[id] || fallbackName
-        };
-    });
-
-    const toggleTheme = (checked: boolean) => {
+    const toggleTheme = useCallback((checked: boolean) => {
         setIsDarkMode(!checked); // because the UI assumes toggle is "Light Mode On" when checked
-    };
+    }, [setIsDarkMode]);
 
-    const staticCards: CardItem[] = [
+    // Memo'd to stop the entire 8-card JSX tree from being rebuilt every time
+    // sysLogs changes (i.e. every SSE log push). Each input is intentionally
+    // narrow; the heavy log card depends on sysLogs but the other 7 don't.
+    const staticCards: CardItem[] = useMemo(() => [
         {
             id: "system-telemetry",
             colSpan: 3,
@@ -276,7 +306,7 @@ export const InternalView: React.FC = () => {
                             </div>
                         ) : (
                             <div className="flex flex-col-reverse overflow-y-auto gap-1.5 font-mono text-xs w-full h-full pr-2 select-text cursor-text">
-                                {[...sysLogs].reverse().map((log) => (
+                                {sysLogs.slice(-LOG_DISPLAY_CAP).reverse().map((log) => (
                                     <div key={log.id} className="flex gap-3 w-full border-b border-white/5 pb-1.5 first:border-0 first:pb-0">
                                         <div className="flex gap-2 shrink-0">
                                             <span className="text-white/40">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
@@ -561,8 +591,12 @@ export const InternalView: React.FC = () => {
                     </div>
                 </div>
             ),
-        }
-    ];
+        },
+    ], [
+        sysMetrics, sysLogs, historicalLogs, loadingOlder, fetcherHealth,
+        session, isDarkMode, viewHues, views, autoResearch, aiCompanionEnabled,
+        loadOlderLogs, setViewHue, toggleTheme, setAutoResearch, setAiCompanionEnabled,
+    ]);
 
     return (
         <Scrollbar className="w-full h-full pb-8">
