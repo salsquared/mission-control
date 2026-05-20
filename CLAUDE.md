@@ -18,18 +18,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | --- | --- | --- | --- |
 | `mission-control-dev` | 4101 | `prisma/dev.db` (via `.env.development`) | `npm run dev` |
 | `mission-control` | 3101 | `prisma/prod.db` (via `.env.production`) | `npm run start` (compiled build) |
-| `mission-control-scheduler` | — | shared | `scheduler/index.ts` |
+| `mission-control-scheduler-dev` | — | `prisma/dev.db` | `scheduler/index.ts` (`MC_SCHEDULER_TIER=dev`) |
+| `mission-control-scheduler-prod` | — | `prisma/prod.db` | `scheduler/index.ts` (`MC_SCHEDULER_TIER=prod`) |
+
+One scheduler per tier — they're independent. Each scheduler logs with a `[SCHEDULER:<tier>]` prefix. If a tier's DB is schema-behind (Prisma `P2021`, e.g. prod.db is currently missing `Watchlist`/`JobPosting`/etc.), the affected job emits one loud warning and is disabled for that process's lifetime — so the schema-behind tier doesn't spam errors every tick. Bring the lagging DB current with `npx prisma migrate deploy` (point `DATABASE_URL` at the target SQLite first) and `pm2 restart mission-control-scheduler-<tier>` to re-enable.
 
 Restart / inspect:
 - `pm2 restart mission-control-dev` — pick up config changes (next.config.ts, env, etc.) on the dev tier.
 - `pm2 restart mission-control` — same for prod after a fresh build.
-- `pm2 logs mission-control-dev` (or `mission-control` / `mission-control-scheduler`) — tail logs.
-- `pm2 list` — quick status of all three.
+- `pm2 logs mission-control-scheduler-dev` (or `-prod`) — tail per-tier scheduler logs.
+- `pm2 list` — quick status of all processes.
 
 The npm scripts themselves remain useful for one-offs:
 - `npm run build` — production build (webpack). Run before restarting `mission-control` so it picks up new compiled code.
 - `npm run lint` — ESLint (flat config, extends `eslint-config-next`).
 - `npm run test:hermetic` — runs `./scripts/pre-push.sh` (the hermetic suite). Use this to verify before pushing without going through `git push`.
+- `npm run test:integration` — runs `./scripts/test-integration.sh` against the dev PM2 process on :4101. Aborts early with a helpful message if `mission-control-dev` isn't online; bypass with `SKIP_INTEGRATION_TESTS=1`. Not part of the pre-push gate.
+- `npm run test:all` — hermetic + integration in sequence. Use before merging non-trivial changes to `main`.
 - `./launch-ms.sh` — convenience launcher that ensures the prod PM2 process is up and opens Chrome in `--app=` mode at `http://localhost:3101`. `./launch-ms.sh --restart` force-kills and recreates the PM2 process.
 - `npx prisma migrate dev` / `npx prisma generate` — schema lives at `prisma/schema.prisma` (SQLite). Dev and prod use **separate DB files** in `prisma/`.
 
@@ -44,7 +49,7 @@ There is **no pre-commit hook** — local commits are unrestricted; the gate is 
 There is no test runner configured. `scripts/tests/` is partitioned by what each script depends on — pick the right subdir when adding a new one:
 
 - **`scripts/tests/hermetic/`** — no network, no PM2, no live external API. Pure logic + in-process Prisma + optional in-process HTTP fixture server. **Every file here is wired into `scripts/pre-push.sh` and runs on every push.** Add new files here only if they're truly hermetic, and append them to the `SUITES` array in `pre-push.sh`.
-- **`scripts/tests/integration/`** — real assertions, but require the dev PM2 process (`mission-control-dev` on :4101) running. E.g. anything that does `fetch(http://localhost:4101/...)`. Not in pre-push; run by hand after `pm2 restart mission-control-dev`.
+- **`scripts/tests/integration/`** — real assertions, but require the dev PM2 process (`mission-control-dev` on :4101) running. Run via `npm run test:integration` (or `test:all` for hermetic + integration). Not in the pre-push gate because PM2 startup adds 5–10s and some smokes hit live boards (Anthropic Greenhouse, Lever demo, Ashby posthog) which can be flaky. Known-flaky in production: `resume-e2e-smoke` hits Gemini and can 429 on the free tier; `watchlist-phase2-smoke` has occasionally thrown a cleanup-phase ECONNRESET after its assertions pass.
 - **`scripts/tests/probes/`** — live external API probes (Gemini, LinkedIn, Greenhouse, ATS slug verifiers, etc.). Diagnostic, not regression — exit-zero is not a contract. Run ad-hoc when debugging an outside system.
 - **`scripts/tests/debug/`** — manual exploration / `console.log` dumps (`gmail-inbox-debug`, `check-cache`, `fix-lint`). No assertions; cwd-equivalent of `/tmp` for the repo.
 
@@ -189,7 +194,7 @@ crontab -e
 rclone copy gdrive:backups/mission-control/  ~/restore/  --include "mc-*.db" --include "mc-resumes-*.tar.gz"
 
 # 2. Stop everything
-pm2 stop mission-control mission-control-dev mission-control-scheduler
+pm2 stop mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod
 
 # 3. Restore the DB
 cp ~/restore/mc-LATEST.db prisma/prod.db
@@ -200,7 +205,7 @@ rm -rf data/resumes/*    # leave .gitkeep
 tar -xzf ~/restore/mc-resumes-LATEST.tar.gz -C data/
 
 # 5. Bring services back up
-pm2 start mission-control mission-control-dev mission-control-scheduler
+pm2 start mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod
 ```
 
 The Cloudflare tunnel (`cloudflared` PID checked via `pm2 list` won't show it — it's a system-level process via Homebrew) handles the public-hostname side. `requireLocalOrSession` in `lib/auth-guards.ts` gates tunnel traffic behind NextAuth while LAN hosts (localhost / mc.local) skip auth.

@@ -55,6 +55,9 @@ SUITES=(
     "scripts/tests/hermetic/webhook-prune-smoke.ts"
     "scripts/tests/hermetic/app-race-dedup-smoke.ts"
     "scripts/tests/hermetic/gemini-rate-limit-smoke.ts"
+    "scripts/tests/hermetic/cache-smoke.ts"
+    "scripts/tests/hermetic/classify-employment-type-smoke.ts"
+    "scripts/tests/hermetic/discovery-suggest-smoke.ts"
     "scripts/tests/hermetic/location-expansion-smoke.ts"
 )
 

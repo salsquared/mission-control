@@ -110,6 +110,62 @@ export function invalidateCacheByPrefix(prefix: string): number {
     return count;
 }
 
+/**
+ * Generic key→value cache for non-HTTP callers — e.g. POST routes that need
+ * to key on body content, or any orchestrator that wants a memoized async
+ * computation. Same L1+L2 semantics as withCache():
+ *   - L1: in-process Map (HMR-safe via globalThis)
+ *   - L2: SQLite when CACHE_BACKEND=sqlite, survives restart
+ *   - in-flight dedup so concurrent callers with the same key share one
+ *     pending fetcher promise
+ *
+ * Callers own the key. Prefix it (e.g. "discovery:suggest:") for groupable
+ * invalidation via invalidateCacheByPrefix().
+ *
+ * Does NOT do the stale-fallback dance withCache uses — those semantics are
+ * tied to NextResponse construction and don't generalize cleanly. If the
+ * fetcher throws, the error propagates and no cache entry is written.
+ */
+export async function cachedValue<T>(
+    key: string,
+    ttlSeconds: number,
+    fetcher: () => Promise<T>,
+): Promise<T> {
+    const l1 = globalCache.get(key);
+    if (l1 && l1.expiry > Date.now()) {
+        cacheStats.hits++;
+        return l1.data as T;
+    }
+    if (useSQLite()) {
+        const l2 = await l2Read(key);
+        if (l2) {
+            globalCache.set(key, l2);
+            cacheStats.hits++;
+            return l2.data as T;
+        }
+    }
+    // In-flight dedup — reuse the existing inFlight map even though its value
+    // type is Promise<NextResponse>, since we never read the queued promise's
+    // type back out. Cast on insert/read locally.
+    const inFlightMap = inFlight as unknown as Map<string, Promise<T>>;
+    const pending = inFlightMap.get(key);
+    if (pending) return pending;
+    const p = (async () => {
+        try {
+            const value = await fetcher();
+            const expiry = Date.now() + ttlSeconds * 1000;
+            globalCache.set(key, { data: value, expiry });
+            if (useSQLite()) await l2Write(key, value, expiry);
+            cacheStats.misses++;
+            return value;
+        } finally {
+            inFlightMap.delete(key);
+        }
+    })();
+    inFlightMap.set(key, p);
+    return p;
+}
+
 export type UpstreamHost = string | ((req: Request) => string | null | undefined);
 
 // RAH-5: hook for scoping cache entries to a user identity. When provided,

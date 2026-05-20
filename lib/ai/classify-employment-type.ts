@@ -70,13 +70,18 @@ function buildUserPrompt(items: ClassifyInput[]): string {
     return `Classify each of these postings.\n\n${JSON.stringify(rows, null, 2)}`;
 }
 
+// Injectable for hermetic tests (scripts/tests/hermetic/classify-employment-type-smoke.ts).
+// Production callers omit it and get the real Gemini-backed chatJSON.
+export type ChatJSONFn = typeof chatJSON;
+
 async function classifyOneBatch(
     items: ClassifyInput[],
     batchIdx: number,
     totalBatches: number,
+    chatFn: ChatJSONFn = chatJSON,
 ): Promise<Map<string, EmploymentType | null>> {
     const start = Date.now();
-    const result = await chatJSON({
+    const result = await chatFn({
         system: SYSTEM_PROMPT,
         user: buildUserPrompt(items),
         schema: ResultSchema,
@@ -117,6 +122,7 @@ async function classifyOneBatch(
  */
 export async function classifyEmploymentTypes(
     items: ClassifyInput[],
+    chatFn: ChatJSONFn = chatJSON,
 ): Promise<Map<string, EmploymentType | null>> {
     if (items.length === 0) return new Map();
     const batches: ClassifyInput[][] = [];
@@ -129,7 +135,7 @@ export async function classifyEmploymentTypes(
     // poison the others. Sequential keeps the timing logs interpretable.
     const merged = new Map<string, EmploymentType | null>();
     for (let i = 0; i < batches.length; i++) {
-        const batchResult = await classifyOneBatch(batches[i], i, batches.length);
+        const batchResult = await classifyOneBatch(batches[i], i, batches.length, chatFn);
         for (const [k, v] of batchResult) merged.set(k, v);
     }
     const elapsed = Date.now() - start;
