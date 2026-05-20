@@ -45,6 +45,27 @@ export interface IngestOptions {
 export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOutcome> {
     const { userId, gmail, msgId, broadcast = true } = opts;
 
+    // Fast-path idempotency (2026-05-20). If we've already produced events
+    // for this Gmail msgId AND every side-effect has been checkpointed,
+    // skip the entire pipeline — no Gmail fetch, no Gemini call, no
+    // upsert. Previously the early-skip lived AFTER the Gemini call, so a
+    // rescan of a 200-email inbox would burn ~20 minutes re-classifying
+    // emails we'd already classified (Gemini free-tier rate limit caps
+    // throughput at ~12 req/min).
+    //
+    // Scoped by user via the Application → User relation: Gmail msgIds are
+    // unique within an account, but two accounts on this server would
+    // conflict without the scope (defensive).
+    const priorEvents = await prisma.applicationEvent.findMany({
+        where: {
+            emailMsgId: msgId,
+            application: { userId },
+        },
+    });
+    if (priorEvents.length > 0 && priorEvents.every(eventFullyCommitted)) {
+        return { action: "skipped", reason: "already_present" };
+    }
+
     let message: gmail_v1.Schema$Message;
     try {
         const res = await gmail.users.messages.get({
@@ -114,22 +135,12 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         }
     }
 
-    // PB-5: only early-skip when (a) we've seen this msg AND (b) every event
-    // we created from it has fully committed its side-effects (notifiedAt for
-    // notifiable kinds; gcalSyncedAt for future-scheduled events). A bare
-    // `lastEmailMsgId === msgId` check would skip even when a prior run
-    // crashed mid-pipeline, permanently losing the notification or Gcal mirror.
-    if (existingApp && existingApp.lastEmailMsgId === msgId) {
-        const priorEvents = await prisma.applicationEvent.findMany({
-            where: { applicationId: existingApp.id, emailMsgId: msgId },
-        });
-        if (priorEvents.length > 0 && priorEvents.every(eventFullyCommitted)) {
-            return { action: "skipped", reason: "duplicate" };
-        }
-        // Else fall through — the pipeline below is idempotent on events
-        // (via @@unique([applicationId, emailMsgId, kind])) and on side-effects
-        // (per-event checkpoints), so re-running fills in the gaps.
-    }
+    // Note: PB-5's secondary early-skip (existingApp.lastEmailMsgId === msgId
+    // + fully-committed check) used to live here. It's dead code now — the
+    // fast-path at the top of this function strictly dominates it. The
+    // retry-recovery fall-through (priorEvents exist but aren't all
+    // committed) is preserved by the fast-path NOT firing in that case,
+    // so we still reach the pipeline below and rerun the side-effects.
 
     let appId: string;
     let action: "created" | "updated";
