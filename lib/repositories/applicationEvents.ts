@@ -148,6 +148,28 @@ export function findEventsForApplication(applicationId: string): Promise<Applica
     });
 }
 
+/**
+ * Most recent event that establishes "what the Application's status was as of
+ * this moment" — STATUS_CHANGED (a transition) or APPLIED (the initial
+ * status anchor). Used by ingest to decide whether to apply an incoming
+ * email's classification: if the email's sentAt is OLDER than this event,
+ * the email's status is stale (e.g. user manually moved to ACCEPTED after
+ * the offer email arrived; re-ingesting that older offer email must not
+ * downgrade them back to OFFER).
+ *
+ * Returns null when no status anchor exists — caller should treat that as
+ * "apply unconditionally" (first email creates the baseline).
+ */
+export function findLatestStatusAnchor(applicationId: string): Promise<ApplicationEvent | null> {
+    return prisma.applicationEvent.findFirst({
+        where: {
+            applicationId,
+            kind: { in: ['STATUS_CHANGED', 'APPLIED'] },
+        },
+        orderBy: { occurredAt: 'desc' },
+    });
+}
+
 export function findEventByGcalId(gcalEventId: string): Promise<ApplicationEvent | null> {
     return prisma.applicationEvent.findFirst({ where: { gcalEventId } });
 }

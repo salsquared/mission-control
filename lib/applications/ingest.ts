@@ -13,6 +13,7 @@ import {
 } from "@/lib/repositories/applications";
 import {
     createApplicationEvents,
+    findLatestStatusAnchor,
     maybeNotifyForApplicationEvent,
     NOTIFY_EVENT_KINDS,
     type ApplicationEventDraft,
@@ -134,21 +135,57 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     let action: "created" | "updated";
     const previousStatus = existingApp?.status ?? null;
 
+    // "Stale-email" guard (2026-05-20): when a user clicks ACCEPTED in the
+    // kanban (or any newer status change happens), re-ingesting an OLDER
+    // email about the same application must NOT downgrade their status. The
+    // application's timeline already records every status anchor — both
+    // user-driven (PATCH route emits STATUS_CHANGED at `new Date()`) and
+    // ingest-driven (occurredAt = email.sentAt). If the latest anchor is
+    // newer than this email's sentAt, the email is historically older than
+    // the current truth — skip the status/role/nextSteps update and the
+    // STATUS_CHANGED emission, but still record the factual events
+    // (EMAIL_RECEIVED, plus OFFER/REJECTION/INTERVIEW_SCHEDULED/etc. — those
+    // events DID happen at the email's date even if they no longer represent
+    // the live status).
+    //
+    // Also fixes a latent same-scan bug: backfill iterates Gmail's
+    // newest-first list, so without this guard the OLDEST email processed
+    // would always win on status.
+    let staleStatusUpdate = false;
     if (existingApp) {
-        // Don't rewrite `company` here. When matchedVia === "senderDomain",
+        const anchor = await findLatestStatusAnchor(existingApp.id);
+        if (anchor && anchor.occurredAt.getTime() > sentAt.getTime()) {
+            staleStatusUpdate = true;
+            console.info(
+                `[ingest] skipping stale status update msg=${msgId} ` +
+                `app=${existingApp.id} email.sentAt=${sentAt.toISOString()} ` +
+                `< anchor.occurredAt=${anchor.occurredAt.toISOString()} ` +
+                `(kind=${anchor.kind}, stored.status=${existingApp.status}, llm=${parsed.status})`,
+            );
+        }
+    }
+
+    if (existingApp) {
+        // Don't rewrite `company` here. When the match came via senderDomain,
         // the LLM's name disagrees with the stored one (that's why we fell
         // through to the domain fallback) — preserving the stored name keeps
         // the display stable across LLM drift on subsequent emails.
         // Only stamp senderDomain when extraction yielded something — null
         // means "ATS-routed / unparseable", which shouldn't blow away a
         // previously captured good domain.
+        // When staleStatusUpdate is set, status/role/nextSteps are skipped
+        // and lastUpdateAt is left alone (no user-visible change happened);
+        // we still bump lastEmailMsgId (idempotency marker) and senderDomain
+        // (so future emails from that root can still match).
         await updateApplication(existingApp.id, {
-            status: parsed.status,
             kind: parsed.kind ?? existingApp.kind,
-            nextSteps: parsed.nextSteps ?? null,
-            role: parsed.role || existingApp.role,
             lastEmailMsgId: msgId,
-            lastUpdateAt: new Date(),
+            ...(staleStatusUpdate ? {} : {
+                status: parsed.status,
+                nextSteps: parsed.nextSteps ?? null,
+                role: parsed.role || existingApp.role,
+                lastUpdateAt: new Date(),
+            }),
             ...(senderDomain ? { senderDomain } : {}),
         });
         appId = existingApp.id;
@@ -183,13 +220,23 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 // lose the email.
                 return { action: "errored", reason: `P2002 on createApplication but follow-up find returned null` };
             }
+            // Race-loser stale check: the race-winner just inserted an APPLIED
+            // event at its own sentAt; if we're processing an OLDER email we
+            // shouldn't downgrade their status. Same rule as the existingApp
+            // branch above.
+            const racedAnchor = await findLatestStatusAnchor(raced.id);
+            if (racedAnchor && racedAnchor.occurredAt.getTime() > sentAt.getTime()) {
+                staleStatusUpdate = true;
+            }
             await updateApplication(raced.id, {
-                status: parsed.status,
                 kind: parsed.kind ?? raced.kind,
-                nextSteps: parsed.nextSteps ?? null,
-                role: parsed.role || raced.role,
                 lastEmailMsgId: msgId,
-                lastUpdateAt: new Date(),
+                ...(staleStatusUpdate ? {} : {
+                    status: parsed.status,
+                    nextSteps: parsed.nextSteps ?? null,
+                    role: parsed.role || raced.role,
+                    lastUpdateAt: new Date(),
+                }),
                 ...(senderDomain ? { senderDomain } : {}),
             });
             appId = raced.id;
@@ -205,6 +252,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         parsed,
         action,
         previousStatus,
+        staleStatusUpdate,
     });
     await createApplicationEvents(eventDrafts);
 
@@ -296,8 +344,12 @@ function buildEventDrafts(input: {
     parsed: ParsedApplicationEmail;
     action: "created" | "updated";
     previousStatus: string | null;
+    /** Set when ingest skipped the Application.status update because a
+     *  newer status anchor exists. Suppresses STATUS_CHANGED emission so
+     *  the timeline doesn't claim a transition that didn't happen. */
+    staleStatusUpdate: boolean;
 }): ApplicationEventDraft[] {
-    const { appId, msgId, subject, sentAt, parsed, action, previousStatus } = input;
+    const { appId, msgId, subject, sentAt, parsed, action, previousStatus, staleStatusUpdate } = input;
     const drafts: ApplicationEventDraft[] = [];
 
     drafts.push({
@@ -320,7 +372,10 @@ function buildEventDrafts(input: {
             toStatus: parsed.status,
             syncSource: "ms",
         });
-    } else if (previousStatus && previousStatus !== parsed.status) {
+    } else if (previousStatus && previousStatus !== parsed.status && !staleStatusUpdate) {
+        // staleStatusUpdate gate: we didn't actually change Application.status,
+        // so emitting a STATUS_CHANGED row in the timeline would lie about a
+        // transition that never happened.
         drafts.push({
             applicationId: appId,
             kind: "STATUS_CHANGED",
