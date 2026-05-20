@@ -10,7 +10,13 @@ const withSerwist = withSerwistInit({
 });
 
 const nextConfig: NextConfig = {
-  reactStrictMode: true,
+  // Match CLAUDE.md ("components are not double-mounted in dev"). React 19
+  // Strict Mode invokes every useEffect twice on mount; in this codebase
+  // that doubles every EventSource opened by useServerEvents on each
+  // navigation, which is exactly the dev-process churn the perf profile is
+  // trying to reduce. If you want the double-mount safety net back, flip
+  // this and audit useServerEvents/AICompanion useEffect first.
+  reactStrictMode: false,
   distDir: isDev ? '.next-dev' : '.next',
   // Server-only packages that should not be webpack-bundled. Without this,
   // webpack tries to resolve their `node:*` scheme imports (e.g. `node:assert`

@@ -74,3 +74,7 @@ public/swe-worker-*.js
 # don't fail on missing parent.
 /data/resumes/*
 !/data/resumes/.gitkeep
+
+# perf-monitor JSONL + markdown summaries (scripts/perf-monitor.ts).
+/data/perf/*
+!/data/perf/.gitkeep

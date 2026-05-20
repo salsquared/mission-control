@@ -118,7 +118,7 @@ Three-tier model fleet (`MODEL_FLASH` / `MODEL_LITE` / `MODEL_LITE_CHEAP`) — p
 
 ### Prisma + dual SQLite databases
 
-`lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (so it lands in the in-app log viewer). The client is cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by which `.env.{development,production}` Next.js picks up. When debugging prod data issues, point at `prisma/prod.db` explicitly.
+`lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (so it lands in the in-app log viewer) — **prod only**. In dev the per-query log is muted by default because every `console.info` fans out to the SSE log subscribers (`/api/system/logs`) and re-renders the Internal Systems dash on each push; set `DEBUG_PRISMA=1` to re-enable when actively debugging. The client is cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by which `.env.{development,production}` Next.js picks up. When debugging prod data issues, point at `prisma/prod.db` explicitly.
 
 When invoking a `tsx` script against the dev DB (e.g. `scripts/tests/**/*.ts`), pass `DATABASE_URL="file:./dev.db"` — **not** `file:./prisma/dev.db`. Prisma resolves a relative `file:` URL from the schema's directory (`prisma/`), so `file:./prisma/dev.db` silently creates a phantom `prisma/prisma/dev.db` and you'll get empty-DB results.
 

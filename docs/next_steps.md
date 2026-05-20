@@ -13,14 +13,19 @@
 
 ## Last session
 
-- **Date:** 2026-05-18
-- **Branch:** `main` (uncommitted — `scripts/` reorganization on top of committed Tier-B classifier). `scripts/tests/` is now partitioned into `hermetic/` (26 pre-push suites + `profile-repo-smoke` + `resume-render-smoke`), `integration/` (10 PM2-dependent smokes), `probes/` (9 live external-API probes incl. `employment-type-classifier-live`, `job-search-live`, ATS slug verifiers), and `debug/` (5 diagnostic dumps). 9 stale Feb–Mar exploration scripts and 4 one-shot backfills moved to `scripts/archive/{exploration,migrations}/`. `scripts/pre-push.sh` paths updated; suite runs 26/26 green in 17s. CLAUDE.md updated with the new subdir layout. Also fixed two pre-existing drifts caught by the rerun: `route-auth-smoke.ts` needed one more `..` after the deeper nesting, and `fetcher-unit-smoke.ts` greenhouse URL assertion was missing `?content=true` (fetcher added it deliberately; test wasn't updated).
+- **Date:** 2026-05-20
+- **Branch:** `main`. Dev-server perf + stability pass. Baseline measurement showed dev process at 1.13 GB / 100 % CPU with one browser tab open (cold idle was 53 MB), and `~/.pm2/pm2.log` had a recurring SIGINT-exit pattern back to 2026-05-15. Shipped 5 fixes (Prisma log gated on `DEBUG_PRISMA=1`, `reactStrictMode: false`, SIGINT/SIGTERM/SIGHUP + uncaught/unhandled diagnostic with stack, PM2 `max_memory_restart` + `min_uptime` + `max_restarts` on both prod and dev, shared `/api/events` EventSource across all `useServerEvents` consumers) + new `scripts/perf-monitor.ts` harness + new `docs/perf-profile.md`. New cross-cutting section in `docs/implementation.md` ("Dev-server perf + stability"). 30/30 hermetic suites green throughout.
+- **Crash investigation outcome:** the new SIGINT diagnostic caught one in the wild (22:44 UTC). `~/.pm2/pm2.log` shows `Stopping app:mission-control-dev id:2` immediately preceding, plus `Stopping app:mission-control id:1` 1 sec later — signature of `pm2 restart` (likely `pm2 restart all`) coming through PM2's IPC socket from another active Claude Code session on this machine. **Not an in-tree bug** — concurrent agents doing legitimate work. The new `min_uptime: 30s` + `max_restarts: 8` will surface real instability if it ever happens.
+- **Post-fix idle measurement** (109 samples / 8 min, no browser activity): RSS median 56 MB, p95 61 MB, max 74 MB, CPU max 1 %. The 1.13 GB earlier was entirely browser-traffic-driven.
+- **Post-fix active-use measurement** (user driving the app for ~18 min, captured live): RSS held **53–58 MB throughout**, CPU **0–0.6 %**, zero restarts. User confirmed: "it seems to be a lot more stable." So fixes 1–3 hold under real browser load; the remaining queued fixes (4 memoize InternalView, 5 scoped cache-invalidation, 6 cache pingDatabase) are nice-to-have, not blocking.
+- **Outside-repo edit:** `~/salsquared/ecosystem.config.cjs` got `max_memory_restart` + `min_uptime` + `max_restarts` on `mission-control` and `mission-control-dev`. `pm2 save` was run.
+- **Unrelated uncommitted edits on disk** from another Claude session (left untouched, not in our commit): `components/cards/ResearchPaperCard.tsx`, `components/views/AIView.tsx`, `components/views/PhysicsView.tsx`.
 - **Last commits on main:**
-  - `db8a9bf fix(security): close 19 unguarded API routes — tunnel auth patch`
-  - `7ad859b fix: 5 bugs from code-review pass`
-  - `2206981 feat(resume): skills-gap report — surface uncovered posting keywords (story 41)`
-  - `2bda824 feat(notifications): per-watchlist mode (each/digest/silent) + decision-deadline nudges`
-  - `0eaaacb docs: add status snapshot + clarified legend to implementation plan`
+  - `19426ea feat(applications): 2-col upcoming-interviews tiles + edit toggle`
+  - `ffb3d8f feat(postings): excluded-companies chip filter + blacklist scaffolding`
+  - `2c5e442 fix(ui): NewsCyclingCard out-of-bounds + ApplicationsKanban viewport cap`
+  - `9008fc4 feat(discovery): suggest endpoint + Gemini 3.5 model pin`
+  - `acda95d fix(workday): skip malformed rows instead of aborting whole page`
 
 ## Umbrella goal
 
