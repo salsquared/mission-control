@@ -18,7 +18,16 @@ export const authOptions: NextAuthOptions = {
                 params: {
                     access_type: "offline",
                     response_type: "code",
-                    prompt: "select_account",
+                    // `consent` (not just `select_account`) forces Google's consent
+                    // screen on every sign-in. Without it, Google treats already-
+                    // consented sign-ins as returning users and omits the
+                    // refresh_token — which breaks any flow that goes through
+                    // getGoogleAuthClient (Gmail scan, Calendar mirror, etc.) on
+                    // a fresh Account row (e.g. after the prod DB was created
+                    // separately from dev, both pointing at the same Google
+                    // client_id). The signIn callback below persists whatever
+                    // tokens Google sends, so this self-heals on next sign-in.
+                    prompt: "select_account consent",
                     // Request scopes for Gmail API and Calendar API
                     scope: "openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events"
                 }
