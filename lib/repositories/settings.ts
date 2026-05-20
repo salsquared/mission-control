@@ -7,6 +7,7 @@ export interface GlobalSettingData {
     viewHues: Record<string, number>;
     dashOrder: string[];
     dashTitles: Record<string, string>;
+    globalNegativeFilters: string[];
     version: number;
 }
 
@@ -52,14 +53,23 @@ export function parseGlobalSetting(row: {
     viewHues: string;
     dashOrder: string;
     dashTitles: string;
+    globalNegativeFilters: string;
     version: number;
 }): GlobalSettingData {
+    let globalNegativeFilters: string[] = [];
+    try {
+        const parsed = JSON.parse(row.globalNegativeFilters);
+        if (Array.isArray(parsed)) {
+            globalNegativeFilters = parsed.filter((p): p is string => typeof p === "string");
+        }
+    } catch { /* malformed JSON in DB — fall back to empty */ }
     return {
         isDarkMode: row.isDarkMode,
         viewHuesEnabled: row.viewHuesEnabled,
         viewHues: JSON.parse(row.viewHues),
         dashOrder: JSON.parse(row.dashOrder),
         dashTitles: JSON.parse(row.dashTitles),
+        globalNegativeFilters,
         version: row.version,
     };
 }
@@ -71,5 +81,6 @@ export function serializeGlobalSetting(data: Partial<GlobalSettingData>) {
     if (data.viewHues !== undefined) out.viewHues = JSON.stringify(data.viewHues);
     if (data.dashOrder !== undefined) out.dashOrder = JSON.stringify(data.dashOrder);
     if (data.dashTitles !== undefined) out.dashTitles = JSON.stringify(data.dashTitles);
+    if (data.globalNegativeFilters !== undefined) out.globalNegativeFilters = JSON.stringify(data.globalNegativeFilters);
     return out;
 }

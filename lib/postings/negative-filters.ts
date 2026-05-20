@@ -27,6 +27,15 @@ export function compileNegativeFilters(json: string | null): RegExp[] {
     return out;
 }
 
+// Compile a plain pattern array. Used for the cross-watchlist global filter
+// stored on GlobalSetting.globalNegativeFilters. Routes through the same
+// cache by JSON-stringifying the input so identical pattern sets share regex
+// instances.
+export function compileNegativeFiltersFromArray(patterns: string[]): RegExp[] {
+    if (patterns.length === 0) return [];
+    return compileNegativeFilters(JSON.stringify(patterns));
+}
+
 export function matchesNegativeFilters(
     row: { title: string; snippet: string | null; location: string | null },
     regexes: RegExp[],

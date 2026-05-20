@@ -10,6 +10,7 @@ export const SettingsDataSchema = z.object({
     viewHues: z.record(z.string(), z.number()),
     dashOrder: z.array(z.string()),
     dashTitles: z.record(z.string(), z.string()),
+    globalNegativeFilters: z.array(z.string()),
     version: z.number().int(),
 });
 
@@ -37,4 +38,5 @@ export const SettingsPostSchema = z.object({
     viewHues: z.record(z.string(), z.number()).optional(),
     dashOrder: z.array(z.string()).optional(),
     dashTitles: z.record(z.string(), z.string()).optional(),
+    globalNegativeFilters: z.array(z.string().max(200)).max(20).optional(),
 });

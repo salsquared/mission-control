@@ -47,14 +47,15 @@ model SelectedReviewPaper {
 }
 
 model GlobalSetting {
-  id              String   @id @default("global")
-  isDarkMode      Boolean  @default(true)
-  viewHuesEnabled Boolean  @default(true)
-  viewHues        String   @default("{}")  // JSON: Record<string, number>
-  dashOrder       String   @default("[]") // JSON: string[]
-  dashTitles      String   @default("{}") // JSON: Record<string, string>
-  version         Int      @default(0)   // bumped on every write; client sends as If-Match
-  updatedAt       DateTime @updatedAt
+  id                    String   @id @default("global")
+  isDarkMode            Boolean  @default(true)
+  viewHuesEnabled       Boolean  @default(true)
+  viewHues              String   @default("{}")  // JSON: Record<string, number>
+  dashOrder             String   @default("[]") // JSON: string[]
+  dashTitles            String   @default("{}") // JSON: Record<string, string>
+  globalNegativeFilters String   @default("[]") // JSON: string[] — regex patterns merged into every watchlist's filter on read
+  version               Int      @default(0)   // bumped on every write; client sends as If-Match
+  updatedAt             DateTime @updatedAt
 }
 
 // --- NextAuth Models --- //
