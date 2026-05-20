@@ -27,9 +27,14 @@ const WorkdayJobSchema = z.object({
     remoteType: z.string().nullable().optional(),
 }).passthrough();
 
+// Envelope-only validation. Each entry in `jobPostings` is validated
+// individually inside the loop so a single malformed row doesn't abort the
+// whole crawl — Boeing in particular (1,170+ jobs) hits transient source
+// hiccups where one entry comes back missing title/externalPath and the old
+// `z.array(WorkdayJobSchema)` would fail the entire page.
 const WorkdayResponseSchema = z.object({
     total: z.number().int().optional(),
-    jobPostings: z.array(WorkdayJobSchema),
+    jobPostings: z.array(z.unknown()),
 });
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -67,6 +72,11 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
 
     const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
     const out: RawPosting[] = [];
+    let skipped = 0;
+    // Throttle per-job warn logs so a chronically misbehaving source doesn't
+    // spam PM2 logs. We log the first few in full and rely on the summary at
+    // the end for the rest.
+    const SAMPLE_WARN_LIMIT = 3;
     try {
         for (let page = 0; page < maxPages; page++) {
             // Per-page timeout — a single signal across the whole loop would
@@ -94,9 +104,19 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
             const json = await res.json();
             const parsed = WorkdayResponseSchema.safeParse(json);
             if (!parsed.success) {
-                return { ok: false, error: `Unexpected Workday response shape: ${parsed.error.issues.slice(0, 2).map(i => i.message).join("; ")}` };
+                return { ok: false, error: `Unexpected Workday envelope shape: ${parsed.error.issues.slice(0, 2).map(i => i.message).join("; ")}` };
             }
-            for (const j of parsed.data.jobPostings) {
+            for (const raw of parsed.data.jobPostings) {
+                const job = WorkdayJobSchema.safeParse(raw);
+                if (!job.success) {
+                    skipped++;
+                    if (skipped <= SAMPLE_WARN_LIMIT) {
+                        const fields = job.error.issues.slice(0, 2).map(i => `${i.path.join(".") || "?"}: ${i.message}`).join("; ");
+                        console.warn(`[workday] ${config.companyName} page=${page}: skipping malformed job — ${fields}; sample=${JSON.stringify(raw).slice(0, 200)}`);
+                    }
+                    continue;
+                }
+                const j = job.data;
                 out.push({
                     company: config.companyName,
                     title: j.title,
@@ -112,6 +132,8 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
             // the `total` field on the first page — Workday returns total=0 on
             // subsequent paginated requests (offset > 0), so a naive
             // `out.length >= total` check would always break after page 1.
+            // Use the raw page length (not `out.length` delta) so a page full
+            // of skipped malformed entries still counts as a "full" page.
             if (parsed.data.jobPostings.length < PAGE_SIZE) break;
             if (page === 0 && typeof parsed.data.total === "number" && parsed.data.total > 0 && out.length >= parsed.data.total) break;
         }
@@ -122,5 +144,8 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
         return { ok: false, error: `Fetch failed: ${msg}` };
     }
 
+    if (skipped > 0) {
+        console.warn(`[workday] ${config.companyName}: ingested ${out.length} postings, skipped ${skipped} malformed entries`);
+    }
     return { ok: true, postings: out };
 }
