@@ -509,9 +509,9 @@ Source-code comments using `RAH-N` for moved items were updated to the new `PB-N
 - ✅ **PB-8 — Notification dedupKey @unique.** Shipped 2026-05-17. Migration `20260517182000_pb8_notification_dedup_key` adds `Notification.dedupKey String? @unique`. `dispatchNotification` accepts optional `dedupKey`, catches P2002, returns `Notification | null`. New `utcDateBucket()` helper (UTC-anchored — DST-safe). Callers updated: `stale-applications` → `stale-nudge:${appId}:${YYYY-MM-DD}`; `deadline-nudges` → `deadline:${appId}:${YYYY-MM-DD}`; `posting-digest` → `posting-digest:${watchlistId}:${maxIncluded.toISOString()}` (keyed on batch watermark, not day, so legitimate second-cohort runs still fire); `job-watcher` per-posting → `posting:${postingId}`; per-event notify → `event:${eventId}`; closure-summary → `watchlist-closures:${watchlistId}:${YYYY-MM-DD}`. Hermetic smoke at `scripts/tests/hermetic/notification-dedup-smoke.ts` (9/9) including a concurrent Promise.all race test that confirms exactly one dispatcher wins. Audit found and addressed: SQLite null-vs-unique semantics, return-type null handling at every caller, posting-digest dedup granularity (day → watermark).
 - ✅ **PB-15 — New-postings filter UI (type / remote / location).** Shipped 2026-05-17. Schema migration `20260517172344_add_posting_employment_type` adds `JobPosting.employmentType String?`. `lib/fetchers/employment-type.ts` exports `normalizeEmploymentType` (ATS field) + `inferEmploymentTypeFromTitle` (word-boundary regex, won't match "intern" in "international") + `pickEmploymentType` (combined). Wired into all six fetchers (Lever/Ashby use ATS field, Greenhouse/Workday/LinkedIn/careers-page use title heuristic). `components/cards/NewPostingsCard.tsx` got a Filters drawer: 5 employment-type chips, "Remote only" toggle, "Location contains…" free-text. Filter state persists on `useAppStore` (per-device via the existing `app-state` zustand persist; bumped version 1→2 with a migrate). Each row now shows its employment-type chip inline next to location. Hermetic smoke at `scripts/tests/hermetic/employment-type-smoke.ts` (31/31). Note: existing JobPosting rows have `employmentType=null` until next crawl re-extracts them.
 
-### Dev-server perf + stability ◐
+### Dev-server perf + stability ✅
 
-Cross-cutting cleanup pass against the **mission-control-dev** PM2 process. Symptoms (reported 2026-05-19): dev process climbing past 1 GB RSS at idle, CPU pegged at 100 % even with no foreground interaction, Safari occasionally reloading the page mid-use, and an unexplained pattern of `code [0] via signal [SIGINT]` exits stretching back to 2026-05-15 in `~/.pm2/pm2.log`.
+Cross-cutting cleanup pass against the **mission-control-dev** PM2 process. Symptoms (reported 2026-05-19): dev process climbing past 1 GB RSS at idle, CPU pegged at 100 % even with no foreground interaction, Safari occasionally reloading the page mid-use, and an unexplained pattern of `code [0] via signal [SIGINT]` exits stretching back to 2026-05-15 in `~/.pm2/pm2.log`. **Closed 2026-05-20** — all 9 originally-identified fixes + 4 follow-on bundle-side wins + a Turbopack flip shipped, with measured deltas at each step.
 
 Investigation lives in [`docs/perf-profile.md`](./perf-profile.md); the ranked fix list mirrors that file. Production is unaffected (prod `mission-control` idles at ~50 MB and has the same SIGINT-exit pattern only when system memory pressure is high — i.e. PM2 → OS kill cascade, not an in-tree bug).
 
@@ -525,32 +525,38 @@ Investigation lives in [`docs/perf-profile.md`](./perf-profile.md); the ranked f
 - `/api/system` polls every 5 s from the Internal dash and runs a Prisma `pingDatabase()` per tick, feeding back into the `[DATABASE]` log loop.
 - The SIGINT exit pattern is **clean** (`code 0`), not OOM/SIGKILL. Suspects: macOS sleep/wake (Mac mini, but configurable), pm2-logrotate (config inspected, rotation is benign at midnight), an external agent running `pm2 restart all` (no in-tree caller; `grep` clean), or system-memory-pressure kills surfaced as SIGINT to the npm wrapper. None reproducible on-demand — instrumented in fix 2 so the next event tells us where it came from.
 
-**🟡 In progress / shipped (this conversation, uncommitted):**
+**✅ Shipped (commits `dc85f44` → `faa410b`, all on `main`):**
 
-- ✅ **Fix 1 — `[DATABASE]` log gated on `DEBUG_PRISMA=1` in dev** (`lib/prisma.ts`). Production unchanged. Verified by `pm2 logs mission-control-dev` showing zero `[DATABASE]` lines after a `/api/system` round-trip. CLAUDE.md updated.
-- ✅ **Fix 2a — `reactStrictMode: false`** (`next.config.ts`). Matches CLAUDE.md's stated invariant; stops the per-mount EventSource churn. If the safety net is ever wanted back, audit `useServerEvents` and `AICompanion` effects first.
-- ✅ **Fix 2b — SIGINT/SIGTERM/SIGHUP diagnostic** (`instrumentation.ts`). All three signals + `uncaughtException` + `unhandledRejection` now log pid, uptime, and a trimmed stack via `console.warn` / `console.error`. The next mysterious restart will land a `[SHUTDOWN] SIGINT received pid=… uptime=…` line with a Node-internal stack frame identifying the entry point. Verified: a `pm2 reload` correctly produced the diagnostic line on the restarted dev process.
-- ✅ **Fix 2c — PM2 memory ceiling + `min_uptime` / `max_restarts`** (`~/salsquared/ecosystem.config.cjs`). `mission-control-dev` gets `max_memory_restart: '1700M'` (below the 2 GB V8 cap), prod gets `900M`. `min_uptime: 30s` + `max_restarts: 8` make PM2 surface "unstable" cases instead of looping silently. `pm2 save` run.
-- ✅ **`scripts/perf-monitor.ts`** — independent observer. Uses `pm2 jlist` to find the PM2-managed PID then walks `ps -eo pid,ppid,rss,pcpu,command` to the `next-server` worker so the reported RSS / CPU match what `/api/system` shows. Writes `data/perf/<ts>.jsonl` + a markdown summary on SIGINT. Accepts `label <name>` + Enter on stdin to tag phases. **Initial version (2026-05-19) measured the npm wrapper instead of the worker** and produced misleading "53–58 MB at idle" readings — corrected 2026-05-20.
+- **Fix 1 — `[DATABASE]` log gated on `DEBUG_PRISMA=1` in dev** (`lib/prisma.ts`). Prod unchanged.
+- **Fix 2a — `reactStrictMode: false`** (`next.config.ts`). Reconciled with CLAUDE.md's stated invariant; killed the per-mount EventSource double-open.
+- **Fix 2b — SIGINT/SIGTERM/SIGHUP + uncaught/unhandled diagnostic** (`instrumentation.ts`). Caught one mystery restart in the wild (`Stopping app:mission-control-dev id:2` from PM2's IPC socket — another concurrent Claude Code session running `pm2 restart all`, not an in-tree bug).
+- **Fix 2c — PM2 memory ceilings** (`~/salsquared/ecosystem.config.cjs`). `mission-control-dev: max_memory_restart: 1700M`, prod 900M, `min_uptime: 30s`, `max_restarts: 8`. *Caveat:* PM2 watches the npm wrapper, not the worker, so these caps are largely cosmetic for worker leaks. Useful for catching wrapper-level pathology.
+- **Fix 3 — shared `/api/events` `EventSource`** (refcounted, auto-reconnect after the server's 60 s SSE timeout) — `hooks/useServerEvents.ts`. One stream per tab instead of N.
+- **Fix 4 — `InternalView` memoised + `computeHealth` moved to a 5 s timer** — `components/views/InternalView.tsx`. Log buffer capped at 200 (was 500); rendered list capped at last 100.
+- **Fix 5 — debounced `CacheInvalidationListener` (300 ms)** — `components/providers/CacheInvalidationListener.tsx`. Collapses scheduler-tick bursts into one refetch wave.
+- **Fix 6 — `/api/system` caches `pingDatabase()` + `pulsarOnline` for 15 s** — `app/api/system/route.ts`. Eliminates the self-feeding telemetry poll loop.
+- **Fix 7 — L1 cache expiry sweep** every 5 min — `lib/cache.ts`. Was unbounded prior.
+- **Fix 8 — `[CACHE HIT/MISS]` + `[API Request]` muted in dev** unless `DEBUG_VERBOSE_LOG=1` — `lib/cache.ts`, `proxy.ts`. Caveat: Internal Systems "Fetcher Health" card reads empty in dev (relied on the log scrape) — Cache Telemetry card still works.
+- **Fix 9 — Pulsar WS reconnect backoff** extended to 5 min after 10 failed attempts — `lib/pulsar-ws-relay.ts`. Was 30 s indefinitely.
+- **Lazy-load dashes via `next/dynamic`** — `components/Dashboard.tsx`. Biggest single dev-floor lever; before, all 8 views compiled at boot.
+- **Dropped `react-icons` (83 MB)** — `components/views/SpaceView.tsx` (moon icons → U+1F311 – U+1F318 unicode), `package.json`.
+- **`experimental.optimizePackageImports`** for `lucide-react`, `framer-motion`, `@radix-ui/*` — `next.config.ts`. Compile-time barrel transforms.
+- **`next dev --turbopack`** — `package.json`. Single biggest measured improvement once the above landed. Production `build` stays on webpack (verified path).
 
-**🔵 Open (next in queue):**
+**Measurement infra (kept around for future work):**
 
-- **Fix 3 — share one `/api/events` `EventSource`** across all `useServerEvents` consumers. Provider + ref-counted subscription map. Touches one hook + one provider; existing consumers don't change API. Expected: dev process holds 1 stream per tab instead of N.
-- **Fix 4 — memoise `InternalView` + recompute `computeHealth` on a timer, not per log push.** Stops the worst client-side render loop. Move `staticCards` into a `useMemo` keyed on the inputs that actually change.
-- **Fix 5 — scope `CacheInvalidationListener` invalidations** via a prefix included in the SSE payload. Pass `predicate` to `queryClient.invalidateQueries` so only matching query keys refetch.
-- **Fix 6 — in-process cache `pingDatabase()` for ~15 s** in `/api/system`. Eliminates the self-feeding telemetry loop. The "Database Status" pill doesn't need 5 s freshness.
+- **`scripts/perf-monitor.ts`** — walks the PM2 process tree to the actual `next-server` worker (not the npm wrapper that `pm2 jlist` reports). Writes JSONL + markdown summary to `data/perf/`. Supports `MC_PERF_RESTART=1` for cold-baseline AB comparisons, `MC_PERF_PROCESS=mission-control` to switch to prod-tier observation.
+- **`docs/perf-profile.md`** — the original investigation snapshot + the shipped-fix log + measured deltas.
 
-**Measurement workflow:**
+**Final measured numbers** (cold 5-min idle, worker RSS, vs original baseline):
 
-```sh
-npx tsx scripts/perf-monitor.ts baseline
-# … browse the app for ~2 min …
-label after-fix-N      # type into the monitor's stdin
-# … another ~2 min …
-^C                     # prints per-label median/p95/max table + writes a .md
-```
+| Run | RSS median | RSS max | CPU max |
+| --- | ---: | ---: | ---: |
+| baseline (pre-fix) | 1263 MB | **1464 MB** | 14.8 % |
+| **dev (Turbopack, all fixes)** | **722 MB** | **951 MB** | 73 % |
+| prod (`mission-control`, webpack-built) | 279 MB | 387 MB | 13.5 % |
 
-The monitor is the source of truth for "did fix N help?" — don't trust `/api/system`'s self-report, since it's part of what we're measuring.
+Total dev cut: −43 % median, −35 % max. The 100 % CPU peg is gone. Dev/prod ratio is now ~2.6 ×, normal for a Next app of this size.
 
 ### Prompt tuning ⏳
 

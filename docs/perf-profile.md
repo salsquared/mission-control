@@ -90,19 +90,51 @@ The 1 Hz NextLaunch timer is the only one worth flagging on its own — render t
 
 ---
 
-## Recommended order to ship
+## Shipped (2026-05-20)
 
-Each item below is a self-contained change; don't bundle them — measure RSS + CPU after each.
+All 9 originally-identified fixes shipped, plus 3 follow-on bundle-side wins discovered while measuring, plus a Turbopack flip. Each was measured with `scripts/perf-monitor.ts` against a cold-restart worker (via `MC_PERF_RESTART=1`).
 
-1. **Silence `[DATABASE]` query logs in dev** unless `DEBUG_PRISMA=1`. One-line gate in `lib/prisma.ts:23`. Expected: largest single drop in dev CPU + heap pressure, no UI change beyond the live log tail being quieter.
-2. **Reconcile Strict Mode.** Flip `next.config.ts:13` to `false` to match CLAUDE.md, OR update CLAUDE.md and own the doubled effects. I'd recommend `false` for now — saves 2× SSE opens on every page navigate and matches existing component assumptions.
-3. **Share one `/api/events` EventSource** across all `useServerEvents` callers. Provider + ref-counted subscription Map. Touches one hook + one provider; consumers don't change.
-4. **Memoise `InternalView`'s `staticCards`** with `useMemo`, and move `computeHealth` to an effect-driven recompute (e.g. only every 5 s, not per log push). Keep the live tail responsive but stop walking 500 entries per Prisma query.
-5. **Scope `CacheInvalidationListener` invalidations** to a prefix from the SSE payload — stop blanket-refetching every query.
-6. **In-process cache `pingDatabase()`** in `/api/system` for ~15 s. Eliminates the self-feeding telemetry loop.
+1. ✅ **Silence `[DATABASE]` query logs in dev** unless `DEBUG_PRISMA=1` — `lib/prisma.ts`.
+2. ✅ **`reactStrictMode: false`** — `next.config.ts`. Reconciled with CLAUDE.md's stated invariant.
+3. ✅ **Shared `/api/events` EventSource** across all `useServerEvents` callers — refcounted, auto-reconnect — `hooks/useServerEvents.ts`.
+4. ✅ **Memoise `InternalView` + move `computeHealth` to a 5 s timer** instead of per log push — `components/views/InternalView.tsx`. Log buffer capped at 200 (was 500), rendered list capped at last 100.
+5. ✅ **Debounced `CacheInvalidationListener`** (300 ms) so a scheduler tick's invalidation burst collapses into one refetch wave — `components/providers/CacheInvalidationListener.tsx`. Per-query scoping deferred — single-tab dev usage doesn't warrant the cache-key↔query-key schema work.
+6. ✅ **Cached `pingDatabase()` + `pulsarOnline` for 15 s** in `/api/system`. The poll-loop was self-feeding.
+7. ✅ **L1 cache expiry sweep** every 5 min — `lib/cache.ts`. Was unbounded prior.
+8. ✅ **Dev-mute the chatty per-request logs** (`[CACHE HIT/MISS]`, `[API Request]`) behind `DEBUG_VERBOSE_LOG=1` — `lib/cache.ts`, `proxy.ts`. Same prod-on / dev-gated pattern as `DEBUG_PRISMA`.
+9. ✅ **Pulsar WS reconnect backoff** extended to 5 min after 10 failed attempts — `lib/pulsar-ws-relay.ts`. Was 30 s indefinitely, ~360 log entries/hr against a dead service.
+10. ✅ **Lazy-load every dash via `next/dynamic`** — `components/Dashboard.tsx`. The biggest single dev-floor lever; before, all 8 views compiled at module top.
+11. ✅ **Dropped `react-icons` (83 MB)** by replacing 8 moon-phase icons with U+1F311 – U+1F318 unicode glyphs — `components/views/SpaceView.tsx`. Removed the dep from `package.json`.
+12. ✅ **`experimental.optimizePackageImports`** for `lucide-react`, `framer-motion`, and the `@radix-ui/*` primitives — `next.config.ts`. Next 14+ feature; transforms barrel imports to per-icon paths at compile.
+13. ✅ **`next dev --turbopack`** — `package.json`. Single biggest measured win after all the above landed. Production `build` stays on webpack (see CLAUDE.md "Dev vs prod tooling split" for the rationale).
 
-## Out-of-scope but worth knowing
+### Measured deltas (cold 5-min idle, worker RSS, vs original baseline)
 
-- The 2 GB `--max-old-space-size` is intentional (CLAUDE.md flags it); lowering it without fixing #1–#3 will just OOM. Once those land, you can re-test at 1 GB.
-- Webpack vs Turbopack: dev script uses `--webpack` explicitly. If you ever want to A/B test, Turbopack would likely cut the `.next-dev/cache` footprint, but every Next 16 / Tailwind 4 / Prisma combo needs a re-verification before flipping.
-- `instrumentation.ts` starts a Pulsar WS relay on every Node boot; benign cost but worth flagging — `pulsar` PM2 process is offline today (`/api/system` reports `pulsarOnline: false`) and the relay sits in a reconnect loop. Not the dominant cost, but noise in the logs.
+| Run | RSS median | RSS p95 | RSS max | CPU max |
+| --- | ---: | ---: | ---: | ---: |
+| baseline (pre-fix-1) | 1263 MB | 1432 MB | **1464 MB** | 14.8% |
+| after fixes 1–9 (webpack) | 1098 MB | 1112 MB | 1113 MB | 4.2% |
+| + lazy-load + bundle opts (webpack) | 999 MB | 1191 MB | 1542 MB | 165% |
+| **+ Turbopack** (final) | **722 MB** | **777 MB** | **951 MB** | **73%** |
+
+Total cut: **−43 % RSS median, −35 % RSS max, 100 % CPU peg → transient 73 % bursts**.
+
+### Prod sanity check (2026-05-20)
+
+For comparison, the prod tier (`next start`, webpack-built) ran a 5-min sample after a `pm2 restart mission-control`:
+
+| Metric | Value |
+| --- | ---: |
+| Worker RSS median | **279 MB** |
+| Worker RSS p95 | 300 MB |
+| Worker RSS max | 387 MB |
+| Worker RSS floor | 279 MB (flat for the entire post-warmup window) |
+| Worker CPU max | 13.5 % |
+
+So the app's actual runtime footprint is ~280 MB. The dev/prod ratio is now ~2.6 ×, which is normal for a Next app of this size. The remaining dev overhead is structural to dev tooling (HMR, Turbopack in-memory state, source maps, error overlay).
+
+## Out-of-scope / future
+
+- **Production `build` still uses webpack** (`next build --webpack`). Turbopack's build path is stable in Next 16 but not yet verified against this stack (`@serwist/next` SW generation, Prisma client gen quirks, CSS chunk hashing differences). Flip is a re-test, not a commit-and-ship.
+- `instrumentation.ts` still starts the Pulsar WS relay on boot. With the fix-9 backoff change it's now ~once per 5 min when Pulsar is offline, down from ~once per 30 s. Benign.
+- `scripts/perf-monitor.ts` is now the canonical observation tool. Use `MC_PERF_RESTART=1` for cold-baseline AB measurements; leave unset for "is it stable over N minutes" observation. Reports per-process-tree RSS so it doesn't get fooled by the `pm2 list` npm-wrapper trap.

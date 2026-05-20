@@ -14,22 +14,14 @@
 ## Last session
 
 - **Date:** 2026-05-20
-- **Branch:** `main`. Dev-server perf + stability pass. Baseline measurement showed dev process at 1.13 GB / 100 % CPU with one browser tab open (cold idle was 53 MB), and `~/.pm2/pm2.log` had a recurring SIGINT-exit pattern back to 2026-05-15. Shipped 5 fixes (Prisma log gated on `DEBUG_PRISMA=1`, `reactStrictMode: false`, SIGINT/SIGTERM/SIGHUP + uncaught/unhandled diagnostic with stack, PM2 `max_memory_restart` + `min_uptime` + `max_restarts` on both prod and dev, shared `/api/events` EventSource across all `useServerEvents` consumers) + new `scripts/perf-monitor.ts` harness + new `docs/perf-profile.md`. New cross-cutting section in `docs/implementation.md` ("Dev-server perf + stability"). 30/30 hermetic suites green throughout.
-- **Crash investigation outcome:** the new SIGINT diagnostic caught one in the wild (22:44 UTC). `~/.pm2/pm2.log` shows `Stopping app:mission-control-dev id:2` immediately preceding, plus `Stopping app:mission-control id:1` 1 sec later — signature of `pm2 restart` (likely `pm2 restart all`) coming through PM2's IPC socket from another active Claude Code session on this machine. **Not an in-tree bug** — concurrent agents doing legitimate work. The new `min_uptime: 30s` + `max_restarts: 8` will surface real instability if it ever happens.
-- **Measurement bug found 2026-05-20:** the original `perf-monitor.ts` polled `pm2 jlist`, which returns the npm wrapper PID — not the `next-server` worker that actually serves HTTP. So the "53–58 MB idle / 53–58 MB active" readings I reported on 2026-05-19 were the **idle shell**, not the real server. They are retracted. Monitor fixed to walk `ps -eo pid,ppid,rss,pcpu` to the worker.
-- **Post-fix-1-3 worker baseline** (5 min idle, 64 samples): worker RSS median **1263 MB**, p95 1432 MB, peak 1464 MB, with one big V8 Mark-Sweep-Compact reclaiming ~1 GB to a 268 MB floor mid-window. CPU max 14.8 % (GC pressure). Sawtooth amplitude ~1.2 GB.
-- **Post-fix-4-6 worker baseline** (5 min idle, 63 samples): worker RSS median 1071 MB (−15 %), p95 1216 MB (−15 %), peak 1217 MB (−17 %), CPU max 7.3 % (−50 %).
-- **Post-fix-7-9 worker baseline** (5 min idle, 61 samples): worker RSS median **1098 MB (−13 %)**, p95 **1112 MB (−22 %)**, peak **1113 MB (−24 %)**, CPU p95 1.8 %, **CPU max 4.2 % (−72 %)**. Sawtooth essentially flat — median-to-p95 spread is 14 MB (was 169 MB in baseline). Active L1 cache entries 25 (was 32 with most expired).
-- **Post-bundle-opts worker baseline** (5 min idle, 62 samples, after dropping `react-icons`, lazy-loading dashes via `next/dynamic`, and enabling `experimental.optimizePackageImports` for lucide-react/radix/framer-motion): worker RSS median **860 MB**, p95 **957 MB**, peak **957 MB**, floor **610 MB**. Sawtooth amplitude ~347 MB. CPU max 11.0 % (brief dash-compile spikes — trade-off from dynamic loading; strictly better than the prior flat-high state).
-- **Net of the session**: peak RSS **1.46 GB → 957 MB (−35 %)**, floor 920 MB → 610 MB, peak CPU 14.8 % → ~11 % (transient, not pinned). Worker now fits comfortably under the 2 GB cap with real headroom. The 100 % CPU peg is gone, Safari should stop reloading, and the dev process is finally in the right ballpark for a moderate Next-app.
-- **Outside-repo edit:** `~/salsquared/ecosystem.config.cjs` got `max_memory_restart` + `min_uptime` + `max_restarts` on `mission-control` and `mission-control-dev`. `pm2 save` was run.
-- **Unrelated uncommitted edits on disk** from another Claude session (left untouched, not in our commit): `components/cards/ResearchPaperCard.tsx`, `components/views/AIView.tsx`, `components/views/PhysicsView.tsx`.
-- **Last commits on main:**
-  - `19426ea feat(applications): 2-col upcoming-interviews tiles + edit toggle`
-  - `ffb3d8f feat(postings): excluded-companies chip filter + blacklist scaffolding`
-  - `2c5e442 fix(ui): NewsCyclingCard out-of-bounds + ApplicationsKanban viewport cap`
-  - `9008fc4 feat(discovery): suggest endpoint + Gemini 3.5 model pin`
-  - `acda95d fix(workday): skip malformed rows instead of aborting whole page`
+- **Branch:** `main`, pushed through `faa410b`. Dev-server perf + stability pass — closed. Detailed log + measurements in [`docs/perf-profile.md`](./perf-profile.md) and `docs/implementation.md` "Dev-server perf + stability". TL;DR: dev worker went from 1.13 GB median / 100 % CPU pinned → **722 MB median, ~73 % transient CPU bursts under Turbopack**. Prod tier was already healthy and verified at **279 MB median, flat for 5 min after warmup**.
+- **Headline shipped artifacts (this session):**
+  - 9 in-app perf fixes (Prisma log gate, Strict Mode flip, signal diagnostics, shared EventSource, InternalView memoization, debounced cache-invalidation, cached pings, L1 cache prune, verbose-log mute, Pulsar backoff).
+  - 4 bundle-side wins (lazy-load dashes, dropped `react-icons`, `optimizePackageImports`, **flipped dev to Turbopack**).
+  - 1 bug fix (LLM leaderboard dedupe + defensive React key).
+  - 1 measurement tool (`scripts/perf-monitor.ts`) with `MC_PERF_RESTART=1` cold-baseline support, JSONL + markdown summaries to `data/perf/`.
+- **Crash investigation outcome:** the new SIGINT/SIGTERM diagnostic in `instrumentation.ts` caught one mystery restart in the wild — `~/.pm2/pm2.log` showed `Stopping app:mission-control-dev id:2` from PM2's IPC socket. **Not an in-tree bug** — another concurrent Claude Code session on this machine ran `pm2 restart all`. The diagnostic stays in place to identify future occurrences.
+- **Outside-repo edit:** `~/salsquared/ecosystem.config.cjs` has `max_memory_restart` + `min_uptime` + `max_restarts` for both prod and dev tiers. `pm2 save` run. *Caveat:* PM2 watches the npm wrapper, not the `next-server` worker — these caps catch wrapper-level pathology but not worker leaks. Worker truth is `/api/system` or `scripts/perf-monitor.ts`.
 
 ## Umbrella goal
 

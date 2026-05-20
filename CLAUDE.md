@@ -29,6 +29,11 @@ Restart / inspect:
 - `pm2 logs mission-control-scheduler-dev` (or `-prod`) — tail per-tier scheduler logs.
 - `pm2 list` — quick status of all processes.
 
+**Dev vs prod tooling split** (2026-05-20):
+- **`npm run dev` uses Turbopack** (`next dev --turbopack`). Measured ~35 % lower worker RSS than webpack dev, ~55 % lower peak CPU during compile bursts. Active on `mission-control-dev`.
+- **`npm run build` stays on webpack** (`next build --webpack`). Prod runtime is a `next start` of the compiled output and doesn't care which compiler produced it; webpack's build path is the verified one. Don't flip `build` to Turbopack without re-running `npm run test:hermetic` and a manual route sweep — a few small differences (CSS chunk hashing, prerender behavior) can bite.
+- The `webpack: (config, { dev, isServer, nextRuntime }) => { ... }` function in `next.config.ts` is **inert during `next dev`** (Turbopack ignores it) but still applies to `next build`. Keep it — the watchOptions.ignored entries and `node:*` scheme fallbacks are still load-bearing for prod builds.
+
 The npm scripts themselves remain useful for one-offs:
 - `npm run build` — production build (webpack). Run before restarting `mission-control` so it picks up new compiled code.
 - `npm run lint` — ESLint (flat config, extends `eslint-config-next`).
@@ -151,7 +156,7 @@ Article count is capped by `MAX_NEWS_ARTICLES` in `lib/constants.ts`.
 
 ### PWA / service worker
 
-`@serwist/next` wraps the Next config in `next.config.ts` and emits `public/sw.js` from `app/sw.ts`. **The service worker is disabled in dev** (`disable: isDev`); the webpack `watchOptions.ignored` list also excludes `public/sw.js`, `public/sw.js.map`, and Prisma DB files to prevent dev-mode reload loops. If you add generated artifacts in `public/`, add them to that ignore list too.
+`@serwist/next` wraps the Next config in `next.config.ts` and emits `public/sw.js` from `app/sw.ts`. **The service worker is disabled in dev** (`disable: isDev`); the webpack `watchOptions.ignored` list also excludes `public/sw.js`, `public/sw.js.map`, and Prisma DB files to prevent reload loops during prod builds (and previously dev — see note below). If you add generated artifacts in `public/`, add them to that ignore list too. Under Turbopack-driven `next dev`, the watchOptions are inert (Turbopack uses its own watcher) but Turbopack's defaults handle these cases without manual ignores.
 
 ## Documentation conventions
 
@@ -161,7 +166,11 @@ Article count is capped by `MAX_NEWS_ARTICLES` in `lib/constants.ts`.
 ## Conventions and gotchas
 
 - `reactStrictMode: false` in `next.config.ts` — components are not double-mounted in dev. Don't rely on strict-mode side-effect detection.
-- The dev-server-only `--max-old-space-size=2048` is intentional; lower it and parser/fetcher routes can OOM on big pages.
+- The dev-server-only `--max-old-space-size=2048` is intentional but **comfortably oversized** post-Turbopack: measured idle worker is ~280 MB (prod) / ~720 MB (dev under Turbopack). The 2 GB cap leaves headroom for fetcher/parser routes on big pages. Don't lower without re-measuring under heavy LinkedIn/Workday crawls.
+- **Dev worker profile is asymmetric to PM2's view**: `pm2 jlist` reports the npm wrapper PID (~55 MB), not the `next-server` worker child that actually serves HTTP. To gauge real load, use `/api/system` (in-process `process.memoryUsage()`) or `scripts/perf-monitor.ts` (which walks the process tree to the worker). `pm2 list` will lie to you about how heavy dev is.
+- **Dev process tree:** `npm → next dev → next-server` (3 procs under Turbopack). Prod tree: `npm → next-server` (2 procs — `next start` doesn't fork). `max_memory_restart` in `~/salsquared/ecosystem.config.cjs` watches the npm wrapper, not the worker, so the cap is effectively cosmetic for memory leaks in the actual server. Worker stability lives in `process.memoryUsage()` checks, not PM2's cap.
+- **Verbose-log gates** (added 2026-05-20 for SSE fan-out reasons): `[DATABASE]` Prisma logs muted in dev unless `DEBUG_PRISMA=1`; `[CACHE HIT]` / `[CACHE MISS]` from `lib/cache.ts` and `[API Request]` from `proxy.ts` muted in dev unless `DEBUG_VERBOSE_LOG=1`. All on in production (the in-app log viewer is the canonical observability surface there).
+- **Dev-server perf profile** lives at [`docs/perf-profile.md`](./docs/perf-profile.md). Active perf-monitor harness: `scripts/perf-monitor.ts` (env-configurable, supports `MC_PERF_RESTART=1` for cold-baseline AB comparisons). Writes JSONL + a markdown summary to `data/perf/`.
 - Scope authorization via `lib/auth.ts` is the only place that requests Google tokens. Server-side Gmail/Calendar callers should always go through `getGoogleAuthClient(userId)`, never construct an OAuth client inline.
 - API routes that fetch external data should be wrapped in `withCache` — bare external `fetch` per request is the exception, not the rule.
 - For server-side logging use `console.info` / `console.warn` / `console.error` (they're captured by the in-app log viewer). Don't introduce a separate logger.
