@@ -18,10 +18,17 @@
  *      writes a sibling .md file next to the JSONL.
  *
  * Env:
- *   MC_PERF_PROCESS     — PM2 process name to watch (default: mission-control-dev)
- *   MC_PERF_INTERVAL_MS — sample interval (default: 5000)
+ *   MC_PERF_PROCESS         — PM2 process name to watch (default: mission-control-dev)
+ *   MC_PERF_INTERVAL_MS     — sample interval (default: 5000)
+ *   MC_PERF_RESTART=1       — pm2-restart the process before sampling so AB fix
+ *                             comparisons start from an identical cold worker.
+ *                             Captures the warmup curve as part of the run.
+ *   MC_PERF_RESTART_SETTLE_S — seconds to wait after restart before sampling
+ *                             (default: 4)
  *
  * Run with:  npx tsx scripts/perf-monitor.ts
+ *            (or `MC_PERF_RESTART=1 npx tsx scripts/perf-monitor.ts before-fix`
+ *             for AB fix-comparison runs)
  */
 
 import { execFile } from 'node:child_process';
@@ -35,6 +42,16 @@ const exec = promisify(execFile);
 const PROCESS_NAME = process.env.MC_PERF_PROCESS ?? 'mission-control-dev';
 const INTERVAL_MS = Number(process.env.MC_PERF_INTERVAL_MS ?? 5000);
 const OUT_DIR = path.join(process.cwd(), 'data', 'perf');
+// When set, pm2-restart the target process before sampling so AB fix
+// comparisons start from an identical cold-worker state. Captures the
+// warmup curve as part of the run, which is honest. For "is it stable"
+// observation of an already-running process, leave unset.
+const RESTART_FIRST = process.env.MC_PERF_RESTART === '1';
+// Seconds to wait after restart before sampling. The npm wrapper comes
+// back online almost immediately; the next-server worker takes longer
+// to spawn and start serving. 4 s is enough on this hardware for the
+// worker to exist and be sampleable by ps.
+const RESTART_SETTLE_S = Number(process.env.MC_PERF_RESTART_SETTLE_S ?? 4);
 
 type Sample = {
     ts: string;
@@ -192,11 +209,21 @@ function summarize() {
 
 async function main() {
     await fs.mkdir(OUT_DIR, { recursive: true });
+    if (RESTART_FIRST) {
+        console.log(`[restart] pm2 restart ${PROCESS_NAME} (settle ${RESTART_SETTLE_S}s)...`);
+        try {
+            await exec('pm2', ['restart', PROCESS_NAME]);
+            await new Promise(r => setTimeout(r, RESTART_SETTLE_S * 1000));
+            console.log(`[restart] done. sampling now.`);
+        } catch (e: any) {
+            console.error(`[restart] failed: ${e?.message ?? e} — continuing without restart.`);
+        }
+    }
     const startTs = new Date().toISOString().replace(/[:.]/g, '-');
     const outPath = path.join(OUT_DIR, `${startTs}.jsonl`);
     const handle = await fs.open(outPath, 'a');
     console.log(`perf-monitor -> ${outPath}`);
-    console.log(`process=${PROCESS_NAME} interval=${INTERVAL_MS}ms label="${currentLabel}"`);
+    console.log(`process=${PROCESS_NAME} interval=${INTERVAL_MS}ms label="${currentLabel}"  restart_first=${RESTART_FIRST}`);
     console.log(`type 'label <name>' + Enter to tag subsequent samples. Ctrl-C to stop.\n`);
 
     const rl = createInterface({ input: process.stdin });
