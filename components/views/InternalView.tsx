@@ -1,25 +1,22 @@
 "use client";
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { api, queryKeys } from "@/lib/api-client";
-import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, ShieldAlert, RefreshCw } from "lucide-react";
+import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, RefreshCw } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useSession, signIn, signOut } from "next-auth/react";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
+import { FetcherHealthCard } from "../cards/FetcherHealthCard";
 
 // Soft cap on the in-memory log buffer. The SSE stream pushes one entry per
-// server-side console.* call, so under load this fills quickly. computeHealth
-// runs O(n) over this array; capping prevents the per-log work from growing
-// unbounded. Lowered from 500 — we display the most recent ~100 anyway.
+// server-side console.* call, so under load this fills quickly. Lowered from
+// 500 — we display the most recent ~100 anyway.
 const LOG_BUFFER_CAP = 200;
 const LOG_DISPLAY_CAP = 100;
-// computeHealth used to run per-log-push, which was the dominant client-side
-// cost on the Internal Systems dash. Now it runs on a fixed interval.
-const HEALTH_RECOMPUTE_INTERVAL_MS = 5000;
 
 const formatLogMessage = (message: string) => {
     const regex = /\b(GET|POST|PUT|DELETE|PATCH|OPTIONS|HEAD|[2345]\d{2})\b/g;
@@ -47,29 +44,6 @@ const formatLogMessage = (message: string) => {
     });
 };
 
-type HealthEntry = { ok: number; fallback: number; broken: number };
-type HealthMap = Record<string, HealthEntry>;
-
-function parseHostFromLog(message: string): string | null {
-    // Cache events emitted by `withCache` carry the upstream host as the first token after the
-    // prefix when the route declared `upstreamHost`. Format: "[CACHE HIT] news.google.com /api/..."
-    // The cacheKey always starts with `/`, so a non-`/` token in that slot is the host.
-    const cache = message.match(/\[CACHE (?:HIT|HIT L2|MISS|FALLBACK)\] (\S+)/);
-    if (cache) {
-        const token = cache[1];
-        // CacheKeys always start with `/` (`url.pathname + ?query`), so any non-`/` token in
-        // this slot is the upstream host. Allows bare hostnames like "localhost" or "pulsar".
-        if (!token.startsWith('/')) return token;
-    }
-    // Direct external-fetch lines (emitted by lib/fetchers/* and inline route fetches) embed the
-    // upstream URL inline; pull it out and take the hostname.
-    const ext = message.match(/\[EXTERNAL API\].*?(\S+\.\S+)/);
-    if (ext) {
-        try { return new URL(ext[1].startsWith('http') ? ext[1] : 'https://' + ext[1]).hostname; } catch { return ext[1]; }
-    }
-    return null;
-}
-
 export const InternalView: React.FC = () => {
     const { data: session } = useSession();
     const { data: sysMetrics } = useQuery({
@@ -80,30 +54,6 @@ export const InternalView: React.FC = () => {
     const [sysLogs, setSysLogs] = useState<{ id: string; timestamp: string; level: string; message: string; }[]>([]);
     const [historicalLogs, setHistoricalLogs] = useState<{ ts: string; level: string; msg: string }[]>([]);
     const [loadingOlder, setLoadingOlder] = useState(false);
-    const [fetcherHealth, setFetcherHealth] = useState<HealthMap>({});
-    const logsRef = useRef(sysLogs);
-
-    const computeHealth = useCallback((logs: { level: string; message: string; timestamp: string }[]) => {
-        const cutoff = Date.now() - 60 * 60 * 1000;
-        const map: HealthMap = {};
-        for (const log of logs) {
-            if (new Date(log.timestamp).getTime() < cutoff) continue;
-            const msg = log.message;
-            const isFallback = msg.startsWith('[CACHE FALLBACK]');
-            const isBroken = msg.startsWith('[SCRAPER BROKEN]');
-            const isOk = msg.startsWith('[EXTERNAL API]') || msg.startsWith('[CACHE HIT]') || msg.startsWith('[CACHE MISS]');
-            if (!isFallback && !isBroken && !isOk) continue;
-            const host = parseHostFromLog(msg);
-            // Cache events without a parsed host are local-only routes (e.g. moon phase
-            // computation). They aren't "fetcher activity" in the upstream-health sense, so skip.
-            if (!host) continue;
-            if (!map[host]) map[host] = { ok: 0, fallback: 0, broken: 0 };
-            if (isFallback) map[host].fallback++;
-            else if (isBroken) map[host].broken++;
-            else map[host].ok++;
-        }
-        return map;
-    }, []);
 
     const loadOlderLogs = useCallback(async () => {
         setLoadingOlder(true);
@@ -121,11 +71,6 @@ export const InternalView: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        // Set up SSE for logs. The handler used to call computeHealth on every
-        // single log push (an O(n) walk + regex). With the dev server emitting
-        // a console.* per Prisma query, cache hit, fetcher call, etc., that was
-        // the dominant client-side cost on this dash. computeHealth now runs
-        // on a fixed interval (see the effect below) reading from logsRef.
         const eventSource = new EventSource('/api/system/logs');
 
         eventSource.onmessage = (event) => {
@@ -133,14 +78,12 @@ export const InternalView: React.FC = () => {
                 const data = JSON.parse(event.data);
                 if (data.type === 'initial') {
                     const initial = (data.logs || []).slice(-LOG_BUFFER_CAP);
-                    logsRef.current = initial;
                     setSysLogs(initial);
                 } else if (data.type === 'new') {
                     setSysLogs((prevLogs) => {
                         const nextLogs = prevLogs.length >= LOG_BUFFER_CAP
                             ? [...prevLogs.slice(prevLogs.length - LOG_BUFFER_CAP + 1), data.log]
                             : [...prevLogs, data.log];
-                        logsRef.current = nextLogs;
                         return nextLogs;
                     });
                 }
@@ -158,17 +101,6 @@ export const InternalView: React.FC = () => {
             eventSource.close();
         };
     }, []);
-
-    // Recompute fetcher health on a fixed interval rather than per log push.
-    // Reads from logsRef (always current) so this effect doesn't need to
-    // re-subscribe whenever sysLogs changes.
-    useEffect(() => {
-        setFetcherHealth(computeHealth(logsRef.current));
-        const id = setInterval(() => {
-            setFetcherHealth(computeHealth(logsRef.current));
-        }, HEALTH_RECOMPUTE_INTERVAL_MS);
-        return () => clearInterval(id);
-    }, [computeHealth]);
 
     // Persisted settings store
     const { autoResearch, setAutoResearch, aiCompanionEnabled, setAiCompanionEnabled } = useSettingsStore();
@@ -397,57 +329,7 @@ export const InternalView: React.FC = () => {
         {
             id: "fetcher-health",
             colSpan: 3,
-            content: (
-                <div className="flex flex-col h-[280px]">
-                    <div className="flex items-center gap-2 mb-4 text-amber-400 shrink-0">
-                        <ShieldAlert className="w-5 h-5" />
-                        <h3 className="font-bold tracking-wider uppercase text-sm">Fetcher Health (Last Hour)</h3>
-                    </div>
-                    <div className="flex-1 overflow-y-auto pr-2">
-                        {Object.keys(fetcherHealth).length === 0 ? (
-                            <div className="flex items-center justify-center h-full">
-                                <p className="text-muted-foreground text-sm">No fetcher activity in the last hour</p>
-                            </div>
-                        ) : (
-                            <table className="w-full text-xs font-mono">
-                                <thead>
-                                    <tr className="text-white/40 border-b border-white/10">
-                                        <th className="text-left pb-2 font-normal">Host</th>
-                                        <th className="text-right pb-2 font-normal w-16">OK</th>
-                                        <th className="text-right pb-2 font-normal w-20">Fallback</th>
-                                        <th className="text-right pb-2 font-normal w-16">Broken</th>
-                                        <th className="text-right pb-2 font-normal w-16">Health</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {Object.entries(fetcherHealth)
-                                        .sort(([, a], [, b]) => b.broken - a.broken || b.fallback - a.fallback)
-                                        .map(([host, h]) => {
-                                            const total = h.ok + h.fallback + h.broken;
-                                            const pct = total === 0 ? 100 : Math.round((h.ok / total) * 100);
-                                            const pill = pct >= 95
-                                                ? 'bg-emerald-500/20 text-emerald-400'
-                                                : pct >= 70
-                                                    ? 'bg-amber-500/20 text-amber-400'
-                                                    : 'bg-red-500/20 text-red-400';
-                                            return (
-                                                <tr key={host} className="border-b border-white/5 last:border-0">
-                                                    <td className="py-2 text-slate-300 truncate max-w-[180px]" title={host}>{host}</td>
-                                                    <td className="py-2 text-right text-emerald-400">{h.ok}</td>
-                                                    <td className="py-2 text-right text-amber-400">{h.fallback}</td>
-                                                    <td className="py-2 text-right text-red-400">{h.broken}</td>
-                                                    <td className="py-2 text-right">
-                                                        <span className={`px-2 py-0.5 rounded-full text-xs font-bold ${pill}`}>{pct}%</span>
-                                                    </td>
-                                                </tr>
-                                            );
-                                        })}
-                                </tbody>
-                            </table>
-                        )}
-                    </div>
-                </div>
-            ),
+            content: <FetcherHealthCard />,
         },
         {
             id: "internal-3",
@@ -593,7 +475,7 @@ export const InternalView: React.FC = () => {
             ),
         },
     ], [
-        sysMetrics, sysLogs, historicalLogs, loadingOlder, fetcherHealth,
+        sysMetrics, sysLogs, historicalLogs, loadingOlder,
         session, isDarkMode, viewHues, views, autoResearch, aiCompanionEnabled,
         loadOlderLogs, setViewHue, toggleTheme, setAutoResearch, setAiCompanionEnabled,
     ]);

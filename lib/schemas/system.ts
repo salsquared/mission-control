@@ -21,3 +21,15 @@ export const SystemTelemetryResponseSchema = z.object({
     pulsarOnline: z.boolean(),
     cache: CacheStatsSchema,
 });
+
+// Per-host counts over the past hour. Drives the FetcherHealthCard.
+const FetcherHealthEntrySchema = z.object({
+    ok: z.number().int(),
+    fallback: z.number().int(),
+    broken: z.number().int(),
+});
+export const FetcherHealthResponseSchema = z.object({
+    health: z.record(z.string(), FetcherHealthEntrySchema),
+    computedAt: z.string(),
+    note: z.string().optional(),
+});

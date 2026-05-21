@@ -30,7 +30,7 @@ import {
     SettingsPostConflictSchema,
     SettingsPostSchema,
 } from './schemas/settings';
-import { SystemTelemetryResponseSchema } from './schemas/system';
+import { SystemTelemetryResponseSchema, FetcherHealthResponseSchema } from './schemas/system';
 import {
     CacheInvalidatePostSchema,
     CacheInvalidateResponseSchema,
@@ -151,6 +151,7 @@ export const queryKeys = {
     applications: ['applications'] as const,
     settings: ['settings'] as const,
     system: ['system'] as const,
+    fetcherHealth: ['fetcher-health'] as const,
     calendarEvents: ['calendar-events'] as const,
     applicationEvents: (filter?: { applicationId?: string | null; upcoming?: boolean; kinds?: readonly string[] }) =>
         ['application-events', filter ?? {}] as const,
@@ -284,6 +285,7 @@ export const api = {
         get: () => jsonFetch('/api/system', SystemTelemetryResponseSchema),
         invalidateCache: (input: z.infer<typeof CacheInvalidatePostSchema>) =>
             jsonFetch('/api/system/cache/invalidate', CacheInvalidateResponseSchema, jsonBody('POST', input)),
+        fetcherHealth: () => jsonFetch('/api/system/fetcher-health', FetcherHealthResponseSchema),
     },
 
     calendarEvents: {
