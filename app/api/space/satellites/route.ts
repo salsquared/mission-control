@@ -1,13 +1,18 @@
 import { NextResponse } from 'next/server';
-import { withCache } from '../../../../lib/cache';
+import { withCache, readCachedDataIgnoringExpiry } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 
 const UPSTREAM_HOST = 'celestrak.org';
+const CACHE_KEY = '/api/space/satellites';
 
-// Celestrak refreshes GROUP=active every 2 hours. Next 16 requires literal
-// numbers for `revalidate` — can't reference a const expression.
-const SATELLITE_TTL_SECONDS = 7200;
-export const revalidate = 7200;
+// Celestrak's GP=active updates ~every 2h, but their 403 "data has not updated
+// since your last successful download" gate is per-IP and our dev (:4101) +
+// prod (:3101) tiers share an outbound IP — so re-fetching every 2h on either
+// tier almost always trips the other's window. The active-satellite total
+// changes by a handful day-over-day; 6h is plenty fresh for the dashboard
+// readout and cuts our Celestrak traffic by ~3x.
+const SATELLITE_TTL_SECONDS = 21600;
+export const revalidate = 21600;
 
 async function getHandler() {
     try {
@@ -23,11 +28,28 @@ async function getHandler() {
 
         if (!res.ok) {
             // Celestrak returns 403 with body "GP data has not updated since your last successful
-            // download..." when we re-request unchanged data. Throw so withCache serves the stale
-            // entry (the data really is unchanged) instead of returning a 500.
+            // download of GROUP=active at <UTC timestamp>. Data is updated once every 2 hours." when
+            // we re-request unchanged data. That's not a punitive rate-limit — they're telling us
+            // our prior payload is still current. Serve the last cached entry (ignoring TTL expiry)
+            // so the dashboard doesn't break on a cold restart. If nothing is cached anywhere
+            // (worst-case: first-ever fetch after migrating prod to sqlite L2), return a structured
+            // 503 with Retry-After so the client backs off cleanly instead of looking like a crash.
             const body = await res.text().catch(() => '');
             if (res.status === 403 && body.includes('has not updated')) {
-                console.info('[EXTERNAL API] Celestrak: data unchanged since last download, falling back to cache');
+                const lastKnown = await readCachedDataIgnoringExpiry(CACHE_KEY);
+                if (lastKnown) {
+                    console.info('[EXTERNAL API] Celestrak: data unchanged, serving last-known payload');
+                    return NextResponse.json(lastKnown, { headers: { 'X-Cache': 'CELESTRAK-UNCHANGED' } });
+                }
+                const lastSuccessMatch = body.match(/at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC/);
+                const nextRefreshSec = lastSuccessMatch
+                    ? Math.max(60, Math.ceil((new Date(lastSuccessMatch[1] + 'Z').getTime() + 2 * 3600 * 1000 - Date.now()) / 1000))
+                    : 1800;
+                console.warn(`[EXTERNAL API] Celestrak: data unchanged, no prior payload cached — retry in ~${nextRefreshSec}s`);
+                return NextResponse.json(
+                    { error: 'Celestrak data unchanged since last successful download; no cached fallback available yet.', retryAfterSeconds: nextRefreshSec },
+                    { status: 503, headers: { 'Retry-After': String(nextRefreshSec), 'X-Cache': 'CELESTRAK-LOCKED' } }
+                );
             }
             throw new Error(`Failed to fetch active satellites: ${res.status} ${res.statusText}`);
         }

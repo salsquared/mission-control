@@ -82,7 +82,14 @@ function useSpaceCompanyNews(companies: typeof SPACE_COMPANIES) {
 export const SpaceView: React.FC = () => {
     const { data: spaceNewsRaw, refetch: refetchSpace } = useQuery<SpaceArticle[]>({ queryKey: ['space', 'news'], queryFn: () => fetcher('/api/space') });
     const { data: launchData, refetch: refetchLaunches } = useQuery<Launch[]>({ queryKey: ['space', 'launches'], queryFn: () => fetcher('/api/space/launches') });
-    const { data: satellitesData, refetch: refetchSats } = useQuery<any>({ queryKey: ['space', 'satellites'], queryFn: () => fetcher('/api/space/satellites') });
+    const { data: satellitesData, refetch: refetchSats } = useQuery<any>({
+        queryKey: ['space', 'satellites'],
+        queryFn: () => fetcher('/api/space/satellites'),
+        // Celestrak's gp.php 403s when their GROUP=active data hasn't changed
+        // since our last successful pull (per-IP, 2h cadence). Retrying multiplies
+        // the lockout — react-query default of 3 retries means 4× the hits per mount.
+        retry: false,
+    });
     const { data: solarData, refetch: refetchSolar } = useQuery<any>({ queryKey: ['space', 'solar'], queryFn: () => fetcher('/api/space/solar') });
     const { data: moonData, refetch: refetchMoon } = useQuery<any>({ queryKey: ['space', 'moon'], queryFn: () => fetcher('/api/space/moon') });
     const { newsMap: companyNewsMap } = useSpaceCompanyNews(SPACE_COMPANIES);

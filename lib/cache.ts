@@ -85,6 +85,25 @@ async function l2Read(key: string): Promise<L1Entry | null> {
     }
 }
 
+// Recover the last cached payload for `key` even if its TTL has expired and
+// it isn't in the in-process L1 map. Used by upstream-aware routes (currently
+// just /api/space/satellites) when the upstream signals "your prior download
+// is still current" (Celestrak's 403 "GP data has not updated") so they can
+// serve last-good data instead of bubbling a 500 to the dashboard.
+// Returns the data payload only — callers attach their own response shape.
+export async function readCachedDataIgnoringExpiry(key: string): Promise<any | null> {
+    const l1 = globalCache.get(key);
+    if (l1) return l1.data;
+    if (!useSQLite()) return null;
+    try {
+        const row = await findCacheEntry(key);
+        if (!row) return null;
+        return JSON.parse(row.data);
+    } catch {
+        return null;
+    }
+}
+
 async function l2Write(key: string, data: any, expiry: number): Promise<void> {
     try {
         await upsertCacheEntry({
