@@ -31,8 +31,9 @@ All three constants live in `lib/ai/gemini.ts` and are passed through `chatJSON(
 | `lib/ai/classify-employment-type.ts` (classifyEmploymentTypes) | `MODEL_LITE_CHEAP` | **1024** | 50 items/batch | Pure 5-class enum picker per posting. Cheapest model is invisible-quality. Positional output (`{"types":[…]}` array, no id echoing) — see 2026-05-20 change log entry. |
 | `lib/discovery/suggest.ts` (suggestCompanies) | `MODEL_LITE` *(default)* | 4096 | small | User-triggered "Discover companies". Temp 0.9 for exploration. |
 | `lib/resumes/posting.ts` (parsePosting) | `MODEL_LITE` *(default)* | 2048 | **8 KB** posting | Keyword extraction from job posting HTML/text. |
-| `lib/resumes/rewrite.ts` (rewriteBullets) | **`MODEL_FLASH`** | 4096 | small | **Only full-Flash caller.** Output directly becomes resume bullets the user sends to employers. |
-| `lib/profile/import-llm.ts` (extractProfileFromText) | `MODEL_LITE` *(default)* | **32768** | 60 KB resume | Large output budget retained because nested bullets across many roles + projects + education legitimately need it. |
+| `lib/resumes/rewrite.ts` (rewriteBullets) | **`MODEL_FLASH`** | 4096 | small | Output directly becomes resume bullets the user sends to employers. |
+| `lib/profile/import-llm.ts` (extractProfileFromText) | `MODEL_LITE` *(default)* | **32768** | 60 KB resume | Per-file mechanical extraction — verbatim preservation, no judgment. Large output budget because nested bullets across many roles + projects + education legitimately need it. |
+| `lib/profile/synthesize.ts` (synthesizeMasterResume) | **`MODEL_FLASH`** | **32768** | 80 KB serialized inputs | **One call per import.** Consolidates all per-file extractions + existing profile into the canonical "master resume" stored on the Profile dash. Resolves role-vs-project misclassifications across files, dedupes entities, orders reverse-chrono. The output IS what every downstream tailored-resume rewrite pulls from — quality matters. |
 
 ---
 

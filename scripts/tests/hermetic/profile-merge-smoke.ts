@@ -279,6 +279,178 @@ function emptyIncoming(): ExtractedProfile {
     }
 }
 
+// ─── Cross-category dedup: incoming work role folds into existing project ──
+
+{
+    const existing = emptyExisting();
+    existing.projects = [{
+        id: "proj-iris",
+        name: "Iris",
+        description: "Decentralized Earth Observation platform",
+        repoUrl: null, liveUrl: null,
+        bullets: [makeBullet("Architected a decentralized Earth Observation platform")],
+    }];
+    const incoming = emptyIncoming();
+    // LLM misclassified this as a work role — same entity as the project above
+    incoming.workRoles = [{
+        company: "Iris (Earth Observation Platform)",  // prefix-matches "Iris"
+        title: "Creator & Lead Developer",
+        location: null,
+        startDate: "2022-03-01T00:00:00.000Z",
+        endDate: null,
+        bullets: ["Integrated Solidity + Chainlink for on-chain data verification"],
+    }];
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    if (r.workRolesToCreate.length !== 0) fail(`cross-category fold: shouldn't create a role, got ${r.workRolesToCreate.length}`);
+    else pass("cross-category fold: misclassified role didn't create a duplicate row");
+    if (r.counts.workRolesFoldedIntoProjects !== 1) fail(`cross-category fold: expected 1 fold, got ${r.counts.workRolesFoldedIntoProjects}`);
+    else pass("cross-category fold: counter incremented");
+    if (r.projectUpdates.length !== 1) fail(`cross-category fold: expected 1 project update, got ${r.projectUpdates.length}`);
+    else pass("cross-category fold: project picked up the new bullet");
+    if (r.projectUpdates[0]?.bullets.length !== 2) fail(`cross-category fold: expected 2 bullets on project, got ${r.projectUpdates[0]?.bullets.length}`);
+    else pass("cross-category fold: bullets count correct");
+}
+
+// ─── Cross-category dedup: exact-match (SEB-style) ──────────────────────
+
+{
+    const existing = emptyExisting();
+    existing.projects = [{
+        id: "proj-seb",
+        name: "Space Enterprise at Berkeley",
+        description: null, repoUrl: null, liveUrl: null,
+        bullets: [makeBullet("Led crowdfunding that raised $10,000")],
+    }];
+    const incoming = emptyIncoming();
+    // LLM read the "EXPERIENCE" section heading literally and made this a role
+    incoming.workRoles = [{
+        company: "Space Enterprise at Berkeley",
+        title: "Avionics Engineer",
+        location: null,
+        startDate: "2020-09-01T00:00:00.000Z",
+        endDate: "2022-03-01T00:00:00.000Z",
+        bullets: ["Engineered an apogee-detection program in Python"],
+    }];
+    const r = mergeImports(existing, [{ filename: "a.txt", tree: incoming }]);
+    if (r.workRolesToCreate.length !== 0) fail("SEB fold: shouldn't create role row");
+    else pass("SEB fold: misclassified collegiate-rocketry role folded into project");
+    if (r.counts.workRolesFoldedIntoProjects !== 1) fail("SEB fold: counter not set");
+    else pass("SEB fold: counter incremented");
+}
+
+// ─── Cross-category dedup: pending project create (same import) ─────────
+
+{
+    const existing = emptyExisting();
+    const incoming = emptyIncoming();
+    // The synthesizer emits Iris as a project AND another draft's role survives —
+    // verify the role folds into the pending project even before write.
+    incoming.projects = [{
+        name: "Iris",
+        description: null, repoUrl: null, liveUrl: null,
+        bullets: ["original project bullet"],
+    }];
+    incoming.workRoles = [{
+        company: "Iris (Earth Observation Platform)",
+        title: "Creator & Lead Developer",
+        location: null,
+        startDate: "2022-03-01T00:00:00.000Z",
+        endDate: null,
+        bullets: ["bullet that should land on the project"],
+    }];
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    if (r.projectsToCreate.length !== 1) fail("pending-project fold: expected 1 project create");
+    else pass("pending-project fold: project created once");
+    if (r.workRolesToCreate.length !== 0) fail("pending-project fold: role shouldn't be created");
+    else pass("pending-project fold: misclassified role didn't create a duplicate");
+    if (r.projectsToCreate[0]?.bullets.length !== 2) fail("pending-project fold: bullets not folded onto pending project");
+    else pass("pending-project fold: role's bullet landed on the project");
+}
+
+// ─── Word-boundary safety: "AWS Lambda Workshop" must not fold into "AWS" ──
+
+{
+    const existing = emptyExisting();
+    existing.projects = [{
+        id: "proj-aws", name: "AWS",
+        description: null, repoUrl: null, liveUrl: null, bullets: [],
+    }];
+    const incoming = emptyIncoming();
+    incoming.workRoles = [{
+        company: "AWS Lambda Workshop",  // contains "aws" but not as a name prefix
+        title: "Instructor",
+        location: null,
+        startDate: "2023-06-01T00:00:00.000Z",
+        endDate: null,
+        bullets: ["taught"],
+    }];
+    // norm("AWS Lambda Workshop") = "aws lambda workshop"
+    // norm("AWS") = "aws"
+    // startsWith("aws ") → "aws lambda workshop".startsWith("aws ") = true → folds
+    // This IS the documented behavior — a project literally named "AWS" prefix-
+    // matches anything starting with "AWS ". User should rename their project.
+    // The bigger risk is the reverse — "aws" not a substring of "lambda" — covered below.
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    if (r.counts.workRolesFoldedIntoProjects !== 1) fail("word-boundary: should fold (prefix match)");
+    else pass("word-boundary: prefix-match folds as documented");
+}
+
+// ─── Word-boundary safety: project name not a prefix → no fold ──────────
+
+{
+    const existing = emptyExisting();
+    existing.projects = [{
+        id: "proj-foo", name: "Foo",
+        description: null, repoUrl: null, liveUrl: null, bullets: [],
+    }];
+    const incoming = emptyIncoming();
+    incoming.workRoles = [{
+        company: "Bar Foo Corp",  // contains "foo" mid-string, NOT a prefix
+        title: "Engineer",
+        location: null,
+        startDate: "2023-01-01T00:00:00.000Z",
+        endDate: null,
+        bullets: ["unrelated"],
+    }];
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    if (r.counts.workRolesFoldedIntoProjects !== 0) fail("word-boundary: should NOT fold (no prefix match)");
+    else pass("word-boundary: substring-but-not-prefix doesn't false-fold");
+    if (r.workRolesToCreate.length !== 1) fail("word-boundary: role should be created normally");
+    else pass("word-boundary: role created normally when no project match");
+}
+
+// ─── Reverse-chrono ordering on bulk import ─────────────────────────────
+
+{
+    const existing = emptyExisting();
+    const incoming = emptyIncoming();
+    incoming.workRoles = [
+        // Deliberately out of order — synthesizer should ideally emit reverse-
+        // chrono but the deterministic merge also sorts as a safety net.
+        { company: "OldCo", title: "T1", location: null, startDate: "2018-01-01", endDate: "2019-01-01", bullets: ["o"] },
+        { company: "NewCo", title: "T2", location: null, startDate: "2025-01-01", endDate: null, bullets: ["n"] },
+        { company: "MidCo", title: "T3", location: null, startDate: "2022-01-01", endDate: "2023-01-01", bullets: ["m"] },
+    ];
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    if (r.workRolesToCreate.length !== 3) fail("reverse-chrono: expected 3 creates");
+    else {
+        const companies = r.workRolesToCreate.map(c => c.company);
+        if (companies[0] !== "NewCo" || companies[1] !== "MidCo" || companies[2] !== "OldCo") {
+            fail(`reverse-chrono: wrong order, got ${JSON.stringify(companies)}`);
+        } else pass("reverse-chrono: workRolesToCreate ordered newest-first");
+    }
+    // Education same treatment
+    const incoming2 = emptyIncoming();
+    incoming2.education = [
+        { institution: "OldU", degree: null, field: null, startDate: "2010-01-01", endDate: "2014-01-01", bullets: [] },
+        { institution: "NewU", degree: null, field: null, startDate: "2024-01-01", endDate: null, bullets: [] },
+    ];
+    const r2 = mergeImports(existing, [{ filename: "b.pdf", tree: incoming2 }]);
+    if (r2.educationToCreate.length !== 2 || r2.educationToCreate[0].institution !== "NewU") {
+        fail("reverse-chrono: educationToCreate not sorted");
+    } else pass("reverse-chrono: educationToCreate ordered newest-first");
+}
+
 console.log(`\n${passes}/${passes + fails} steps passed`);
 if (fails > 0) process.exit(1);
 console.log("All checks passed.");

@@ -10,6 +10,7 @@ interface PerFileCounts {
     workRolesAdded: number;
     workRolesMerged: number;
     workRolesDroppedNoStartDate?: number;
+    workRolesFoldedIntoProjects?: number;
     projectsAdded: number;
     projectsMerged: number;
     educationAdded: number;
@@ -100,6 +101,16 @@ export function ImportResumesCard() {
                 toastStore.push({
                     message: `${dropped} work role${dropped === 1 ? "" : "s"} skipped — couldn't read a start date. Add manually.`,
                     type: "warning",
+                });
+            }
+            // Surface cross-category folds so the user knows we caught
+            // misclassifications (student-org / personal-project entries that
+            // the source resume formatted like a job).
+            const folded = c.workRolesFoldedIntoProjects ?? 0;
+            if (folded > 0) {
+                toastStore.push({
+                    message: `${folded} entr${folded === 1 ? "y" : "ies"} reclassified from work role to project (student org / personal project).`,
+                    type: "info",
                 });
             }
             setFiles([]);

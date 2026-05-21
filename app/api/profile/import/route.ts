@@ -3,6 +3,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { extractText } from "@/lib/profile/extract";
 import { extractProfileFromText } from "@/lib/profile/import-llm";
+import { synthesizeMasterResume } from "@/lib/profile/synthesize";
 import { mergeImports, type ExistingProfileForMerge } from "@/lib/profile/merge";
 import {
     findOrCreateProfile,
@@ -54,7 +55,7 @@ export async function POST(req: NextRequest) {
         }
     }
 
-    let stage: "extract" | "analyze" | "merge" | "write" = "extract";
+    let stage: "extract" | "analyze" | "synthesize" | "merge" | "write" = "extract";
     try {
         // 1. Extract text from each file
         const extracted: { filename: string; text: string }[] = [];
@@ -72,8 +73,8 @@ export async function POST(req: NextRequest) {
             trees.push({ filename: e.filename, tree });
         }
 
-        // 3. Load existing profile and merge
-        stage = "merge";
+        // 3. Load existing profile so the synthesizer + merge step can dedup
+        // against what the user already has.
         const existing = await findOrCreateProfile(userId);
         const existingForMerge: ExistingProfileForMerge = {
             headline: existing.headline,
@@ -95,9 +96,23 @@ export async function POST(req: NextRequest) {
                 startDate: e.startDate, endDate: e.endDate, bullets: e.bullets,
             })),
         };
-        const merge = mergeImports(existingForMerge, trees);
 
-        // 4. Apply writes — one repository call per change. Not a single Prisma
+        // 4. Synthesize the master resume — one Flash call that consolidates
+        // every per-file draft + existing entities into a single canonical
+        // tree. Resolves role-vs-project misclassifications across files,
+        // dedupes entities, sorts reverse-chrono. Skipped only when the user
+        // somehow uploaded zero parseable files (covered earlier).
+        stage = "synthesize";
+        const synthesized = await synthesizeMasterResume(existingForMerge, trees);
+
+        // 5. Deterministic merge applies the synthesized tree to the DB with
+        // append-never-overwrite semantics + cross-category dedup safety net.
+        stage = "merge";
+        const merge = mergeImports(existingForMerge, [
+            { filename: "(synthesized)", tree: synthesized },
+        ]);
+
+        // 6. Apply writes — one repository call per change. Not a single Prisma
         // transaction (each call already does its own). Acceptable trade-off
         // for MVP; the existing profile API isn't transactional either.
         stage = "write";

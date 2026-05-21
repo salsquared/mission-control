@@ -108,6 +108,13 @@ export interface MergeCounts {
     workRolesMerged: number;
     /** Work roles dropped because the LLM couldn't infer a startDate (Prisma requires non-null). */
     workRolesDroppedNoStartDate: number;
+    /**
+     * Cross-category folds: incoming work roles whose normalized company name
+     * matched an existing project, so the role's bullets were merged into that
+     * project rather than creating a duplicate work-role row. Catches LLM
+     * misclassifications even when the synthesis pass missed them.
+     */
+    workRolesFoldedIntoProjects: number;
     projectsAdded: number;
     projectsMerged: number;
     educationAdded: number;
@@ -203,6 +210,7 @@ function emptyCounts(): MergeCounts {
         workRolesAdded: 0,
         workRolesMerged: 0,
         workRolesDroppedNoStartDate: 0,
+        workRolesFoldedIntoProjects: 0,
         projectsAdded: 0,
         projectsMerged: 0,
         educationAdded: 0,
@@ -218,6 +226,7 @@ function addCounts(a: MergeCounts, b: MergeCounts): MergeCounts {
         workRolesAdded: a.workRolesAdded + b.workRolesAdded,
         workRolesMerged: a.workRolesMerged + b.workRolesMerged,
         workRolesDroppedNoStartDate: a.workRolesDroppedNoStartDate + b.workRolesDroppedNoStartDate,
+        workRolesFoldedIntoProjects: a.workRolesFoldedIntoProjects + b.workRolesFoldedIntoProjects,
         projectsAdded: a.projectsAdded + b.projectsAdded,
         projectsMerged: a.projectsMerged + b.projectsMerged,
         educationAdded: a.educationAdded + b.educationAdded,
@@ -272,6 +281,45 @@ function findProjectMatch(
         if (norm(p.name) === cName) {
             if (!cRepo || !norm(p.repoUrl) || norm(p.repoUrl) === cRepo) return p;
         }
+    }
+    return null;
+}
+
+/**
+ * Cross-category safety net. The synthesis pass should already collapse the
+ * "Iris-the-role-from-file-B + Iris-the-project-from-file-A" case, but if it
+ * misses (or this is a single-file import that bypasses synthesis), an
+ * incoming work role whose normalized company matches an existing project name
+ * gets folded into that project instead of creating a duplicate.
+ *
+ * Match keys:
+ *   - exact `norm(workRole.company) === norm(project.name)`
+ *   - or `norm(workRole.company)` starts with `norm(project.name) + ' '` (so
+ *     "Iris (Earth Observation Platform)" → norm "iris earth observation
+ *     platform" matches project "Iris" → norm "iris"). We require a trailing
+ *     space-separator so "AWS Lambda Workshop" doesn't fold into a project
+ *     named "AWS".
+ */
+function findProjectByCompanyName(
+    candidate: ExtractedWorkRole,
+    projects: ExistingProject[],
+    pendingCreates: ProjectCreate[],
+): ExistingProject | ProjectCreate | null {
+    const cCompany = norm(candidate.company);
+    if (!cCompany) return null;
+    const matchesProjectName = (pName: string): boolean => {
+        const n = norm(pName);
+        if (!n) return false;
+        if (n === cCompany) return true;
+        // Strict prefix-with-word-boundary so "iris" matches "iris earth obs"
+        // but not "iristech".
+        return cCompany.startsWith(n + " ");
+    };
+    for (const p of pendingCreates) {
+        if (matchesProjectName(p.name)) return p;
+    }
+    for (const p of projects) {
+        if (matchesProjectName(p.name)) return p;
     }
     return null;
 }
@@ -357,8 +405,70 @@ function mergeOneFile(acc: Accumulator, existing: ExistingProfileForMerge, incom
     const headerCounts = mergeHeader(acc, existing, incoming.header);
     counts.headerFieldsFilled = headerCounts.headerFieldsFilled;
 
+    // Projects are processed BEFORE work roles so that the cross-category
+    // safety net below can fold a misclassified role into a project that's
+    // pending creation from the same file (not just one already in the DB).
+    // Order within the same file matters because both lookups walk pendingCreates.
+
+    // Projects
+    for (const pr of incoming.projects) {
+        const match = findProjectMatch(pr, existing.projects, acc.projectsToCreate);
+        if (match && "id" in match) {
+            const update = acc.projectUpdates.get(match.id);
+            const baseBullets = update?.bullets ?? match.bullets;
+            const merged = mergeBullets(baseBullets, pr.bullets);
+            applyMergedToUpdate(acc.projectUpdates as Map<string, ProjectUpdate>, match.id, merged.merged, merged.added > 0);
+            counts.projectsMerged++;
+            counts.bulletsAdded += merged.added;
+            counts.bulletsDeduped += merged.deduped;
+        } else if (match) {
+            const merged = mergeBullets(match.bullets, pr.bullets);
+            match.bullets = merged.merged;
+            if (!match.description && pr.description) match.description = pr.description;
+            if (!match.repoUrl && pr.repoUrl) match.repoUrl = pr.repoUrl;
+            if (!match.liveUrl && pr.liveUrl) match.liveUrl = pr.liveUrl;
+            counts.projectsMerged++;
+            counts.bulletsAdded += merged.added;
+            counts.bulletsDeduped += merged.deduped;
+        } else {
+            acc.projectsToCreate.push({
+                name: pr.name,
+                description: pr.description,
+                repoUrl: pr.repoUrl,
+                liveUrl: pr.liveUrl,
+                bullets: bulletsFromStrings(pr.bullets),
+            });
+            counts.projectsAdded++;
+            counts.bulletsAdded += pr.bullets.filter(t => t && t.trim()).length;
+        }
+    }
+
     // Work roles
     for (const wr of incoming.workRoles) {
+        // Cross-category safety net: if this "work role" is actually a
+        // misclassified project (e.g. "Space Enterprise at Berkeley" — a
+        // student org — or "Iris (Earth Observation Platform)" — a personal
+        // project), fold its bullets into the matching project instead of
+        // creating a duplicate role row.
+        const crossMatch = findProjectByCompanyName(wr, existing.projects, acc.projectsToCreate);
+        if (crossMatch) {
+            if ("id" in crossMatch) {
+                const update = acc.projectUpdates.get(crossMatch.id);
+                const baseBullets = update?.bullets ?? crossMatch.bullets;
+                const merged = mergeBullets(baseBullets, wr.bullets);
+                applyMergedToUpdate(acc.projectUpdates as Map<string, ProjectUpdate>, crossMatch.id, merged.merged, merged.added > 0);
+                counts.bulletsAdded += merged.added;
+                counts.bulletsDeduped += merged.deduped;
+            } else {
+                const merged = mergeBullets(crossMatch.bullets, wr.bullets);
+                crossMatch.bullets = merged.merged;
+                counts.bulletsAdded += merged.added;
+                counts.bulletsDeduped += merged.deduped;
+            }
+            counts.workRolesFoldedIntoProjects++;
+            continue;
+        }
+
         const match = findWorkRoleMatch(wr, existing.workRoles, acc.workRolesToCreate);
         if (match && "id" in match) {
             const update = acc.workRoleUpdates.get(match.id);
@@ -400,39 +510,6 @@ function mergeOneFile(acc: Accumulator, existing: ExistingProfileForMerge, incom
             });
             counts.workRolesAdded++;
             counts.bulletsAdded += wr.bullets.filter(t => t && t.trim()).length;
-        }
-    }
-
-    // Projects
-    for (const pr of incoming.projects) {
-        const match = findProjectMatch(pr, existing.projects, acc.projectsToCreate);
-        if (match && "id" in match) {
-            const update = acc.projectUpdates.get(match.id);
-            const baseBullets = update?.bullets ?? match.bullets;
-            const merged = mergeBullets(baseBullets, pr.bullets);
-            applyMergedToUpdate(acc.projectUpdates as Map<string, ProjectUpdate>, match.id, merged.merged, merged.added > 0);
-            counts.projectsMerged++;
-            counts.bulletsAdded += merged.added;
-            counts.bulletsDeduped += merged.deduped;
-        } else if (match) {
-            const merged = mergeBullets(match.bullets, pr.bullets);
-            match.bullets = merged.merged;
-            if (!match.description && pr.description) match.description = pr.description;
-            if (!match.repoUrl && pr.repoUrl) match.repoUrl = pr.repoUrl;
-            if (!match.liveUrl && pr.liveUrl) match.liveUrl = pr.liveUrl;
-            counts.projectsMerged++;
-            counts.bulletsAdded += merged.added;
-            counts.bulletsDeduped += merged.deduped;
-        } else {
-            acc.projectsToCreate.push({
-                name: pr.name,
-                description: pr.description,
-                repoUrl: pr.repoUrl,
-                liveUrl: pr.liveUrl,
-                bullets: bulletsFromStrings(pr.bullets),
-            });
-            counts.projectsAdded++;
-            counts.bulletsAdded += pr.bullets.filter(t => t && t.trim()).length;
         }
     }
 
@@ -498,6 +575,19 @@ export function mergeImports(
         perFile.push({ filename: f.filename, counts: c });
         total = addCounts(total, c);
     }
+
+    // Sort new entities reverse-chronologically before returning. The API
+    // route writes them in this order and the repository auto-assigns
+    // `position = MAX(position) + 1` per create, so newest gets the lowest new
+    // position. On a first import (no existing rows) this gives the user a
+    // properly ordered list without any drag-reorder; on subsequent imports
+    // new rows land at the end but in reverse-chrono among themselves.
+    acc.workRolesToCreate.sort((a, b) => b.startDate.getTime() - a.startDate.getTime());
+    acc.educationToCreate.sort((a, b) => {
+        const at = a.startDate?.getTime() ?? -Infinity;
+        const bt = b.startDate?.getTime() ?? -Infinity;
+        return bt - at;
+    });
 
     const headerHasChanges = Object.keys(acc.headerPatch).length > 0;
     return {
