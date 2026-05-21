@@ -21,6 +21,13 @@ export async function upsertCacheEntry(entry: CacheEntryRow): Promise<void> {
     });
 }
 
+export async function listFreshCacheEntries(): Promise<{ key: string; expiry: Date }[]> {
+    return prisma.cacheEntry.findMany({
+        where: { expiry: { gt: new Date() } },
+        select: { key: true, expiry: true },
+    });
+}
+
 export async function deleteExpiredCacheEntries(): Promise<number> {
     const result = await prisma.cacheEntry.deleteMany({
         where: { expiry: { lt: new Date() } },
