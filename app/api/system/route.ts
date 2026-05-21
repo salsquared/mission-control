@@ -121,12 +121,11 @@ export async function GET(req: Request) {
         if (hours > 0) uptimeFormatted += `${hours}h `;
         uptimeFormatted += `${minutes}m`;
 
-        const [dbConnected, pulsarOnline] = await Promise.all([
+        const [dbConnected, pulsarOnline, cache] = await Promise.all([
             getCachedDbConnected(),
             getCachedPulsarOnline(),
+            getCacheStats(),
         ]);
-
-        const cache = getCacheStats();
 
         return NextResponse.json({
             cpuUsagePercent,

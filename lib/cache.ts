@@ -5,6 +5,7 @@ import {
     deleteExpiredCacheEntries,
     deleteCacheEntry,
     deleteCacheEntriesByPrefix,
+    listFreshCacheEntries,
 } from '@/lib/repositories/cache-entries';
 import { broadcastEvent } from '@/lib/events';
 
@@ -65,10 +66,34 @@ if (!(globalThis as any).__apiCachePruner) {
     }
 }
 
-export function getCacheStats() {
-    const activeEntries = Array.from(globalCache.entries()).map(([key, entry]) => ({
+// Merges L1 (in-memory) and L2 (SQLite) entries so the telemetry reflects the
+// real cache footprint. Pre-prune-7 (May 20), L1 retained every entry forever
+// and looked like the full cache. With the 5-min L1 prune, L1 is just a hot
+// working set — most cached payloads live exclusively in L2. Read L1 first
+// (authoritative for keys present in both), then union in L2-only keys.
+// Filters out expired-but-not-yet-pruned L1 entries so the telemetry list
+// matches what would actually serve a request.
+export async function getCacheStats() {
+    const now = Date.now();
+    const merged = new Map<string, number>(); // key → expiry (ms)
+    for (const [key, entry] of globalCache) {
+        if (entry.expiry > now) merged.set(key, entry.expiry);
+    }
+    if (useSQLite()) {
+        try {
+            const rows = await listFreshCacheEntries();
+            for (const row of rows) {
+                if (!merged.has(row.key)) {
+                    merged.set(row.key, new Date(row.expiry).getTime());
+                }
+            }
+        } catch (e) {
+            console.warn('[CACHE] L2 telemetry read failed — returning L1 only:', e);
+        }
+    }
+    const activeEntries = Array.from(merged.entries()).map(([key, expiry]) => ({
         key,
-        remainingTtl: Math.max(0, Math.floor((entry.expiry - Date.now()) / 1000))
+        remainingTtl: Math.max(0, Math.floor((expiry - now) / 1000)),
     }));
     return { hits: cacheStats.hits, misses: cacheStats.misses, activeEntries };
 }

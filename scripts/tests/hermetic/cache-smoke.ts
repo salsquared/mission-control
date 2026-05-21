@@ -288,14 +288,14 @@ async function testInvalidatePrefix() {
 
 async function testStats() {
     resetCacheNamespace("/api/test-stats");
-    const before = getCacheStats();
+    const before = await getCacheStats();
     const handler = withCache(async () => NextResponse.json({}), 60);
 
     await handler(makeReq("/api/test-stats"));   // miss
     await handler(makeReq("/api/test-stats"));   // hit
     await handler(makeReq("/api/test-stats"));   // hit
 
-    const after = getCacheStats();
+    const after = await getCacheStats();
     if (after.misses - before.misses < 1) fail(`stats: misses didn't advance (${after.misses - before.misses})`);
     else if (after.hits - before.hits < 2) fail(`stats: hits didn't advance by ≥2 (${after.hits - before.hits})`);
     else pass("getCacheStats tracks hits/misses");
