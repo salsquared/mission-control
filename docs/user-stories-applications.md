@@ -81,7 +81,7 @@ Working list. Priority emoji: **🔴** must-have for next ship, **🟡** importa
 ## 10. Application document tracking
 
 47. 🟡 ◐ As a user, I want to attach the exact resume and cover letter I sent to each Application so the timeline shows the artifacts, not just the events. *(Resume side ✅ — `GeneratedResume.applicationId` links each gen to its app. Cover-letter side is OOS — see story 40.)*
-48. 🔵 As a user, I want a diff view between two resume versions sent to different companies so I can see what I changed and why.
+48. 🔵 ✅ As a user, I want a diff view between two resume versions sent to different companies so I can see what I changed and why. *(Shipped 2026-05-22 — `lib/resumes/diff.ts:computeResumeDiff` + `/api/resumes/diff`. UI: multi-select two rows in the Resumes section on `ApplicationDetailOverlay`, "Compare selected" reveals an inline panel with posting-keyword deltas, bullet-selection deltas, and shared-bullet rewrite differences side-by-side.)*
 
 ## 11. Follow-up & nudges
 
@@ -118,10 +118,10 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 
 - **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories 56–59). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
 - **🟡: 27 total, 25 ✅ + 1 ◐ + 1 ⛔.** Story **47** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story 40). Story **37** is ⛔ user-declined (2026-05-15). All other 🟡 closed.
-- **🔵 shipped: 6/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **63** (bulk-move tracks).
+- **🔵 shipped: 7/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion), **63** (bulk-move tracks).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **48** resume version diff; **63** bulk-move tracks; **24** compensation parsing.
+**Next-up candidates** (small surface, real leverage): **63** bulk-move tracks; **24** compensation parsing; **46** README ingestion.
 
 ---
 

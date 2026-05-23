@@ -19,6 +19,7 @@ import {
     Users,
     UserPlus,
     Hand,
+    Columns2,
 } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import {
@@ -701,6 +702,166 @@ const ApplicationContactsSection: React.FC<{ applicationId: string }> = ({ appli
     );
 };
 
+// ─── Story 48: side-by-side diff between two GeneratedResume rows ──────
+
+interface DiffSelectionSummary {
+    sourceLabel: string;
+    originalText: string;
+    rewrittenText: string;
+    matchedKeywords: string[];
+}
+function asSelectionSummary(raw: unknown): DiffSelectionSummary | null {
+    if (!raw || typeof raw !== 'object') return null;
+    const r = raw as Record<string, unknown>;
+    return {
+        sourceLabel: typeof r.sourceLabel === 'string' ? r.sourceLabel : '',
+        originalText: typeof r.originalText === 'string' ? r.originalText : '',
+        rewrittenText: typeof r.rewrittenText === 'string' ? r.rewrittenText : '',
+        matchedKeywords: Array.isArray(r.matchedKeywords)
+            ? r.matchedKeywords.filter((x): x is string => typeof x === 'string')
+            : [],
+    };
+}
+
+const ResumeDiffPanel: React.FC<{ a: string; b: string; onClose: () => void }> = ({ a, b, onClose }) => {
+    const { data, isLoading, error } = useQuery({
+        queryKey: ['resumes', 'diff', a, b],
+        queryFn: () => api.resumes.diff(a, b),
+    });
+
+    if (isLoading) {
+        return (
+            <div className="mt-2 rounded-md bg-black/30 border border-white/10 p-3 flex items-center gap-2 text-[11px] text-white/40">
+                <Loader2 className="w-3 h-3 animate-spin" /> Diffing…
+            </div>
+        );
+    }
+    if (error || !data) {
+        return (
+            <div className="mt-2 rounded-md bg-rose-500/10 border border-rose-400/20 p-3 text-[11px] text-rose-200">
+                Diff failed: {error instanceof Error ? error.message : 'Unknown error'}
+                <button onClick={onClose} className="ml-2 underline">close</button>
+            </div>
+        );
+    }
+
+    const d = data.diff;
+    const aLabel = `${d.a.company ?? '?'}${d.a.title ? ` · ${d.a.title}` : ''}`;
+    const bLabel = `${d.b.company ?? '?'}${d.b.title ? ` · ${d.b.title}` : ''}`;
+
+    return (
+        <div className="mt-2 rounded-md bg-black/30 border border-purple-400/20 p-3 space-y-3">
+            <div className="flex items-center justify-between">
+                <div className="text-[11px] uppercase tracking-wide text-purple-300/80">
+                    Comparing {new Date(d.a.createdAt).toLocaleDateString()} ↔ {new Date(d.b.createdAt).toLocaleDateString()}
+                </div>
+                <button onClick={onClose} className="text-white/40 hover:text-white/80">
+                    <X className="w-3.5 h-3.5" />
+                </button>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div className="rounded bg-rose-500/5 border border-rose-400/20 px-2 py-1">
+                    <span className="text-rose-300/80 font-semibold">A:</span> <span className="text-white/70">{aLabel}</span>
+                </div>
+                <div className="rounded bg-emerald-500/5 border border-emerald-400/20 px-2 py-1">
+                    <span className="text-emerald-300/80 font-semibold">B:</span> <span className="text-white/70">{bLabel}</span>
+                </div>
+            </div>
+
+            <div className="text-[11px] text-white/50">
+                {d.summary.keywordsChanged} keyword{d.summary.keywordsChanged === 1 ? '' : 's'} different ·
+                {' '}{d.summary.selectionsChanged} selection{d.summary.selectionsChanged === 1 ? '' : 's'} different ·
+                {' '}{d.summary.rewritesChanged} rewrite{d.summary.rewritesChanged === 1 ? '' : 's'} differ
+            </div>
+
+            {/* Keyword deltas */}
+            {(d.keywords.onlyA.length > 0 || d.keywords.onlyB.length > 0) && (
+                <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wider text-white/40">Posting keywords</div>
+                    {d.keywords.onlyA.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                            <span className="text-[10px] text-rose-300/80">only in A:</span>
+                            {d.keywords.onlyA.map(k => (
+                                <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-rose-500/10 border border-rose-500/20 text-rose-200">{k}</span>
+                            ))}
+                        </div>
+                    )}
+                    {d.keywords.onlyB.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                            <span className="text-[10px] text-emerald-300/80">only in B:</span>
+                            {d.keywords.onlyB.map(k => (
+                                <span key={k} className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-200">{k}</span>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* Selections in only one */}
+            {d.selections.onlyA.length > 0 && (
+                <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wider text-rose-300/80">
+                        Bullets only in A ({d.selections.onlyA.length})
+                    </div>
+                    <ul className="space-y-1">
+                        {d.selections.onlyA.map(asSelectionSummary).filter((s): s is DiffSelectionSummary => s !== null).map((s, i) => (
+                            <li key={i} className="text-[11px] text-rose-100/90 bg-rose-500/5 border border-rose-500/15 rounded px-2 py-1">
+                                <span className="text-rose-300/70 italic">{s.sourceLabel}:</span> {s.rewrittenText || s.originalText}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+            {d.selections.onlyB.length > 0 && (
+                <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wider text-emerald-300/80">
+                        Bullets only in B ({d.selections.onlyB.length})
+                    </div>
+                    <ul className="space-y-1">
+                        {d.selections.onlyB.map(asSelectionSummary).filter((s): s is DiffSelectionSummary => s !== null).map((s, i) => (
+                            <li key={i} className="text-[11px] text-emerald-100/90 bg-emerald-500/5 border border-emerald-500/15 rounded px-2 py-1">
+                                <span className="text-emerald-300/70 italic">{s.sourceLabel}:</span> {s.rewrittenText || s.originalText}
+                            </li>
+                        ))}
+                    </ul>
+                </div>
+            )}
+
+            {/* Shared bullets with rewrite differences */}
+            {d.selections.shared.some(s => s.rewriteChanged) && (
+                <div className="space-y-1">
+                    <div className="text-[10px] uppercase tracking-wider text-white/40">
+                        Same bullet, rewritten differently ({d.selections.shared.filter(s => s.rewriteChanged).length})
+                    </div>
+                    <ul className="space-y-2">
+                        {d.selections.shared.filter(s => s.rewriteChanged).map(s => {
+                            const aSum = asSelectionSummary(s.a);
+                            const bSum = asSelectionSummary(s.b);
+                            if (!aSum || !bSum) return null;
+                            return (
+                                <li key={s.bulletId} className="bg-white/5 border border-white/10 rounded px-2 py-1.5 text-[11px]">
+                                    <div className="text-white/40 italic mb-1">{aSum.sourceLabel || bSum.sourceLabel}</div>
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <div className="text-rose-100/90"><span className="text-rose-300/70">A:</span> {aSum.rewrittenText}</div>
+                                        <div className="text-emerald-100/90"><span className="text-emerald-300/70">B:</span> {bSum.rewrittenText}</div>
+                                    </div>
+                                </li>
+                            );
+                        })}
+                    </ul>
+                </div>
+            )}
+
+            {d.summary.keywordsChanged === 0 && d.summary.selectionsChanged === 0 && d.summary.rewritesChanged === 0 && (
+                <div className="text-[11px] text-white/50 italic">
+                    These two resumes are functionally identical — same keywords, same bullets, same rewrites.
+                </div>
+            )}
+        </div>
+    );
+};
+
 // ─── M8-2.4: Per-Application Generate + "Resumes sent" section ─────────
 
 const ApplicationResumesSection: React.FC<{ applicationId: string; company: string; role: string | null }> = ({ applicationId, company, role }) => {
@@ -709,12 +870,26 @@ const ApplicationResumesSection: React.FC<{ applicationId: string; company: stri
     const [postingUrl, setPostingUrl] = useState("");
     const [postingText, setPostingText] = useState("");
     const [generating, setGenerating] = useState(false);
+    // Story 48 — multi-select for diff. Up to 2 ids; selecting a 3rd kicks
+    // out the oldest pick (FIFO) so the user doesn't have to manually
+    // deselect before recomparing.
+    const [selectedForDiff, setSelectedForDiff] = useState<string[]>([]);
+    const [diffPair, setDiffPair] = useState<{ a: string; b: string } | null>(null);
 
     const { data, isLoading } = useQuery({
         queryKey: queryKeys.resumes({ applicationId }),
         queryFn: () => api.resumes.list({ applicationId }),
     });
     const resumes = data?.resumes ?? [];
+
+    const toggleSelect = (id: string) => {
+        setSelectedForDiff(prev => {
+            if (prev.includes(id)) return prev.filter(x => x !== id);
+            const next = [...prev, id];
+            return next.length > 2 ? next.slice(-2) : next;
+        });
+    };
+    const canCompare = selectedForDiff.length === 2;
 
     async function handleGenerate() {
         if (generating) return;
@@ -784,35 +959,79 @@ const ApplicationResumesSection: React.FC<{ applicationId: string; company: stri
                     ) : resumes.length === 0 ? (
                         <p className="text-[11px] text-white/40 italic">No resumes generated for this application yet.</p>
                     ) : (
-                        <ul className="space-y-1">
-                            {resumes.map(r => (
-                                <li key={r.id} className="flex items-center justify-between rounded-md bg-black/30 border border-white/10 px-2.5 py-1.5">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                        <span className="text-[10px] uppercase tracking-wide text-purple-300/80 bg-purple-500/10 px-1.5 py-0.5 rounded">
-                                            {r.format}
-                                        </span>
-                                        <span className="text-[11px] text-white/70">
-                                            {new Date(r.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' })}
-                                        </span>
-                                        {r.status === 'failed' && (
-                                            <span className="text-[10px] text-red-300/80 bg-red-500/10 border border-red-500/20 px-1 rounded">failed</span>
-                                        )}
-                                    </div>
-                                    {r.hasArtifact ? (
-                                        <a
-                                            href={api.resumes.downloadUrl(r.id)}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            className="text-[11px] text-purple-300 hover:text-purple-200 underline underline-offset-2"
-                                        >
-                                            Download
-                                        </a>
-                                    ) : (
-                                        <span className="text-[10px] text-white/30">no file</span>
-                                    )}
-                                </li>
-                            ))}
-                        </ul>
+                        <>
+                            <ul className="space-y-1">
+                                {resumes.map(r => {
+                                    const checked = selectedForDiff.includes(r.id);
+                                    return (
+                                        <li key={r.id} className="flex items-center justify-between rounded-md bg-black/30 border border-white/10 px-2.5 py-1.5">
+                                            <div className="flex items-center gap-2 min-w-0">
+                                                {resumes.length >= 2 && (
+                                                    <input
+                                                        type="checkbox"
+                                                        checked={checked}
+                                                        onChange={() => toggleSelect(r.id)}
+                                                        title="Pick two to compare"
+                                                        className="accent-purple-500 cursor-pointer"
+                                                    />
+                                                )}
+                                                <span className="text-[10px] uppercase tracking-wide text-purple-300/80 bg-purple-500/10 px-1.5 py-0.5 rounded">
+                                                    {r.format}
+                                                </span>
+                                                <span className="text-[11px] text-white/70">
+                                                    {new Date(r.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric' })}
+                                                </span>
+                                                {r.status === 'failed' && (
+                                                    <span className="text-[10px] text-red-300/80 bg-red-500/10 border border-red-500/20 px-1 rounded">failed</span>
+                                                )}
+                                            </div>
+                                            {r.hasArtifact ? (
+                                                <a
+                                                    href={api.resumes.downloadUrl(r.id)}
+                                                    target="_blank"
+                                                    rel="noopener noreferrer"
+                                                    className="text-[11px] text-purple-300 hover:text-purple-200 underline underline-offset-2"
+                                                >
+                                                    Download
+                                                </a>
+                                            ) : (
+                                                <span className="text-[10px] text-white/30">no file</span>
+                                            )}
+                                        </li>
+                                    );
+                                })}
+                            </ul>
+
+                            {resumes.length >= 2 && (
+                                <div className="flex items-center gap-2 text-[11px] text-white/50">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            if (!canCompare) return;
+                                            setDiffPair({ a: selectedForDiff[0], b: selectedForDiff[1] });
+                                        }}
+                                        disabled={!canCompare}
+                                        className="flex items-center gap-1.5 px-2.5 py-1 rounded bg-purple-500/15 hover:bg-purple-500/25 border border-purple-400/20 text-purple-100 text-[11px] disabled:opacity-40 disabled:cursor-not-allowed"
+                                    >
+                                        <Columns2 className="w-3 h-3" />
+                                        Compare selected
+                                    </button>
+                                    <span className="text-white/40">
+                                        {selectedForDiff.length === 0 && "Pick two resumes to diff."}
+                                        {selectedForDiff.length === 1 && "Pick one more to diff."}
+                                        {selectedForDiff.length === 2 && "Ready to compare."}
+                                    </span>
+                                </div>
+                            )}
+
+                            {diffPair && (
+                                <ResumeDiffPanel
+                                    a={diffPair.a}
+                                    b={diffPair.b}
+                                    onClose={() => setDiffPair(null)}
+                                />
+                            )}
+                        </>
                     )}
 
                     {/* Generate-for-this-application form */}

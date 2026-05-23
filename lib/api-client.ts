@@ -537,6 +537,42 @@ export const api = {
             ),
         // Returns a direct download URL — UI uses it as href, no fetch needed.
         downloadUrl: (id: string) => `/api/resumes/${encodeURIComponent(id)}/download`,
+        // Story 48 — side-by-side diff between two GeneratedResume rows
+        // (selections deltas, posting-keyword deltas, skills-gap deltas).
+        // Returns the diff shape from lib/resumes/diff.ts.
+        diff: (a: string, b: string) =>
+            jsonFetch(
+                `/api/resumes/diff?a=${encodeURIComponent(a)}&b=${encodeURIComponent(b)}`,
+                z.object({
+                    diff: z.object({
+                        a: z.object({ id: z.string(), createdAt: z.string(), applicationId: z.string().nullable(), company: z.string().nullable(), title: z.string().nullable() }),
+                        b: z.object({ id: z.string(), createdAt: z.string(), applicationId: z.string().nullable(), company: z.string().nullable(), title: z.string().nullable() }),
+                        keywords: z.object({ onlyA: z.array(z.string()), onlyB: z.array(z.string()), both: z.array(z.string()) }),
+                        skillsGap: z.object({ onlyA: z.array(z.string()), onlyB: z.array(z.string()), both: z.array(z.string()) }),
+                        selections: z.object({
+                            onlyA: z.array(z.unknown()),
+                            onlyB: z.array(z.unknown()),
+                            shared: z.array(z.object({
+                                bulletId: z.string(),
+                                a: z.unknown(),
+                                b: z.unknown(),
+                                rewriteChanged: z.boolean(),
+                                originalChanged: z.boolean(),
+                                scoreDelta: z.number(),
+                                keywordsOnlyA: z.array(z.string()),
+                                keywordsOnlyB: z.array(z.string()),
+                                tagsOnlyA: z.array(z.string()),
+                                tagsOnlyB: z.array(z.string()),
+                            })),
+                        }),
+                        summary: z.object({
+                            keywordsChanged: z.number(),
+                            selectionsChanged: z.number(),
+                            rewritesChanged: z.number(),
+                        }),
+                    }),
+                }),
+            ),
     },
 
     blacklist: {

@@ -33,6 +33,7 @@ SUITES=(
     "scripts/tests/hermetic/route-auth-smoke.ts"
     "scripts/tests/hermetic/fetcher-unit-smoke.ts"
     "scripts/tests/hermetic/resume-select-smoke.ts"
+    "scripts/tests/hermetic/resume-diff-smoke.ts"
     "scripts/tests/hermetic/skills-gap-smoke.ts"
     "scripts/tests/hermetic/profile-merge-smoke.ts"
     "scripts/tests/hermetic/profile-snapshots-smoke.ts"
