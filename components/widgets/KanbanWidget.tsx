@@ -118,7 +118,7 @@ export function KanbanWidget<T>({
         : null;
 
     const board = (
-        <div className="flex relative h-full w-full gap-4 overflow-x-auto overflow-y-hidden custom-scrollbar pb-2">
+        <div className="flex relative h-full w-full gap-4 overflow-x-auto overflow-y-hidden custom-scrollbar pb-2 touch-pan-x">
             {columns.map((col) => {
                 const columnItems = items.filter((item) => col.filterFn(item));
                 return (

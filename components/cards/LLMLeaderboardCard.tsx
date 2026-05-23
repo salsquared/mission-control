@@ -80,7 +80,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
             action={onRefresh ? <ReloadButton onReload={onRefresh} /> : undefined}
         >
             {categories && categories.length > 0 && onCategoryChange && (
-                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 pb-scroll shrink-0">
+                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 pb-scroll shrink-0 touch-pan-x">
                     {categories.map((cat) => (
                         <button
                             key={cat.id}

@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
@@ -20,6 +20,15 @@ export const metadata: Metadata = {
   title: "Mission Control",
   description: "Advanced dashboard for monitoring and autonomous systems control.",
   manifest: "/manifest.json",
+};
+
+// viewportFit: 'cover' lets the layout reach env(safe-area-inset-*) on notched
+// iPhones. Without width=device-width the page renders at 980px-default zoomed
+// out on iOS Safari — making the mobile shell (Track D / MD-3) unusable.
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

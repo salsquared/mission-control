@@ -20,7 +20,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ## Status snapshot (2026-05-22)
 
-**TL;DR — the roadmap is functionally closed.** Every 🔴 must-have, every 🟡 important (sans declined), and every 🔵 nice-to-have (sans declined / future / one deferred rollback half) shipped. All open RAH-N security items closed. The single remaining piece is Story 33's restore-from-snapshot UX, intentionally deferred until there's a real edit to roll back. Forward motion now lives in "apply, observe failure modes, tune prompts" — captured in §Prompt tuning.
+**TL;DR — the user-stories roadmap is functionally closed; Track D (mobile layout) is the next open canonical phase.** Every 🔴 must-have, every 🟡 important (sans declined), and every 🔵 nice-to-have (sans declined / future / one deferred rollback half) across Tracks A/B/C shipped. All open RAH-N security items closed. Remaining items: Track D MD-0 → MD-7 (designed 2026-05-22, not started — first-class platform work on the dashboard mobile shell), and Story 33's restore-from-snapshot UX (deferred until there's a real edit to roll back). Day-to-day forward motion outside Track D lives in "apply, observe failure modes, tune prompts" — captured in §Prompt tuning.
 
 ### Coverage by priority
 
@@ -48,6 +48,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 | C | M8 Phase 3 | ✅ | DOCX ✅. Skills-gap (41) ✅. Multi-template (37) ⛔ user-declined 2026-05-15. Cover letter (40) ⛔ user-declined |
 | C | M9 Phase 1 | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
 | C | M9 Phase 2 | ✅ | Suggested rewrites (45), README ingestion (46) — both shipped 2026-05-22 |
+| **D** — Mobile layout | MD-0 → MD-7 | ⏳ | Designed 2026-05-22, not started. View-as-top-layer + swipe-driven nav; desktop shell unchanged. MD-0 (viewport meta + safe-area) is a standalone first PR. |
 | **Cross-cutting** | Notification dispatcher | ✅ | Tier model (critical/standard/low), global bell, EMAIL_ENABLED kill-switch |
 | Cross-cutting | Backups | ✅ | DB + `data/resumes/` tar to Google Drive via rclone + recovery runbook |
 | Cross-cutting | Pre-push hermetic gate | ✅ | 14 suites, ~5s, simple-git-hooks |
@@ -56,9 +57,10 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. **Everything else is closed.** RAH-12, RAH-13, and stories 50, 48, 63, 24, 46, 45, 28 all ✅ shipped 2026-05-22.
+Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-12, RAH-13, and stories 50, 48, 63, 24, 46, 45, 28 all ✅ shipped 2026-05-22. Track D (mobile layout) is the only open canonical phase work outside Story 33's deferred half.
 
-1. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
+1. **Track D — Mobile layout (MD-0 → MD-7).** Phone usability pass. MD-0 (viewport meta + safe-area-inset audit on `app/layout.tsx`) ships first as a standalone PR — independently verifiable on a real phone and load-bearing for everything after. MD-1 → MD-7 then introduce a `useEffectiveMobileLayout()` hook, fork `Dashboard.tsx` into `<DesktopShell>` (verbatim move) + `<MobileShell>` (new edge-to-edge swipe carousel), and convert `LaunchpadOverlay` into a bottom-sheet variant that hosts Library + AI Companion rows. ~7 files, ~450 lines net, no schema or API changes.
+2. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
 
 ### User-declined
 
@@ -430,6 +432,122 @@ Stories: 42, 43, 44 (🟡). Shipped 2026-05-15.
 - **Project portfolio toggle UI** — add a checkbox + repo input on `ProjectCard` so the user can flip projects to portfolio mode without going through Prisma.
 - **M9.4 — Suggested-rewrites (story 45) ✅ shipped 2026-05-22.** `lib/profile/metric-deltas.ts:computeMetricDeltas(prev, next)` runs after every metrics refresh. Detects star-threshold crossings against `STAR_MILESTONES = [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000]` (highest-only — 4→26 fires once at 25), primary-language flips, new ≥5%-share languages (filters out one-off shell scripts), and commit-count jumps ≥25% AND ≥10 absolute (so tiny repos don't churn). First-ingest (`prev === null`) is silent — only changes fire. Each delta dispatches a `kind='system' tier='standard'` notification with dedupKey `portfolio-rewrite:${projectId}:${type}:${milestone}` so a milestone never re-fires; the commit-jump uses `nextCommits` as the milestone so subsequent jumps key uniquely. Hermetic `metric-deltas-smoke.ts` (16/16).
 - **M9.5 — README-as-source (story 46) ✅ shipped 2026-05-22.** `Project.readme` + `readmeUpdatedAt` columns (migration `add_project_readme`, both DBs). New `fetchGithubReadme(ownerRepo)` in `lib/fetchers/github-public-fetcher.ts` — separate from `fetchGithubRepoMetrics` so the metrics hot path stays at 3 API calls. `scheduler/jobs/github-metrics.ts` refreshes README weekly (independent cadence from the 20h metrics gate) — README failures don't tank the metrics refresh for the same project. Stored markdown is truncated at 16 KB at write time to bound row size. Resume rewrite prompt: new optional `ProjectReadmeContext` param on `rewriteBullets`; `app/api/resumes/route.ts` builds the context for project-source bullets actually in the selection (avoids paying tokens on READMEs that aren't surfaced) and slices an additional 2 KB excerpt per project before prompt assembly. Pure prompt builder extracted as `buildRewriteUserPrompt` so the README-context branch is unit-testable; hermetic `readme-prompt-smoke.ts` (13/13) covers no-ctx, empty-ctx, project-only inclusion, multi-bullet dedup (one README per project, not per bullet), selective inclusion (only sourceIds in the selection), truncation at the prompt limit, and empty-string-readme as no-readme.
+
+---
+
+## Track D — Mobile layout
+
+First-class platform work: make the dashboard usable on a phone. Today's `components/Dashboard.tsx:210` chrome — `max-w-7xl mx-auto bg-card/80 ... rounded-3xl p-12 pt-16 pb-4` — is the desktop "card-on-a-canvas" frame; views render inside it. On a phone that frame eats most of the viewport and the navigation surfaces (left/right chevrons at lines 233–245, bottom controls bar at 249–295) are too small for touch. The plan: on narrow viewports flip the visual hierarchy so the **view** is the top layer instead of the dash frame, drop the buttons, and drive nav by horizontal swipe. Desktop behavior unchanged.
+
+Not tied to a `user-stories-applications.md` entry — this is platform UX rather than feature work — but treated as canonical phase work because the surface area (Dashboard shell, every view, Launchpad, NotificationBell) cuts across all three feature tracks and any future track ships into both shells from day one.
+
+State of the tree (2026-05-22): designed, not started. No `useMediaQuery` / `matchMedia` / mobile detection exists anywhere in the codebase (grep clean). No `viewport` meta tag in `app/layout.tsx` either — on iOS Safari the page currently renders at 980 px-default zoomed out, so MD-0 below has standalone value regardless of whether MD-1+ ship. `CardGrid` already collapses to `grid-cols-1` at `< md:` (line 29), so view bodies are mobile-friendly inside their wrapper today.
+
+### Decisions (2026-05-22)
+
+- **Activation = viewport + override.** `matchMedia('(max-width: 768px)')` flips it on automatically; a `mobileLayoutPreference: 'auto' | 'force-on' | 'force-off'` field on the DevicePrefs slice lets the user pin it. Default `'auto'`. Pure viewport felt brittle (tablet edge cases, no desktop-testing escape hatch); pure toggle hurt first-mobile-visit UX before the user discovered the switch.
+- **Hidden-nav access = tap-title + edge-swipe-down.** Tap the dash title at top opens a bottom-sheet Launchpad; an edge-swipe-down from the very top opens the same sheet (iOS-style redundancy, single discoverable surface). Library and AI Companion become rows inside that sheet — they have no other home once the bottom controls bar disappears.
+- **Swipe model = real drag-with-finger carousel.** framer-motion `drag="x"` with `dragDirectionLock`; the active view tracks the finger and snaps to neighbor on release when `Math.abs(offset.x) > 50 || Math.abs(velocity.x) > 500`. Only `[prev, current, next]` mount at any time so the lazy-load argument from `Dashboard.tsx:16–23` (dev-worker memory floor) still holds.
+- **MD-0 lands first as a standalone PR.** Viewport meta + safe-area-inset audit is independently verifiable (open `https://mc.local` on a phone, confirm device-width render) and decoupling it from the carousel rewrite makes regression triage cheaper.
+
+### MD-0 — Viewport prep ⏳
+
+Standalone PR. Single file.
+
+- Add a `viewport` export to `app/layout.tsx` alongside the existing `metadata` export (line 19): `width: 'device-width'`, `initialScale: 1`, `viewportFit: 'cover'`. The `viewportFit: 'cover'` is what lets the rest of the stack reach `env(safe-area-inset-*)` on notched iPhones.
+- Audit fixed-position elements in `Dashboard.tsx` (`NotificationBell` top-right, bottom controls bar at line 249) for `env(safe-area-inset-bottom)` padding — once the viewport meta lands, the iOS home-indicator chin otherwise eats the controls bar.
+
+Acceptance: load the Cloudflare-tunnel URL on a phone, confirm the layout renders at device width (not zoomed-out 980 px) and nothing fixed-positioned overlaps the home indicator.
+
+### MD-1 — Detection + preference ⏳
+
+- New hook `hooks/useMobileLayout.ts`: `matchMedia('(max-width: 768px)')`, SSR-safe (returns `false` until mounted to avoid hydration mismatch).
+- New field `mobileLayoutPreference: 'auto' | 'force-on' | 'force-off'` on `DevicePrefsSlice` in `components/providers/state/index.ts:98`. Default `'auto'`. Add to the `partialize` whitelist at line 173 so it persists in `app-state` localStorage. Bump `version: 7 → 8` and add a default-injection case to the existing `migrate` function at line 181 (existing users inherit `'auto'`).
+- Composite `useEffectiveMobileLayout()`: if preference is `force-on`/`force-off` return that, else fall back to `useMobileLayout()`.
+
+### MD-2 — Dashboard shell fork ⏳
+
+Refactor `components/Dashboard.tsx`:
+
+- Extract the shared logic — `orderedDashes` memo (line 106), `currentIndex` state, the mount-effect (line 124), the `activeViewId` sync (line 165), the `nextSlide` / `prevSlide` / `goToSlide` callbacks — into a `useDashCarousel()` hook.
+- Split rendering into `<DesktopShell>` (current JSX moved verbatim) and `<MobileShell>` (new). The top-level Dashboard becomes ~15 lines: `return isMobile ? <MobileShell {...carouselProps} /> : <DesktopShell {...carouselProps} />`.
+
+No behavioral change on desktop — DesktopShell is a verbatim move.
+
+### MD-3 — MobileShell ⏳
+
+New file `components/dashboard/MobileShell.tsx`. Drops the `max-w-7xl mx-auto bg-card/80 ... rounded-3xl p-12 pt-16 pb-4` wrapper entirely — the view renders edge-to-edge against the page background, with hue accent at the top edge and a page-dot row at the bottom.
+
+```
+┌─ top bar (h-12, hue accent) ───────────┐
+│  Space                          🔔     │  ← title tap → Launchpad sheet
+├────────────────────────────────────────┤
+│                                        │
+│   <SpaceView />   ← edge-to-edge       │
+│                                        │
+├────────────────────────────────────────┤
+│         · · · ● · · · ·                │  ← page dots, hue-tinted
+└────────────────────────────────────────┘
+```
+
+Carousel:
+
+- Outer wrapper `<motion.div drag="x" dragDirectionLock dragConstraints={{ left: 0, right: 0 }} dragElastic={0.2}>`.
+- Render only `[prev, current, next]`. The other 5 lazy chunks stay un-fetched until the user swipes near them — the same invariant that keeps the dev-worker memory floor honest.
+- `onDragEnd`: snap to neighbor if `Math.abs(info.offset.x) > 50 || Math.abs(info.velocity.x) > 500`, else spring back to centre.
+- `touchAction: 'pan-y'` on the outer container so the browser handles vertical scroll natively; framer-motion only intercepts horizontal.
+- Edge-swipe-down: a 24 px-tall invisible strip pinned to `top: 0` with its own `onPanEnd` that opens the Launchpad sheet when `info.offset.y > 80`.
+
+Bottom dots: 8 dots (one per dash, hue-tinted from `viewHues[currentDashId]`), active dot enlarged. Tap a dot to jump directly — cheaper than discovering the swipe gesture.
+
+`NotificationBell` stays top-right at smaller scale; its existing `AnimatePresence` dropdown rerolls as a full-height bottom sheet on narrow viewports.
+
+### MD-4 — Launchpad bottom sheet ⏳
+
+Add a `variant?: 'fullscreen' | 'sheet'` prop to `components/overlays/LaunchpadOverlay.tsx`.
+
+- `'sheet'`: a `motion.div` rising from bottom to ~90 vh, rounded top corners, backdrop-blur. Drag-down on the handle dismisses.
+- Body content (dash grid, reorder logic, edit-mode toggle) is unchanged — the existing JSX runs verbatim, just inside a sheet container instead of taking the canvas.
+- Two new rows appended below the dash grid: "Library" (opens `SavedPapersOverlay`, currently the `Library` button at `Dashboard.tsx:265`) and "AI Companion" (the `MessageSquare` button at line 282, gated on `aiCompanionEnabled`). They have no home on mobile once the bottom bar is gone, so they live here.
+
+Desktop keeps `variant="fullscreen"`. MobileShell's title-tap handler passes `variant="sheet"`.
+
+### MD-5 — Inner-view audit ⏳
+
+A few horizontal scrollers inside cards may fight the outer carousel. Audit + verify each on a real device:
+
+- `components/views/SpaceView.tsx:279` — lunar cycle strip (`overflow-x-auto`). Inside the swipe area; needs verification that the inner scroller's pointer capture wins below the 50 px outer threshold.
+- `components/cards/ApplicationsKanbanCard.tsx` — kanban lanes have framer-motion card drag (already uses pointer capture, expected fine but real-device check).
+- `components/grids/CardGrid.tsx:29` — already collapses to `grid-cols-1` at `< md:`, so masonry-style space-news views render single-column on phones with no further work.
+- `components/Section.tsx:22` per-section `px-6` headers are fine as-is.
+
+Strategy: rely on `dragDirectionLock` + the 50 px / 500 px · s⁻¹ outer threshold. Inner horizontal scrollers under that threshold keep the gesture by default.
+
+### MD-6 — Preference UI ⏳
+
+Add a "Layout" segmented control inside the Launchpad sheet (Auto / Mobile / Desktop) bound to `mobileLayoutPreference`. Mirror on Internal Systems for grep-discoverability — that's where other device prefs already surface.
+
+### MD-7 — Validation ⏳
+
+- Manual: iOS Safari on a real phone (notch handling, edge swipe, momentum). Chrome DevTools mobile emulation at 375 × 812. Desktop browser resized below 768 px.
+- DevTools network panel: confirm only 3 dash chunks fetch at a time — the lazy-mount-neighbors invariant from MD-3.
+- `npm run test:hermetic` stays green. The Dashboard isn't covered there but the suite should remain unaffected (no API, schema, or repository changes).
+
+No new hermetic file. The carousel is gesture / animation behavior that DOM-level assertions can't meaningfully cover; verification is "feels right on a real phone."
+
+### File touch estimate
+
+| File | Change | Lines |
+| --- | --- | ---: |
+| `app/layout.tsx` | MD-0 — `viewport` export | ~5 |
+| `hooks/useMobileLayout.ts` | new (MD-1) | ~30 |
+| `components/providers/state/index.ts` | MD-1 — new field + v7→v8 migration | ~15 |
+| `components/Dashboard.tsx` | MD-2 — extract `useDashCarousel()`, shell fork | ~80 net |
+| `components/dashboard/MobileShell.tsx` | new (MD-3) | ~150 |
+| `components/dashboard/DesktopShell.tsx` | extracted from Dashboard | ~140 |
+| `components/overlays/LaunchpadOverlay.tsx` | MD-4 — `variant` prop + Library/AI rows | ~40 |
+
+~7 files, ~450 lines net. No schema, API, repository, or scheduler changes.
 
 ---
 

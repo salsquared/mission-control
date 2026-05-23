@@ -276,7 +276,7 @@ export const SpaceView: React.FC = () => {
                                 })?.phase || moonData.weekly_cycles[7]?.phase}
                             </div>
 
-                            <div ref={moonScrollRef} className="flex gap-2 overflow-x-auto pb-2 mt-2 scrollbar-none relative">
+                            <div ref={moonScrollRef} className="flex gap-2 overflow-x-auto pb-2 mt-2 scrollbar-none relative touch-pan-x">
                                 {moonData.weekly_cycles.map((day: any) => {
                                     const dateObj = new Date(day.date + 'T00:00:00');
                                     const now = new Date();

@@ -95,14 +95,22 @@ const DEFAULT_POSTING_FILTERS_BY_TRACK: Record<PostingsTrackKey, PostingFilters>
     side: DEFAULT_POSTING_FILTERS,
 };
 
+// Track D / MD-1: mobile-mode activation override. `auto` defers to the
+// matchMedia('(max-width: 768px)') check; the force values pin the shell
+// regardless of viewport (useful for testing mobile mode on a desktop browser,
+// or for users who want to opt out on a tablet).
+export type MobileLayoutPreference = "auto" | "force-on" | "force-off";
+
 interface DevicePrefsSlice {
     autoResearch: boolean;
     aiCompanionEnabled: boolean;
     postingFilters: Record<PostingsTrackKey, PostingFilters>;
+    mobileLayoutPreference: MobileLayoutPreference;
 
     setAutoResearch: (v: boolean) => void;
     setAiCompanionEnabled: (v: boolean) => void;
     setPostingFilters: (track: PostingsTrackKey, next: PostingFilters) => void;
+    setMobileLayoutPreference: (v: MobileLayoutPreference) => void;
 }
 
 // ---------- Combined store ----------
@@ -162,10 +170,12 @@ export const useAppStore = create<AppState>()(
             autoResearch: false,
             aiCompanionEnabled: false,
             postingFilters: DEFAULT_POSTING_FILTERS_BY_TRACK,
+            mobileLayoutPreference: "auto",
             setAutoResearch: (autoResearch) => set({ autoResearch }),
             setAiCompanionEnabled: (aiCompanionEnabled) => set({ aiCompanionEnabled }),
             setPostingFilters: (track, next) =>
                 set((s) => ({ postingFilters: { ...s.postingFilters, [track]: next } })),
+            setMobileLayoutPreference: (mobileLayoutPreference) => set({ mobileLayoutPreference }),
         }),
         {
             name: 'app-state',
@@ -176,8 +186,9 @@ export const useAppStore = create<AppState>()(
                 activeViewId: state.activeViewId,
                 viewScreenshots: state.viewScreenshots,
                 postingFilters: state.postingFilters,
+                mobileLayoutPreference: state.mobileLayoutPreference,
             }),
-            version: 7,
+            version: 8,
             migrate: (persisted: any, fromVersion: number) => {
                 // v2 → v3: flip includeUnspecified to false. Existing users
                 // would otherwise inherit the old `true` default and the
@@ -194,6 +205,9 @@ export const useAppStore = create<AppState>()(
                 //          had configured for career; side starts as the same
                 //          shape (sensible: their current company/location
                 //          filters were career-flavored, so career inherits).
+                // v7 → v8 (MD-1 / Track D): introduce `mobileLayoutPreference`
+                //          (default 'auto'). Existing users get auto-detection
+                //          on first reload after the mobile shell ships.
                 const pf = persisted.postingFilters;
                 // Normalize whatever's at persisted.postingFilters into the
                 // current PostingFilters shape. Handles either an old single-
@@ -235,12 +249,18 @@ export const useAppStore = create<AppState>()(
                     const one = normalizeOne(pf);
                     postingFilters = { career: one, side: one };
                 }
+                const mobileLayoutPreference: MobileLayoutPreference =
+                    persisted.mobileLayoutPreference === "force-on" ||
+                    persisted.mobileLayoutPreference === "force-off"
+                        ? persisted.mobileLayoutPreference
+                        : "auto";
                 return {
                     autoResearch: persisted.autoResearch ?? false,
                     aiCompanionEnabled: persisted.aiCompanionEnabled ?? persisted.backgroundTasks ?? false,
                     activeViewId: persisted.activeViewId ?? 'rocketry',
                     viewScreenshots: persisted.viewScreenshots ?? {},
                     postingFilters,
+                    mobileLayoutPreference,
                 };
             },
         }

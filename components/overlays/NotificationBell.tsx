@@ -126,7 +126,7 @@ export const NotificationBell: React.FC = () => {
             <button
                 onClick={() => setOpen(o => !o)}
                 aria-label={hasUnread ? `Notifications — ${unread} unread` : "Notifications"}
-                className="fixed top-4 right-4 z-40 flex items-center justify-center w-10 h-10 rounded-full bg-black/40 border border-white/10 hover:border-white/20 hover:bg-black/60 backdrop-blur-sm text-white/70 hover:text-white transition-all shadow-lg"
+                className="fixed top-[max(1rem,env(safe-area-inset-top))] right-[max(1rem,env(safe-area-inset-right))] z-40 flex items-center justify-center w-10 h-10 rounded-full bg-black/40 border border-white/10 hover:border-white/20 hover:bg-black/60 backdrop-blur-sm text-white/70 hover:text-white transition-all shadow-lg"
             >
                 {hasUnread ? <BellRing className="w-4 h-4" /> : <Bell className="w-4 h-4" />}
                 {hasUnread && (
