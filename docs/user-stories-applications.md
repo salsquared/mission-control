@@ -48,7 +48,7 @@ Working list. Priority emoji: **🔴** must-have for next ship, **🟡** importa
 25. 🔴 ✅ As a user, when the crawler finds a new posting matching a high-priority watchlist, I want a notification (in-app, browser push, optionally email) within minutes — not the next time I open the dashboard.
 26. 🟡 ✅ As a user, I want a per-watchlist notification preference (e.g., "Rocket Lab — notify on anything new", "LinkedIn — daily digest only") so I'm not pinged for every fuzzy match.
 27. 🟡 ✅ As a user, I want notifications for application-side events too — interview scheduled, offer received, no response in N days, decision deadline approaching — using the same delivery mechanism as the crawler.
-28. 🔵 As a user, I want a "quiet hours" window so notifications don't fire while I'm asleep.
+28. 🔵 ✅ As a user, I want a "quiet hours" window so notifications don't fire while I'm asleep. *(Shipped 2026-05-22 — `GlobalSetting.quietHoursStart/End/Timezone` columns. `dispatchNotification` strips `email` from the channels of any non-critical dispatch that lands inside the window; the in-app surface keeps firing so the bell catches up at wake time. Critical tier (offers, interview-scheduled) bypasses the window — the user opted into the "ping me regardless" semantics for those. Wrap-around windows (22:00 → 08:00) handled correctly.)*
 
 ## 7. Resume & professional history
 
@@ -118,10 +118,10 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 
 - **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories 56–59). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
 - **🟡: 27 total, 25 ✅ + 1 ◐ + 1 ⛔.** Story **47** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story 40). Story **37** is ⛔ user-declined (2026-05-15). All other 🟡 closed.
-- **🔵 shipped: 11/13** (stories **23** negative filters, **24** comp parsing, **33** profile snapshots ◐ capture only, **41** skills-gap, **45** suggested rewrites, **46** README ingestion, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks, **63** bulk-move tracks). User-declined: **40** (cover letter). Genuinely open: **28** (quiet hours).
+- **🔵 shipped: 12/13** (stories **23** negative filters, **24** comp parsing, **28** quiet hours, **33** profile snapshots ◐ capture only, **41** skills-gap, **45** suggested rewrites, **46** README ingestion, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks, **63** bulk-move tracks). User-declined: **40** (cover letter). Genuinely open: none — story **33** is ◐ partial pending rollback UX, but capture is shipped.
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **28** quiet hours; **33** rollback UX; RAH-12 Gemini rate-limit.
+**Next-up candidates** (small surface, real leverage): **33** rollback UX (the deferred half of profile snapshots); RAH-12 Gemini rate-limit.
 
 ---
 

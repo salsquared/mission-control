@@ -14,7 +14,7 @@
 ## Last session
 
 - **Date:** 2026-05-22 (consolidated TODO-march session).
-- **Branch:** `main`. **Eight things landed end-to-end, eight commits ahead of `origin/main`:**
+- **Branch:** `main`. **Nine things landed end-to-end, nine commits ahead of `origin/main`:**
   - `ace2be9` — Story 33 capture-side (ProfileSnapshot model + UI) + cross-doc reconciliation.
   - `25ff47b` — RAH-13 age-encrypted DB backups + recovery runbook.
   - `2d0c594` — Story 50 recruiter contacts (Contact model + UI + stale-nudge body rewrite).
@@ -22,7 +22,8 @@
   - `e3cb694` — Story 63 bulk-move applications between tracks (no schema; new route + select-mode UI).
   - `e3fcd85` — Story 24 compensation parsing (`JobPosting.compensationMin/Max/Currency/Cadence` columns + parser + UI chip).
   - `6ed817c` — Story 46 README ingestion (`Project.readme` + scheduler fetch + rewrite-prompt context).
-  - (next) — Story 45 suggested portfolio rewrites (metric-delta detector + scheduler dispatch).
+  - `f44cb64` — Story 45 suggested portfolio rewrites (metric-delta detector + scheduler dispatch).
+  - (next) — Story 28 quiet hours (`GlobalSetting.quietHours*` + dispatcher gate).
 - **Earlier in this same session** (kept for reference, full details below in §Recently completed):
   1. **Cross-doc reconciliation** — `next_steps.md` had drifted from `user-stories-applications.md` and `implementation.md`: the "Immediate next actions" list still showed Story 26 (per-watchlist notification mode, actually shipped in MB Phase 2b), Story 37 (multi-template, actually ⛔ user-killed 2026-05-15), and Story 41 (skills-gap, actually shipped + has hermetic) as open work. `implementation.md` itself had an internal contradiction — line 48 marked skills-gap ✅ but the M8 Phase 3 prose claimed it was deferred. All three docs fixed.
   2. **Story 33 capture side shipped** — `ProfileSnapshot` model + migration `add_profile_snapshots` applied to both dev.db and prod.db; repository + 2 API routes; api-client surface; new "Snapshot now" UI card in a "History" section on `ProfileView`. Hermetic smoke 17/17, full pre-push 34/34, prod build green, PM2 prod + dev restarted. Rollback/restore UX intentionally deferred — see `docs/implementation.md` M7.5.
@@ -55,9 +56,10 @@ Out of scope until top-of-stack ships: AI Companion prompt tuning, visual polish
 
 ## Immediate next actions (in order)
 
-1. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; gates `dispatchNotification` email delivery within the window (in-app stays unaffected). Deferred until in-app noise is actually a problem — flag here in case the user wants it once application-event email starts firing daily.
-2. **Story 33 rollback UX (🔵).** Capture side shipped; restore-from-snapshot is the deferred half. Build a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` from the stored payload.
-3. **RAH-12 — per-userId Gemini rate-limit (🟡 abuse).** Token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) checked before the first Gemini call. Single-user today, but a logged-in tab in a loop drains the free-tier quota.
+1. **Story 33 rollback UX (🔵).** Capture side shipped; restore-from-snapshot is the deferred half. Build a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` from the stored payload.
+2. **RAH-12 — per-userId Gemini rate-limit (🟡 abuse).** Token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) checked before the first Gemini call. Single-user today, but a logged-in tab in a loop drains the free-tier quota.
+
+**Note: at this point every shippable 🔴/🟡/🔵 story is either ✅ or ⛔.** The only remaining open code work is Story 33's rollback half and RAH-12 (defense-in-depth). After those, the open backlog moves to "real-world use → first applied posting → iterate on prompts" — there's no more story-numbered scaffolding to build before sending applications.
 
 **User-side follow-ups for RAH-13 (just shipped):**
 - **Save the secret key to 1Password.** The file `~/.config/mission-control/backup.key` was generated this session. It's chmod-600 locally, but losing the Mac without an offsite copy means every encrypted backup is unrecoverable. Copy the file's full contents (including the `# created:` / `# public key:` header lines) into a 1Password secure-note titled `mission-control backup secret`.
@@ -92,6 +94,7 @@ Nothing in-flight in the editor. Story 33 capture side shipped this session (see
 
 ## Recently completed
 
+- **2026-05-22 (Story 28)** — **Quiet hours for non-critical email.** New `GlobalSetting.quietHoursStart` / `End` / `Timezone` columns (migration `add_quiet_hours`, both DBs). Pure helper `lib/notifications/quiet-hours.ts:isInQuietHours(now, config)` resolves `now` into the IANA zone via `Intl.DateTimeFormat` (DST handled automatically), supports both same-day and wrap-around windows. `dispatchNotification` strips `email` from the channels of any non-critical dispatch that lands inside the window — bell row still creates so the catch-up at wake time is intact. Critical tier (OFFER / INTERVIEW_SCHEDULED) bypasses entirely. Hermetic 20/20 (`quiet-hours-smoke.ts`). Full pre-push 41/41, prod build green.
 - **2026-05-22 (Story 45)** — **Suggested portfolio-bullet rewrites on metric deltas.** New `lib/profile/metric-deltas.ts:computeMetricDeltas(prev, next)` (pure) runs after every github-metrics tick. Detects star-threshold crossings against `[5, 10, 25, 50, 100, 250, 500, 1k, 2.5k, 5k]` (highest-only — 4→26 fires once at 25), primary-language flips, new ≥5%-share languages (filters one-off shell scripts), and commit-count jumps ≥25% AND ≥10 absolute. First-ingest (no prior metrics) is silent. Each delta dispatches a `kind='system' tier='standard'` notification with dedupKey `portfolio-rewrite:${projectId}:${type}:${milestone}` so a milestone fires at most once. `scheduler/jobs/github-metrics.ts` candidates query gains `profile: { select: { userId: true } }` for dispatch targeting. Hermetic 16/16 (`metric-deltas-smoke.ts`, wired into pre-push). Full pre-push 40/40, prod build green, schedulers restarted so the next 6h tick fires.
 - **2026-05-22 (Story 46)** — **README ingestion for portfolio repos.** New `Project.readme` + `readmeUpdatedAt` columns (migration `add_project_readme`, both DBs). `fetchGithubReadme(ownerRepo)` separate from `fetchGithubRepoMetrics` so the metrics hot path stays at 3 API calls; weekly cadence in the scheduler (independent of the 20h metrics gate); README failures don't tank metrics refresh for the same project. Markdown stored truncated at 16 KB. Resume rewrite prompt extended with a `ProjectReadmeContext` param — `app/api/resumes/route.ts` builds the context only for project-source bullets actually in the selection (avoids paying tokens on READMEs that aren't surfaced), slices 2 KB per project before prompt assembly. Pure prompt builder extracted as `buildRewriteUserPrompt` so the README branch is unit-testable; hermetic `readme-prompt-smoke.ts` (13/13). Full pre-push 39/39, prod build green, prod + scheduler-prod restarted.
 - **2026-05-22 (Story 24)** — **Compensation parsing on `JobPosting`.** New `lib/postings/compensation.ts:parseCompensation` regex pass over `(title + snippet + location)` → `compensationMin/Max/Currency/Cadence` columns. Migration `add_posting_compensation` applied to both DBs. Wired into `scheduler/jobs/job-watcher.ts` at row-create time (legacy rows stay null until the next crawl re-extracts them). Cadence detection covers `/hr`, `per day/week/month/year`, `annually` / `annual` / `yearly` / `p.a.` — slash patterns rewritten to drop the leading `\b` since a space before `/` isn't a word boundary, which had silently broken `$120 / year`-style snippets. Plausibility guards reject "5,000 employees" / "$1 / hour" garbage. UI: emerald chip on `NewPostingsCard` rows formatted as `$120k–$150k/yr` (or `$60/hr` for hourly). Hermetic `compensation-smoke.ts` (18/18). Full pre-push 38/38, prod build green, prod + scheduler-prod restarted.

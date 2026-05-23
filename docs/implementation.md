@@ -28,7 +28,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 |---|---|---|---|---|
 | 🔴 must-have | **20** | 0 | 0 | 20 (incl. §13 56–59 and story 30a) |
 | 🟡 important | **25** | 0 | 1 | 27 (story 47 ◐ partial — resume side shipped, cover-letter side OOS; story 37 ⛔ multi-template user-declined 2026-05-15) |
-| 🔵 nice-to-have | **11** | 1 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
+| 🔵 nice-to-have | **12** | 0 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
 
 ### Per-track status
 
@@ -56,11 +56,10 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13, Story 50, Story 48, Story 63, Story 24, Story 46, and Story 45 ✅ shipped 2026-05-22.
+Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13, Story 50, Story 48, Story 63, Story 24, Story 46, Story 45, and Story 28 ✅ shipped 2026-05-22.
 
-1. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
-2. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
-3. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
+1. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
+2. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
 
 ### User-declined
 
@@ -310,9 +309,9 @@ Stories: 28 (🔵), 23 (🔵), 24 (🔵).
 
 Story 49. Shipped as `scheduler/jobs/stale-applications.ts` (see MA-f.4).
 
-#### MB-3.3 — Quiet hours (story 28) — open
+#### MB-3.3 — Quiet hours (story 28) ✅
 
-User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEnd: '08:00', tz }`. Notification dispatcher holds delivery until the window opens; in-app stays unaffected. Blocked-by: actual nuisance signal from production.
+Shipped 2026-05-22. `GlobalSetting.quietHoursStart`, `quietHoursEnd`, `quietHoursTimezone` — all nullable; quiet hours are off until both Start and End are populated. Migration `add_quiet_hours`. `lib/notifications/quiet-hours.ts:isInQuietHours(now, config)` resolves `now` into the configured IANA zone via `Intl.DateTimeFormat` (DST handled by the host's zoneinfo) and tests against the window. Same-day windows are `[start, end)`; wrap-around windows (`22:00 → 08:00`) are `[start, 24:00) ∪ [00:00, end)`. `dispatchNotification` strips `email` from non-critical dispatches whose timestamp lands inside the window — the row still creates so the bell shows it, but no Gmail send fires. Critical tier (`tier === "critical"` — OFFER / INTERVIEW_SCHEDULED / etc.) bypasses entirely; the user has explicitly opted into 3 a.m. interruptions for those. Hermetic `quiet-hours-smoke.ts` (20/20) covers null-config disablement, invalid HH:MM/timezone degradation, same-day, wrap-around, zero-length window, and a non-UTC tz (`America/Los_Angeles`).
 
 #### MB-3.4 — Negative filters ✅ / compensation parsing (open)
 

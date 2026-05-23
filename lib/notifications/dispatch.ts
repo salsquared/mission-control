@@ -25,6 +25,7 @@
 import { prisma } from "@/lib/prisma";
 import type { Notification } from "@prisma/client";
 import type { NotificationKind, NotificationTier } from "@/lib/schemas/notifications";
+import { isInQuietHours } from "@/lib/notifications/quiet-hours";
 
 export interface DispatchInput {
     userId: string;
@@ -73,7 +74,27 @@ function defaultChannelsForTier(tier: NotificationTier): string {
  * non-null return.
  */
 export async function dispatchNotification(input: DispatchInput): Promise<Notification | null> {
-    const channels = input.channels ?? defaultChannelsForTier(input.tier);
+    let channels = input.channels ?? defaultChannelsForTier(input.tier);
+
+    // Story 28 — quiet hours. If the user has a quiet-hours window
+    // configured AND we're inside it AND this dispatch was going to email,
+    // strip "email" from channels so the row still surfaces in the bell
+    // but no Gmail send fires. Critical tier (offers, etc.) bypasses quiet
+    // hours — the user explicitly wants those even at 3am.
+    if (input.tier !== "critical" && channels.includes("email")) {
+        const settings = await prisma.globalSetting.findUnique({
+            where: { id: "global" },
+            select: { quietHoursStart: true, quietHoursEnd: true, quietHoursTimezone: true },
+        });
+        if (settings && isInQuietHours(new Date(), {
+            start: settings.quietHoursStart,
+            end: settings.quietHoursEnd,
+            timezone: settings.quietHoursTimezone,
+        })) {
+            channels = channels.split(",").map(c => c.trim()).filter(c => c !== "email").join(",");
+        }
+    }
+
     let row: Notification;
     try {
         row = await prisma.notification.create({

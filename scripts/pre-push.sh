@@ -42,6 +42,7 @@ SUITES=(
     "scripts/tests/hermetic/compensation-smoke.ts"
     "scripts/tests/hermetic/readme-prompt-smoke.ts"
     "scripts/tests/hermetic/metric-deltas-smoke.ts"
+    "scripts/tests/hermetic/quiet-hours-smoke.ts"
     "scripts/tests/hermetic/email-message-smoke.ts"
     "scripts/tests/hermetic/watchlist-hermetic-smoke.ts"
     "scripts/tests/hermetic/negative-filters-smoke.ts"
