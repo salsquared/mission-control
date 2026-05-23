@@ -23,6 +23,7 @@ export const ApplicationsView: React.FC = () => {
     const [isScanning, setIsScanning] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isAdding, setIsAdding] = useState(false);
+    const [isAddingSide, setIsAddingSide] = useState(false);
     const [detailAppId, setDetailAppId] = useState<string | null>(null);
 
     // Track first-time authentication so background session revalidations
@@ -34,22 +35,46 @@ export const ApplicationsView: React.FC = () => {
     const queryClient = useQueryClient();
     const { data: appsData, isLoading: loading } = useQuery({
         queryKey: queryKeys.applications,
-        queryFn: () => api.applications.list(),
+        queryFn: () => api.applications.list({ track: 'career' }),
+        enabled: Boolean(session),
+    });
+    // MB Phase 4: separate query for the side-track kanban. Both queries hit
+    // the same /api/applications endpoint with ?track=, so React Query keeps
+    // them partitioned in cache.
+    const { data: sideAppsData, isLoading: sideLoading } = useQuery({
+        queryKey: [...queryKeys.applications, 'side'] as const,
+        queryFn: () => api.applications.list({ track: 'side' }),
         enabled: Boolean(session),
     });
     const apps: AppRecord[] = (appsData?.applications ?? []) as unknown as AppRecord[];
+    const sideApps: AppRecord[] = (sideAppsData?.applications ?? []) as unknown as AppRecord[];
 
+    // Predicate-based invalidation covers both `['applications']` and
+    // `['applications', 'side']` so a single Application SSE event refreshes
+    // both kanbans (a row could have its track flipped, which removes it from
+    // one list and inserts into the other).
     const invalidateApps = useCallback(
-        () => queryClient.invalidateQueries({ queryKey: queryKeys.applications }),
+        () => queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'applications',
+        }),
         [queryClient]
     );
     useServerEvents('Application', invalidateApps);
     useServerEvents('CalendarEvent', invalidateApps);
 
     const handleStatusChange = useCallback(async (id: string, newStatus: string) => {
-        const prev = queryClient.getQueryData(queryKeys.applications);
-        queryClient.setQueryData(queryKeys.applications, (old: any) => ({
-            applications: (old?.applications ?? []).map((a: any) =>
+        // MB Phase 4: the dragged row could be in either the career or the side
+        // cache. Locate it and patch the matching cache optimistically so the
+        // kanban reflects the new status before the server round-trip
+        // completes.
+        const careerKey = queryKeys.applications;
+        const sideKey = [...queryKeys.applications, 'side'] as const;
+        const careerPrev = queryClient.getQueryData<{ applications: AppRecord[] }>(careerKey);
+        const sidePrev = queryClient.getQueryData<{ applications: AppRecord[] }>(sideKey);
+        const inCareer = (careerPrev?.applications ?? []).some(a => a.id === id);
+        const targetKey = inCareer ? careerKey : sideKey;
+        queryClient.setQueryData<{ applications: AppRecord[] }>(targetKey, (old) => ({
+            applications: (old?.applications ?? []).map((a) =>
                 a.id === id ? { ...a, status: newStatus, lastUpdateAt: new Date().toISOString() } : a
             ),
         }));
@@ -57,7 +82,8 @@ export const ApplicationsView: React.FC = () => {
             await api.applications.update({ id, status: newStatus as any });
             queryClient.invalidateQueries({ queryKey: ['application-events'] });
         } catch (e: any) {
-            queryClient.setQueryData(queryKeys.applications, prev);
+            // Roll back only the cache we touched.
+            queryClient.setQueryData(targetKey, inCareer ? careerPrev : sidePrev);
             toastStore.push({ message: `Status update failed: ${e.message}`, type: 'error' });
         }
     }, [queryClient]);
@@ -222,6 +248,33 @@ export const ApplicationsView: React.FC = () => {
         { id: "new-postings", content: <NewPostingsCard /> },
     ];
 
+    // MB Phase 4. Side pipeline kanban: same status columns as career, just
+    // bound to track="side". Calendar + Account Status stay shared across
+    // both tracks above — interviews are interviews and there's only one
+    // Gmail account.
+    const sidePipelineCards: CardItem[] = [
+        {
+            id: "side-kanban",
+            colSpan: 3,
+            className: "max-h-[50vh]",
+            content: (
+                <ApplicationsKanbanCard
+                    track="side"
+                    apps={sideApps}
+                    loading={sideLoading}
+                    onAdd={() => setIsAddingSide(true)}
+                    onStatusChange={handleStatusChange}
+                    onItemClick={setDetailAppId}
+                />
+            )
+        }
+    ];
+
+    const sideDiscoveryCards: CardItem[] = [
+        { id: "side-watchlists", content: <WatchlistsCard track="side" /> },
+        { id: "side-new-postings", content: <NewPostingsCard track="side" /> },
+    ];
+
     return (
         <Scrollbar className="w-full h-full pb-8">
             <Section title="Applications Pipeline" description="Auto-syncs via Gmail & Pub/Sub API">
@@ -254,10 +307,31 @@ export const ApplicationsView: React.FC = () => {
                     </div>
                 </Section>
             )}
+            {session && (
+                <Section title="Side Pipeline" description="Pay-the-bills work — gig / blue-collar / short-term. Same status columns; separate kanban so career leads aren't diluted.">
+                    <div className="mt-4">
+                        <CardGrid items={sidePipelineCards} />
+                    </div>
+                </Section>
+            )}
+            {session && (
+                <Section title="Side Discovery" description="Keyword watchlists for job types (barista, warehouse, delivery, security). Shares the same crawler + 10-min scheduler tick as career watchlists.">
+                    <div className="mt-4">
+                        <CardGrid items={sideDiscoveryCards} columns={2} />
+                    </div>
+                </Section>
+            )}
             <AddApplicationModal
                 open={isAdding}
                 onClose={() => setIsAdding(false)}
                 onCreated={() => invalidateApps()}
+                defaultTrack="career"
+            />
+            <AddApplicationModal
+                open={isAddingSide}
+                onClose={() => setIsAddingSide(false)}
+                onCreated={() => invalidateApps()}
+                defaultTrack="side"
             />
             {detailAppId && (
                 <ApplicationDetailOverlay

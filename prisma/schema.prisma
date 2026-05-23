@@ -154,16 +154,25 @@ model Application {
   posting          JobPosting?       @relation(fields: [postingId], references: [id], onDelete: SetNull)
   generatedResumes GeneratedResume[]
 
+  // MB Phase 4 — "career" | "side". Career is the long-term professional
+  // pipeline; side is gig / blue-collar / pay-the-bills work tracked separately
+  // so the two kanbans don't pollute each other. New rows default to career;
+  // legacy rows pre-migration also default to career.
+  track           String    @default("career")
+
   @@index([userId, status])
   @@index([userId, kind])
+  @@index([userId, track])
   // Fallback dedup lookup (see senderDomain field comment).
   @@index([userId, senderDomain])
-  // PA-3: race-safe dedup. SQLite allows multiple NULLs in a unique compound
-  // so legacy rows with normalizedCompany=null stay unconstrained until
-  // backfilled. Once both rows for a user have non-null normalizedCompany,
-  // a duplicate insert throws P2002 → ingest catches and falls through to
-  // update.
-  @@unique([userId, normalizedCompany])
+  // PA-3 + MB Phase 4: race-safe dedup, now scoped by track so the same employer
+  // can exist as both a career application and a side application (e.g.
+  // Starbucks corporate role vs. Starbucks barista). SQLite allows multiple
+  // NULLs in a unique compound so legacy rows with normalizedCompany=null stay
+  // unconstrained until backfilled. Once both rows for a user have non-null
+  // normalizedCompany, a duplicate insert throws P2002 → ingest catches and
+  // falls through to update.
+  @@unique([userId, normalizedCompany, track])
 }
 
 model ApplicationEvent {
@@ -355,6 +364,11 @@ model Watchlist {
   lastSuccessAt   DateTime?
   lastError       String?
   active          Boolean   @default(true)
+  // MB Phase 4 — "career" | "side". Career = long-term professional ATSes
+  // (Greenhouse, Lever, Workday, etc.); side = gig / blue-collar keyword
+  // watchlists (typically LinkedIn search by job-type keywords). Scheduler
+  // crawls both transparently; UI segregates them.
+  track           String    @default("career")
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -362,6 +376,7 @@ model Watchlist {
   postings JobPosting[]
 
   @@index([userId, active])
+  @@index([userId, track, active])
 }
 
 model JobPosting {

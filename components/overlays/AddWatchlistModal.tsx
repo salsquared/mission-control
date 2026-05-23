@@ -32,6 +32,13 @@ interface AddWatchlistModalProps {
      * picker still works, just without the dedup hint.
      */
     existingWatchlists?: readonly WatchlistWire[];
+    /**
+     * MB Phase 4. Stamps every watchlist created from this modal instance
+     * with the given track. Defaults to "career" so existing call sites are
+     * unaffected. The side-track WatchlistsCard mounts its own modal with
+     * defaultTrack="side" so the "+ Add watchlist" button creates side rows.
+     */
+    defaultTrack?: "career" | "side";
 }
 
 // Three top-level modes. Default lands on "find" because the most common
@@ -125,7 +132,7 @@ function uniqByName<T extends { name: string }>(items: readonly T[]): T[] {
     return out;
 }
 
-export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onClose, onCreated, existingWatchlists = [] }) => {
+export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onClose, onCreated, existingWatchlists = [], defaultTrack = "career" }) => {
     // SSR gate: createPortal needs document.body, which only exists on the
     // client. Without this, the modal would crash during server render.
     const [mounted, setMounted] = useState(false);
@@ -439,6 +446,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     companyName: "LinkedIn search",
                 },
                 scheduleMinutes: scheduleHours * 60,
+                track: defaultTrack,
             });
             toastStore.push({ message: `Watching for: ${name}`, type: "info" });
             onCreated();
@@ -483,6 +491,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     // PB-14: bind to the directory entry so future slug/ATS
                     // corrections in lib/company-directory.ts apply automatically.
                     directoryKey: entry.name,
+                    track: defaultTrack,
                 })
             );
             const discoverPromises = discoverEntries.map(entry =>
@@ -490,6 +499,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     name: entry.name,
                     config: { kind: entry.kind, boardSlug: entry.slug, companyName: entry.companyName },
                     scheduleMinutes: scheduleHours * 60,
+                    track: defaultTrack,
                 })
             );
             const allEntriesOrdered = [...dirEntries, ...discoverEntries];
@@ -601,6 +611,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     name: entry.name,
                     config: { kind: entry.kind, boardSlug: entry.slug, companyName: entry.companyName },
                     scheduleMinutes: scheduleHours * 60,
+                    track: defaultTrack,
                 })
             ));
             const okCount = results.filter(r => r.status === "fulfilled").length;
@@ -685,6 +696,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 name: advName.trim(),
                 config,
                 scheduleMinutes: scheduleHours * 60,
+                track: defaultTrack,
             });
             toastStore.push({ message: `Watchlist created: ${advName.trim()}`, type: "info" });
             onCreated();
@@ -710,12 +722,21 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     </button>
                 </div>
 
-                {/* Mode tabs */}
+                {/* Mode tabs. MB Phase 4: the side track hides "Watch company"
+                  * and "Discover" because both feed off COMPANY_DIRECTORY +
+                  * Gemini career suggestions (Anthropic, Rocket Lab, …) and
+                  * surfacing those inside the side modal would muddle the
+                  * pipelines the user explicitly wants kept separate (story 56).
+                  * Side stays keyword-first per story 57 — "Find roles" is the
+                  * primary path, "Advanced" remains for the rare case the user
+                  * wants to point at a specific big-box ATS slug. */}
                 <div className="flex border-b border-white/10 shrink-0">
                     {[
                         { id: "find" as const, label: "Find roles", Icon: Sparkles, hint: "Search by what you want to do" },
-                        { id: "company" as const, label: "Watch company", Icon: Building2, hint: "Pick a known company" },
-                        { id: "discover" as const, label: "Discover", Icon: Telescope, hint: "Find more companies in a topic via Gemini" },
+                        ...(defaultTrack === "side" ? [] : [
+                            { id: "company" as const, label: "Watch company", Icon: Building2, hint: "Pick a known company" },
+                            { id: "discover" as const, label: "Discover", Icon: Telescope, hint: "Find more companies in a topic via Gemini" },
+                        ]),
                         { id: "advanced" as const, label: "Advanced", Icon: Settings2, hint: "Hand-config a custom source" },
                     ].map(({ id, label, Icon, hint }) => {
                         const active = mode === id;

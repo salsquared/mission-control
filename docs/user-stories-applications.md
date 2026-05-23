@@ -92,7 +92,20 @@ Working list. Priority emoji: **🔴** must-have for next ship, **🟡** importa
 
 51. 🔵 ✅ As a user, I want the same pipeline to handle non-job applications — citizenship, grad school, grants, accelerators — since the schema already supports `kind`. (Decide at MVP: keep the UI job-focused but don't paint into a corner.)
 
-## 13. Future / out of scope for now
+## 13. Side-work pipeline
+
+Story 51 already proved the schema can carry multiple `kind`s through one pipeline. This section is the next axis: a parallel pipeline for *gig / blue-collar / pay-the-bills* applications, run alongside the career pipeline on the same dash. Background: the user is working as a security guard at Crypto Arena while career-hunting, and gig leads (barista, warehouse, delivery driver) shouldn't dilute the career kanban or vice-versa. Watchlists for this side are keyword-first (job type) rather than employer-first.
+
+56. 🔴 ✅ As a user juggling a security-guard job at Crypto Arena, I want a second pipeline for gig / blue-collar applications so leads I send for "barista" or "warehouse" don't dilute my career kanban.
+57. 🔴 ✅ As a user, I want side-track watchlists to take *keywords* (job-type queries like "delivery driver Los Angeles") instead of specific companies, since gig hunting is type-first not employer-first.
+58. 🔴 ✅ As a user, I want a separate kanban for side-track applications with the same status columns (Interested → Applied → … → Rejected) so the workflow is familiar.
+59. 🔴 ✅ As a user, I want side-track new-postings to surface in their own feed card so I can scan gig leads independently of career leads.
+60. 🟡 ✅ As a user, when a gig employer cold-emails me (no prior watchlist), I want the application to default to career and be easy to reclassify with one click — I'd rather flip a wrong one than train a classifier.
+61. 🟡 ✅ As a user, I want the same Calendar widget and Account Status card to serve both tracks — interviews are interviews, and I only have one Gmail account.
+62. 🔵 ✅ As a user, I want the same employer to be allowed in both tracks as separate applications (e.g., Starbucks barista in side, Starbucks corporate role in career) so dedup doesn't silently merge them.
+63. 🔵 As a user, I want to bulk-move applications between tracks if I miscategorize a batch (e.g., realized after the fact a Costco "operations associate" was actually corporate). *(Single-row flip via the kind/track toggle in the detail overlay ships with MB Phase 4; bulk-select UI is future.)*
+
+## 14. Future / out of scope for now
 
 52. 🔵 Browser extension for one-click "save this posting" from any careers page (avoids needing every site supported by the crawler).
 53. 🔵 Auto-fill of application forms (Greenhouse / Workday / Lever) from the stored profile.

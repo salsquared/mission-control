@@ -22,7 +22,14 @@ export async function trackAsApplication(
 ): Promise<TrackResult> {
     const posting = await prisma.jobPosting.findFirst({
         where: { id: postingId, watchlist: { userId } },
-        select: { id: true, company: true, title: true, status: true, sourceUrl: true },
+        // MB Phase 4: pull the parent watchlist's track so the created
+        // Application lands in the correct kanban. Side-track postings (from
+        // keyword watchlists like "warehouse Los Angeles") become side-track
+        // applications; career-track postings stay career.
+        select: {
+            id: true, company: true, title: true, status: true, sourceUrl: true,
+            watchlist: { select: { track: true } },
+        },
     });
     if (!posting) return { ok: false, reason: "posting-not-found" };
 
@@ -54,6 +61,7 @@ export async function trackAsApplication(
                     role: posting.title,
                     status: "INTERESTED",
                     kind: "job",
+                    track: posting.watchlist.track,
                     postingId: posting.id,
                     lastUpdateAt: now,
                 },

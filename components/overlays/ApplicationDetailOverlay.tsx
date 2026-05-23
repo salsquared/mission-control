@@ -21,6 +21,7 @@ import { api, queryKeys } from "@/lib/api-client";
 import {
     APPLICATION_STATUSES,
     APPLICATION_KINDS,
+    APPLICATION_TRACKS,
     type ApplicationsListResponseSchema,
     type ApplicationSchema,
     type ApplicationPatchSchema,
@@ -149,6 +150,27 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         } catch (e) {
             queryClient.setQueryData(queryKeys.applications, prev);
             toastStore.push({ message: `Update failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
+        }
+    };
+
+    // MB Phase 4: per-row track flip. The application disappears from the
+    // current kanban and reappears in the other on save — the predicate-based
+    // invalidation in ApplicationsView's invalidateApps catches both query
+    // keys so React Query refetches both lists.
+    const handleTrackChange = async (newTrack: typeof APPLICATION_TRACKS[number]) => {
+        if (!app || app.track === newTrack) return;
+        const prev = optimisticPatch({ track: newTrack });
+        try {
+            await api.applications.update({ id: applicationId, track: newTrack });
+            // The career-track list still has this row cached as track=career;
+            // invalidate by predicate so both `['applications']` and
+            // `['applications', 'side']` queries refetch.
+            queryClient.invalidateQueries({
+                predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'applications',
+            });
+        } catch (e) {
+            queryClient.setQueryData(queryKeys.applications, prev);
+            toastStore.push({ message: `Track move failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
 
@@ -307,6 +329,25 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                                             }`}
                                         >
                                             {k}
+                                        </button>
+                                    ))}
+                                </div>
+                                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                    <span className="text-[10px] uppercase tracking-wider text-white/30 mr-1">Track</span>
+                                    {APPLICATION_TRACKS.map((t) => (
+                                        <button
+                                            key={t}
+                                            onClick={() => handleTrackChange(t)}
+                                            className={`text-[10px] uppercase tracking-wider font-bold px-2 py-1 rounded-md border transition-colors ${
+                                                app.track === t
+                                                    ? (t === 'career'
+                                                        ? 'bg-blue-500/20 text-blue-300 border-blue-500/30'
+                                                        : 'bg-amber-500/20 text-amber-300 border-amber-500/30')
+                                                    : 'bg-white/5 text-white/40 border-white/10 hover:bg-white/10 hover:text-white/70'
+                                            }`}
+                                            title={t === 'career' ? 'Career — main pipeline' : 'Side — gig / blue-collar pipeline'}
+                                        >
+                                            {t}
                                         </button>
                                     ))}
                                 </div>

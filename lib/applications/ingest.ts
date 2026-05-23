@@ -121,10 +121,18 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     // `extractSenderDomain` returns null for multi-tenant ATS / admissions
     // platforms — those can't identify a single employer, so we don't fall
     // back to them.
+    //
+    // MB Phase 4: cold Gmail ingest always operates within the "career" track.
+    // Side-track applications enter only through the track-as-application
+    // route (which inherits track from the parent watchlist) or via a user
+    // PATCH on an existing row. This keeps the classifier-free ingest path
+    // simple and predictable — the user reclassifies any miscategorized side
+    // employer with one click in ApplicationDetailOverlay.
+    const ingestTrack = "career";
     const senderDomain = extractSenderDomain(from);
-    let existingApp = await findApplicationByCompany(userId, parsed.company);
+    let existingApp = await findApplicationByCompany(userId, parsed.company, ingestTrack);
     if (!existingApp && senderDomain) {
-        const byDomain = await findApplicationBySenderDomain(userId, senderDomain);
+        const byDomain = await findApplicationBySenderDomain(userId, senderDomain, ingestTrack);
         if (byDomain) {
             existingApp = byDomain;
             console.info(
@@ -232,7 +240,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             action = "created";
         } catch (err: any) {
             if (err?.code !== "P2002") throw err;
-            const raced = await findApplicationByCompany(userId, parsed.company);
+            const raced = await findApplicationByCompany(userId, parsed.company, ingestTrack);
             if (!raced) {
                 // The conflict came from somewhere else (different unique
                 // constraint, transient state). Surface so we don't silently

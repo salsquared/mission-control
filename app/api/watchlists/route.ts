@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
-import { WatchlistPostSchema } from "@/lib/schemas/watchlists";
+import { WatchlistPostSchema, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig, resolveCreatePayload } from "@/lib/watchlists/hydrate";
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 
@@ -20,7 +20,9 @@ function serialize(w: {
     notificationMode: string;
     lastDigestAt: Date | null;
     scheduleMinutes: number; lastRunAt: Date | null; lastSuccessAt: Date | null;
-    lastError: string | null; active: boolean; createdAt: Date; updatedAt: Date;
+    lastError: string | null; active: boolean;
+    track: string;
+    createdAt: Date; updatedAt: Date;
 }) {
     let parsedFilters: string[] = [];
     if (w.negativeFilters) {
@@ -58,15 +60,23 @@ function serialize(w: {
     };
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
 
+    // MB Phase 4: optional ?track=career|side filter. Omitted = all tracks
+    // (any unrecognized value also falls through to "all" rather than 400 —
+    // matches the lenient ?status= filter convention elsewhere in this route).
+    const trackParam = req.nextUrl.searchParams.get("track");
+    const trackFilter = trackParam ? WatchlistTrackSchema.safeParse(trackParam) : null;
+    const where: { userId: string; track?: string } = { userId };
+    if (trackFilter?.success) where.track = trackFilter.data;
+
     try {
         const rows = await prisma.watchlist.findMany({
-            where: { userId },
+            where,
             orderBy: { createdAt: "asc" },
         });
         const out = rows.map(serialize).filter((x): x is Exclude<ReturnType<typeof serialize>, null> => x !== null);
@@ -102,6 +112,7 @@ export async function POST(req: NextRequest) {
                 directoryKey: resolved.directoryKey,
                 scheduleMinutes: parsed.data.scheduleMinutes,
                 notificationMode: parsed.data.notificationMode,
+                track: parsed.data.track,
             },
         });
         broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });

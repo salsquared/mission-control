@@ -141,6 +141,8 @@ export interface PostingsListFilter {
     excludeCompanies?: readonly string[];
     remoteOnly?: boolean;
     locations?: readonly string[];
+    /** MB Phase 4: "career" | "side". Omitted = all tracks. */
+    track?: string;
 }
 
 // ─── Query keys (TanStack tuples) ──────────────────────────────────────────
@@ -194,7 +196,10 @@ export const api = {
     },
 
     applications: {
-        list: () => jsonFetch('/api/applications', ApplicationsListResponseSchema),
+        list: (filter?: { track?: string }) => {
+            const qs = filter?.track ? `?track=${encodeURIComponent(filter.track)}` : '';
+            return jsonFetch(`/api/applications${qs}`, ApplicationsListResponseSchema);
+        },
         create: (input: z.infer<typeof ApplicationPostSchema>) =>
             jsonFetch('/api/applications', ApplicationMutationResponseSchema, jsonBody('POST', input)),
         update: (input: z.infer<typeof ApplicationPatchSchema>) =>
@@ -361,7 +366,10 @@ export const api = {
     },
 
     watchlists: {
-        list: () => jsonFetch('/api/watchlists', WatchlistsListResponseSchema),
+        list: (filter?: { track?: string }) => {
+            const qs = filter?.track ? `?track=${encodeURIComponent(filter.track)}` : '';
+            return jsonFetch(`/api/watchlists${qs}`, WatchlistsListResponseSchema);
+        },
         create: (input: z.input<typeof WatchlistPostSchema>) =>
             jsonFetch('/api/watchlists', WatchlistMutationResponseSchema, jsonBody('POST', input)),
         update: (id: string, input: z.infer<typeof WatchlistPatchSchema>) =>
@@ -397,6 +405,7 @@ export const api = {
                 // insensitive for ASCII, so we don't need lowercasing.
                 params.set('locations', filter.locations.join(','));
             }
+            if (filter?.track) params.set('track', filter.track);
             const qs = params.toString();
             return jsonFetch(`/api/postings${qs ? '?' + qs : ''}`, PostingsListResponseSchema);
         },

@@ -71,7 +71,7 @@ async function main() {
         check("concurrent: the loser threw P2002", rejected.length === 1 && (rejected[0].reason as { code?: string })?.code === "P2002");
 
         // 3. findApplicationByCompany matches across suffix differences.
-        const found = await findApplicationByCompany(user.id, `${baseName} LLC`);
+        const found = await findApplicationByCompany(user.id, `${baseName} LLC`, "career");
         check("find by suffix-variant returns the keyed row", found?.id === a.id, `got id=${found?.id}`);
 
         // 4. Rename keeps normalizedCompany in sync.

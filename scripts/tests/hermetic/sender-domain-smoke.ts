@@ -107,9 +107,9 @@ async function main() {
         // Email #1: LLM returns "California State University Long Beach".
         // No existing app — create.
         const llmName1 = normalizeCompanyName("California State University Long Beach");
-        const existing1 = await findApplicationByCompany(userId, llmName1);
+        const existing1 = await findApplicationByCompany(userId, llmName1, "career");
         check("first email: no existing app by company", existing1 === null);
-        const existingByDomain1 = await findApplicationBySenderDomain(userId, csulbDomain);
+        const existingByDomain1 = await findApplicationBySenderDomain(userId, csulbDomain, "career");
         check("first email: no existing app by domain", existingByDomain1 === null);
         const app1 = await createApplication({
             userId,
@@ -132,10 +132,10 @@ async function main() {
         check("LLM-drift case: normalized names differ between #1 and #2",
             llmName1 !== llmName2,
             `#1="${llmName1}" #2="${llmName2}"`);
-        const byCompany2 = await findApplicationByCompany(userId, llmName2);
+        const byCompany2 = await findApplicationByCompany(userId, llmName2, "career");
         check("second email: company-name lookup misses (the bug)",
             byCompany2 === null);
-        const byDomain2 = await findApplicationBySenderDomain(userId, csulbDomain);
+        const byDomain2 = await findApplicationBySenderDomain(userId, csulbDomain, "career");
         check("second email: sender-domain fallback hits",
             byDomain2?.id === app1.id,
             `got ${byDomain2?.id ?? "null"}`);
@@ -149,9 +149,9 @@ async function main() {
         const llmName3 = normalizeCompanyName("CSULB");
         check("LLM-drift case: #3 distinct from #1 and #2",
             llmName3 !== llmName1 && llmName3 !== llmName2);
-        const byCompany3 = await findApplicationByCompany(userId, llmName3);
+        const byCompany3 = await findApplicationByCompany(userId, llmName3, "career");
         check("third email: company-name lookup misses", byCompany3 === null);
-        const byDomain3 = await findApplicationBySenderDomain(userId, csulbDomain);
+        const byDomain3 = await findApplicationBySenderDomain(userId, csulbDomain, "career");
         check("third email: sender-domain fallback hits same row",
             byDomain3?.id === app1.id);
         await updateApplication(byDomain3!.id, {
@@ -184,7 +184,7 @@ async function main() {
             senderDomain: "stanford.edu",
         });
         createdIds.push(otherApp.id);
-        const byOtherDomain = await findApplicationBySenderDomain(userId, "stanford.edu");
+        const byOtherDomain = await findApplicationBySenderDomain(userId, "stanford.edu", "career");
         check("cross-school: stanford.edu returns Stanford row, not CSULB",
             byOtherDomain?.id === otherApp.id);
 
@@ -193,7 +193,7 @@ async function main() {
         // defensive: if some caller did, it should still find any row that
         // happens to be tagged with the literal value (since we trust the
         // ingest-side blocklist gate). Verifying it doesn't crash is enough.
-        const sanity = await findApplicationBySenderDomain(userId, "greenhouse.io");
+        const sanity = await findApplicationBySenderDomain(userId, "greenhouse.io", "career");
         check("ATS root query: returns null cleanly (no rows tagged that way)",
             sanity === null);
     } finally {

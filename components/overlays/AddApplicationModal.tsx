@@ -1,20 +1,34 @@
 import React, { useState } from "react";
 import { X, Loader2 } from "lucide-react";
 import { api } from "@/lib/api-client";
-import { APPLICATION_STATUSES, APPLICATION_KINDS } from "@/lib/schemas/applications";
+import {
+    APPLICATION_STATUSES,
+    APPLICATION_KINDS,
+    APPLICATION_TRACKS,
+} from "@/lib/schemas/applications";
 import { toastStore } from "@/lib/toast-store";
+
+type AppTrack = typeof APPLICATION_TRACKS[number];
 
 interface AddApplicationModalProps {
     open: boolean;
     onClose: () => void;
     onCreated?: (id: string) => void;
+    /**
+     * MB Phase 4: track preselected for the form. Defaults to "career". Each
+     * pipeline kanban mounts its own modal instance pinned to its track so the
+     * `+ Add` button creates a row in the correct pipeline without the user
+     * having to remember to set it.
+     */
+    defaultTrack?: AppTrack;
 }
 
-export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, onClose, onCreated }) => {
+export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, onClose, onCreated, defaultTrack = "career" }) => {
     const [company, setCompany] = useState("");
     const [role, setRole] = useState("");
     const [status, setStatus] = useState<typeof APPLICATION_STATUSES[number]>("APPLIED");
     const [kind, setKind] = useState<typeof APPLICATION_KINDS[number] | "">("");
+    const [track, setTrack] = useState<AppTrack>(defaultTrack);
     const [dateApplied, setDateApplied] = useState("");
     const [submitting, setSubmitting] = useState(false);
 
@@ -25,6 +39,7 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, 
         setRole("");
         setStatus("APPLIED");
         setKind("");
+        setTrack(defaultTrack);
         setDateApplied("");
     };
 
@@ -38,6 +53,7 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, 
                 role: role.trim() || null,
                 status,
                 kind: kind || null,
+                track,
                 dateApplied: dateApplied ? new Date(dateApplied).toISOString() : null,
             });
             toastStore.push({ message: `Added ${result.application.company}`, type: 'info' });
@@ -123,6 +139,21 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, 
                             </select>
                         </label>
                     </div>
+
+                    <label className="flex flex-col gap-1.5 text-sm">
+                        <span className="text-white/60 text-xs font-medium uppercase tracking-wider">Track</span>
+                        <select
+                            value={track}
+                            onChange={(e) => setTrack(e.target.value as AppTrack)}
+                            className="bg-black/40 border border-white/10 rounded-md px-3 py-2 text-white focus:outline-none focus:border-blue-500/50"
+                        >
+                            {APPLICATION_TRACKS.map((t) => (
+                                <option key={t} value={t} className="bg-[#111]">
+                                    {t === "career" ? "Career (main pipeline)" : "Side (gig / blue-collar)"}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
 
                     <label className="flex flex-col gap-1.5 text-sm">
                         <span className="text-white/60 text-xs font-medium uppercase tracking-wider">Date Applied</span>

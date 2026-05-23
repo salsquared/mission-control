@@ -22,6 +22,15 @@ export const ApplicationStatusSchema = z.enum(APPLICATION_STATUSES);
 export const APPLICATION_KINDS = ['job', 'internship', 'college', 'other'] as const;
 export const ApplicationKindSchema = z.enum(APPLICATION_KINDS);
 
+// MB Phase 4 — orthogonal to kind. "career" = long-term professional pursuit
+// (the main kanban); "side" = gig / blue-collar / pay-the-bills work shown in
+// the segregated Side Pipeline. Defaults to "career" on every code path
+// (cold-email ingest, manual add, posting-track) so existing flows keep
+// landing in the career kanban. Users flip a row's track via the inline
+// editor in ApplicationDetailOverlay.
+export const APPLICATION_TRACKS = ['career', 'side'] as const;
+export const ApplicationTrackSchema = z.enum(APPLICATION_TRACKS);
+
 // ─── Entity shape ──────────────────────────────────────────────────────────
 // Mirrors prisma.Application.
 export const ApplicationSchema = z.object({
@@ -31,6 +40,7 @@ export const ApplicationSchema = z.object({
     role: z.string().nullable(),
     status: z.string(),
     kind: z.string().nullable(),
+    track: ApplicationTrackSchema.default('career'),
     nextSteps: z.string().nullable(),
     dateApplied: z.string().datetime().nullable(),
     decisionDeadline: z.string().datetime().nullable(),
@@ -61,6 +71,7 @@ export const ApplicationPostSchema = z.object({
     role: z.string().min(1).nullable().optional(),
     status: ApplicationStatusSchema.default('APPLIED'),
     kind: ApplicationKindSchema.nullable().optional(),
+    track: ApplicationTrackSchema.default('career'),
     nextSteps: z.string().nullable().optional(),
     dateApplied: z.string().datetime().nullable().optional(),
     decisionDeadline: z.string().datetime().nullable().optional(),
@@ -72,6 +83,7 @@ export const ApplicationPatchSchema = z.object({
     role: z.string().nullable().optional(),
     status: ApplicationStatusSchema.optional(),
     kind: ApplicationKindSchema.nullable().optional(),
+    track: ApplicationTrackSchema.optional(),
     nextSteps: z.string().nullable().optional(),
     dateApplied: z.string().datetime().nullable().optional(),
     decisionDeadline: z.string().datetime().nullable().optional(),
@@ -80,6 +92,7 @@ export const ApplicationPatchSchema = z.object({
         || d.role !== undefined
         || d.status !== undefined
         || d.kind !== undefined
+        || d.track !== undefined
         || d.nextSteps !== undefined
         || d.dateApplied !== undefined
         || d.decisionDeadline !== undefined,

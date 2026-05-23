@@ -8,6 +8,8 @@ export interface ApplicationCreate {
     role: string;
     status: string;
     kind?: string | null;
+    /** MB Phase 4: "career" | "side". Defaults to "career" when omitted. */
+    track?: string;
     nextSteps?: string | null;
     dateApplied?: Date;
     decisionDeadline?: Date;
@@ -23,6 +25,7 @@ export interface ApplicationCreate {
 export interface ApplicationUpdate {
     status?: string;
     kind?: string | null;
+    track?: string;
     nextSteps?: string | null;
     role?: string | null;
     company?: string;
@@ -33,9 +36,15 @@ export interface ApplicationUpdate {
     senderDomain?: string | null;
 }
 
-export function findApplicationsByUser(userId: string): Promise<Application[]> {
+/**
+ * MB Phase 4: optional track filter. When omitted, returns rows from every
+ * track (used by Gmail/Gcal sync paths that don't care about pipeline). The
+ * Applications API GET passes the track from the ?track= query string so the
+ * two kanbans on ApplicationsView each get a track-scoped list.
+ */
+export function findApplicationsByUser(userId: string, track?: string): Promise<Application[]> {
     return prisma.application.findMany({
-        where: { userId },
+        where: track ? { userId, track } : { userId },
         orderBy: { lastUpdateAt: 'desc' },
     });
 }
@@ -54,28 +63,37 @@ export function findApplicationByIdForUser(id: string, userId: string): Promise<
  * Caller is responsible for blocklisting multi-tenant ATS roots
  * (extractSenderDomain returns null for those, so this never gets called
  * with `greenhouse.io` / `commonapp.org` / etc.).
+ *
+ * MB Phase 4: scoped by track. Gmail ingest always passes "career" — the
+ * companion track-as-application route passes the parent watchlist's track.
+ * Two tracks for the same domain coexist (e.g. "starbucks.com" career vs
+ * side); the dedup hit stays within the caller's pipeline.
  */
 export function findApplicationBySenderDomain(
     userId: string,
-    senderDomain: string
+    senderDomain: string,
+    track: string,
 ): Promise<Application | null> {
     return prisma.application.findFirst({
-        where: { userId, senderDomain },
+        where: { userId, senderDomain, track },
         orderBy: { lastUpdateAt: "desc" },
     });
 }
 
 export async function findApplicationByCompany(
     userId: string,
-    company: string
+    company: string,
+    track: string,
 ): Promise<Application | null> {
     // PA-3: prefer the indexed `normalizedCompany` lookup when present, falling
     // back to the legacy LOWER(company) raw query for rows that haven't been
     // backfilled yet (and as a safety net if normalization itself drifts).
+    // MB Phase 4: both paths scope by track so e.g. Starbucks-barista (side)
+    // and Starbucks-corporate (career) coexist without false dedup hits.
     const key = normalizeCompanyName(company);
     if (key) {
         const row = await prisma.application.findFirst({
-            where: { userId, normalizedCompany: key },
+            where: { userId, normalizedCompany: key, track },
         });
         if (row) return row;
     }
@@ -84,7 +102,9 @@ export async function findApplicationByCompany(
     // is PostgreSQL/MongoDB-only, so we use $queryRaw with LOWER() for SQLite.
     const rows = await prisma.$queryRaw<Application[]>`
         SELECT * FROM "Application"
-        WHERE "userId" = ${userId} AND LOWER("company") = LOWER(${company})
+        WHERE "userId" = ${userId}
+          AND LOWER("company") = LOWER(${company})
+          AND "track" = ${track}
         LIMIT 1
     `;
     return rows[0] ?? null;

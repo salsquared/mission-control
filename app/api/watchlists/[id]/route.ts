@@ -19,7 +19,9 @@ function serialize(w: {
     notificationMode: string;
     lastDigestAt: Date | null;
     scheduleMinutes: number; lastRunAt: Date | null; lastSuccessAt: Date | null;
-    lastError: string | null; active: boolean; createdAt: Date; updatedAt: Date;
+    lastError: string | null; active: boolean;
+    track: string;
+    createdAt: Date; updatedAt: Date;
 }) {
     let parsedFilters: string[] = [];
     if (w.negativeFilters) {
@@ -85,6 +87,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (parsed.data.scheduleMinutes !== undefined) data.scheduleMinutes = parsed.data.scheduleMinutes;
         if (parsed.data.active !== undefined) data.active = parsed.data.active;
         if (parsed.data.notificationMode !== undefined) data.notificationMode = parsed.data.notificationMode;
+        if (parsed.data.track !== undefined) data.track = parsed.data.track;
         if (parsed.data.negativeFilters !== undefined) {
             // Empty array → NULL so the column reads as "no filtering" rather than "[]".
             data.negativeFilters = parsed.data.negativeFilters.length > 0

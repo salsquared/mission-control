@@ -6,6 +6,7 @@ import {
     ApplicationPostSchema,
     ApplicationPatchSchema,
     ApplicationDeleteSchema,
+    ApplicationTrackSchema,
 } from "@/lib/schemas/applications";
 import {
     findApplicationsByUser,
@@ -24,14 +25,23 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
     return typeof id === "string" && id.length > 0 ? id : null;
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
 
+    // MB Phase 4: optional ?track=career|side filter. Omitted = both tracks
+    // (used by code paths that aggregate across pipelines, e.g. the calendar
+    // widget pulling all upcoming interviews). Unrecognized values fall
+    // through to "all" rather than 400 — matches the lenient handling on
+    // /api/watchlists and /api/postings.
+    const trackParam = req.nextUrl.searchParams.get("track");
+    const trackFilter = trackParam ? ApplicationTrackSchema.safeParse(trackParam) : null;
+    const track = trackFilter?.success ? trackFilter.data : undefined;
+
     try {
-        const applications = await findApplicationsByUser(userId);
+        const applications = await findApplicationsByUser(userId, track);
         return NextResponse.json({ applications }, { status: 200 });
     } catch (e: any) {
         console.error("[applications GET] error:", e);
@@ -49,7 +59,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
-    const { company, role, status, kind, nextSteps, dateApplied, decisionDeadline } = parsed.data;
+    const { company, role, status, kind, track, nextSteps, dateApplied, decisionDeadline } = parsed.data;
     const now = new Date();
 
     try {
@@ -64,6 +74,7 @@ export async function POST(req: NextRequest) {
             role: role ?? '',
             status,
             kind: kind ?? null,
+            track,
             nextSteps: nextSteps ?? null,
             dateApplied: initialAppliedDate ?? undefined,
             decisionDeadline: decisionDeadline ? new Date(decisionDeadline) : undefined,
@@ -103,7 +114,7 @@ export async function PATCH(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
-    const { id, company, role, status, kind, nextSteps, dateApplied, decisionDeadline } = parsed.data;
+    const { id, company, role, status, kind, track, nextSteps, dateApplied, decisionDeadline } = parsed.data;
 
     try {
         const existing = await findApplicationByIdForUser(id, userId);
@@ -122,6 +133,7 @@ export async function PATCH(req: NextRequest) {
         if (role !== undefined) update.role = role;
         if (status !== undefined) update.status = status;
         if (kind !== undefined) update.kind = kind;
+        if (track !== undefined) update.track = track;
         if (nextSteps !== undefined) update.nextSteps = nextSteps;
         if (dateApplied !== undefined) update.dateApplied = dateApplied ? new Date(dateApplied) : null;
         if (decisionDeadline !== undefined) update.decisionDeadline = decisionDeadline ? new Date(decisionDeadline) : null;

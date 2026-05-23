@@ -174,6 +174,13 @@ export const NegativeFiltersSchema = z.array(
 export const WATCHLIST_NOTIFICATION_MODES = ["each", "digest", "silent"] as const;
 export const WatchlistNotificationModeSchema = z.enum(WATCHLIST_NOTIFICATION_MODES);
 
+// MB Phase 4 — pipeline track. "career" = long-term professional pursuit
+// (kept on the main kanban); "side" = gig / blue-collar / pay-the-bills work
+// (segregated into its own kanban + discovery section on ApplicationsView).
+// Both are crawled the same way; the field is metadata for UI filtering.
+export const WATCHLIST_TRACKS = ["career", "side"] as const;
+export const WatchlistTrackSchema = z.enum(WATCHLIST_TRACKS);
+
 export const WatchlistSchema = z.object({
     id: z.string(),
     userId: z.string(),
@@ -192,6 +199,7 @@ export const WatchlistSchema = z.object({
     lastSuccessAt: z.string().datetime().nullable(),
     lastError: z.string().nullable(),
     active: z.boolean(),
+    track: WatchlistTrackSchema.default("career"),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
 });
@@ -245,6 +253,7 @@ export const WatchlistPostSchema = z.object({
     // defense-in-depth: an unmatched key gets normalized to null on resolve,
     // but we still don't want to persist arbitrarily-large strings.
     directoryKey: z.string().min(1).max(100).nullable().optional(),
+    track: WatchlistTrackSchema.default("career"),
 });
 
 export const WatchlistPatchSchema = z.object({
@@ -254,13 +263,15 @@ export const WatchlistPatchSchema = z.object({
     notificationMode: WatchlistNotificationModeSchema.optional(),
     scheduleMinutes: z.number().int().positive().optional(),
     active: z.boolean().optional(),
+    track: WatchlistTrackSchema.optional(),
 }).refine(d =>
     d.name !== undefined ||
     d.config !== undefined ||
     d.negativeFilters !== undefined ||
     d.notificationMode !== undefined ||
     d.scheduleMinutes !== undefined ||
-    d.active !== undefined,
+    d.active !== undefined ||
+    d.track !== undefined,
     { message: "At least one mutable field must be provided" },
 );
 

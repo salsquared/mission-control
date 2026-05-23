@@ -1,6 +1,6 @@
 "use client";
 import React from "react";
-import { Mail, Plus } from "lucide-react";
+import { Mail, Briefcase, Plus } from "lucide-react";
 import { Card } from "../ui/Card";
 import { KanbanWidget, KanbanColumnDef } from "../widgets/KanbanWidget";
 
@@ -12,6 +12,28 @@ export interface AppRecord {
     nextSteps: string | null;
     lastUpdateAt: string;
 }
+
+// MB Phase 4. Per-track presentation. The kanban columns (status flow) are
+// identical across tracks — only the card chrome and empty-state copy diverge,
+// since a side application moves through the same Interested → Applied → ...
+// pipeline as a career one.
+const TRACK_PRESETS = {
+    career: {
+        title: "Pipeline Kanban",
+        icon: Mail,
+        iconColorClass: "text-blue-400",
+        addBtnClass: "bg-blue-500/10 hover:bg-blue-500/20 text-blue-400",
+        emptyText: "No applications",
+    },
+    side: {
+        title: "Side Pipeline",
+        icon: Briefcase,
+        iconColorClass: "text-amber-400",
+        addBtnClass: "bg-amber-500/10 hover:bg-amber-500/20 text-amber-400",
+        emptyText: "No side applications — add a gig watchlist below or click + to track one manually",
+    },
+} as const;
+type TrackKey = keyof typeof TRACK_PRESETS;
 
 type AppKanbanColumnDef = KanbanColumnDef<AppRecord> & { statuses: string[] };
 
@@ -32,6 +54,8 @@ interface ApplicationsKanbanCardProps {
     onAdd: () => void;
     onStatusChange: (id: string, newStatus: string) => void;
     onItemClick: (id: string) => void;
+    /** MB Phase 4: defaults to "career" so existing call sites keep working. */
+    track?: TrackKey;
 }
 
 export const ApplicationsKanbanCard: React.FC<ApplicationsKanbanCardProps> = ({
@@ -40,7 +64,9 @@ export const ApplicationsKanbanCard: React.FC<ApplicationsKanbanCardProps> = ({
     onAdd,
     onStatusChange,
     onItemClick,
+    track = "career",
 }) => {
+    const preset = TRACK_PRESETS[track];
     const renderItem = (app: AppRecord) => {
         const colDef = pipelineColumns.find((c) => c.statuses.includes(app.status));
         const colorClass = colDef?.colorClass || "bg-slate-500/20 text-slate-400 border-none";
@@ -71,13 +97,13 @@ export const ApplicationsKanbanCard: React.FC<ApplicationsKanbanCardProps> = ({
 
     return (
         <Card
-            title="Pipeline Kanban"
-            icon={Mail}
-            iconColorClass="text-blue-400"
+            title={preset.title}
+            icon={preset.icon}
+            iconColorClass={preset.iconColorClass}
             action={
                 <button
                     onClick={onAdd}
-                    className="p-1.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 rounded-lg transition-colors cursor-pointer"
+                    className={`p-1.5 ${preset.addBtnClass} rounded-lg transition-colors cursor-pointer`}
                     title="Add application"
                 >
                     <Plus className="w-4 h-4" />
@@ -93,7 +119,7 @@ export const ApplicationsKanbanCard: React.FC<ApplicationsKanbanCardProps> = ({
                 onStatusChange={onStatusChange}
                 renderItem={renderItem}
                 loading={loading}
-                emptyText="No applications"
+                emptyText={preset.emptyText}
             />
         </Card>
     );
