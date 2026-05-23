@@ -20,7 +20,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ## Status snapshot (2026-05-22)
 
-**TL;DR — the "apply ASAP" loop is complete, plus the side-track pipeline.** Every 🔴 must-have is shipped end-to-end (including §13 side-work 56–59). What remains is one 🟡 cross-cutting item (RAH-13 backup encryption) and a tail of 🔵 nice-to-haves.
+**TL;DR — the "apply ASAP" loop is complete, plus the side-track pipeline.** Every 🔴 must-have is shipped end-to-end (including §13 side-work 56–59). The 🟡 cross-cutting RAH-13 (backup encryption) shipped 2026-05-22. What remains is a tail of 🔵 nice-to-haves.
 
 ### Coverage by priority
 
@@ -28,14 +28,14 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 |---|---|---|---|---|
 | 🔴 must-have | **20** | 0 | 0 | 20 (incl. §13 56–59 and story 30a) |
 | 🟡 important | **25** | 0 | 1 | 27 (story 47 ◐ partial — resume side shipped, cover-letter side OOS; story 37 ⛔ multi-template user-declined 2026-05-15) |
-| 🔵 nice-to-have | **5** | 7 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
+| 🔵 nice-to-have | **6** | 6 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
 
 ### Per-track status
 
 | Track | Phase | Status | Notes |
 |---|---|---|---|
 | **A** — Pipeline UX | MA | ✅ | Kanban + drill-in + manual add + delete + inline edit + NOTE composer |
-| A | MA-followup | ✅ (mostly) | Inline edit 13, delete 15, kind toggle 51, stale-app nudges 49 all shipped. Open: recruiter contacts (50), resume-version diff (48) |
+| A | MA-followup | ✅ (mostly) | Inline edit 13, delete 15, kind toggle 51, stale-app nudges 49, recruiter contacts 50 all shipped. Open: resume-version diff (48) |
 | **B** — Discovery | MB Phase 1 | ✅ | careers-page + greenhouse, in-app notifications, "Track" / "Hide" |
 | B | MB Phase 2a | ✅ | Track→App (story 20), Lever + Ashby, closed-detection |
 | B | MB Phase 2b | ✅ | Workday + LinkedIn fetchers + Gmail OAuth email send + per-watchlist notificationMode (each/digest/silent) + posting-digest daily job |
@@ -56,17 +56,16 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13 (backup encryption) ✅ shipped 2026-05-22.
+Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13 (backup encryption) and Story 50 (recruiter contacts) ✅ shipped 2026-05-22.
 
-1. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
-2. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
-3. **Story 63 — bulk-move applications between tracks (🔵).** Single-row flip shipped in MB Phase 4 (kind/track toggle in detail overlay); bulk-select UI for batch reclassification still open.
-4. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
-5. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
-6. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
-7. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
-8. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
-9. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
+1. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
+2. **Story 63 — bulk-move applications between tracks (🔵).** Single-row flip shipped in MB Phase 4 (kind/track toggle in detail overlay); bulk-select UI for batch reclassification still open.
+3. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
+4. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
+5. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
+6. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
+7. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
+8. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
 
 ### User-declined
 
@@ -97,7 +96,9 @@ Stories: 13, 14, 15, 47, 48 (🟡) · 49, 50 (🟡).
 - **MA-f.3** ◐ — Document attachment (story 47 resume side). `GeneratedResume.applicationId` link is wired (M8 Phase 2). Diff between two sent versions (story 48) still open 🔵.
 - **MA-f.4** ✅ — Follow-up nudges (story 49). `scheduler/jobs/stale-applications.ts` fires daily, finds apps with `lastUpdateAt < now - STALE_AFTER_DAYS`, emits `Notification(kind='application', payload.type='stale-nudge')` dedup'd against active prior nudges. `scripts/tests/hermetic/stale-nudge-smoke.ts` covers it.
 
-**Still open in MA-followup:** story 50 (per-application recruiter contacts), story 48 (resume diff).
+**MA-f.5** ✅ — Recruiter contacts (story 50). Shipped 2026-05-22. New `Contact` Prisma model (id, applicationId, name, email?, role?, notes?, lastTouchedAt?, position) with cascade-on-application-delete; migration `add_application_contacts` applied to both dev.db and prod.db. `lib/repositories/contacts.ts` exposes CRUD with parent-application ownership scoping + `primaryContactForApplication(applicationId)` that orders by `lastTouchedAt desc nulls last → position asc → createdAt asc`. `/api/applications/contacts` route handles GET/POST/PATCH/DELETE under `requireSession`. UI: expandable "Contacts" footer on `ApplicationDetailOverlay` (sits between Timeline and Resumes) with inline add-form + per-row Touch button (bumps lastTouchedAt to now) + Trash. `scheduler/jobs/stale-applications.ts` now consults `primaryContactForApplication` and reshapes the nudge body — "Consider drafting a follow-up to <FirstName>" when a contact exists, falling back to the generic body otherwise. Hermetic: `scripts/tests/hermetic/contacts-smoke.ts` (25/25) covers CRUD + cross-user rejection + primary-contact ordering + cascade-on-application-delete.
+
+**Still open in MA-followup:** story 48 (resume diff).
 
 ---
 

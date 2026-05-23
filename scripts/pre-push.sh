@@ -36,6 +36,7 @@ SUITES=(
     "scripts/tests/hermetic/skills-gap-smoke.ts"
     "scripts/tests/hermetic/profile-merge-smoke.ts"
     "scripts/tests/hermetic/profile-snapshots-smoke.ts"
+    "scripts/tests/hermetic/contacts-smoke.ts"
     "scripts/tests/hermetic/email-message-smoke.ts"
     "scripts/tests/hermetic/watchlist-hermetic-smoke.ts"
     "scripts/tests/hermetic/negative-filters-smoke.ts"

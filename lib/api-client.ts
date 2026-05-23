@@ -58,6 +58,13 @@ import {
     ApplicationEventAdoptPostSchema,
 } from './schemas/applicationEvents';
 import {
+    ContactPostSchema,
+    ContactPatchSchema,
+    ContactsListResponseSchema,
+    ContactMutationResponseSchema,
+    ContactDeleteResponseSchema,
+} from './schemas/contacts';
+import {
     ProfileGetResponseSchema,
     ProfilePatchSchema,
     WorkRoleMutationResponseSchema,
@@ -166,6 +173,7 @@ export const queryKeys = {
     profile: ['profile'] as const,
     profileSnapshots: ['profile-snapshots'] as const,
     profileSnapshot: (id: string) => ['profile-snapshot', id] as const,
+    contacts: (applicationId: string) => ['contacts', applicationId] as const,
     watchlists: ['watchlists'] as const,
     postings: (filter?: PostingsListFilter) =>
         ['postings', filter ?? {}] as const,
@@ -256,6 +264,23 @@ export const api = {
             },
             adopt: (input: z.infer<typeof ApplicationEventAdoptPostSchema>) =>
                 jsonFetch('/api/applications/events/adopt', ApplicationEventMutationResponseSchema, jsonBody('POST', input)),
+        },
+        contacts: {
+            list: (applicationId: string) =>
+                jsonFetch(
+                    `/api/applications/contacts?applicationId=${encodeURIComponent(applicationId)}`,
+                    ContactsListResponseSchema,
+                ),
+            create: (input: z.infer<typeof ContactPostSchema>) =>
+                jsonFetch('/api/applications/contacts', ContactMutationResponseSchema, jsonBody('POST', input)),
+            update: (input: z.infer<typeof ContactPatchSchema>) =>
+                jsonFetch('/api/applications/contacts', ContactMutationResponseSchema, jsonBody('PATCH', input)),
+            delete: (id: string) =>
+                jsonFetch(
+                    `/api/applications/contacts?id=${encodeURIComponent(id)}`,
+                    ContactDeleteResponseSchema,
+                    { method: 'DELETE' },
+                ),
         },
     },
 

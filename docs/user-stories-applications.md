@@ -86,7 +86,7 @@ Working list. Priority emoji: **🔴** must-have for next ship, **🟡** importa
 ## 11. Follow-up & nudges
 
 49. 🟡 ✅ As a user, I want the app to flag applications where I've had no response in N days (configurable per stage) and offer to draft a follow-up email.
-50. 🔵 As a user, I want to track recruiter/hiring-manager contacts per application (name, email, last touched) so follow-ups are addressed to the right person.
+50. 🔵 ✅ As a user, I want to track recruiter/hiring-manager contacts per application (name, email, last touched) so follow-ups are addressed to the right person. *(Shipped 2026-05-22 — `Contact` table per Application, CRUD via `/api/applications/contacts`, expandable "Contacts" section on `ApplicationDetailOverlay`. Stale-application nudges (story 49) now address the suggestion to the primary contact by first name when one exists.)*
 
 ## 12. Multi-kind applications
 
@@ -118,10 +118,10 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 
 - **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories 56–59). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
 - **🟡: 27 total, 25 ✅ + 1 ◐ + 1 ⛔.** Story **47** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story 40). Story **37** is ⛔ user-declined (2026-05-15). All other 🟡 closed.
-- **🔵 shipped: 5/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **51** multi-kind, **62** same-employer-both-tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **50** (recruiter contacts), **63** (bulk-move tracks).
+- **🔵 shipped: 6/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **63** (bulk-move tracks).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **50** recruiter contacts; **48** resume version diff; **63** bulk-move tracks.
+**Next-up candidates** (small surface, real leverage): **48** resume version diff; **63** bulk-move tracks; **24** compensation parsing.
 
 ---
 

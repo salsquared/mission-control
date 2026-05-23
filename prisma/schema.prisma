@@ -154,6 +154,7 @@ model Application {
   events           ApplicationEvent[]
   posting          JobPosting?       @relation(fields: [postingId], references: [id], onDelete: SetNull)
   generatedResumes GeneratedResume[]
+  contacts         Contact[]
 
   // MB Phase 4 — "career" | "side". Career is the long-term professional
   // pipeline; side is gig / blue-collar / pay-the-bills work tracked separately
@@ -174,6 +175,29 @@ model Application {
   // normalizedCompany, a duplicate insert throws P2002 → ingest catches and
   // falls through to update.
   @@unique([userId, normalizedCompany, track])
+}
+
+// Story 50 — per-application recruiter / hiring-manager contacts. Optional
+// per row: not every application has a known contact (cold portal applies,
+// generic careers@ inbox, etc.). Cascades on Application delete so orphan
+// contacts can't accumulate. The stale-application nudge job consults the
+// most-recent contact (by lastTouchedAt, fallback to position) to address
+// the "draft a follow-up" suggestion to a person by name.
+model Contact {
+  id            String    @id @default(cuid())
+  applicationId String
+  name          String
+  email         String?
+  role          String?   // free-form: "Recruiter", "Hiring Manager", "Referrer", …
+  notes         String?
+  lastTouchedAt DateTime?
+  position      Int       @default(0)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, position])
 }
 
 model ApplicationEvent {

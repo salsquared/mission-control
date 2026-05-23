@@ -16,6 +16,9 @@ import {
     ChevronDown,
     ChevronRight,
     FileText,
+    Users,
+    UserPlus,
+    Hand,
 } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import {
@@ -29,6 +32,7 @@ import {
 import type { ApplicationEventSchema } from "@/lib/schemas/applicationEvents";
 import type { z } from "zod";
 import { toastStore } from "@/lib/toast-store";
+import { useServerEvents } from "@/hooks/useServerEvents";
 
 type Application = z.infer<typeof ApplicationSchema>;
 type ApplicationsCache = z.infer<typeof ApplicationsListResponseSchema>;
@@ -462,6 +466,7 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                     )}
                 </div>
 
+                {app && <ApplicationContactsSection applicationId={app.id} />}
                 {app && <ApplicationResumesSection applicationId={app.id} company={app.company} role={app.role ?? null} />}
 
                 <form onSubmit={handleAddNote} className="p-4 border-t border-white/10 shrink-0 flex gap-2">
@@ -482,6 +487,216 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                     </button>
                 </form>
             </div>
+        </div>
+    );
+};
+
+// ─── Story 50: Per-Application Recruiter/Hiring-Manager Contacts ───────
+
+const ApplicationContactsSection: React.FC<{ applicationId: string }> = ({ applicationId }) => {
+    const queryClient = useQueryClient();
+    const [open, setOpen] = useState(false);
+    const [adding, setAdding] = useState(false);
+    const [draftName, setDraftName] = useState("");
+    const [draftEmail, setDraftEmail] = useState("");
+    const [draftRole, setDraftRole] = useState("");
+    const [busy, setBusy] = useState(false);
+
+    const { data, isLoading } = useQuery({
+        queryKey: queryKeys.contacts(applicationId),
+        queryFn: () => api.applications.contacts.list(applicationId),
+        enabled: open,
+    });
+    const contacts = data?.contacts ?? [];
+
+    useServerEvents("Contact", () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.contacts(applicationId) });
+    });
+
+    const resetDraft = () => {
+        setDraftName("");
+        setDraftEmail("");
+        setDraftRole("");
+    };
+
+    const handleAdd = async () => {
+        const name = draftName.trim();
+        if (!name) return;
+        setBusy(true);
+        try {
+            await api.applications.contacts.create({
+                applicationId,
+                name,
+                email: draftEmail.trim() || null,
+                role: draftRole.trim() || null,
+            });
+            resetDraft();
+            setAdding(false);
+            queryClient.invalidateQueries({ queryKey: queryKeys.contacts(applicationId) });
+        } catch (e) {
+            toastStore.push({ message: `Add contact failed: ${e instanceof Error ? e.message : String(e)}`, type: "error" });
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleDelete = async (id: string) => {
+        if (!window.confirm("Delete this contact?")) return;
+        try {
+            await api.applications.contacts.delete(id);
+            queryClient.invalidateQueries({ queryKey: queryKeys.contacts(applicationId) });
+        } catch (e) {
+            toastStore.push({ message: `Delete failed: ${e instanceof Error ? e.message : String(e)}`, type: "error" });
+        }
+    };
+
+    const handleTouch = async (id: string) => {
+        try {
+            await api.applications.contacts.update({
+                id,
+                lastTouchedAt: new Date().toISOString(),
+            });
+            queryClient.invalidateQueries({ queryKey: queryKeys.contacts(applicationId) });
+        } catch (e) {
+            toastStore.push({ message: `Touch failed: ${e instanceof Error ? e.message : String(e)}`, type: "error" });
+        }
+    };
+
+    return (
+        <div className="px-4 py-3 border-t border-white/10 shrink-0">
+            <button
+                type="button"
+                onClick={() => setOpen(o => !o)}
+                className="flex items-center justify-between w-full text-left text-xs uppercase tracking-wide text-white/50 hover:text-white/80"
+            >
+                <span className="flex items-center gap-2">
+                    <Users className="w-3.5 h-3.5" />
+                    Contacts
+                    {contacts.length > 0 && <span className="text-emerald-300/80">({contacts.length})</span>}
+                </span>
+                {open ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+            </button>
+
+            {open && (
+                <div className="mt-2 space-y-2">
+                    {isLoading ? (
+                        <div className="flex items-center gap-2 text-[11px] text-white/40">
+                            <Loader2 className="w-3 h-3 animate-spin" /> Loading…
+                        </div>
+                    ) : contacts.length === 0 ? (
+                        <p className="text-[11px] text-white/40 italic">No contacts yet. Add a recruiter or hiring manager to address follow-ups by name.</p>
+                    ) : (
+                        <ul className="space-y-1">
+                            {contacts.map(c => (
+                                <li key={c.id} className="flex items-center justify-between gap-2 rounded-md bg-black/30 border border-white/10 px-2.5 py-1.5">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-baseline gap-2 min-w-0">
+                                            <span className="text-[12px] text-white/90 truncate">{c.name}</span>
+                                            {c.role && (
+                                                <span className="text-[10px] text-emerald-300/70 italic shrink-0">{c.role}</span>
+                                            )}
+                                        </div>
+                                        <div className="flex items-center gap-2 text-[10px] text-white/40 mt-0.5">
+                                            {c.email && (
+                                                <a
+                                                    href={`mailto:${c.email}`}
+                                                    className="inline-flex items-center gap-1 text-cyan-300/70 hover:text-cyan-200 truncate max-w-[24ch]"
+                                                >
+                                                    <Mail className="w-2.5 h-2.5" />
+                                                    {c.email}
+                                                </a>
+                                            )}
+                                            {c.lastTouchedAt && (
+                                                <span title={new Date(c.lastTouchedAt).toLocaleString()}>
+                                                    last touched {new Date(c.lastTouchedAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-1 shrink-0">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleTouch(c.id)}
+                                            className="p-1 rounded text-white/30 hover:text-emerald-300 transition-colors"
+                                            title="Mark as touched (sets last-touched to now)"
+                                        >
+                                            <Hand className="w-3.5 h-3.5" />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => handleDelete(c.id)}
+                                            className="p-1 rounded text-white/30 hover:text-rose-400 transition-colors"
+                                            title="Delete contact"
+                                        >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                        </button>
+                                    </div>
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+
+                    {adding ? (
+                        <div className="rounded-md bg-emerald-500/5 border border-emerald-400/20 p-2.5 space-y-2">
+                            <input
+                                type="text"
+                                value={draftName}
+                                onChange={e => setDraftName(e.target.value)}
+                                placeholder="Name (required)"
+                                disabled={busy}
+                                autoFocus
+                                className="w-full px-2 py-1.5 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-emerald-400/40"
+                            />
+                            <div className="flex gap-2">
+                                <input
+                                    type="text"
+                                    value={draftEmail}
+                                    onChange={e => setDraftEmail(e.target.value)}
+                                    placeholder="Email"
+                                    disabled={busy}
+                                    className="flex-1 px-2 py-1.5 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-emerald-400/40"
+                                />
+                                <input
+                                    type="text"
+                                    value={draftRole}
+                                    onChange={e => setDraftRole(e.target.value)}
+                                    placeholder="Role (e.g. Recruiter)"
+                                    disabled={busy}
+                                    className="flex-1 px-2 py-1.5 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-emerald-400/40"
+                                />
+                            </div>
+                            <div className="flex gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleAdd}
+                                    disabled={busy || !draftName.trim()}
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-400/30 text-[11px] font-semibold text-emerald-100 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <UserPlus className="w-3 h-3" />}
+                                    Add
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => { setAdding(false); resetDraft(); }}
+                                    disabled={busy}
+                                    className="px-3 py-1.5 rounded bg-white/5 hover:bg-white/10 text-[11px] text-white/60"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => setAdding(true)}
+                            className="flex items-center gap-1.5 text-[11px] text-emerald-300/80 hover:text-emerald-200"
+                        >
+                            <UserPlus className="w-3 h-3" />
+                            Add contact
+                        </button>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

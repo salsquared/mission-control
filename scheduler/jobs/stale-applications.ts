@@ -16,6 +16,7 @@
  */
 import { prisma } from "@/lib/prisma";
 import { dispatchNotification, utcDateBucket } from "@/lib/notifications/dispatch";
+import { primaryContactForApplication } from "@/lib/repositories/contacts";
 
 const STALE_AFTER_DAYS = 14;
 const NUDGE_COOLDOWN_DAYS = 7;
@@ -82,6 +83,13 @@ export async function runStaleApplicationNudges(): Promise<StaleNudgeRunResult> 
         );
         const roleLabel = app.role ? `${app.role} at ${app.company}` : app.company;
 
+        // Story 50 — if we know a recruiter / hiring-manager name on this app,
+        // address the suggestion to them by first name. Falls back to the
+        // generic body when there are no contacts (cold portal applies etc).
+        const contact = await primaryContactForApplication(app.id);
+        const firstName = contact?.name.trim().split(/\s+/)[0];
+        const followUpClause = firstName ? `Consider drafting a follow-up to ${firstName}.` : `Consider drafting a follow-up.`;
+
         try {
             // PB-8: dedupKey races concurrent scheduler ticks on the same app
             // within the same UTC day → at-most-once nudge per day.
@@ -90,11 +98,12 @@ export async function runStaleApplicationNudges(): Promise<StaleNudgeRunResult> 
                 tier: "standard",
                 kind: "application",
                 title: `No update from ${app.company} in ${daysSinceUpdate} days`,
-                body: `Your application for ${roleLabel} hasn't moved in ${daysSinceUpdate} days. Consider drafting a follow-up.`,
+                body: `Your application for ${roleLabel} hasn't moved in ${daysSinceUpdate} days. ${followUpClause}`,
                 payload: {
                     applicationId: app.id,
                     type: "stale-nudge",
                     daysSinceUpdate,
+                    contactId: contact?.id ?? null,
                 },
                 dedupKey: `stale-nudge:${app.id}:${utcDateBucket()}`,
             });

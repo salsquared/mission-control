@@ -13,8 +13,12 @@
 
 ## Last session
 
-- **Date:** 2026-05-22 (later session — doc reconciliation + Story 33 capture).
-- **Branch:** `main`. **Two things landed:**
+- **Date:** 2026-05-22 (consolidated TODO-march session).
+- **Branch:** `main`. **Four things landed end-to-end, three commits behind `origin/main`:**
+  - `ace2be9` — Story 33 capture-side (ProfileSnapshot model + UI) + cross-doc reconciliation.
+  - `25ff47b` — RAH-13 age-encrypted DB backups + recovery runbook.
+  - (next) — Story 50 recruiter contacts.
+- **Earlier in this same session** (kept for reference, full details below in §Recently completed):
   1. **Cross-doc reconciliation** — `next_steps.md` had drifted from `user-stories-applications.md` and `implementation.md`: the "Immediate next actions" list still showed Story 26 (per-watchlist notification mode, actually shipped in MB Phase 2b), Story 37 (multi-template, actually ⛔ user-killed 2026-05-15), and Story 41 (skills-gap, actually shipped + has hermetic) as open work. `implementation.md` itself had an internal contradiction — line 48 marked skills-gap ✅ but the M8 Phase 3 prose claimed it was deferred. All three docs fixed.
   2. **Story 33 capture side shipped** — `ProfileSnapshot` model + migration `add_profile_snapshots` applied to both dev.db and prod.db; repository + 2 API routes; api-client surface; new "Snapshot now" UI card in a "History" section on `ProfileView`. Hermetic smoke 17/17, full pre-push 34/34, prod build green, PM2 prod + dev restarted. Rollback/restore UX intentionally deferred — see `docs/implementation.md` M7.5.
 - **Files added / changed:**
@@ -46,12 +50,11 @@ Out of scope until top-of-stack ships: AI Companion prompt tuning, visual polish
 
 ## Immediate next actions (in order)
 
-1. **Story 50 — recruiter contacts (🔵).** Per-application `Contact(id, applicationId, name, email?, role?, lastTouchedAt?)` rows. Surface in `ApplicationDetailOverlay`; the existing follow-up nudges (story 49) become "draft follow-up to <name>" instead of "draft follow-up".
-2. **Story 48 — resume-version diff (🔵).** Side-by-side diff between two `GeneratedResume` rows (selections + rendered text). Most useful on the same `applicationId`. Pure read-side; no schema changes.
-3. **Story 63 — bulk-move applications between tracks (🔵).** Single-row Track toggle shipped in MB Phase 4; bulk-select UI ("reclassify N apps at once") still open. Multi-select on kanban cards + a track-flip action.
-4. **Story 33 rollback UX (🔵).** Capture side shipped; restore-from-snapshot is the deferred half. Build a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` from the stored payload. Defer until the user actually wants to roll back.
-5. **RAH-12 — per-userId Gemini rate-limit (🟡 abuse).** Token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) checked before the first Gemini call. Single-user today, but a logged-in tab in a loop drains the free-tier quota.
-6. **Open 🔵 tail** (pick opportunistically): 24 comp parsing, 28 quiet hours, 45 suggested portfolio rewrites, 46 README ingestion.
+1. **Story 48 — resume-version diff (🔵).** Side-by-side diff between two `GeneratedResume` rows (selections + rendered text). Most useful on the same `applicationId`. Pure read-side; no schema changes.
+2. **Story 63 — bulk-move applications between tracks (🔵).** Single-row Track toggle shipped in MB Phase 4; bulk-select UI ("reclassify N apps at once") still open. Multi-select on kanban cards + a track-flip action.
+3. **Story 33 rollback UX (🔵).** Capture side shipped; restore-from-snapshot is the deferred half. Build a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` from the stored payload. Defer until the user actually wants to roll back.
+4. **RAH-12 — per-userId Gemini rate-limit (🟡 abuse).** Token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) checked before the first Gemini call. Single-user today, but a logged-in tab in a loop drains the free-tier quota.
+5. **Open 🔵 tail** (pick opportunistically): 24 comp parsing, 28 quiet hours, 45 suggested portfolio rewrites, 46 README ingestion.
 
 **User-side follow-ups for RAH-13 (just shipped):**
 - **Save the secret key to 1Password.** The file `~/.config/mission-control/backup.key` was generated this session. It's chmod-600 locally, but losing the Mac without an offsite copy means every encrypted backup is unrecoverable. Copy the file's full contents (including the `# created:` / `# public key:` header lines) into a 1Password secure-note titled `mission-control backup secret`.
@@ -86,6 +89,7 @@ Nothing in-flight in the editor. Story 33 capture side shipped this session (see
 
 ## Recently completed
 
+- **2026-05-22 (Story 50)** — **Recruiter contacts per application.** New `Contact` Prisma model with cascade-on-application-delete; migration `add_application_contacts` applied to both DBs. `lib/repositories/contacts.ts` exposes CRUD with parent-application ownership scoping + `primaryContactForApplication` (orders by lastTouchedAt desc nulls last → position → createdAt). `/api/applications/contacts` GET/POST/PATCH/DELETE under `requireSession`. UI: expandable "Contacts" section on `ApplicationDetailOverlay` between Timeline and Resumes — inline add-form + per-row Touch (bumps lastTouchedAt) + Trash. `scheduler/jobs/stale-applications.ts` rewrites the nudge body to "Consider drafting a follow-up to <FirstName>" when a contact exists, falls back to generic otherwise. Hermetic 25/25 (`contacts-smoke.ts`, wired into pre-push). Full pre-push 35/35, prod build green, prod PM2 + scheduler-prod restarted so the next stale-nudge tick picks up the new body shape.
 - **2026-05-22 (RAH-13)** — **DB backups now encrypted with age.** `scripts/backup-db.sh` reworked: auto-discovers an age recipient at `~/.config/mission-control/backup.pub`, encrypts each artifact in place before either local retention or offsite upload sees it, falls back to plaintext with a loud warning so cron doesn't break before initial key setup. New `scripts/backup-decrypt.sh` companion (auto-discovers the identity at `~/.config/mission-control/backup.key`). One-time setup done this session: `brew install age`, `age-keygen`, public key dropped at the discovery path, secret key chmod-600 locally. Round-trip verified: encrypted backup → decrypt → 37 Applications matches live `prisma/prod.db`. CLAUDE.md §Backups + recovery rewritten with the new setup, cron note, and recovery runbook (which now includes a "restore secret key from 1Password" step). **User still needs to copy the secret key to 1Password** — see §Immediate next actions for the follow-up checklist.
 - **2026-05-22 (later session)** — **Cross-doc reconciliation + Story 33 capture-side shipped.** `next_steps.md` had drifted (Story 26 / 37 / 41 listed as open work but were respectively shipped / killed / shipped); `implementation.md` had an internal contradiction on skills-gap status. Both fixed. Then built Story 33's read-only safety net: `ProfileSnapshot` model + migration `add_profile_snapshots`, repository + 2 API routes + api-client surface + `ProfileSnapshotsCard` in a new "History" section on `ProfileView`. SSE `'ProfileSnapshot'` channel for cross-tab invalidation. Hermetic smoke 17/17 (`profile-snapshots-smoke.ts`, wired into pre-push as suite 7 of 34). Full pre-push 34/34, prod build green. Rollback/restore intentionally deferred to a later iteration.
 - **2026-05-22** — **MB Phase 4 side-track pipeline fully landed.** Three commits:
