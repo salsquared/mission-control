@@ -18,17 +18,17 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ---
 
-## Status snapshot (2026-05-15)
+## Status snapshot (2026-05-22)
 
-**TL;DR — the "apply ASAP" loop is complete.** Every 🔴 must-have is shipped end-to-end across all three tracks. What remains is 🟡 polish and 🔵 nice-to-haves.
+**TL;DR — the "apply ASAP" loop is complete, plus the side-track pipeline.** Every 🔴 must-have is shipped end-to-end (including §13 side-work 56–59). What remains is one 🟡 cross-cutting item (RAH-13 backup encryption) and a tail of 🔵 nice-to-haves.
 
 ### Coverage by priority
 
 | Priority | Shipped | Open | Declined | Total |
 |---|---|---|---|---|
-| 🔴 must-have | **16** | 0 | 0 | 16 |
-| 🟡 important | **22** | 2 | 0 | 24 (story 47 counted as ◐ partial — resume side shipped, cover-letter side belongs to declined story 40) |
-| 🔵 nice-to-have | **3** | 7 | 1 | 11 (excluding 4 future/OOS items 52–55) |
+| 🔴 must-have | **20** | 0 | 0 | 20 (incl. §13 56–59 and story 30a) |
+| 🟡 important | **25** | 0 | 1 | 27 (story 47 ◐ partial — resume side shipped, cover-letter side OOS; story 37 ⛔ multi-template user-declined 2026-05-15) |
+| 🔵 nice-to-have | **5** | 7 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
 
 ### Per-track status
 
@@ -45,7 +45,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 | C | M7.4 | ✅ | Multi-resume import (PDF/DOCX/TXT/JSON) → LLM extract → append-merge |
 | C | M8 Phase 1 | ✅ | Tailored generation: posting → keywords → selection → rewrite → PDF |
 | C | M8 Phase 2 | ✅ | Archival + `applicationId` linkage + "Why these bullets?" trace |
-| C | M8 Phase 3 | ◐ | DOCX ✅. Skills-gap (41) ✅. Multi-template (37) open. Cover letter (40) ⛔ user-declined |
+| C | M8 Phase 3 | ✅ | DOCX ✅. Skills-gap (41) ✅. Multi-template (37) ⛔ user-declined 2026-05-15. Cover letter (40) ⛔ user-declined |
 | C | M9 Phase 1 | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
 | C | M9 Phase 2 | 💤 | Suggested rewrites (45), README ingestion (46) |
 | **Cross-cutting** | Notification dispatcher | ✅ | Tier model (critical/standard/low), global bell, EMAIL_ENABLED kill-switch |
@@ -56,14 +56,18 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-1. **Story 37 — second resume template (🟡).** Add a single-column or two-column variant alongside `ats-plain.tsx`, plus a picker on `GenerateResumeCard`. Visible artifact polish.
-2. **Story 33 — profile snapshots (🔵).** `ProfileSnapshot(userId, takenAt, payloadJson)` + a "Snapshot now" button. Button-press-only; no auto-snapshotting.
-3. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
-4. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
+Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful.
+
+1. **RAH-13 — encrypt DB backups (🟡 security).** `scripts/backup-db.sh` currently tars `prisma/prod.db` straight to Drive in plaintext — `Account.refresh_token` and `access_token` are inside. Pipe through `age -r <pubkey>` (key stored outside Drive) or switch to rclone `crypt:` remote.
+2. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
+3. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
+4. **Story 63 — bulk-move applications between tracks (🔵).** Single-row flip shipped in MB Phase 4 (kind/track toggle in detail overlay); bulk-select UI for batch reclassification still open.
 5. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
 6. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
 7. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
 8. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
+9. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
+10. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
 
 ### User-declined
 
@@ -354,6 +358,20 @@ Stories: 30, 30a (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/integrati
 
 Pipeline: `lib/profile/extract.ts` (PDF via pdf-parse v2, DOCX via mammoth, TXT/MD/JSON inline) → `lib/profile/import-llm.ts` (Gemini structured-output extraction) → `lib/profile/merge.ts` (deterministic dedup + append-merge against existing profile). Append-to-repository semantics enforced — no overwrite. `next.config.ts` carries `pdf-parse / mammoth / puppeteer-core / html-to-docx` in `serverExternalPackages`.
 
+### M7.5 — Profile snapshots ◐ (capture shipped, rollback deferred)
+
+Story 33 (🔵). Shipped 2026-05-22. Smoke: `scripts/tests/hermetic/profile-snapshots-smoke.ts` (17/17). Migration: `20260523024735_add_profile_snapshots`.
+
+New `ProfileSnapshot` Prisma model — `(id, userId, takenAt, label?, payload, createdAt)` — captures the full hydrated `Profile` (header + workRoles + projects + education with parsed bullets) as a JSON string. Button-press only — there is **no** auto-snapshot on profile edits (would balloon row count and add a hidden write path the user can't see).
+
+- `lib/repositories/profile-snapshots.ts` — `createProfileSnapshot`, `listProfileSnapshots` (summary projection, ordered newest-first), `getProfileSnapshot` (returns null on corrupt JSON rather than throwing), `deleteProfileSnapshot`. Owner check on every read/delete.
+- API: `app/api/profile/snapshots/route.ts` (GET list, POST create) + `app/api/profile/snapshots/[id]/route.ts` (GET full payload, DELETE). All session-gated via `requireSession`.
+- `lib/api-client.ts` — `api.profile.snapshots.{list, get, create, delete}` + new `queryKeys.profileSnapshots` / `queryKeys.profileSnapshot(id)`.
+- `lib/events.ts` + `hooks/useServerEvents.ts` — `'ProfileSnapshot'` added to the `ModelName` / `ServerEventModel` unions so cross-tab create + delete invalidate the snapshot list.
+- UI: `components/cards/ProfileSnapshotsCard.tsx` mounted in a new "History" section on `ProfileView`. Label input (optional, 120 char cap) + "Snapshot now" button + list with delete-per-row.
+
+**Rollback is intentionally not wired yet.** First deliverable is just a read-only safety net so the user can see how their profile looked at past points in time. When/if they actually want to roll back, the path is: open snapshot row → confirm destructive overwrite → transactional bulk-replace of `WorkRole` / `Project` / `Education` rows from the stored payload. The destructive nature is the reason it's deferred — building a half-tested restore path before there's clear demand is more dangerous than the safety net it's meant to provide.
+
 ### M7.4 followups — Fuzzy dedup + extra formats 💤 / partial ✅
 
 - ✅ **M7.4-f.4 — Tag editing UI** (story 32). Shipped 2026-05-15. BulletRow now renders each tag as a click-to-remove chip and has an inline "+ tag" affordance. Tags persist via the existing bullet PATCH path (the bullet shape already had `tags: string[]`). Autocomplete from other tags in the profile deferred — current entry experience is fine and autocomplete needs the parent component to thread `allTags` down.
@@ -397,11 +415,9 @@ Story 36 (lock/exclude UI surfacing) deferred — toggles already exist; just ne
 
 **M8-3.2 (cover letter) — ❌ Killed 2026-05-15.** User writes cover letters by hand.
 
-**M8-3.3 (skills-gap report) — 💤 deferred 🔵.** Still useful (posting keywords minus profile bullet tags), but lower priority now that the rest of the M8 stack is done.
+**M8-3.3 (skills-gap report) — ✅ shipped.** `lib/resumes/skills-gap.ts:computeSkillsGap(profile, posting.keywords)` returns the set of posting keywords with no profile bullet (tag or word-boundary substring) evidence. Persisted as `GeneratedResume.skillsGap` (JSON), surfaced under the "Why these bullets?" expander as `SkillsGapBlock` in `GenerateResumeCard.tsx`. Hermetic smoke at `scripts/tests/hermetic/skills-gap-smoke.ts`. PB-4 (2026-05-16) ported the same word-boundary helper into `lib/resumes/select.ts` so the bullet scorer and the gap report agree on what counts as a match.
 
 Stories: 37 (🟡 templates), 40 (🔵 cover letter), 41 (🔵 skills-gap).
-
-- **M8-3.3 (skills-gap, deferred)**: `posting.keywords` minus the union of (all profile bullet tags + all profile bullet substring matches). Surfaces "the posting talks about X, your profile doesn't mention X" so the user can fill the gap manually.
 
 ### M9 Phase 1 — GitHub-driven project metrics ✅
 

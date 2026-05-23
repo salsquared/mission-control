@@ -57,14 +57,14 @@ Working list. Priority emoji: **🔴** must-have for next ship, **🟡** importa
 30a. 🔴 ✅ As a user, I want my profile to act as a master repository of resume material I can tailor from — not a single "current" resume. I want to upload one resume or many (over time, across roles), and have the LLM recognize duplicate items (same role, same bullet, near-identical wording across uploads) and merge them with what I've already captured, while adding any genuinely new items. Over months of applications this should *accumulate* into a richer pool, never overwrite it, so any future tailored resume can pull the strongest evidence from across my whole history.
 31. 🟡 ✅ As a user, I want to edit any history entry (add a bullet, fix a date, retire a role) and have the change flow into every future generated resume.
 32. 🟡 ✅ As a user, I want to tag bullets and accomplishments with skills/keywords (e.g., "Go", "distributed systems", "leadership") so I can filter and surface the right ones per role.
-33. 🔵 As a user, I want versioned snapshots of my profile so I can see how my history has been described over time and roll back unintended edits.
+33. 🔵 ◐ As a user, I want versioned snapshots of my profile so I can see how my history has been described over time and roll back unintended edits. *(Capture side shipped 2026-05-22 — `ProfileSnapshot` table, button-triggered "Snapshot now" + list with delete on `ProfileView`. Rollback / restore-from-snapshot intentionally deferred until the read-only safety net proves useful.)*
 
 ## 8. Tailored resume generation
 
 34. 🔴 ✅ As a user, given a job posting (URL or pasted text), I want the app to generate a tailored resume that pulls only the most relevant bullets from my profile and reorders them to match the role's emphasis.
 35. 🟡 ✅ As a user, I want to see *why* each bullet was selected (which keyword in the posting it maps to) so I can sanity-check the output before sending.
 36. 🟡 ✅ As a user, I want to lock specific bullets as "always include" (e.g., my current role's headline) and exclude others entirely.
-37. 🟡 As a user, I want to pick a visual template/style for the generated resume (single-column, two-column, ATS-plain) and have generation respect it.
+37. 🟡 ⛔ As a user, I want to pick a visual template/style for the generated resume (single-column, two-column, ATS-plain) and have generation respect it. *(User decision 2026-05-15: every target company runs resumes through an ATS parser; visual-polish gain isn't worth the parsing risk on a non-plain template. `ats-plain.tsx` is final. See `implementation.md` M8 Phase 3.)*
 38. 🔴 ✅ As a user, I want the generated resume to be exportable as PDF and DOCX, with the same content rendered identically across both.
 39. 🟡 ✅ As a user, I want every generated resume archived against the Application it was sent for so I can later say "what version did I send Acme on March 5?"
 40. 🔵 ⛔ As a user, I want a generated cover letter alongside the resume, with the same posting/profile context. *(User decision: writing cover letters by hand. OOS.)*
@@ -114,14 +114,14 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 
 ---
 
-## Status snapshot (2026-05-15)
+## Status snapshot (2026-05-22)
 
-- **All 🔴 must-haves shipped** (16/16). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX — is in production.
-- **🟡 shipped: 22/25.** Still open: **37** (multi-template picker). *Resume side of **47** shipped; cover-letter side is OOS by user decision.*
-- **🔵 shipped: 3/13** (stories **23** negative filters, **41** skills-gap, **51** multi-kind). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **33** (profile snapshots), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **50** (recruiter contacts).
+- **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories 56–59). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
+- **🟡: 27 total, 25 ✅ + 1 ◐ + 1 ⛔.** Story **47** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story 40). Story **37** is ⛔ user-declined (2026-05-15). All other 🟡 closed.
+- **🔵 shipped: 5/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **51** multi-kind, **62** same-employer-both-tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion), **48** (resume diff), **50** (recruiter contacts), **63** (bulk-move tracks).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **37** second resume template; **33** profile snapshots (one extra table, button-triggered); **50** recruiter contacts.
+**Next-up candidates** (small surface, real leverage): **50** recruiter contacts; **48** resume version diff; **63** bulk-move tracks.
 
 ---
 

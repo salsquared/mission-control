@@ -106,6 +106,7 @@ model User {
   notifications    Notification[]
   generatedResumes GeneratedResume[]
   blacklist        BlacklistedCompany[]
+  profileSnapshots ProfileSnapshot[]
 }
 
 model VerificationToken {
@@ -294,6 +295,26 @@ model Education {
   profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, position])
+}
+
+// Story 33 — versioned snapshots of a user's Profile. Button-press only —
+// no auto-snapshotting on every profile edit (would balloon row count and
+// add a hidden write path the user can't see). The payload is the full
+// HydratedProfile (Profile + workRoles + projects + education with parsed
+// bullets) serialized to JSON; rollback UX is intentionally deferred.
+// First deliverable is just a read-only safety net so the user can see
+// how their profile looked at past points in time.
+model ProfileSnapshot {
+  id        String   @id @default(cuid())
+  userId    String
+  takenAt   DateTime @default(now())
+  label     String?  // optional free-form label set by the user at capture time
+  payload   String   // JSON: serialized HydratedProfile
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, takenAt])
 }
 
 

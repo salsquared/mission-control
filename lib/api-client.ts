@@ -70,6 +70,10 @@ import {
     EducationPostSchema,
     EducationPatchSchema,
     ProfileDeleteResponseSchema,
+    ProfileSnapshotPostSchema,
+    ProfileSnapshotsListResponseSchema,
+    ProfileSnapshotMutationResponseSchema,
+    ProfileSnapshotGetResponseSchema,
 } from './schemas/profile';
 import {
     WatchlistPostSchema,
@@ -160,6 +164,8 @@ export const queryKeys = {
     savedPapers: (filter?: { topic?: string | null; status?: string | null }) =>
         ['saved-papers', filter ?? {}] as const,
     profile: ['profile'] as const,
+    profileSnapshots: ['profile-snapshots'] as const,
+    profileSnapshot: (id: string) => ['profile-snapshot', id] as const,
     watchlists: ['watchlists'] as const,
     postings: (filter?: PostingsListFilter) =>
         ['postings', filter ?? {}] as const,
@@ -343,6 +349,27 @@ export const api = {
                     `/api/profile/education?id=${encodeURIComponent(id)}`,
                     ProfileDeleteResponseSchema,
                     { method: 'DELETE' }
+                ),
+        },
+        snapshots: {
+            list: () =>
+                jsonFetch('/api/profile/snapshots', ProfileSnapshotsListResponseSchema),
+            get: (id: string) =>
+                jsonFetch(
+                    `/api/profile/snapshots/${encodeURIComponent(id)}`,
+                    ProfileSnapshotGetResponseSchema,
+                ),
+            create: (input: z.infer<typeof ProfileSnapshotPostSchema>) =>
+                jsonFetch(
+                    '/api/profile/snapshots',
+                    ProfileSnapshotMutationResponseSchema,
+                    jsonBody('POST', input),
+                ),
+            delete: (id: string) =>
+                jsonFetch(
+                    `/api/profile/snapshots/${encodeURIComponent(id)}`,
+                    ProfileDeleteResponseSchema,
+                    { method: 'DELETE' },
                 ),
         },
     },

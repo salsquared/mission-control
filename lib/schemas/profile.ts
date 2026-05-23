@@ -182,3 +182,33 @@ export type ProfileWire = z.infer<typeof ProfileSchema>;
 export type WorkRoleWire = z.infer<typeof WorkRoleSchema>;
 export type ProjectWire = z.infer<typeof ProjectSchema>;
 export type EducationWire = z.infer<typeof EducationSchema>;
+
+// ─── Profile snapshots (story 33) ──────────────────────────────────────────
+// List entries are intentionally lightweight — no payload, so the UI list
+// renders fast even with hundreds of snapshots. Full payload is fetched via
+// the [id] route only when the user opens a specific snapshot.
+export const ProfileSnapshotSummarySchema = z.object({
+    id: z.string(),
+    takenAt: z.string().datetime(),
+    label: z.string().nullable(),
+});
+export const ProfileSnapshotSchema = ProfileSnapshotSummarySchema.extend({
+    payload: ProfileSchema,
+});
+
+export const ProfileSnapshotPostSchema = z.object({
+    label: z.string().max(120).nullable().optional(),
+});
+
+export const ProfileSnapshotsListResponseSchema = z.object({
+    snapshots: z.array(ProfileSnapshotSummarySchema),
+});
+export const ProfileSnapshotMutationResponseSchema = z.object({
+    snapshot: ProfileSnapshotSummarySchema,
+});
+export const ProfileSnapshotGetResponseSchema = z.object({
+    snapshot: ProfileSnapshotSchema,
+});
+
+export type ProfileSnapshotSummaryWire = z.infer<typeof ProfileSnapshotSummarySchema>;
+export type ProfileSnapshotWire = z.infer<typeof ProfileSnapshotSchema>;

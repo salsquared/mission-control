@@ -8,6 +8,7 @@ import { CardGrid, type CardItem } from "../grids/CardGrid";
 import { ProfileIdentityCard } from "../cards/ProfileIdentityCard";
 import { GenerateResumeCard } from "../cards/GenerateResumeCard";
 import { ImportResumesCard } from "../cards/ImportResumesCard";
+import { ProfileSnapshotsCard } from "../cards/ProfileSnapshotsCard";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { api, queryKeys } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
@@ -257,6 +258,10 @@ export const ProfileView: React.FC = () => {
         { id: "generate-resume", colSpan: 1, hFit: true, content: <GenerateResumeCard /> },
     ];
 
+    const historyCards: CardItem[] = [
+        { id: "profile-snapshots", colSpan: 1, hFit: true, content: <ProfileSnapshotsCard /> },
+    ];
+
     const identityCards: CardItem[] = [
         {
             id: "profile-identity",
@@ -302,6 +307,12 @@ export const ProfileView: React.FC = () => {
             <Section title="Identity" description="The building blocks the resume generator pulls from. Hover a bullet to lock 🔒 (always include) or exclude 🚫 (never include). Tags help the generator match the right bullets to a posting.">
                 <div className="mt-4">
                     <CardGrid items={identityCards} />
+                </div>
+            </Section>
+
+            <Section title="History" description="Versioned snapshots of your profile — capture one before a big edit so you can always look back at how the resume material was worded.">
+                <div className="mt-4">
+                    <CardGrid items={historyCards} columns={2} />
                 </div>
             </Section>
         </Scrollbar>
