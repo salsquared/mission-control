@@ -18,6 +18,11 @@ const nextConfig: NextConfig = {
   // this and audit useServerEvents/AICompanion useEffect first.
   reactStrictMode: false,
   distDir: isDev ? '.next-dev' : '.next',
+  // Public dev hostnames reaching the dev server via the Cloudflare tunnel.
+  // Next 16+ warns on cross-origin requests to /_next/* and will require
+  // this explicit allowlist in a future major. LAN hosts (localhost,
+  // mc.local) hit the dev server directly and don't need entries here.
+  allowedDevOrigins: ['ms-dev.salsquared.xyz'],
   // Server-only packages that should not be webpack-bundled. Without this,
   // webpack tries to resolve their `node:*` scheme imports (e.g. `node:assert`
   // pulled in transitively via undici) and fails the build. These are loaded
