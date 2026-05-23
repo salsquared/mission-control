@@ -56,18 +56,17 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful.
+Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13 (backup encryption) ✅ shipped 2026-05-22.
 
-1. **RAH-13 — encrypt DB backups (🟡 security).** `scripts/backup-db.sh` currently tars `prisma/prod.db` straight to Drive in plaintext — `Account.refresh_token` and `access_token` are inside. Pipe through `age -r <pubkey>` (key stored outside Drive) or switch to rclone `crypt:` remote.
-2. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
-3. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
-4. **Story 63 — bulk-move applications between tracks (🔵).** Single-row flip shipped in MB Phase 4 (kind/track toggle in detail overlay); bulk-select UI for batch reclassification still open.
-5. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
-6. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
-7. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
-8. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
-9. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
-10. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
+1. **Story 50 — recruiter contacts (🔵).** Per-application `Contact` rows so follow-ups (already wired via 49) can be addressed to the right person.
+2. **Story 48 — resume-version diff (🔵).** Diff view between two `GeneratedResume` rows.
+3. **Story 63 — bulk-move applications between tracks (🔵).** Single-row flip shipped in MB Phase 4 (kind/track toggle in detail overlay); bulk-select UI for batch reclassification still open.
+4. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
+5. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
+6. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
+7. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
+8. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
+9. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
 
 ### User-declined
 
@@ -484,7 +483,7 @@ Triple-track review on 2026-05-16 (mutating-route auth · data-leak / fs / exter
 - ✅ **RAH-10 — OIDC signer identity check.** Shipped 2026-05-16. After `verifyPubSubOIDC` returns, `app/api/gmail/webhook/route.ts` now asserts `payload.email === process.env.PUBSUB_SERVICE_ACCOUNT_EMAIL && payload.email_verified === true`. When the env var is unset the route logs a warning and accepts (to not break existing deploys before the env is set) — populate it in `.env` per `docs/hosting.md` §1.
 - ✅ **RAH-11 — Service-token bearer constant-time compare.** Shipped 2026-05-16. `lib/auth-guards.ts:requireServiceToken` now uses `crypto.timingSafeEqual` on equal-length buffers (length pre-check still fails fast without leaking length).
 - ⏳ **RAH-12 — No rate limit on Gemini-call routes.** `POST /api/resumes` and `POST /api/profile/import` each spawn 1–N Gemini calls per request with no per-user throttle. A logged-in tab in a loop can drain the GenAI free-tier quota. Fix: shared per-userId token bucket (e.g. 5 generations / 10 min) checked before the first Gemini call.
-- ⏳ **RAH-13 — Backups mirror plaintext refresh tokens.** `scripts/backup-db.sh` tars `prisma/prod.db` straight to `gdrive:backups/mission-control/`. The DB contains `Account.refresh_token` and `access_token` in plaintext — anyone with access to that Drive folder gets Gmail + Calendar equivalence on this account. Fix: pipe through `age -r <pubkey>` or `openssl enc -aes-256-gcm` with the key stored outside Drive (1Password / hardware token), or switch to an rclone `crypt:` remote.
+- ✅ **RAH-13 — Backups now encrypted with age.** Shipped 2026-05-22. `scripts/backup-db.sh` reworked: auto-discovers an age recipient at `~/.config/mission-control/backup.pub`, encrypts each artifact in place (DB hot-backup + resume-artifacts tar) before either local retention or rclone upload sees it, falls back to plaintext with a loud warning if no recipient is configured (so cron doesn't break before initial key setup) and fail-closes if a recipient is configured but `age` is missing. New `scripts/backup-decrypt.sh` companion auto-discovers the identity at `~/.config/mission-control/backup.key`. Local retention also prunes `.age` variants. CLAUDE.md §Backups + recovery rewritten with the one-time setup steps (brew install + age-keygen + 1Password store) and the recovery runbook (which now includes decrypt-from-Drive). Round-trip verified end-to-end against the live keypair on the setup machine.
 **🔵 Low** (latent multi-user bugs, defense-in-depth, UX papercuts):
 
 - ✅ **RAH-17 — `/api/notifications/test` rate limit.** Shipped 2026-05-16. 30s in-memory token bucket per userId; `globalThis`-attached so HMR doesn't reset it in dev. Returns 429 with `Retry-After` header.
