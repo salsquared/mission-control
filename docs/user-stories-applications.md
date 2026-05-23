@@ -76,7 +76,7 @@ Working list. Priority emoji: **🔴** must-have for next ship, **🟡** importa
 43. 🟡 ✅ As a user, I want to flag specific repos as "portfolio" so they're surfaced as project bullets on generated resumes with auto-summarized descriptions and metrics (LOC, language mix, "X commits over Y months", deploy/users if I provide them).
 44. 🟡 ✅ As a user, I want the project summaries to refresh on a schedule so a resume generated today reflects last week's progress, not a stale snapshot.
 45. 🔵 As a user, I want suggested portfolio-bullet rewrites when a repo's metrics meaningfully change (crossed a star threshold, shipped a new language, big release) so my resume stays sharp without me babysitting it.
-46. 🔵 As a user, I want to pull READMEs into the profile as source material for bullet generation, not just commit metadata.
+46. 🔵 ✅ As a user, I want to pull READMEs into the profile as source material for bullet generation, not just commit metadata. *(Shipped 2026-05-22 — `Project.readme` + `readmeUpdatedAt` columns. New `fetchGithubReadme` in `lib/fetchers/github-public-fetcher.ts`, refreshed on a weekly cadence by `scheduler/jobs/github-metrics.ts`. Resume rewrite prompt includes a "Project READMEs" section keyed by sourceId for any project-source bullet in the selection — capped at 2 KB per project. Markdown is stored truncated at 16 KB to keep DB rows bounded.)*
 
 ## 10. Application document tracking
 
@@ -118,10 +118,10 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 
 - **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories 56–59). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
 - **🟡: 27 total, 25 ✅ + 1 ◐ + 1 ⛔.** Story **47** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story 40). Story **37** is ⛔ user-declined (2026-05-15). All other 🟡 closed.
-- **🔵 shipped: 9/13** (stories **23** negative filters, **24** comp parsing, **33** profile snapshots ◐ capture only, **41** skills-gap, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks, **63** bulk-move tracks). User-declined: **40** (cover letter). Genuinely open: **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion).
+- **🔵 shipped: 10/13** (stories **23** negative filters, **24** comp parsing, **33** profile snapshots ◐ capture only, **41** skills-gap, **46** README ingestion, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks, **63** bulk-move tracks). User-declined: **40** (cover letter). Genuinely open: **28** (quiet hours), **45** (suggested rewrites).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **46** README ingestion; **45** suggested portfolio rewrites; **28** quiet hours.
+**Next-up candidates** (small surface, real leverage): **45** suggested portfolio rewrites; **28** quiet hours; **33** rollback UX.
 
 ---
 

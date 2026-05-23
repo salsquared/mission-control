@@ -34,12 +34,23 @@ const SYSTEM_PROMPT = [
     "Return strictly JSON of shape {\"bullets\": [{\"id\", \"rewrittenText\", \"matchedKeywords\"}]} — one entry per input bullet, in the same order. `matchedKeywords` lists which of the posting's keywords the rewrite emphasizes.",
 ].join("\n");
 
-export async function rewriteBullets(
+// Story 46 — README excerpts per project sourceId. Caller-built; the rewriter
+// only renders what's handed in. ~2 KB cap per project so the combined prompt
+// stays in budget even with 4-5 portfolio projects in one resume.
+export interface ProjectReadmeContext {
+    readmesBySourceId: Record<string, string>;
+}
+
+export const PROJECT_README_PROMPT_LIMIT = 2_048;
+
+// Pure prompt builder, exported so it can be unit-tested without hitting
+// Gemini. Mirrors the body that rewriteBullets ships in production — change
+// it here and the LLM sees the new shape immediately.
+export function buildRewriteUserPrompt(
     selections: BulletSelection[],
     posting: ParsedPosting,
-): Promise<RewrittenBullet[]> {
-    if (selections.length === 0) return [];
-
+    readmeCtx?: ProjectReadmeContext,
+): string {
     const inputBullets = selections.map(s => ({
         id: s.bulletId,
         originalText: s.originalText,
@@ -49,17 +60,52 @@ export async function rewriteBullets(
         locked: s.locked,
     }));
 
-    const userPrompt = [
+    // Group READMEs by sourceId so the prompt doesn't repeat them per bullet
+    // when one project has multiple bullets selected.
+    const readmeSection: string[] = [];
+    if (readmeCtx?.readmesBySourceId) {
+        const projectSourceIds = new Set(
+            selections.filter(s => s.kind === "project").map(s => s.sourceId),
+        );
+        for (const sourceId of projectSourceIds) {
+            const readme = readmeCtx.readmesBySourceId[sourceId];
+            if (!readme) continue;
+            const label = selections.find(s => s.sourceId === sourceId)?.sourceLabel ?? sourceId;
+            const trimmed = readme.length > PROJECT_README_PROMPT_LIMIT
+                ? readme.slice(0, PROJECT_README_PROMPT_LIMIT) + "\n…(truncated)"
+                : readme;
+            readmeSection.push(`### Project README — ${label}\n${trimmed}`);
+        }
+    }
+
+    return [
         `Posting title: ${posting.title ?? "(unknown)"}`,
         `Company: ${posting.company ?? "(unknown)"}`,
         `Seniority: ${posting.seniority ?? "(unknown)"}`,
         "",
         "Posting keywords (what the posting emphasizes):",
         posting.keywords.map(k => `  - ${k}`).join("\n"),
+        ...(readmeSection.length > 0
+            ? [
+                "",
+                "Project READMEs (use as factual reference for project-source bullets — do NOT invent new claims, only emphasize what the README confirms is true):",
+                readmeSection.join("\n\n"),
+            ]
+            : []),
         "",
         "Bullets to rewrite (preserve every `id` exactly):",
         JSON.stringify(inputBullets, null, 2),
     ].join("\n");
+}
+
+export async function rewriteBullets(
+    selections: BulletSelection[],
+    posting: ParsedPosting,
+    readmeCtx?: ProjectReadmeContext,
+): Promise<RewrittenBullet[]> {
+    if (selections.length === 0) return [];
+
+    const userPrompt = buildRewriteUserPrompt(selections, posting, readmeCtx);
 
     const response = await chatJSON({
         system: SYSTEM_PROMPT,

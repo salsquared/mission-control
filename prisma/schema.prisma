@@ -293,6 +293,13 @@ model Project {
   githubRepo         String?   // "owner/repo" — drives the M9 scheduler fetch
   portfolio          Boolean   @default(false) // flag to fetch metrics for this project + surface on resumes
   metricsUpdatedAt   DateTime?
+  // Story 46 — raw README markdown fetched from the GitHub default branch
+  // for portfolio repos. Capped at ~16 KB at write time so a runaway README
+  // (e.g. embedded changelogs) can't bloat the row. Consumed by the resume
+  // rewrite prompt as additional source material so portfolio-project
+  // bullets can reflect what the repo actually does, not just star counts.
+  readme             String?
+  readmeUpdatedAt    DateTime?
   position           Int       @default(0)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt

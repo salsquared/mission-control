@@ -53,6 +53,12 @@ export const ProjectSchema = z.object({
     githubRepo: z.string().nullable(),
     portfolio: z.boolean(),
     metricsUpdatedAt: z.string().datetime().nullable(),
+    // Story 46 — README markdown ingested for portfolio repos. Truncated at
+    // 16 KB at write time; the resume rewrite prompt slices an additional
+    // 2 KB excerpt per project. NULL when no README has been fetched yet
+    // (or the repo has no README).
+    readme: z.string().nullable().optional(),
+    readmeUpdatedAt: z.string().datetime().nullable().optional(),
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),

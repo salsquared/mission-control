@@ -133,3 +133,84 @@ export async function fetchGithubRepoMetrics(ownerRepo: string): Promise<GithubF
         clearTimeout(timeoutId);
     }
 }
+
+// Story 46 — README ingestion. Separate from fetchGithubRepoMetrics so the
+// hot path stays at 3 API calls; README is a 4th call only for repos we
+// actually want to surface on resumes. Returns the decoded markdown, or
+// null when the repo has no README (404) / the response was malformed.
+// Errors are returned, not thrown.
+
+const ReadmeResponseSchema = z.object({
+    content: z.string(),     // base64-encoded
+    encoding: z.string(),    // "base64" in practice
+}).passthrough();
+
+export type GithubReadmeResult =
+    | { ok: true; readme: string | null }
+    | { ok: false; error: string };
+
+// 16 KB cap. A representative repo README (Iris, Pulsar, this app) is
+// 2-8 KB; anything > 16 KB is almost certainly bundling a changelog or
+// auto-generated API docs that doesn't belong in a resume-rewrite prompt.
+const README_MAX_BYTES = 16_384;
+
+export async function fetchGithubReadme(ownerRepo: string): Promise<GithubReadmeResult> {
+    const match = ownerRepo.match(/^([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)$/);
+    if (!match) return { ok: false, error: `Invalid owner/repo: ${ownerRepo}` };
+    const [, owner, repo] = match;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    try {
+        const url = `https://api.github.com/repos/${owner}/${repo}/readme`;
+        try {
+            assertExternalHttpUrl(url);
+        } catch (e) {
+            if (e instanceof UnsafeURLError) return { ok: false, error: e.message };
+            throw e;
+        }
+        let res: Response;
+        try {
+            res = await fetch(url, {
+                headers: {
+                    "User-Agent": "mission-control/1.0 (+https://mc.local; personal project)",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                },
+                signal: controller.signal,
+            });
+        } catch (e) {
+            return { ok: false, error: `Fetch failed: ${e instanceof Error ? e.message : String(e)}` };
+        }
+        if (res.status === 404) return { ok: true, readme: null };
+        if (!res.ok) {
+            const rate = res.headers.get("x-ratelimit-remaining");
+            return { ok: false, error: `HTTP ${res.status}${rate !== null ? ` (rate remaining ${rate})` : ""}` };
+        }
+        let json: unknown;
+        try { json = await res.json(); } catch (e) { return { ok: false, error: `Bad JSON: ${e instanceof Error ? e.message : String(e)}` }; }
+        const parsed = ReadmeResponseSchema.safeParse(json);
+        if (!parsed.success) return { ok: false, error: "Unexpected README payload shape" };
+        if (parsed.data.encoding !== "base64") {
+            return { ok: false, error: `Unexpected README encoding: ${parsed.data.encoding}` };
+        }
+        let decoded: string;
+        try {
+            decoded = Buffer.from(parsed.data.content, "base64").toString("utf8");
+        } catch (e) {
+            return { ok: false, error: `Base64 decode failed: ${e instanceof Error ? e.message : String(e)}` };
+        }
+        // Truncate at boundary, not mid-codepoint. Buffer.byteLength gives the
+        // UTF-8 byte count regardless of the source string's encoding.
+        if (Buffer.byteLength(decoded, "utf8") > README_MAX_BYTES) {
+            // Use Buffer slicing then re-decode so we don't split a multi-byte
+            // char. The trailing slice is dropped — losing 1-3 bytes of tail
+            // is a non-issue for resume-prompt purposes.
+            const buf = Buffer.from(decoded, "utf8").subarray(0, README_MAX_BYTES);
+            decoded = buf.toString("utf8");
+        }
+        return { ok: true, readme: decoded };
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}

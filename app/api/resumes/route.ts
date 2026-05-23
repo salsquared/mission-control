@@ -144,7 +144,27 @@ export async function POST(req: NextRequest) {
 
         // 4. Rewrite via LLM
         stage = "rewrite";
-        const rewrites = await rewriteBullets(flat, posting);
+        // Story 46 — build per-project README context once before the rewrite
+        // call. Only includes READMEs for projects whose bullets are actually
+        // in the selection AND that have a stored README (`portfolio=true`
+        // + scheduler fetched it). Keeps the prompt-budget bounded to the
+        // projects that matter for this specific resume.
+        const projectIdsInSelection = new Set(
+            flat.filter(s => s.kind === "project").map(s => s.sourceId),
+        );
+        const readmesBySourceId: Record<string, string> = {};
+        for (const project of profile.projects) {
+            if (projectIdsInSelection.has(project.id)) {
+                // ProjectWire doesn't include the readme field on its zod shape,
+                // but the hydrated profile DOES carry it through from the DB.
+                // Treat the field defensively.
+                const r = (project as unknown as { readme?: string | null }).readme;
+                if (typeof r === "string" && r.trim().length > 0) {
+                    readmesBySourceId[project.id] = r;
+                }
+            }
+        }
+        const rewrites = await rewriteBullets(flat, posting, { readmesBySourceId });
 
         // 4b. Skills gap (story 41) — pure, no LLM. Compute against the
         // FULL profile, not just the selected bullets: even an unselected
