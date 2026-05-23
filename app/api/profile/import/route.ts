@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth-guards";
+import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { broadcastEvent } from "@/lib/events";
 import { extractText } from "@/lib/profile/extract";
 import { extractProfileFromText } from "@/lib/profile/import-llm";
@@ -34,6 +35,18 @@ export async function POST(req: NextRequest) {
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+
+    // RAH-12: per-userId rate limit BEFORE any file/LLM work. Each import
+    // spawns N (extract → synthesize → merge) Gemini calls per file, so 5
+    // imports per 10 minutes is a generous human cap. A stuck loop posting
+    // multipart payloads would otherwise sustain real cost.
+    const rl = checkUserRateLimit("profile:import", userId, Date.now(), { max: 5, windowMs: 10 * 60 * 1000 });
+    if (!rl.ok) {
+        return NextResponse.json(
+            { error: `Too many profile imports — try again in ${rl.retryAfterSec}s`, stage: "rate-limit" },
+            { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+        );
+    }
 
     let formData: FormData;
     try {

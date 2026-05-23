@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
+import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting } from "@/lib/resumes/posting";
 import { selectBullets, flattenSelections } from "@/lib/resumes/select";
@@ -106,6 +107,19 @@ export async function POST(req: NextRequest) {
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+
+    // RAH-12: per-userId rate limit BEFORE any Gemini-touching code runs.
+    // Defense-in-depth against an accidental refresh loop or runaway client
+    // burning through the daily generation budget (1 generate = 2-3 Gemini
+    // calls). 5 per 10 minutes is a generous human cap while still bounding
+    // a stuck loop.
+    const rl = checkUserRateLimit("resumes:gen", userId, Date.now(), { max: 5, windowMs: 10 * 60 * 1000 });
+    if (!rl.ok) {
+        return NextResponse.json(
+            { error: `Too many resume generations — try again in ${rl.retryAfterSec}s`, stage: "rate-limit" },
+            { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+        );
+    }
 
     const parsed = ResumePostBodySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
