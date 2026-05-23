@@ -28,7 +28,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 |---|---|---|---|---|
 | 🔴 must-have | **20** | 0 | 0 | 20 (incl. §13 56–59 and story 30a) |
 | 🟡 important | **25** | 0 | 1 | 27 (story 47 ◐ partial — resume side shipped, cover-letter side OOS; story 37 ⛔ multi-template user-declined 2026-05-15) |
-| 🔵 nice-to-have | **10** | 2 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
+| 🔵 nice-to-have | **11** | 1 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
 
 ### Per-track status
 
@@ -56,12 +56,11 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13, Story 50, Story 48, Story 63, Story 24, and Story 46 ✅ shipped 2026-05-22.
+Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13, Story 50, Story 48, Story 63, Story 24, Story 46, and Story 45 ✅ shipped 2026-05-22.
 
-1. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
-2. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
-3. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
-4. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
+1. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
+2. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
+3. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
 
 ### User-declined
 
@@ -431,7 +430,7 @@ Stories: 42, 43, 44 (🟡). Shipped 2026-05-15.
 ### M9 Phase 2 — GitHub UX polish ◐
 
 - **Project portfolio toggle UI** — add a checkbox + repo input on `ProjectCard` so the user can flip projects to portfolio mode without going through Prisma.
-- **M9.4 — Suggested-rewrites** (🔵 story 45): when `metrics` change meaningfully (crossed 100 stars, shipped a new language, big release), enqueue a `Notification(kind='system')` suggesting the user revisit the project bullets.
+- **M9.4 — Suggested-rewrites (story 45) ✅ shipped 2026-05-22.** `lib/profile/metric-deltas.ts:computeMetricDeltas(prev, next)` runs after every metrics refresh. Detects star-threshold crossings against `STAR_MILESTONES = [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000]` (highest-only — 4→26 fires once at 25), primary-language flips, new ≥5%-share languages (filters out one-off shell scripts), and commit-count jumps ≥25% AND ≥10 absolute (so tiny repos don't churn). First-ingest (`prev === null`) is silent — only changes fire. Each delta dispatches a `kind='system' tier='standard'` notification with dedupKey `portfolio-rewrite:${projectId}:${type}:${milestone}` so a milestone never re-fires; the commit-jump uses `nextCommits` as the milestone so subsequent jumps key uniquely. Hermetic `metric-deltas-smoke.ts` (16/16).
 - **M9.5 — README-as-source (story 46) ✅ shipped 2026-05-22.** `Project.readme` + `readmeUpdatedAt` columns (migration `add_project_readme`, both DBs). New `fetchGithubReadme(ownerRepo)` in `lib/fetchers/github-public-fetcher.ts` — separate from `fetchGithubRepoMetrics` so the metrics hot path stays at 3 API calls. `scheduler/jobs/github-metrics.ts` refreshes README weekly (independent cadence from the 20h metrics gate) — README failures don't tank the metrics refresh for the same project. Stored markdown is truncated at 16 KB at write time to bound row size. Resume rewrite prompt: new optional `ProjectReadmeContext` param on `rewriteBullets`; `app/api/resumes/route.ts` builds the context for project-source bullets actually in the selection (avoids paying tokens on READMEs that aren't surfaced) and slices an additional 2 KB excerpt per project before prompt assembly. Pure prompt builder extracted as `buildRewriteUserPrompt` so the README-context branch is unit-testable; hermetic `readme-prompt-smoke.ts` (13/13) covers no-ctx, empty-ctx, project-only inclusion, multi-bullet dedup (one README per project, not per bullet), selective inclusion (only sourceIds in the selection), truncation at the prompt limit, and empty-string-readme as no-readme.
 
 ---

@@ -7,7 +7,9 @@
  * projects per hour — well above typical personal portfolio size.
  */
 import { prisma } from "@/lib/prisma";
-import { fetchGithubRepoMetrics, fetchGithubReadme } from "@/lib/fetchers/github-public-fetcher";
+import { fetchGithubRepoMetrics, fetchGithubReadme, type RepoMetrics } from "@/lib/fetchers/github-public-fetcher";
+import { computeMetricDeltas } from "@/lib/profile/metric-deltas";
+import { dispatchNotification } from "@/lib/notifications/dispatch";
 
 export interface GithubMetricsRunResult {
     processed: number;
@@ -15,6 +17,22 @@ export interface GithubMetricsRunResult {
     failed: number;
     skippedRecent: number;
     readmesFetched: number;
+    deltasDispatched: number;
+}
+
+function parsePriorMetrics(raw: string | null): RepoMetrics | null {
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw) as Partial<RepoMetrics> | null;
+        if (!parsed || typeof parsed !== "object") return null;
+        // Tolerant cast — the row is a JSON-stringified RepoMetrics from a
+        // prior tick, but a hand-edited or legacy row might be sparse. The
+        // delta function reads each field defensively, so a partial shape
+        // is fine.
+        return parsed as RepoMetrics;
+    } catch {
+        return null;
+    }
 }
 
 // Story 46 — README cadence is independent from metrics. READMEs change
@@ -30,13 +48,25 @@ export async function runGithubMetrics(): Promise<GithubMetricsRunResult> {
             portfolio: true,
             githubRepo: { not: null },
         },
-        select: { id: true, githubRepo: true, metricsUpdatedAt: true, readmeUpdatedAt: true },
+        // Story 45: include the project's prior metrics + name + profile.userId
+        // so the metric-delta detector can compare new vs. prior and the
+        // notification dispatcher can target the owning user.
+        select: {
+            id: true,
+            name: true,
+            githubRepo: true,
+            metrics: true,
+            metricsUpdatedAt: true,
+            readmeUpdatedAt: true,
+            profile: { select: { userId: true } },
+        },
     });
 
     let succeeded = 0;
     let failed = 0;
     let skippedRecent = 0;
     let readmesFetched = 0;
+    let deltasDispatched = 0;
     const now = Date.now();
 
     for (const p of candidates) {
@@ -50,6 +80,7 @@ export async function runGithubMetrics(): Promise<GithubMetricsRunResult> {
 
         const repo = p.githubRepo!;
         const update: Record<string, unknown> = {};
+        let newMetrics: RepoMetrics | null = null;
 
         if (metricsStale) {
             const result = await fetchGithubRepoMetrics(repo);
@@ -61,6 +92,7 @@ export async function runGithubMetrics(): Promise<GithubMetricsRunResult> {
                 // than the bottleneck (3-call metrics) so don't let a metrics
                 // failure also lose us the README budget.
             } else {
+                newMetrics = result.metrics;
                 update.metrics = JSON.stringify(result.metrics);
                 update.metricsUpdatedAt = new Date();
             }
@@ -97,8 +129,41 @@ export async function runGithubMetrics(): Promise<GithubMetricsRunResult> {
         } catch (e) {
             console.warn(`[github-metrics] DB write failed for project ${p.id}:`, e);
             failed++;
+            continue;
+        }
+
+        // Story 45 — compare new vs prior metrics and dispatch a
+        // suggested-rewrite Notification per significant delta. Runs AFTER
+        // the row update so a notification can never be sent for a state
+        // that didn't actually persist. dedupKey ties each milestone to a
+        // single dispatch; once "stars-threshold:100" fires for project X
+        // it won't re-fire until the next milestone (250) is crossed.
+        if (newMetrics) {
+            const prevMetrics = parsePriorMetrics(p.metrics);
+            const deltas = computeMetricDeltas(prevMetrics, newMetrics);
+            for (const delta of deltas) {
+                try {
+                    const result = await dispatchNotification({
+                        userId: p.profile.userId,
+                        tier: "standard",
+                        kind: "system",
+                        title: `${p.name} — ${delta.summary}`,
+                        body: `Consider revisiting the bullets for ${p.name} on your profile — the project's metrics meaningfully changed.`,
+                        payload: {
+                            projectId: p.id,
+                            type: "portfolio-rewrite-suggestion",
+                            deltaType: delta.type,
+                            milestone: delta.milestone,
+                        },
+                        dedupKey: `portfolio-rewrite:${p.id}:${delta.type}:${delta.milestone}`,
+                    });
+                    if (result) deltasDispatched++;
+                } catch (e) {
+                    console.warn(`[github-metrics] delta dispatch failed for project ${p.id} (${delta.type}):`, e);
+                }
+            }
         }
     }
 
-    return { processed: candidates.length, succeeded, failed, skippedRecent, readmesFetched };
+    return { processed: candidates.length, succeeded, failed, skippedRecent, readmesFetched, deltasDispatched };
 }
