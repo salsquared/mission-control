@@ -14,7 +14,7 @@
 ## Last session
 
 - **Date:** 2026-05-22 (consolidated TODO-march session).
-- **Branch:** `main`. **Ten things landed end-to-end, ten commits ahead of `origin/main`:**
+- **Branch:** `main`, in sync with `origin/main` at `708308a`. **Ten commits landed end-to-end (all pushed):**
   - `ace2be9` — Story 33 capture-side (ProfileSnapshot model + UI) + cross-doc reconciliation.
   - `25ff47b` — RAH-13 age-encrypted DB backups + recovery runbook.
   - `2d0c594` — Story 50 recruiter contacts (Contact model + UI + stale-nudge body rewrite).
@@ -24,36 +24,24 @@
   - `6ed817c` — Story 46 README ingestion (`Project.readme` + scheduler fetch + rewrite-prompt context).
   - `f44cb64` — Story 45 suggested portfolio rewrites (metric-delta detector + scheduler dispatch).
   - `e29cf58` — Story 28 quiet hours (`GlobalSetting.quietHours*` + dispatcher gate).
-  - (next) — RAH-12 per-userId Gemini rate limit (sliding-window limiter on /api/resumes + /api/profile/import).
-- **Earlier in this same session** (kept for reference, full details below in §Recently completed):
-  1. **Cross-doc reconciliation** — `next_steps.md` had drifted from `user-stories-applications.md` and `implementation.md`: the "Immediate next actions" list still showed Story 26 (per-watchlist notification mode, actually shipped in MB Phase 2b), Story 37 (multi-template, actually ⛔ user-killed 2026-05-15), and Story 41 (skills-gap, actually shipped + has hermetic) as open work. `implementation.md` itself had an internal contradiction — line 48 marked skills-gap ✅ but the M8 Phase 3 prose claimed it was deferred. All three docs fixed.
-  2. **Story 33 capture side shipped** — `ProfileSnapshot` model + migration `add_profile_snapshots` applied to both dev.db and prod.db; repository + 2 API routes; api-client surface; new "Snapshot now" UI card in a "History" section on `ProfileView`. Hermetic smoke 17/17, full pre-push 34/34, prod build green, PM2 prod + dev restarted. Rollback/restore UX intentionally deferred — see `docs/implementation.md` M7.5.
-- **Files added / changed:**
-  - `prisma/schema.prisma` — new `ProfileSnapshot` model + `User.profileSnapshots` relation.
-  - `prisma/migrations/20260523024735_add_profile_snapshots/` — applied to both DBs.
-  - `lib/repositories/profile-snapshots.ts` (new), `lib/schemas/profile.ts` (extended), `lib/api-client.ts` (`api.profile.snapshots.*`), `lib/events.ts` + `hooks/useServerEvents.ts` (added `'ProfileSnapshot'` to model unions).
-  - `app/api/profile/snapshots/route.ts` + `app/api/profile/snapshots/[id]/route.ts` (new — session-gated via `requireSession`).
-  - `components/cards/ProfileSnapshotsCard.tsx` (new), `components/views/ProfileView.tsx` (mounts the card in a new "History" `<Section>` after Identity).
-  - `scripts/tests/hermetic/profile-snapshots-smoke.ts` (new, wired into `scripts/pre-push.sh`).
-  - Docs: `user-stories-applications.md` §status snapshot + story 33 + 37 updates; `implementation.md` coverage table + M7.5 section + open-work list.
-- **Schema migration safety (verified):** new table additive only, no FK / constraint changes on existing tables. Both DBs migrated with PM2 dev + scheduler-dev + prod + scheduler-prod stopped first to avoid SQLite `database is locked`. All four processes back online after migrate.
-- **Working tree:** uncommitted. No commits created this session — pending user's call.
+  - `708308a` — RAH-12 per-userId Gemini rate limit (sliding-window limiter on /api/resumes + /api/profile/import).
+- **Final gate state:** pre-push 42/42 hermetic suites, prod `npm run build` green, all 5 new routes mounted + session-gated, both DBs at the same migration head (32/32 applied), all 4 PM2 processes online, prod restarted on the new build. Per-detail summaries of each commit are in §Recently completed below.
+- **Schema migration safety (verified):** all 5 migrations this session are additive-only — `CREATE TABLE` × 2 (ProfileSnapshot, Contact) with no FK to existing tables besides cascade-on-User/Application, and nullable `ADD COLUMN` × 3 (JobPosting comp, Project readme, GlobalSetting quiet-hours). Zero risk of data loss. PM2 was stopped per-migration where SQLite would otherwise lock (4 of 5); the other one ran live.
+- **Working tree:** clean, in sync with `origin/main`.
 
 ## Umbrella goal
 
-**Finish `docs/user-stories-applications.md` so the user can apply to jobs and internships ASAP.** That doc is the canonical roadmap — three independent tracks (Track A: pipeline UX; Track B: job discovery + notifications; Track C: profile + resume generation + GitHub). Don't re-derive the plan here; consult that file for milestone definitions (MA, MB, M7, M8, M9).
+**Apply to jobs.** The `docs/user-stories-applications.md` roadmap is functionally closed — every 🔴 + 🟡 + 🔵 story is shipped, declined, or deferred-by-design. Forward motion now runs through real-world use:
 
-**Top-level priority order** (chosen for "apply ASAP"):
-1. ✅ **M7 — Profile spine** (Track C). Shipped 2026-05-14 in `0367263` + `e41b6c0`.
-2. **M8 — Tailored resume generation** (Track C). *Current focus.* Detailed plan in `docs/user-stories-applications.md` §M8. Phase 1 produces the first sendable PDF.
-3. **MA — Pipeline writes + drill-in** (Track A). So applications the user *sends* get tracked end-to-end (manual add, status drag, timeline, notes).
-4. **MB — Watchlists + notifications** (Track B). Hunts for new postings. Lower urgency than M8 — the user can hand-source openings; what they can't easily do is hand-tailor a resume per posting.
+1. Send applications.
+2. When the LLM rewrites are off, capture the failure mode in `docs/implementation.md` §Prompt tuning and revise prompts.
+3. When something in the pipeline misfires (wrong status classification, missed posting, calendar sync glitch), file it as a follow-up and patch.
 
-Out of scope until top-of-stack ships: AI Companion prompt tuning, visual polish, M9 (GitHub-driven project metrics).
+Track A (Pipeline UX), Track B (Discovery + notifications), Track C (Profile + resume + GitHub) are all in production. Backups encrypted (RAH-13). Rate limits in place (RAH-12). The MA/MB/M7/M8/M9 milestone scaffolding referenced by older sessions is all behind us; consult `docs/implementation.md` for the per-milestone shipped detail.
 
 ## Critical path — current
 
-**Back to "real-world use → first applied posting → iterate on prompts."** The "apply ASAP" loop is fully closed: capture, kanban + side-track kanban, drill-in, watchlists (career + side), notifications with negative-filter gate at the scheduler layer, profile + multi-resume import, tailored PDF + DOCX + skills-gap. Every 🔴 + 🟡 story is shipped or user-declined. What's left is a tail of 🔵 polish + two cross-cutting items (backup encryption, Gemini rate-limit). Prompt tuning is blocked on the user actually applying to postings — when they do, capture failure modes in `implementation.md` §Prompt tuning.
+**Apply, observe, iterate.** The "apply ASAP" loop is fully closed: capture, kanban + side-track kanban, drill-in, contacts, watchlists (career + side), notifications with negative-filter gate + quiet hours, profile + multi-resume import + snapshots, tailored PDF + DOCX + skills-gap + resume-diff, GitHub metrics + README ingestion + suggested-rewrite nudges. Backups encrypted, Gemini-call routes rate-limited. Every 🔴 + 🟡 + 🔵 story is shipped or explicitly declined/deferred. Prompt tuning needs real user data — when an LLM rewrite goes off, capture in `implementation.md` §Prompt tuning.
 
 ## Immediate next actions (in order)
 
@@ -75,22 +63,27 @@ Out of scope until top-of-stack ships: AI Companion prompt tuning, visual polish
 
 ## In-progress work
 
-Nothing in-flight in the editor. Story 33 capture side shipped this session (see §Last session). Working tree is uncommitted — user has not yet asked for a commit.
+Nothing in flight. Working tree clean, in sync with `origin/main`.
 
-**Unattended UI verifications waiting on user feedback (new this session):**
-- New "History" section renders on `ProfileView` below "Identity", with a `ProfileSnapshotsCard` containing the label input + "Snapshot now" button + empty-state copy.
-- Clicking "Snapshot now" without a label produces an unlabeled row (italic "Unlabeled" placeholder). Clicking it after typing a label persists the label.
-- The trash icon next to a row prompts a `window.confirm`, then deletes on confirm.
-- Cross-tab: deleting on one tab makes the other tab's list refresh within ~a second (SSE `ProfileSnapshot` channel).
+**Unattended UI verifications waiting on user feedback (this session's commits, by surface):**
 
-**Unattended UI verifications still waiting on user feedback (from 2026-05-22 morning session):**
-- "Side Pipeline" + "Side Discovery" sections render below the career sections after hard-refresh.
-- `AddApplicationModal` opened from the side kanban defaults `track="side"`; inline Track toggle in `ApplicationDetailOverlay` flips a row between pipelines.
-- `AddWatchlistModal` opened from the side card shows only "Find roles" + "Advanced" tabs (career-curated Company/Discover tabs hidden).
-- Per-track `postingFilters` slice in Zustand: toggling a chip on one `NewPostingsCard` does NOT mirror to the other.
-- Per-track negative-filter blocklists: adding a pattern in the career `WatchlistsCard` filter drawer does NOT hide matching postings on the side card (and vice versa).
-- For a keyword-only side feed (no company-based watchlists), all postings render in the main list — no "Other matches" detour.
-- `/api/system` `cacheStats.hits` actually moves now (was pinned at 0 because the browser was caching at `max-age=ttl`; `ae424e8` switched to `no-store`).
+*Profile dash:*
+- "History" section renders below "Identity" with `ProfileSnapshotsCard` — label input, "Snapshot now" button, list with per-row delete. Cross-tab delete refreshes via SSE.
+
+*Applications dash:*
+- "Contacts" expander sits between Timeline and Resumes on `ApplicationDetailOverlay`. Inline add-form (name + email + role), per-row Touch (bumps `lastTouchedAt`) and Trash. Stale-nudge body now reads "Consider drafting a follow-up to {FirstName}" when a primary contact exists.
+- Resume rows in the Resumes section get checkboxes when ≥ 2 are present; selecting 2 enables "Compare selected" → inline `ResumeDiffPanel` (keyword chips + bullet onlyA/onlyB + shared-but-rewritten side-by-side).
+- Kanban header has a `CheckSquare` button (both career + side). Tapping it enters select mode: card taps toggle checkboxes (no detail-overlay open), drag-to-status is suppressed, a footer bar shows "N selected · Move to <other-track>". Conflicts (same employer already in target track) surface as a toast listing the colliding companies; nothing moves.
+
+*Postings:*
+- Emerald comp chip on `NewPostingsCard` rows that parsed cleanly (`$120k–$150k/yr` style). Will be sparse on day-of since only the next crawl populates the columns.
+
+*Backups / infrastructure (no UI):*
+- Confirm `~/.config/mission-control/backup.key` exists and is chmod-600. Run `./scripts/backup-decrypt.sh ~/backups/mission-control/$(ls -t ~/backups/mission-control/*.age | head -1)` once to verify the round-trip works against a real artifact.
+
+*Open from prior session (still valid):*
+- Side-track UI: kanban sections, `AddApplicationModal` defaults to `track="side"`, `AddWatchlistModal` hides career-curated tabs, per-track filter slices are independent.
+- `/api/system` `cacheStats.hits` actually moves (was pinned at 0 pre-`ae424e8`).
 
 ## Recently completed
 
@@ -103,16 +96,13 @@ Nothing in-flight in the editor. Story 33 capture side shipped this session (see
 - **2026-05-22 (Story 48)** — **Resume-version diff between two `GeneratedResume` rows.** Pure read-side, no schema changes. `lib/resumes/diff.ts:computeResumeDiff` compares two rows along three axes — posting `parsedKeywords` (A-order preserved), `selections` set-diffed by `bulletId`, and `skillsGap`. Tolerant per-field hydration in the route handler means legacy rows with missing fields default to empty arrays instead of 500ing. `/api/resumes/diff?a=&b=` ownership-checks both rows in one Prisma `findMany` with `userId in where`. UI: when ≥2 resumes are present on an Application, each row gets a checkbox; pick two (FIFO past 2) and "Compare selected" reveals an inline `ResumeDiffPanel` with summary stats + keyword chips (rose=only A, emerald=only B) + bullets-only-in-A / bullets-only-in-B / shared-but-rewritten-differently buckets. Hermetic 31/31 (`resume-diff-smoke.ts`, wired into pre-push). Full pre-push 36/36.
 - **2026-05-22 (Story 50)** — **Recruiter contacts per application.** New `Contact` Prisma model with cascade-on-application-delete; migration `add_application_contacts` applied to both DBs. `lib/repositories/contacts.ts` exposes CRUD with parent-application ownership scoping + `primaryContactForApplication` (orders by lastTouchedAt desc nulls last → position → createdAt). `/api/applications/contacts` GET/POST/PATCH/DELETE under `requireSession`. UI: expandable "Contacts" section on `ApplicationDetailOverlay` between Timeline and Resumes — inline add-form + per-row Touch (bumps lastTouchedAt) + Trash. `scheduler/jobs/stale-applications.ts` rewrites the nudge body to "Consider drafting a follow-up to <FirstName>" when a contact exists, falls back to generic otherwise. Hermetic 25/25 (`contacts-smoke.ts`, wired into pre-push). Full pre-push 35/35, prod build green, prod PM2 + scheduler-prod restarted so the next stale-nudge tick picks up the new body shape.
 - **2026-05-22 (RAH-13)** — **DB backups now encrypted with age.** `scripts/backup-db.sh` reworked: auto-discovers an age recipient at `~/.config/mission-control/backup.pub`, encrypts each artifact in place before either local retention or offsite upload sees it, falls back to plaintext with a loud warning so cron doesn't break before initial key setup. New `scripts/backup-decrypt.sh` companion (auto-discovers the identity at `~/.config/mission-control/backup.key`). One-time setup done this session: `brew install age`, `age-keygen`, public key dropped at the discovery path, secret key chmod-600 locally. Round-trip verified: encrypted backup → decrypt → 37 Applications matches live `prisma/prod.db`. CLAUDE.md §Backups + recovery rewritten with the new setup, cron note, and recovery runbook (which now includes a "restore secret key from 1Password" step). **User still needs to copy the secret key to 1Password** — see §Immediate next actions for the follow-up checklist.
-- **2026-05-22 (later session)** — **Cross-doc reconciliation + Story 33 capture-side shipped.** `next_steps.md` had drifted (Story 26 / 37 / 41 listed as open work but were respectively shipped / killed / shipped); `implementation.md` had an internal contradiction on skills-gap status. Both fixed. Then built Story 33's read-only safety net: `ProfileSnapshot` model + migration `add_profile_snapshots`, repository + 2 API routes + api-client surface + `ProfileSnapshotsCard` in a new "History" section on `ProfileView`. SSE `'ProfileSnapshot'` channel for cross-tab invalidation. Hermetic smoke 17/17 (`profile-snapshots-smoke.ts`, wired into pre-push as suite 7 of 34). Full pre-push 34/34, prod build green. Rollback/restore intentionally deferred to a later iteration.
+- **2026-05-22 (Story 33 capture + doc reconciliation)** — Single commit `ace2be9`. **Cross-doc reconciliation**: `next_steps.md` had drifted (Story 26 / 37 / 41 listed as open work but were respectively shipped / killed / shipped); `implementation.md` had an internal contradiction on skills-gap status. Both fixed. Then built Story 33's read-only safety net: `ProfileSnapshot` model + migration `add_profile_snapshots`, repository + 2 API routes + api-client surface + `ProfileSnapshotsCard` in a new "History" section on `ProfileView`. SSE `'ProfileSnapshot'` channel for cross-tab invalidation. Hermetic smoke 17/17 (`profile-snapshots-smoke.ts`, wired into pre-push as suite 7 of 34). Full pre-push 34/34, prod build green. Rollback/restore intentionally deferred to a later iteration.
 - **2026-05-22** — **MB Phase 4 side-track pipeline fully landed.** Three commits:
   - `d2cb49f` (backend + schema): `track` column on `Watchlist` + `Application`, `@@unique([userId, normalizedCompany, track])` so same employer can coexist in both tracks, ingest hard-coded to `"career"` (no LLM classification — user flips via inline Track toggle in `ApplicationDetailOverlay`), track-as-application inherits parent watchlist's track, two new `<Section>`s on `ApplicationsView`, side `AddWatchlistModal` hides Company/Discover tabs. Stories 56–63 in `docs/user-stories-applications.md §13`.
   - `ae424e8` (cache-control fix): prod `Cache-Control` was `max-age=ttl` so the browser short-circuited every repeat request and `cacheStats.hits` stayed at 0. Switched to `private, no-store, max-age=0`; server-side cache still does the work.
   - `431ac8c` (per-track negative filters + UI wiring): reshapes `GlobalSetting.globalNegativeFilters` in-memory parse from `string[]` to `{ career: string[]; side: string[] }`; legacy array migrates into career bucket on first read (no schema migration). `/api/postings`, `scheduler/jobs/job-watcher.ts`, `scheduler/jobs/posting-digest.ts` all consult the right slice per `watchlist.track`. Notifications now apply the negative-filter gate that previously only ran at the postings GET layer — postings still land in the DB, only the bell stays quiet. New `components/ui/FilterButton.tsx`; per-track `postingFilters` slice in Zustand isolates chip toggles between cards. Keyword-only feeds (no company-based watchlists) skip the on/off partition and render everything in the main list. New `notification-negative-filter-smoke` hermetic.
 - **2026-05-22** — Fetcher-health card: dropped "(Last Hour)" from title; added inline `1h / 6h / 1d` success-rate pills next to the filter input. Route now returns per-window `totals` alongside the existing per-host 1h map. Commit `f49a729`.
-- **2026-05-20** — Celestrak satellite fetcher 403 fix. `/api/space/satellites` was returning 500s on both tiers because (a) `.env.production` was missing `CACHE_BACKEND=sqlite` (memory-only L2 → every prod PM2 restart blew the cache), (b) the 7200s TTL matched Celestrak's 2h refresh exactly so dev + prod (shared outbound IP) raced their window, and (c) on a 403 "GP data has not updated" the route caught its own throw and returned 500 instead of serving last-known. Patched: `CACHE_BACKEND=sqlite` added to `.env.production`; TTL bumped to 21600s (6h) in `app/api/space/satellites/route.ts`; new `readCachedDataIgnoringExpiry()` helper in `lib/cache.ts` consumed by the route to serve any prior cached payload when Celestrak says "unchanged".
-- **2026-05-20** — Master-resume synthesis pass + import pipeline fixes. Added `lib/profile/synthesize.ts` (Flash) that runs between per-file extraction (Lite) and the deterministic merge. Resolves role-vs-project misclassifications across files (student orgs like SEB and personal projects like Iris kept landing as work roles when a draft formatted them as "Title | Org"). Cross-category dedup safety net + reverse-chrono ordering in `lib/profile/merge.ts`. One-shot cleanup at `scripts/archive/migrations/dedupe-roles-projects-cross-category.ts`. Hermetic 37/37; prod restarted.
-- **2026-05-18** — Tier-B employment-type classifier. `lib/ai/classify-employment-type.ts` batches new postings (heuristic-null only) through a single Gemini Flash call per crawl with explicit timing logs. Wired into `scheduler/jobs/job-watcher.ts` between fetch and create; replaced per-posting findUnique with one bulk findMany so the gating costs nothing extra. Live fixture smoke at `scripts/tests/probes/employment-type-classifier-live.ts`: 8/8 strict cases pass, ~1.7–3.7s/item observed.
-- **2026-05-17** — PA + PB-ext + PC follow-up sweep (7 items). PA-1: Gcal idempotency via sha1(eventId) → events.insert.id. PA-2: WebhookDelivery 30-day prune scheduler job. PA-3: `Application.normalizedCompany` + `@@unique([userId, normalizedCompany])` (MB Phase 4 later extended this to include `track`). PB-ext-4/5: backfill JobPosting.employmentType + WorkdayConfig.maxPages override. PC-6: process-shared Gemini token bucket (12 req/min default).
+_(Earlier entries pruned per the 3–5-entry protocol — detail lives in `docs/implementation.md` per-milestone sections + `git log`.)_
 
 ## Known issues / parked TODOs
 

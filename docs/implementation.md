@@ -20,7 +20,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ## Status snapshot (2026-05-22)
 
-**TL;DR — the "apply ASAP" loop is complete, plus the side-track pipeline.** Every 🔴 must-have is shipped end-to-end (including §13 side-work 56–59). The 🟡 cross-cutting RAH-13 (backup encryption) shipped 2026-05-22. What remains is a tail of 🔵 nice-to-haves.
+**TL;DR — the roadmap is functionally closed.** Every 🔴 must-have, every 🟡 important (sans declined), and every 🔵 nice-to-have (sans declined / future / one deferred rollback half) shipped. All open RAH-N security items closed. The single remaining piece is Story 33's restore-from-snapshot UX, intentionally deferred until there's a real edit to roll back. Forward motion now lives in "apply, observe failure modes, tune prompts" — captured in §Prompt tuning.
 
 ### Coverage by priority
 
@@ -47,11 +47,11 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 | C | M8 Phase 2 | ✅ | Archival + `applicationId` linkage + "Why these bullets?" trace |
 | C | M8 Phase 3 | ✅ | DOCX ✅. Skills-gap (41) ✅. Multi-template (37) ⛔ user-declined 2026-05-15. Cover letter (40) ⛔ user-declined |
 | C | M9 Phase 1 | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
-| C | M9 Phase 2 | 💤 | Suggested rewrites (45), README ingestion (46) |
+| C | M9 Phase 2 | ✅ | Suggested rewrites (45), README ingestion (46) — both shipped 2026-05-22 |
 | **Cross-cutting** | Notification dispatcher | ✅ | Tier model (critical/standard/low), global bell, EMAIL_ENABLED kill-switch |
 | Cross-cutting | Backups | ✅ | DB + `data/resumes/` tar to Google Drive via rclone + recovery runbook |
 | Cross-cutting | Pre-push hermetic gate | ✅ | 14 suites, ~5s, simple-git-hooks |
-| Cross-cutting | Route auth hardening | ◐ | 19/19 unguarded routes patched (`requireSession` / `requireLocalOrSession`); RAH-1/5/10/11/17/18/19/20/21/24 ✅ shipped 2026-05-16. **Open ⏳:** RAH-12 (Gemini rate limit), RAH-13 (backup encryption). |
+| Cross-cutting | Route auth hardening | ✅ | 19/19 unguarded routes patched (`requireSession` / `requireLocalOrSession`); RAH-1/5/10/11/17/18/19/20/21/24 ✅ shipped 2026-05-16. RAH-12 (Gemini rate limit) + RAH-13 (backup encryption) ✅ shipped 2026-05-22. All 24 items closed. |
 | Cross-cutting | Polish backlog (PB-N) | ✅ | PB-2/3/4/7/9/10/11/12/13 ✅ shipped 2026-05-16. PB-1/5/6/8/14/15 ✅ shipped 2026-05-17. All open PB-N items addressed. |
 
 ### Open work, by leverage (next-up order)
@@ -99,7 +99,7 @@ Stories: 13, 14, 15, 47, 48 (🟡) · 49, 50 (🟡).
 
 ## Track B — Job discovery + notifications
 
-### MB Phase 1 — Watchlists + crawler + in-app notifications 🟢
+### MB Phase 1 — Watchlists + crawler + in-app notifications ✅
 
 Stories: 16, 17, 19, 25 (🔴) — minimum viable "hunt on my behalf" loop.
 
@@ -264,14 +264,14 @@ Shipped 2026-05-15. Smoke: `scripts/tests/integration/watchlist-phase2-smoke.ts`
 - **MB-2.1 (partial) Lever + Ashby fetchers** — `lib/fetchers/lever-fetcher.ts` (api.lever.co/v0/postings/<slug>) and `lib/fetchers/ashby-fetcher.ts` (api.ashbyhq.com/posting-api/job-board/<slug>). WATCHLIST_KINDS expanded to `["careers-page", "greenhouse", "lever", "ashby"]`. AddWatchlistModal kind picker shows all four with per-kind help text.
 - **MB-2.4 Closed-posting detection** — at the end of each scheduler tick (skipped on first run), any non-terminal JobPosting whose `externalId` wasn't in the current fetch set AND whose `lastSeenAt < runAt - 6h` flips to `status='closed', removedAt=runAt`. One `Notification(kind='system')` per watchlist summarizing the closures. The 6h grace window prevents transient feed glitches from prematurely marking postings closed. `RunResult.closed` count exposed via `/api/watchlists/[id]/run`.
 
-### MB Phase 2b — Workday + LinkedIn ✅ / per-watchlist mode 💤
+### MB Phase 2b — Workday + LinkedIn + per-watchlist mode ✅
 
 Stories: 18 (Workday), 21 (LinkedIn), 26 (per-watchlist mode) (🟡) · Decision 2 (email — now resolved via OQ1).
 
 - ✅ **Workday** (shipped 2026-05-15): `lib/fetchers/workday-fetcher.ts`. POST to `<tenantHost>/wday/cxs/<tenantSlug>/<careerSite>/jobs` with paginated `{appliedFacets, limit, offset, searchText}`. **Server caps `limit` at 20** (found empirically; values ≥ 25 return HTTP 400); the fetcher uses PAGE_SIZE=20 + MAX_PAGES=10 = up to 200 postings per crawl. **Total field is only populated on the first page** (offset=0); subsequent pages return `total: 0`, so the "stop when reached total" check is gated on `page === 0`. Real-browser UA required (Cloudflare in front of myworkdayjobs.com rejects bot UAs with HTTP 400). Verified live against Boeing (1,177 jobs, 200 fetched in 8s) and Blue Origin (957 jobs).
 - ✅ **LinkedIn** (shipped 2026-05-15): `lib/fetchers/linkedin-fetcher.ts`. GET against the public guest endpoint `https://www.linkedin.com/jobs-guest/jobs/api/seeMoreJobPostings/search?keywords=X&location=Y&start=N`. Returns HTML chunks; parsed with cheerio via `.base-search-card` selectors. Strips tracking params from `href` so dedup works. Cap PAGE_SIZE=25 × MAX_PAGES=2 = 50 postings/crawl + `f_TPR=r86400` (last 24h) filter to keep volume sane. **Fragile by design** — LinkedIn DOM-shifts often; the comment in the file flags the breakage path. Hourly cadence recommended. Verified live: 10 postings returned for "software engineer / Remote".
 - ✅ **Email delivery** (shipped 2026-05-15 via OQ1): Gmail OAuth send through `lib/email/send.ts`, dispatched via `lib/notifications/dispatch.ts` at `tier='critical'`. See "Track A — Notification dispatcher" / OQ1 below.
-- 💤 **Per-watchlist `each`/`digest`/`silent` mode**: now trivially expressible against the tier system (just override `channels` per watchlist). Defer until the per-posting volume actually feels noisy.
+- ✅ **Per-watchlist `each`/`digest`/`silent` mode** (story 26): `Watchlist.notificationMode` column shipped with the MB Phase 2b batch; `each` fires per-posting in real time, `digest` batches into the daily `posting-digest` scheduler job, `silent` skips delivery (postings still land in the DB so they show in the postings feed when the user opens the dash).
 
 #### MB-2.1b — Workday fetcher (deferred — fiddly per-tenant URLs)
 
@@ -464,7 +464,7 @@ Shipped 2026-05-15 · Commit: `db8a9bf` · Smoke: `scripts/tests/hermetic/route-
 - `app/api/auth/[...nextauth]/route.ts` — NextAuth itself; can't guard the guard.
 - `app/api/gmail/webhook/route.ts` — verifies a Google-issued OIDC JWT against `PUBSUB_AUDIENCE` instead of a session (see `docs/hosting.md` §1).
 
-**⏳ Follow-up hardening (flagged by second-pass review, user-confirmed OOS for the initial patch — not yet shipped):**
+**✅ Follow-up hardening (flagged by second-pass review, all shipped):**
 
 - ✅ **RAH-1 — Host-header spoof defense in `requireLocalOrSession`.** Shipped 2026-05-16. LAN bypass now also requires that every hop in `X-Forwarded-For` is a loopback / RFC1918 / IPv6-private address. Cloudflare tunnel populates the leftmost XFF with the original public client IP — a LAN client (direct or via Next.js's internal proxy, which auto-adds `::1`) only ever shows local hops. New `isPrivateOrLoopback` helper handles IPv4 loopback, RFC1918, IPv4-mapped IPv6, and unique-local / link-local IPv6. Behavioral-tested via curl: LAN direct = 200, `Host: localhost` + `XFF: 8.8.8.8` = 401, LAN client at `192.168.1.5` = 200. `lib/auth-guards.ts:requireLocalOrSession`.
 - ✅ **RAH-5 — `withCache` user-identity hook.** Shipped 2026-05-16. Added an optional `userKeyFn` to `WithCacheOptions` in `lib/cache.ts` — when set, the returned key is prepended to the cache key so per-user routes can opt into isolation. No current callers (all wrapped routes return shared external feeds), but the hook is in place for any future user-specific route.
@@ -493,7 +493,7 @@ Triple-track review on 2026-05-16 (mutating-route auth · data-leak / fs / exter
 
 - ✅ **RAH-24 — `applications/backfill` uses `requireSession`.** Shipped 2026-05-16. Replaced inline `getServerSession` with the shared guard helper for grep-ability.
 
-### Open polish backlog ⏳
+### Polish backlog ✅
 
 Non-security follow-ups that don't fit a story-track milestone. RAH is reserved
 for route-auth / security / abuse-prevention hardening; bug-correctness and UX
