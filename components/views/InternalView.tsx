@@ -59,10 +59,9 @@ export const InternalView: React.FC = () => {
         setLoadingOlder(true);
         try {
             const res = await fetch('/api/system/logs/historical');
-            if (res.ok) {
-                const data = await res.json();
-                setHistoricalLogs(data.logs || []);
-            }
+            if (!res.ok) throw new Error(`/api/system/logs/historical returned ${res.status}`);
+            const data = await res.json();
+            setHistoricalLogs(data.logs || []);
         } catch (e) {
             console.error('Failed to load historical logs', e);
         } finally {
@@ -71,34 +70,56 @@ export const InternalView: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const eventSource = new EventSource('/api/system/logs');
+        let es: EventSource | null = null;
+        let retryTimer: ReturnType<typeof setTimeout> | null = null;
+        let backoff = 3_000;
+        let cancelled = false;
 
-        eventSource.onmessage = (event) => {
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'initial') {
-                    const initial = (data.logs || []).slice(-LOG_BUFFER_CAP);
-                    setSysLogs(initial);
-                } else if (data.type === 'new') {
-                    setSysLogs((prevLogs) => {
-                        const nextLogs = prevLogs.length >= LOG_BUFFER_CAP
-                            ? [...prevLogs.slice(prevLogs.length - LOG_BUFFER_CAP + 1), data.log]
-                            : [...prevLogs, data.log];
-                        return nextLogs;
-                    });
+        const connect = () => {
+            if (cancelled) return;
+            es = new EventSource('/api/system/logs');
+
+            es.onopen = () => { backoff = 3_000; };
+
+            es.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.type === 'initial') {
+                        const initial = (data.logs || []).slice(-LOG_BUFFER_CAP);
+                        setSysLogs(initial);
+                    } else if (data.type === 'new') {
+                        setSysLogs((prevLogs) => {
+                            const nextLogs = prevLogs.length >= LOG_BUFFER_CAP
+                                ? [...prevLogs.slice(prevLogs.length - LOG_BUFFER_CAP + 1), data.log]
+                                : [...prevLogs, data.log];
+                            return nextLogs;
+                        });
+                    }
+                } catch (err) {
+                    console.error("Failed to parse log message", err);
                 }
-            } catch (err) {
-                console.error("Failed to parse log message", err);
-            }
+            };
+
+            // EventSource auto-reconnects on a 2xx-then-drop (readyState CONNECTING);
+            // stay quiet in that case. On a non-2xx response (401 during a
+            // session-cookie blip in dev, 5xx during HMR rebuild) the browser
+            // gives up at readyState CLOSED — schedule a manual reconnect with
+            // backoff so the live tail self-heals instead of dying until reload.
+            es.onerror = () => {
+                if (es?.readyState !== EventSource.CLOSED) return;
+                es.close();
+                if (cancelled) return;
+                retryTimer = setTimeout(connect, backoff);
+                backoff = Math.min(backoff * 2, 30_000);
+            };
         };
 
-        eventSource.onerror = (error) => {
-            console.error("EventSource failed:", error);
-            eventSource.close();
-        };
+        connect();
 
         return () => {
-            eventSource.close();
+            cancelled = true;
+            if (retryTimer) clearTimeout(retryTimer);
+            es?.close();
         };
     }, []);
 

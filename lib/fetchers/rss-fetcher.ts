@@ -42,7 +42,10 @@ export async function fetchRSS(name: string, rssUrl: string): Promise<NewsArticl
                     item.image_url = result.ogImage[0].url.replace(/&amp;/g, '&');
                 }
             } catch (err) {
-                console.error(`[RSS] OGS fetch failed for ${name} article ${item.url}`, err);
+                // Best-effort enrichment; mirror scrape-fetcher.ts noise trim.
+                const reason = (err as any)?.result?.error
+                    ?? (err instanceof Error ? err.message : 'unknown');
+                console.warn(`[RSS] OGS skipped ${name} ${item.url}: ${reason}`);
             }
         }
         return item;

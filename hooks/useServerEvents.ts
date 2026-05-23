@@ -15,6 +15,7 @@ const listenersByModel = new Map<ServerEventModel, Set<Listener>>();
 let activeSource: EventSource | null = null;
 let totalSubs = 0;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let reconnectBackoff = 1_000;
 
 function openSource() {
     if (activeSource || typeof window === 'undefined') return;
@@ -27,18 +28,27 @@ function openSource() {
             for (const fn of set) fn(event);
         } catch { /* ignore malformed events */ }
     };
+    es.onopen = () => { reconnectBackoff = 1_000; };
     es.onerror = () => {
-        // The server SSE handler closes streams at ~60s intervals (Next.js
-        // ReadableStream timeout). The browser surfaces that as an error
-        // event; treat it as a normal reconnect rather than tearing the
-        // shared instance down for the surviving subscribers.
+        // Two failure modes:
+        //   readyState CONNECTING — server closed the stream at the ~60s
+        //     Next.js ReadableStream timeout; the browser is already
+        //     auto-retrying with the same EventSource, so leave activeSource
+        //     in place and let listeners ride the reconnect transparently.
+        //   readyState CLOSED — last response was non-2xx (typically 401
+        //     when the dev session expires; dev and prod use separate
+        //     session tables). The browser will not auto-retry, so close
+        //     and reschedule with exponential backoff (1s → 30s cap) to
+        //     avoid hammering /api/events every second forever.
+        if (es.readyState !== EventSource.CLOSED) return;
         es.close();
         if (activeSource === es) activeSource = null;
         if (totalSubs > 0 && reconnectTimer == null) {
             reconnectTimer = setTimeout(() => {
                 reconnectTimer = null;
                 openSource();
-            }, 1000);
+            }, reconnectBackoff);
+            reconnectBackoff = Math.min(reconnectBackoff * 2, 30_000);
         }
     };
     activeSource = es;
@@ -52,6 +62,7 @@ function closeSourceIfIdle() {
     if (totalSubs === 0 && reconnectTimer) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
+        reconnectBackoff = 1_000;
     }
 }
 

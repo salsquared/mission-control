@@ -55,7 +55,12 @@ async function getHandler(request: Request) {
         return NextResponse.json(sortByDate(articles).slice(0, MAX_NEWS_ARTICLES));
 
     } catch (error) {
-        console.error(`Error fetching company news:`, error);
+        // withCache will fall back to the last good payload + 60s retry TTL,
+        // so this 500 is recoverable for the user. Demote to warn + drop the
+        // stack — the upstream message (SNAPI 429, scraper 0-articles,
+        // ScraperBrokenError) carries enough signal on its own.
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn(`[company-news] ${msg}`);
         return NextResponse.json({ error: 'Failed to fetch company news' }, { status: 500 });
     }
 }

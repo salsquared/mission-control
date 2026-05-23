@@ -116,7 +116,13 @@ export async function fetchScrape(config: CompanyFeedConfig): Promise<NewsArticl
                 item.published_at = new Date((result as any).ogDate).toISOString();
             }
         } catch (err) {
-            console.error(`[SCRAPE] OGS fetch failed for ${name} article ${item.url}`, err);
+            // OGS is best-effort enrichment — the article is still returned
+            // without metadata. Trim to a one-liner so a blocked publisher
+            // (e.g. Rocket Lab's 403 on every article URL) doesn't flood the
+            // log buffer with full opengraph-scraper error objects + stacks.
+            const reason = (err as any)?.result?.error
+                ?? (err instanceof Error ? err.message : 'unknown');
+            console.warn(`[SCRAPE] OGS skipped ${name} ${item.url}: ${reason}`);
         }
         return item;
     }));
