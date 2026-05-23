@@ -389,10 +389,15 @@ export function withCache(
     };
 }
 
-function buildCacheControl(ttlSeconds: number): string {
-    if (process.env.NODE_ENV === 'production') {
-        return `private, max-age=${ttlSeconds}, stale-while-revalidate=${Math.floor(ttlSeconds / 2)}`;
-    }
+function buildCacheControl(_ttlSeconds: number): string {
+    // Always no-store. Previously prod emitted `max-age=ttl` so the browser
+    // HTTP cache held responses for hours/days, but that short-circuits the
+    // browser → server → withCache path: the browser served the second
+    // request from its own disk cache and `cacheStats.hits` never
+    // incremented (Internal Systems dash showed 0% hit rate for days).
+    // With no-store, every browser fetch traverses the server, the in-
+    // process L1+L2 serves it in <1 ms, and the in-app telemetry reflects
+    // reality. Service worker NetworkFirst still owns offline fallback.
     return 'private, no-store, max-age=0';
 }
 
