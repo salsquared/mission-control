@@ -11,10 +11,26 @@ type SortKey = 'host' | 'ok' | 'fallback' | 'broken' | 'health';
 type SortDir = 'asc' | 'desc';
 
 type HealthEntry = { ok: number; fallback: number; broken: number };
+type WindowKey = '1h' | '6h' | '1d';
+const WINDOWS: readonly WindowKey[] = ['1h', '6h', '1d'] as const;
 
 function healthPct(h: HealthEntry): number {
     const total = h.ok + h.fallback + h.broken;
     return total === 0 ? 100 : (h.ok / total) * 100;
+}
+
+function fmtSuccessPct(pct: number, hasData: boolean): string {
+    if (!hasData) return '—';
+    if (pct === 100) return '100%';
+    if (pct > 99) return '>99%';
+    return `${Math.round(pct)}%`;
+}
+
+function successPctColor(pct: number, hasData: boolean): string {
+    if (!hasData) return 'text-white/30';
+    if (pct >= 95) return 'text-emerald-400';
+    if (pct >= 80) return 'text-amber-400';
+    return 'text-red-400';
 }
 
 export const FetcherHealthCard: React.FC = () => {
@@ -93,22 +109,43 @@ export const FetcherHealthCard: React.FC = () => {
         );
     };
 
+    const totals = data?.totals;
+
     return (
         <div className="flex flex-col h-[280px]">
-            <div className="flex items-center justify-between gap-2 mb-3 shrink-0">
-                <div className="flex items-center gap-2 text-amber-400">
+            <div className="flex items-center justify-between gap-3 mb-3 shrink-0">
+                <div className="flex items-center gap-2 text-amber-400 shrink-0">
                     <ShieldAlert className="w-5 h-5" />
-                    <h3 className="font-bold tracking-wider uppercase text-sm">Fetcher Health (Last Hour)</h3>
+                    <h3 className="font-bold tracking-wider uppercase text-sm whitespace-nowrap">Fetcher Health</h3>
                 </div>
-                <div className="relative">
-                    <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
-                    <input
-                        type="text"
-                        value={filter}
-                        onChange={(e) => setFilter(e.target.value)}
-                        placeholder="Filter hosts…"
-                        className="bg-black/30 border border-white/10 rounded-md text-xs font-mono pl-7 pr-2 py-1 w-44 focus:outline-none focus:border-amber-500/40 placeholder:text-white/30"
-                    />
+                <div className="flex items-center gap-2 ml-auto">
+                    <div className="flex items-center gap-1 text-xs font-mono">
+                        {WINDOWS.map(w => {
+                            const entry = totals?.[w];
+                            const total = entry ? entry.ok + entry.fallback + entry.broken : 0;
+                            const pct = entry ? healthPct(entry) : 0;
+                            return (
+                                <div
+                                    key={w}
+                                    title={entry ? `${entry.ok} ok / ${total} fetches` : 'no data'}
+                                    className="flex items-center gap-1 px-2 py-1 rounded-md bg-black/30 border border-white/10"
+                                >
+                                    <span className="text-white/40">{w}</span>
+                                    <span className={successPctColor(pct, total > 0)}>{fmtSuccessPct(pct, total > 0)}</span>
+                                </div>
+                            );
+                        })}
+                    </div>
+                    <div className="relative">
+                        <Search className="w-3.5 h-3.5 absolute left-2 top-1/2 -translate-y-1/2 text-white/30 pointer-events-none" />
+                        <input
+                            type="text"
+                            value={filter}
+                            onChange={(e) => setFilter(e.target.value)}
+                            placeholder="Filter hosts…"
+                            className="bg-black/30 border border-white/10 rounded-md text-xs font-mono pl-7 pr-2 py-1 w-44 focus:outline-none focus:border-amber-500/40 placeholder:text-white/30"
+                        />
+                    </div>
                 </div>
             </div>
             <div className="flex-1 overflow-y-auto pr-2">

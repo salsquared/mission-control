@@ -9,6 +9,13 @@ export const dynamic = 'force-dynamic';
 
 type HealthEntry = { ok: number; fallback: number; broken: number };
 type HealthMap = Record<string, HealthEntry>;
+type WindowKey = '1h' | '6h' | '1d';
+
+const WINDOW_MS: Record<WindowKey, number> = {
+    '1h': 60 * 60 * 1000,
+    '6h': 6 * 60 * 60 * 1000,
+    '1d': 24 * 60 * 60 * 1000,
+};
 
 function pm2LogPath(): string {
     const envPath = process.env.PM2_LOG_PATH;
@@ -37,8 +44,18 @@ async function getHandler(req: Request): Promise<NextResponse> {
     if ('error' in guard && guard.error) return guard.error;
 
     const logFile = pm2LogPath();
-    const cutoff = Date.now() - 60 * 60 * 1000;
+    const now = Date.now();
+    const cutoffs: Record<WindowKey, number> = {
+        '1h': now - WINDOW_MS['1h'],
+        '6h': now - WINDOW_MS['6h'],
+        '1d': now - WINDOW_MS['1d'],
+    };
     const map: HealthMap = {};
+    const totals: Record<WindowKey, HealthEntry> = {
+        '1h': { ok: 0, fallback: 0, broken: 0 },
+        '6h': { ok: 0, fallback: 0, broken: 0 },
+        '1d': { ok: 0, fallback: 0, broken: 0 },
+    };
 
     try {
         const content = await fs.readFile(logFile, 'utf8');
@@ -51,7 +68,8 @@ async function getHandler(req: Request): Promise<NextResponse> {
                 if (!parsed.ts || !parsed.msg) continue;
                 ts = parsed.ts; msg = parsed.msg;
             } catch { continue; }
-            if (new Date(ts).getTime() < cutoff) continue;
+            const tsMs = new Date(ts).getTime();
+            if (tsMs < cutoffs['1d']) continue;
 
             const isFallback = msg.startsWith('[CACHE FALLBACK]');
             const isBroken = msg.startsWith('[SCRAPER BROKEN]');
@@ -60,16 +78,21 @@ async function getHandler(req: Request): Promise<NextResponse> {
 
             const host = parseHostFromLog(msg);
             if (!host) continue;
-            if (!map[host]) map[host] = { ok: 0, fallback: 0, broken: 0 };
-            if (isFallback) map[host].fallback++;
-            else if (isBroken) map[host].broken++;
-            else map[host].ok++;
+            const kind: keyof HealthEntry = isFallback ? 'fallback' : isBroken ? 'broken' : 'ok';
+
+            if (tsMs >= cutoffs['1h']) {
+                if (!map[host]) map[host] = { ok: 0, fallback: 0, broken: 0 };
+                map[host][kind]++;
+            }
+            for (const w of ['1h', '6h', '1d'] as WindowKey[]) {
+                if (tsMs >= cutoffs[w]) totals[w][kind]++;
+            }
         }
-        return NextResponse.json({ health: map, computedAt: new Date().toISOString() });
+        return NextResponse.json({ health: map, totals, computedAt: new Date().toISOString() });
     } catch (err: unknown) {
         const code = (err as { code?: string } | null)?.code;
         if (code === 'ENOENT') {
-            return NextResponse.json({ health: {}, computedAt: new Date().toISOString(), note: 'PM2 log file not found' });
+            return NextResponse.json({ health: {}, totals, computedAt: new Date().toISOString(), note: 'PM2 log file not found' });
         }
         const message = err instanceof Error ? err.message : 'failed';
         return NextResponse.json({ error: message }, { status: 500 });

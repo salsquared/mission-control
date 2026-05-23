@@ -30,6 +30,11 @@ const FetcherHealthEntrySchema = z.object({
 });
 export const FetcherHealthResponseSchema = z.object({
     health: z.record(z.string(), FetcherHealthEntrySchema),
+    totals: z.object({
+        '1h': FetcherHealthEntrySchema,
+        '6h': FetcherHealthEntrySchema,
+        '1d': FetcherHealthEntrySchema,
+    }).optional(),
     computedAt: z.string(),
     note: z.string().optional(),
 });
