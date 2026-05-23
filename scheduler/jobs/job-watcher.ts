@@ -38,6 +38,7 @@ import {
     matchesNegativeFilters,
 } from "@/lib/postings/negative-filters";
 import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
+import { parseCompensation } from "@/lib/postings/compensation";
 
 export interface RunResult {
     watchlistId: string;
@@ -244,6 +245,12 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         // fall back to bumping lastSeenAt instead of erroring out the run.
         let created: { id: string } | null = null;
         try {
+            // Story 24 — parse comp out of (title + snippet + location). Some
+            // ATSes (Greenhouse Engage, occasional Lever) put pay info in the
+            // title; most put it in the snippet body. Failing to parse leaves
+            // every comp column NULL, which is fine — the row is still useful.
+            const compHaystack = [raw.title, raw.snippet, raw.location].filter(Boolean).join("\n");
+            const comp = parseCompensation(compHaystack);
             created = await prisma.jobPosting.create({
                 data: {
                     watchlistId,
@@ -254,6 +261,10 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                     snippet: raw.snippet,
                     sourceUrl: raw.sourceUrl,
                     employmentType: raw.employmentType ?? null,
+                    compensationMin: comp?.min ?? null,
+                    compensationMax: comp?.max ?? null,
+                    compensationCurrency: comp?.currency ?? null,
+                    compensationCadence: comp?.cadence ?? null,
                     status: "new",
                     firstSeenAt: runAt,
                     lastSeenAt: runAt,

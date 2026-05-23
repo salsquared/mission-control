@@ -28,7 +28,7 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 |---|---|---|---|---|
 | 🔴 must-have | **20** | 0 | 0 | 20 (incl. §13 56–59 and story 30a) |
 | 🟡 important | **25** | 0 | 1 | 27 (story 47 ◐ partial — resume side shipped, cover-letter side OOS; story 37 ⛔ multi-template user-declined 2026-05-15) |
-| 🔵 nice-to-have | **8** | 4 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
+| 🔵 nice-to-have | **9** | 3 | 1 | 13 (excluding 4 future/OOS items 52–55; story 40 ⛔ cover letter). Story 33 ◐ — capture side shipped, rollback deferred. |
 
 ### Per-track status
 
@@ -56,14 +56,13 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Open work, by leverage (next-up order)
 
-Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13, Story 50, Story 48, and Story 63 ✅ shipped 2026-05-22.
+Story 37 (multi-template) and Story 40 (cover letter) are ⛔ user-declined; not in this list. Story 33 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful. RAH-13, Story 50, Story 48, Story 63, and Story 24 ✅ shipped 2026-05-22.
 
-1. **Story 24 — compensation parsing (🔵).** Regex over `JobPosting.snippet` → `compensationRangeMin/Max` columns. Lower priority because the postings UI already surfaces snippets.
-2. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
-3. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
-4. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
-5. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
-6. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
+1. **Story 46 — README ingestion (🔵).** Extend M9 to pull READMEs from `portfolio=true` repos as bullet source material.
+2. **Story 45 — suggested portfolio rewrites (🔵).** Detect metric deltas (star threshold, new language, big release) and surface rewrite suggestions.
+3. **Story 28 — quiet hours (🔵).** `GlobalSetting { quietHoursStart, quietHoursEnd, tz }`; deferred until in-app noise is actually a problem.
+4. **Story 33 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Defer until the user actually wants to roll back.
+5. **RAH-12 — Gemini-call rate limit (🟡 abuse).** Per-userId token bucket on `POST /api/resumes` + `POST /api/profile/import` (e.g. 5 generations / 10 min) before the first Gemini call. Single-user today, defense-in-depth.
 
 ### User-declined
 
@@ -320,7 +319,7 @@ User-level setting on `GlobalSetting`: `{ quietHoursStart: '22:00', quietHoursEn
 #### MB-3.4 — Negative filters ✅ / compensation parsing (open)
 
 - ✅ **Negative filters** (story 23, shipped `9da9a2d`): per-watchlist `Watchlist.negativeFilters` JSON regex array. `/api/postings` GET applies case-insensitive matching against `title\nsnippet\nlocation`. `?includeFiltered=true` bypass for debug. UI: expandable editor on `WatchlistsCard` with regex validation + count chip. Hermetic smoke at `scripts/tests/hermetic/negative-filters-smoke.ts` (18/18).
-- **Compensation** (story 24, still open): regex over snippet (`$120k`, `$120,000 - $150,000`, `$60/hr`); store on `JobPosting.compensationRangeMin/Max` if present.
+- **Compensation** (story 24, shipped 2026-05-22): `lib/postings/compensation.ts:parseCompensation` regex over `(title + snippet + location)` → `compensationMin/Max/Currency/Cadence` columns on `JobPosting`. Migration `add_posting_compensation`. Wired into `scheduler/jobs/job-watcher.ts` at row-create time (legacy rows stay null until next crawl re-extracts). Cadence detection covers `/hr`, `per day/week/month/year`, `annually` / `annual` / `yearly` / `p.a.` (slash patterns rewritten to drop the leading `\b` since spaces before `/` aren't word boundaries). Plausibility guards reject "5,000 employees" / "$1 / hour" garbage. UI: emerald chip on `NewPostingsCard` rows formatted as `$120k–$150k/yr` (or `$60/hr` for hourly). Hermetic `compensation-smoke.ts` (18/18) covers the matrix.
 
 ---
 

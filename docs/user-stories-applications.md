@@ -41,7 +41,7 @@ Working list. Priority emoji: **🔴** must-have for next ship, **🟡** importa
 21. 🟡 ✅ As a user, I want crawlers to run on a schedule (e.g., hourly for LinkedIn, every 6h for direct careers pages) and respect each source's politeness limits — no aggressive scraping that gets the IP blocked.
 22. 🟡 ✅ As a user, I want the watcher to detect when a posting I've already saved gets *removed* from the source page so I know the role closed.
 23. 🔵 ✅ As a user, I want to define "negative filters" (companies, technologies, or phrases like "Series A," "on-site only") that auto-hide matching postings from my feed.
-24. 🔵 As a user, I want compensation parsed out of postings when present (range, equity hints, location adjustment) so I can sort by it.
+24. 🔵 ✅ As a user, I want compensation parsed out of postings when present (range, equity hints, location adjustment) so I can sort by it. *(Shipped 2026-05-22 — `lib/postings/compensation.ts:parseCompensation` regex over `(title + snippet + location)` writes `compensationMin/Max/Currency/Cadence` columns on `JobPosting` at fetch time. Surfaced as an emerald chip on `NewPostingsCard` rows. Equity / location-adjustment storage explicitly deferred — they're free-text in the snippet and the structured-storage payoff isn't obvious yet. Sort-by-min is wiring-ready but not exposed in the UI.)*
 
 ## 6. Notification pipeline
 
@@ -118,10 +118,10 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 
 - **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories 56–59). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
 - **🟡: 27 total, 25 ✅ + 1 ◐ + 1 ⛔.** Story **47** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story 40). Story **37** is ⛔ user-declined (2026-05-15). All other 🟡 closed.
-- **🔵 shipped: 8/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks, **63** bulk-move tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion).
+- **🔵 shipped: 9/13** (stories **23** negative filters, **24** comp parsing, **33** profile snapshots ◐ capture only, **41** skills-gap, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks, **63** bulk-move tracks). User-declined: **40** (cover letter). Genuinely open: **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **24** compensation parsing; **46** README ingestion; **45** suggested portfolio rewrites.
+**Next-up candidates** (small surface, real leverage): **46** README ingestion; **45** suggested portfolio rewrites; **28** quiet hours.
 
 ---
 

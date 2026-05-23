@@ -24,7 +24,10 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
 function serialize(p: {
     id: string; watchlistId: string; externalId: string; company: string;
     title: string; location: string | null; postedAt: Date | null; snippet: string | null;
-    sourceUrl: string; employmentType: string | null; status: string;
+    sourceUrl: string; employmentType: string | null;
+    compensationMin: number | null; compensationMax: number | null;
+    compensationCurrency: string | null; compensationCadence: string | null;
+    status: string;
     firstSeenAt: Date; lastSeenAt: Date; removedAt: Date | null;
 }) {
     return {
@@ -38,6 +41,10 @@ function serialize(p: {
         snippet: p.snippet,
         sourceUrl: p.sourceUrl,
         employmentType: p.employmentType,
+        compensationMin: p.compensationMin,
+        compensationMax: p.compensationMax,
+        compensationCurrency: p.compensationCurrency,
+        compensationCadence: p.compensationCadence,
         status: p.status,
         firstSeenAt: p.firstSeenAt.toISOString(),
         lastSeenAt: p.lastSeenAt.toISOString(),

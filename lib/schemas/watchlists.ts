@@ -215,6 +215,9 @@ export const JobPostingStatusSchema = z.enum(JOB_POSTING_STATUSES);
 export const EMPLOYMENT_TYPE_VALUES = ["full-time", "part-time", "internship", "contract", "temporary"] as const;
 export const EmploymentTypeSchema = z.enum(EMPLOYMENT_TYPE_VALUES);
 
+export const COMPENSATION_CADENCES = ["hour", "day", "week", "month", "year"] as const;
+export const CompensationCadenceSchema = z.enum(COMPENSATION_CADENCES);
+
 export const JobPostingSchema = z.object({
     id: z.string(),
     watchlistId: z.string(),
@@ -226,6 +229,12 @@ export const JobPostingSchema = z.object({
     snippet: z.string().nullable(),
     sourceUrl: z.string(),
     employmentType: EmploymentTypeSchema.nullable(),
+    // Story 24 — parsed comp (or null when the snippet didn't match). The UI
+    // formats these into "$120k–$150k / yr" chips on the postings card.
+    compensationMin: z.number().int().nullable(),
+    compensationMax: z.number().int().nullable(),
+    compensationCurrency: z.string().nullable(),
+    compensationCadence: CompensationCadenceSchema.nullable(),
     status: JobPostingStatusSchema,
     firstSeenAt: z.string().datetime(),
     lastSeenAt: z.string().datetime(),

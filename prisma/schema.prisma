@@ -439,6 +439,19 @@ model JobPosting {
   // or NULL when neither the ATS payload nor the title gave a clear signal.
   // Populated by fetchers via lib/fetchers/employment-type.ts.
   employmentType String?
+  // Story 24 — compensation parsed out of postings. Stored as integer
+  // minor units (e.g. dollars; not cents — most postings quote whole-dollar
+  // ranges) so the UI can sort. NULL when no recognisable range was found.
+  // compensationCadence is one of "hour" | "day" | "week" | "month" | "year"
+  // | NULL; the UI defaults to "year" when the cadence is null but a range
+  // is present (the dominant case for white-collar postings). Currency
+  // defaults to "USD" — we have no postings outside the US yet; when we do,
+  // the parser will infer from the symbol and this column carries the
+  // ISO-4217 code.
+  compensationMin       Int?
+  compensationMax       Int?
+  compensationCurrency  String?
+  compensationCadence   String?
   status      String    // "new" | "tracked" | "hidden" | "closed"
   firstSeenAt DateTime  @default(now())
   lastSeenAt  DateTime  @default(now())

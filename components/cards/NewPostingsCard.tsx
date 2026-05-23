@@ -9,6 +9,37 @@ import { useAppStore, type PostingEmploymentType, type PostingFilters } from "@/
 import { Card } from "../ui/Card";
 import { FilterButton } from "../ui/FilterButton";
 
+// Story 24 — format parsed comp as "$120k–$150k / yr" style chip text.
+// Returns null when no comp was parsed for this row so the caller can skip
+// rendering the chip entirely.
+function formatComp(p: {
+    compensationMin: number | null;
+    compensationMax: number | null;
+    compensationCurrency: string | null;
+    compensationCadence: string | null;
+}): string | null {
+    if (p.compensationMin === null || p.compensationMax === null) return null;
+    const fmt = (n: number): string => {
+        if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}m`;
+        if (n >= 10_000) return `$${Math.round(n / 1_000)}k`;
+        return `$${n.toLocaleString()}`;
+    };
+    const cadence = p.compensationCadence;
+    // Default to year when cadence is null but value is plausibly annual —
+    // mirrors the parser's plausibility bounds.
+    const effectiveCadence = cadence ?? (p.compensationMin >= 20_000 ? 'year' : null);
+    const cadenceSuffix = effectiveCadence === 'hour' ? '/hr'
+        : effectiveCadence === 'day' ? '/day'
+            : effectiveCadence === 'week' ? '/wk'
+                : effectiveCadence === 'month' ? '/mo'
+                    : effectiveCadence === 'year' ? '/yr'
+                        : '';
+    const value = p.compensationMin === p.compensationMax
+        ? fmt(p.compensationMin)
+        : `${fmt(p.compensationMin)}–${fmt(p.compensationMax)}`;
+    return `${value}${cadenceSuffix}`;
+}
+
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }
@@ -563,6 +594,11 @@ function PostingRow({
                         {p.employmentType && (
                             <span className="text-[10px] uppercase tracking-wide text-white/50 bg-white/5 border border-white/10 px-1.5 py-0.5 rounded">
                                 {p.employmentType.replace("-", " ")}
+                            </span>
+                        )}
+                        {formatComp(p) && (
+                            <span className="text-[10px] uppercase tracking-wide text-emerald-200/90 bg-emerald-500/10 border border-emerald-400/30 px-1.5 py-0.5 rounded">
+                                {formatComp(p)}
                             </span>
                         )}
                     </div>
