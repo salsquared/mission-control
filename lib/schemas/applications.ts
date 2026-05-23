@@ -65,6 +65,31 @@ export const ApplicationDeleteResponseSchema = z.object({
     id: z.string(),
 });
 
+// Story 63 — bulk move N applications between tracks in one round-trip.
+// The same-employer-both-tracks constraint (@@unique([userId, normalizedCompany, track]))
+// means a bulk move can hit P2002 if a moved row's normalizedCompany already
+// exists in the target track. The 409 response carries the conflicting ids
+// so the UI can surface them without a second round-trip.
+export const ApplicationBulkTrackSchema = z.object({
+    ids: z.array(z.string().min(1)).min(1).max(200),
+    track: ApplicationTrackSchema,
+});
+
+export const ApplicationBulkTrackResponseSchema = z.object({
+    updated: z.number().int().nonnegative(),
+    ids: z.array(z.string()),
+});
+
+export const ApplicationBulkTrackConflictSchema = z.object({
+    error: z.literal('conflict'),
+    conflicts: z.array(z.object({
+        id: z.string(),
+        normalizedCompany: z.string().nullable(),
+        company: z.string(),
+        existingId: z.string(),
+    })),
+});
+
 // ─── Requests ──────────────────────────────────────────────────────────────
 export const ApplicationPostSchema = z.object({
     company: z.string().min(1),

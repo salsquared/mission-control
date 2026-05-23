@@ -133,3 +133,93 @@ export function updateApplication(id: string, data: ApplicationUpdate): Promise<
 export function deleteApplication(id: string): Promise<Application> {
     return prisma.application.delete({ where: { id } });
 }
+
+// Story 63 — bulk track move. The schema's
+// @@unique([userId, normalizedCompany, track]) means moving a row to a track
+// where the same normalizedCompany already exists throws P2002. We pre-check
+// in the same transaction so the response can carry the conflicting pairs
+// and the UI can ask the user to resolve them (delete one, edit the other,
+// or leave both) instead of seeing an opaque 500.
+export interface BulkTrackConflict {
+    id: string;                       // the id being moved
+    normalizedCompany: string | null; // the key that would collide
+    company: string;                  // displayable
+    existingId: string;               // the existing row already in target track
+}
+
+export interface BulkTrackResult {
+    updated: number;
+    ids: string[];
+    conflicts: BulkTrackConflict[];
+}
+
+export async function bulkMoveApplicationsTrack(
+    userId: string,
+    ids: string[],
+    targetTrack: string,
+): Promise<BulkTrackResult> {
+    return prisma.$transaction(async (tx) => {
+        // 1. Fetch the rows we're being asked to move — ownership-scope by userId
+        //    so cross-user ids silently drop.
+        const candidates = await tx.application.findMany({
+            where: { id: { in: ids }, userId },
+            select: { id: true, normalizedCompany: true, company: true, track: true },
+        });
+
+        // Rows already on the target track are no-ops (don't count toward updated,
+        // don't risk a P2002).
+        const toMove = candidates.filter(c => c.track !== targetTrack);
+        if (toMove.length === 0) {
+            return { updated: 0, ids: candidates.map(c => c.id), conflicts: [] };
+        }
+
+        // 2. Find existing rows in the target track that would collide on
+        //    normalizedCompany. Rows with null normalizedCompany can't collide
+        //    (SQLite allows multiple NULLs in the compound unique).
+        const keys = toMove
+            .map(c => c.normalizedCompany)
+            .filter((k): k is string => typeof k === 'string' && k.length > 0);
+        const conflicts: BulkTrackConflict[] = [];
+        if (keys.length > 0) {
+            const existing = await tx.application.findMany({
+                where: {
+                    userId,
+                    track: targetTrack,
+                    normalizedCompany: { in: keys },
+                    // Exclude self — if the user somehow ends up trying to "move" to
+                    // its own track, we already filtered those out, but defense in
+                    // depth in case toMove has overlap with target somehow.
+                    NOT: { id: { in: ids } },
+                },
+                select: { id: true, normalizedCompany: true },
+            });
+            const existingByKey = new Map<string, string>();
+            for (const e of existing) {
+                if (e.normalizedCompany) existingByKey.set(e.normalizedCompany, e.id);
+            }
+            for (const m of toMove) {
+                if (m.normalizedCompany && existingByKey.has(m.normalizedCompany)) {
+                    conflicts.push({
+                        id: m.id,
+                        normalizedCompany: m.normalizedCompany,
+                        company: m.company,
+                        existingId: existingByKey.get(m.normalizedCompany)!,
+                    });
+                }
+            }
+        }
+
+        if (conflicts.length > 0) {
+            // Don't move anything if any row would conflict — partial state is
+            // hard to reason about and the conflicts UI is the place to resolve.
+            return { updated: 0, ids: [], conflicts };
+        }
+
+        const moveIds = toMove.map(c => c.id);
+        await tx.application.updateMany({
+            where: { id: { in: moveIds }, userId },
+            data: { track: targetTrack },
+        });
+        return { updated: moveIds.length, ids: moveIds, conflicts: [] };
+    });
+}

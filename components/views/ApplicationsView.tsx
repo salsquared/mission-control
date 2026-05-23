@@ -167,6 +167,7 @@ export const ApplicationsView: React.FC = () => {
                     onAdd={() => setIsAdding(true)}
                     onStatusChange={handleStatusChange}
                     onItemClick={setDetailAppId}
+                    onBulkMoved={() => invalidateApps()}
                 />
             )
         },
@@ -265,6 +266,7 @@ export const ApplicationsView: React.FC = () => {
                     onAdd={() => setIsAddingSide(true)}
                     onStatusChange={handleStatusChange}
                     onItemClick={setDetailAppId}
+                    onBulkMoved={() => invalidateApps()}
                 />
             )
         }

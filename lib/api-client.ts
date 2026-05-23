@@ -23,6 +23,9 @@ import {
     ApplicationPatchSchema,
     BackfillRequestSchema,
     BackfillResponseSchema,
+    ApplicationBulkTrackSchema,
+    ApplicationBulkTrackResponseSchema,
+    ApplicationBulkTrackConflictSchema,
 } from './schemas/applications';
 import {
     SettingsGetResponseSchema,
@@ -230,6 +233,31 @@ export const api = {
                 BackfillResponseSchema,
                 jsonBody('POST', input ?? {})
             ),
+        // Story 63 — bulk move applications between tracks. Returns a
+        // discriminated union so the caller can branch on the
+        // same-employer-conflicts case (HTTP 409).
+        bulkTrack: async (
+            input: z.infer<typeof ApplicationBulkTrackSchema>,
+        ): Promise<
+            | { ok: true; updated: number; ids: string[] }
+            | { ok: false; conflicts: z.infer<typeof ApplicationBulkTrackConflictSchema>['conflicts'] }
+        > => {
+            const res = await fetch('/api/applications/bulk-track', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(input),
+            });
+            if (res.status === 409) {
+                const body = ApplicationBulkTrackConflictSchema.parse(await res.json());
+                return { ok: false, conflicts: body.conflicts };
+            }
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ error: res.statusText }));
+                throw new Error(err.error || 'Bulk move failed');
+            }
+            const body = ApplicationBulkTrackResponseSchema.parse(await res.json());
+            return { ok: true, updated: body.updated, ids: body.ids };
+        },
         events: {
             list: (filter?: { applicationId?: string; upcoming?: boolean; kinds?: readonly string[] }) => {
                 const params = new URLSearchParams();

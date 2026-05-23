@@ -103,7 +103,7 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 60. 🟡 ✅ As a user, when a gig employer cold-emails me (no prior watchlist), I want the application to default to career and be easy to reclassify with one click — I'd rather flip a wrong one than train a classifier.
 61. 🟡 ✅ As a user, I want the same Calendar widget and Account Status card to serve both tracks — interviews are interviews, and I only have one Gmail account.
 62. 🔵 ✅ As a user, I want the same employer to be allowed in both tracks as separate applications (e.g., Starbucks barista in side, Starbucks corporate role in career) so dedup doesn't silently merge them.
-63. 🔵 As a user, I want to bulk-move applications between tracks if I miscategorize a batch (e.g., realized after the fact a Costco "operations associate" was actually corporate). *(Single-row flip via the kind/track toggle in the detail overlay ships with MB Phase 4; bulk-select UI is future.)*
+63. 🔵 ✅ As a user, I want to bulk-move applications between tracks if I miscategorize a batch (e.g., realized after the fact a Costco "operations associate" was actually corporate). *(Shipped 2026-05-22 — `CheckSquare` button on each kanban header enters select mode; checkboxes appear on cards; a "Move to <other-track>" action moves the whole selection in one transactional `POST /api/applications/bulk-track`. Same-employer-both-tracks conflicts surface as a 409 with the offending rows listed, no partial state.)*
 
 ## 14. Future / out of scope for now
 
@@ -118,10 +118,10 @@ Story 51 already proved the schema can carry multiple `kind`s through one pipeli
 
 - **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories 56–59). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
 - **🟡: 27 total, 25 ✅ + 1 ◐ + 1 ⛔.** Story **47** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story 40). Story **37** is ⛔ user-declined (2026-05-15). All other 🟡 closed.
-- **🔵 shipped: 7/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion), **63** (bulk-move tracks).
+- **🔵 shipped: 8/13** (stories **23** negative filters, **33** profile snapshots ◐ capture only, **41** skills-gap, **48** resume diff, **50** recruiter contacts, **51** multi-kind, **62** same-employer-both-tracks, **63** bulk-move tracks). User-declined: **40** (cover letter). Genuinely open: **24** (comp parsing), **28** (quiet hours), **45** (suggested rewrites), **46** (README ingestion).
 - **🔵 future / OOS:** 52–55.
 
-**Next-up candidates** (small surface, real leverage): **63** bulk-move tracks; **24** compensation parsing; **46** README ingestion.
+**Next-up candidates** (small surface, real leverage): **24** compensation parsing; **46** README ingestion; **45** suggested portfolio rewrites.
 
 ---
 
