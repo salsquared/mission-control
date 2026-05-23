@@ -31,18 +31,26 @@ function pm2LogPath(): string {
     return path.join(os.homedir(), '.pm2', 'logs', file);
 }
 
-// Mirror of the client-side parser previously in InternalView.tsx. Same shape:
-// extracts the upstream host from a [CACHE …] or [EXTERNAL API] log message.
+// Extracts the upstream host from a [CACHE …] or [EXTERNAL API] log message.
+// Previously used the looser regex `(\S+\.\S+)` which matched anything with a
+// dot — including trailing ellipses on truncated descriptive logs
+// (`papers...`, `api...`) and arXiv paper IDs (`2506.13777`), all of which
+// then appeared as bogus "hosts" in the FetcherHealthCard.
 function parseHostFromLog(message: string): string | null {
     const cache = message.match(/\[CACHE (?:HIT|HIT L2|MISS|FALLBACK)\] (\S+)/);
     if (cache) {
         const token = cache[1];
         if (!token.startsWith('/')) return token;
     }
-    const ext = message.match(/\[EXTERNAL API\].*?(\S+\.\S+)/);
-    if (ext) {
-        try { return new URL(ext[1].startsWith('http') ? ext[1] : 'https://' + ext[1]).hostname; } catch { return ext[1]; }
+    // Prefer an explicit URL — most fetch logs include the full target.
+    const url = message.match(/\[EXTERNAL API\][^\n]*?(https?:\/\/\S+)/);
+    if (url) {
+        try { return new URL(url[1]).hostname; } catch { /* fall through */ }
     }
+    // Fall back to a hostname-like token: alpha-bearing TLD of ≥2 chars, no
+    // trailing dots. Rules out `papers...` / `api...` / numeric paper IDs.
+    const host = message.match(/\[EXTERNAL API\][^\n]*?\b([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})\b/i);
+    if (host) return host[1].toLowerCase();
     return null;
 }
 
