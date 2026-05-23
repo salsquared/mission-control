@@ -1,12 +1,13 @@
 "use client";
 import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, Filter, X } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search, Briefcase } from "lucide-react";
 import { api, queryKeys, type PostingsListFilter } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
-import { useAppStore, type PostingEmploymentType } from "@/components/providers/state";
+import { useAppStore, type PostingEmploymentType, type PostingFilters } from "@/components/providers/state";
 import { Card } from "../ui/Card";
+import { FilterButton } from "../ui/FilterButton";
 
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -23,7 +24,27 @@ const EMPLOYMENT_TYPE_CHIPS: ReadonlyArray<{ id: PostingEmploymentType; label: s
     { id: "temporary",   label: "Temporary" },
 ] as const;
 
-export function NewPostingsCard() {
+// MB Phase 4. Per-track presentation.
+const TRACK_PRESETS = {
+    career: {
+        title: "New postings",
+        icon: Newspaper,
+        iconColorClass: "text-cyan-300",
+    },
+    side: {
+        title: "Side postings",
+        icon: Briefcase,
+        iconColorClass: "text-amber-300",
+    },
+} as const;
+type TrackKey = keyof typeof TRACK_PRESETS;
+
+interface NewPostingsCardProps {
+    /** MB Phase 4: defaults to "career" so existing call sites keep working. */
+    track?: TrackKey;
+}
+
+export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {}) {
     const queryClient = useQueryClient();
     const [busyId, setBusyId] = useState<string | null>(null);
     const [filtersOpen, setFiltersOpen] = useState(false);
@@ -32,12 +53,27 @@ export function NewPostingsCard() {
     // whose employer isn't on the user's watchlist) defaults collapsed —
     // it's a long-tail discovery surface, not the main feed.
     const [offListOpen, setOffListOpen] = useState(false);
-    const postingFilters = useAppStore(s => s.postingFilters);
-    const setPostingFilters = useAppStore(s => s.setPostingFilters);
+    // Client-side substring search over posting titles. The chip-based
+    // company/type/location filters are server-side (query key + refetch);
+    // title search is local because users iterate it quickly and the result
+    // set is already bounded by LIMIT=200.
+    const [titleSearch, setTitleSearch] = useState("");
+    // MB Phase 4: per-track filter slice. Each card instance reads only its own
+    // track's filters so toggling chips on the career card doesn't mirror onto
+    // the side card (or vice versa). Setter takes `track` as the first arg.
+    const postingFilters: PostingFilters = useAppStore(s => s.postingFilters[track])
+        ?? { employmentTypes: [], remoteOnly: false, locations: [], includeUnspecified: false, companies: [], excludedCompanies: [] };
+    const setPostingFiltersRaw = useAppStore(s => s.setPostingFilters);
+    const setPostingFilters = useMemo(
+        () => (next: PostingFilters) => setPostingFiltersRaw(track, next),
+        [setPostingFiltersRaw, track],
+    );
 
     // Build the server-side filter payload from the user's chip selections.
     // The query key includes this shape so React Query partitions the cache
     // per filter combination + refetches automatically on toggle.
+    // MB Phase 4: track is part of the filter so each track's cache is
+    // partitioned separately and the right postings feed renders per card.
     const listFilter: PostingsListFilter = useMemo(() => ({
         status: "new",
         limit: LIMIT,
@@ -47,7 +83,8 @@ export function NewPostingsCard() {
         excludeCompanies: postingFilters.excludedCompanies,
         remoteOnly: postingFilters.remoteOnly,
         locations: postingFilters.locations,
-    }), [postingFilters]);
+        track,
+    }), [postingFilters, track]);
 
     const { data, isLoading } = useQuery({
         queryKey: queryKeys.postings(listFilter),
@@ -62,9 +99,15 @@ export function NewPostingsCard() {
     // reflects the current filter set, so deriving chips from it would shrink
     // the chip list as soon as you filtered. Trade-off accepted: LinkedIn
     // users filter by location / type, not employer.
+    // MB Phase 4: scope chip-source watchlists to the current track so the
+    // career card's company chips don't suggest side employers (and vice
+    // versa). Career stays on the original key for cache-sharing with the
+    // career WatchlistsCard; side gets a dedicated key matching the side
+    // WatchlistsCard's scoping.
+    const watchlistsKey = track === "career" ? queryKeys.watchlists : [...queryKeys.watchlists, "side"] as const;
     const { data: watchlistsData } = useQuery({
-        queryKey: queryKeys.watchlists,
-        queryFn: () => api.watchlists.list(),
+        queryKey: watchlistsKey,
+        queryFn: () => api.watchlists.list({ track }),
     });
 
     useServerEvents("Posting", () => {
@@ -114,21 +157,38 @@ export function NewPostingsCard() {
     // "software engineer"). Guarded by watchlists-loaded so we don't briefly
     // dump everything into "Other matches" on initial render before the
     // watchlists query resolves.
+    //
+    // When the user has NO company-based watchlists (typical for the side
+    // track where everything is keyword-driven), the partition is meaningless
+    // — every posting would land in "Other matches" while the main list shows
+    // an "all matches are off-watchlist" hint. Short-circuit and treat all
+    // postings as the main list in that case, so the keyword-only feed reads
+    // cleanly without a forced "Other matches" detour.
     const watchlistsLoaded = watchlistsData !== undefined;
+    const hasCompanyWatchlists = companyOptions.length > 0;
     const watchlistCompaniesLower = useMemo(
         () => new Set(companyOptions.map(c => c.toLowerCase())),
         [companyOptions],
     );
+    const trimmedTitleSearch = titleSearch.trim().toLowerCase();
     const { onList, offList } = useMemo(() => {
         if (!watchlistsLoaded) return { onList: postings, offList: [] as typeof postings };
+        if (!hasCompanyWatchlists) {
+            // Keyword-only feed: skip partitioning entirely.
+            const main = trimmedTitleSearch
+                ? postings.filter(p => p.title.toLowerCase().includes(trimmedTitleSearch))
+                : postings;
+            return { onList: main, offList: [] as typeof postings };
+        }
         const on: typeof postings = [];
         const off: typeof postings = [];
         for (const p of postings) {
+            if (trimmedTitleSearch && !p.title.toLowerCase().includes(trimmedTitleSearch)) continue;
             if (watchlistCompaniesLower.has(p.company.toLowerCase())) on.push(p);
             else off.push(p);
         }
         return { onList: on, offList: off };
-    }, [postings, watchlistCompaniesLower, watchlistsLoaded]);
+    }, [postings, watchlistCompaniesLower, watchlistsLoaded, hasCompanyWatchlists, trimmedTitleSearch]);
 
     // Bounce back to page 1 when filters change — toggling a chip on page 3 of
     // unfiltered results shouldn't land on an empty page 3 of the filtered slice.
@@ -136,8 +196,10 @@ export function NewPostingsCard() {
     // WatchlistsCard.tsx; postingFilters is a stable zustand ref so the compare
     // only flips when the filter actually changes.
     const [lastFilters, setLastFilters] = useState(postingFilters);
-    if (lastFilters !== postingFilters) {
+    const [lastSearch, setLastSearch] = useState(trimmedTitleSearch);
+    if (lastFilters !== postingFilters || lastSearch !== trimmedTitleSearch) {
         setLastFilters(postingFilters);
+        setLastSearch(trimmedTitleSearch);
         setPage(0);
     }
 
@@ -194,28 +256,22 @@ export function NewPostingsCard() {
         }
     }
 
+    const preset = TRACK_PRESETS[track];
+
     return (
         <Card
-            title="New postings"
-            icon={Newspaper}
-            iconColorClass="text-cyan-300"
+            title={preset.title}
+            icon={preset.icon}
+            iconColorClass={preset.iconColorClass}
             action={
                 <div className="flex items-center gap-2">
-                    <button
+                    <FilterButton
+                        active={filtersOpen}
+                        count={activeFilterCount}
                         onClick={() => setFiltersOpen(o => !o)}
-                        title={filtersOpen ? "Hide filters" : "Show filters"}
-                        className={[
-                            "flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-semibold border transition-colors",
-                            activeFilterCount > 0 || filtersOpen
-                                ? "bg-cyan-500/20 text-cyan-100 border-cyan-400/40"
-                                : "bg-black/30 text-white/50 border-white/10 hover:text-white/80",
-                        ].join(" ")}
-                    >
-                        <Filter className="w-3 h-3" />
-                        Filters{activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
-                    </button>
+                    />
                     <span className="text-[11px] text-white/40 tabular-nums">
-                        {onList.length}{postings.length === LIMIT ? "+" : ""} {activeFilterCount > 0 ? "matching" : "new"}
+                        {onList.length}{postings.length === LIMIT ? "+" : ""} {activeFilterCount > 0 || trimmedTitleSearch ? "matching" : "new"}
                         {offList.length > 0 && (
                             <span className="ml-1 text-white/30">· {offList.length} other</span>
                         )}
@@ -223,6 +279,27 @@ export function NewPostingsCard() {
                 </div>
             }
         >
+            <div className="mb-3 relative shrink-0">
+                <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+                <input
+                    type="text"
+                    value={titleSearch}
+                    onChange={e => setTitleSearch(e.target.value)}
+                    placeholder="Search by job title…"
+                    className="w-full pl-7 pr-7 py-1.5 rounded bg-black/30 border border-white/10 text-[12px] text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
+                />
+                {titleSearch && (
+                    <button
+                        onClick={() => setTitleSearch("")}
+                        title="Clear search"
+                        aria-label="Clear search"
+                        className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-white/40 hover:text-white/80"
+                    >
+                        <X className="w-3.5 h-3.5" />
+                    </button>
+                )}
+            </div>
+
             {filtersOpen && (
                 <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 flex flex-col gap-2 shrink-0">
                     <div className="flex items-center justify-between">
@@ -354,10 +431,15 @@ export function NewPostingsCard() {
                     <Loader2 className="w-4 h-4 animate-spin" />
                 </div>
             ) : onList.length === 0 && offList.length === 0 ? (
-                activeFilterCount > 0 ? (
+                activeFilterCount > 0 || trimmedTitleSearch ? (
                     <p className="text-xs text-white/40 italic">
-                        No new postings match your filters.{" "}
-                        <button onClick={resetFilters} className="underline text-cyan-300/80 hover:text-cyan-200">Clear filters</button>
+                        No new postings match your {trimmedTitleSearch && activeFilterCount > 0 ? "search and filters" : trimmedTitleSearch ? "search" : "filters"}.{" "}
+                        <button
+                            onClick={() => { setTitleSearch(""); resetFilters(); }}
+                            className="underline text-cyan-300/80 hover:text-cyan-200"
+                        >
+                            Clear
+                        </button>
                     </p>
                 ) : (
                     <p className="text-xs text-white/40 italic">No new postings. Run a watchlist or wait for the scheduler tick.</p>
@@ -456,7 +538,7 @@ function PostingRow({
 }) {
     return (
         <li className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 hover:border-white/20 transition-colors">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                         <span className="text-[11px] uppercase tracking-wide text-cyan-300/80">{p.company}</span>

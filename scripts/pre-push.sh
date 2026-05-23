@@ -42,6 +42,7 @@ SUITES=(
     "scripts/tests/hermetic/notification-dispatch-smoke.ts"
     "scripts/tests/hermetic/stale-nudge-smoke.ts"
     "scripts/tests/hermetic/posting-digest-smoke.ts"
+    "scripts/tests/hermetic/notification-negative-filter-smoke.ts"
     "scripts/tests/hermetic/deadline-nudge-smoke.ts"
     "scripts/tests/hermetic/find-app-by-company-smoke.ts"
     "scripts/tests/hermetic/company-directory-smoke.ts"

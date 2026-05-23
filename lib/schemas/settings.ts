@@ -4,13 +4,21 @@ import { z } from 'zod';
 // Parsed (post-JSON) GlobalSettingData — mirrors lib/repositories/settings.ts
 // after parseGlobalSetting() runs. `version` is the optimistic-concurrency
 // counter; clients send it back as the If-Match header on POST.
+// Per-track negative filters — see lib/repositories/settings.ts comment.
+// Each track has its own list so the career and side WatchlistsCard
+// instances edit independent blocklists.
+export const NegativeFiltersByTrackSchema = z.object({
+    career: z.array(z.string().max(200)).max(20),
+    side: z.array(z.string().max(200)).max(20),
+});
+
 export const SettingsDataSchema = z.object({
     isDarkMode: z.boolean(),
     viewHuesEnabled: z.boolean(),
     viewHues: z.record(z.string(), z.number()),
     dashOrder: z.array(z.string()),
     dashTitles: z.record(z.string(), z.string()),
-    globalNegativeFilters: z.array(z.string()),
+    negativeFiltersByTrack: NegativeFiltersByTrackSchema,
     version: z.number().int(),
 });
 
@@ -38,5 +46,5 @@ export const SettingsPostSchema = z.object({
     viewHues: z.record(z.string(), z.number()).optional(),
     dashOrder: z.array(z.string()).optional(),
     dashTitles: z.record(z.string(), z.string()).optional(),
-    globalNegativeFilters: z.array(z.string().max(200)).max(20).optional(),
+    negativeFiltersByTrack: NegativeFiltersByTrackSchema.optional(),
 });

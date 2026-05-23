@@ -32,6 +32,12 @@ import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
 import { broadcastEvent } from "@/lib/events";
 import { dispatchNotification } from "@/lib/notifications/dispatch";
 import { classifyEmploymentTypes } from "@/lib/ai/classify-employment-type";
+import {
+    compileNegativeFilters,
+    compileNegativeFiltersFromArray,
+    matchesNegativeFilters,
+} from "@/lib/postings/negative-filters";
+import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 
 export interface RunResult {
     watchlistId: string;
@@ -159,6 +165,20 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     const modeAllowsPerPosting = watchlist.notificationMode === "each";
     const willNotifyForNew = modeAllowsPerPosting && (!isFirstRun || fetchResult.postings.length <= FIRST_RUN_NOTIFY_LIMIT);
 
+    // Negative-filter gate (parity with /api/postings GET). Postings matching
+    // the track-scoped or per-watchlist negative filter still land in the
+    // JobPosting table — the user can surface them later by toggling the
+    // filter off or hitting ?includeFiltered=true. We only suppress the
+    // *notification*. Compiled once per run; both regex sets cached by JSON
+    // identity in lib/postings/negative-filters.ts.
+    const globalSettingRow = await findGlobalSetting();
+    const filtersByTrack = globalSettingRow
+        ? parseGlobalSetting(globalSettingRow).negativeFiltersByTrack
+        : { career: [] as string[], side: [] as string[] };
+    const trackKey: "career" | "side" = watchlist.track === "side" ? "side" : "career";
+    const trackNegativeRegexes = compileNegativeFiltersFromArray(filtersByTrack[trackKey]);
+    const watchlistNegativeRegexes = compileNegativeFilters(watchlist.negativeFilters);
+
     // Pre-compute externalIds + one bulk existence check. Replaces what used
     // to be a per-posting findUnique. Two reasons: (1) lets us gate the
     // Tier-B LLM classifier to brand-new postings only without a second
@@ -253,7 +273,11 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             }
             throw e;
         }
-        if (willNotifyForNew) {
+        const postingForFilter = { title: raw.title, snippet: raw.snippet, location: raw.location };
+        const filteredOut =
+            matchesNegativeFilters(postingForFilter, trackNegativeRegexes) ||
+            matchesNegativeFilters(postingForFilter, watchlistNegativeRegexes);
+        if (willNotifyForNew && !filteredOut) {
             // Low-tier — in-app only. Posting notifications are high-volume by
             // nature; email-blasting them would be a terrible UX. The user
             // sees them in the bell + the Discovery feed.

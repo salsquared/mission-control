@@ -90,6 +90,21 @@ async function main() {
         process.exit(1);
     }
 
+    // Snapshot + neutralize GlobalSetting.globalNegativeFilters for the run.
+    // Sal's real dev.db has filters like "Senior" / "Manager" that would
+    // suppress notifications for the test fixture's "Senior Engineer" /
+    // "Product Manager" titles (parity with /api/postings GET). The smoke
+    // doesn't care about that path — see notification-negative-filter-smoke
+    // for filter behavior — so we clear and restore.
+    const globalRow = await prisma.globalSetting.findUnique({ where: { id: "global" } });
+    const globalFilterSnapshot = globalRow?.globalNegativeFilters ?? null;
+    if (globalRow && globalFilterSnapshot !== "[]") {
+        await prisma.globalSetting.update({
+            where: { id: "global" },
+            data: { globalNegativeFilters: "[]" },
+        });
+    }
+
     let watchlistId = "";
 
     try {
@@ -285,6 +300,12 @@ async function main() {
         if (watchlistId) {
             await prisma.notification.deleteMany({ where: { userId: user.id, createdAt: { gt: new Date(Date.now() - 5 * 60_000) } } }).catch(() => undefined);
             await prisma.watchlist.delete({ where: { id: watchlistId } }).catch(() => undefined);
+        }
+        if (globalFilterSnapshot !== null && globalFilterSnapshot !== "[]") {
+            await prisma.globalSetting.update({
+                where: { id: "global" },
+                data: { globalNegativeFilters: globalFilterSnapshot },
+            }).catch(() => undefined);
         }
         await prisma.$disconnect();
         await fixture.stop();

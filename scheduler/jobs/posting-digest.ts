@@ -13,6 +13,12 @@
  */
 import { prisma } from "@/lib/prisma";
 import { dispatchNotification } from "@/lib/notifications/dispatch";
+import {
+    compileNegativeFilters,
+    compileNegativeFiltersFromArray,
+    matchesNegativeFilters,
+} from "@/lib/postings/negative-filters";
+import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 
 // Don't summarize more than this many postings inline in the body — we still
 // store all of them; the bell just shows the first N and a "+M more".
@@ -30,8 +36,24 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
         select: {
             id: true, userId: true, name: true,
             lastDigestAt: true, createdAt: true,
+            negativeFilters: true,
+            // Track scopes which slice of negativeFiltersByTrack to apply.
+            track: true,
         },
     });
+
+    // Per-track negative-filter parity with /api/postings GET and job-watcher
+    // per-posting dispatch. Compile each track's pattern set once per run;
+    // watchlist-specific set is compiled per iteration (cached by JSON
+    // identity in negative-filters.ts).
+    const globalSettingRow = await findGlobalSetting();
+    const filtersByTrack = globalSettingRow
+        ? parseGlobalSetting(globalSettingRow).negativeFiltersByTrack
+        : { career: [] as string[], side: [] as string[] };
+    const trackRegexes = {
+        career: compileNegativeFiltersFromArray(filtersByTrack.career),
+        side: compileNegativeFiltersFromArray(filtersByTrack.side),
+    };
 
     let summarized = 0;
     let totalPostings = 0;
@@ -48,8 +70,20 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
                 status: { notIn: ["hidden", "closed"] },
             },
             orderBy: { firstSeenAt: "desc" },
-            select: { id: true, company: true, title: true, location: true, firstSeenAt: true },
+            select: { id: true, company: true, title: true, location: true, snippet: true, firstSeenAt: true },
         });
+
+        // Cull postings the user has chosen to ignore via negative filters
+        // (track-scoped + per-watchlist). Filtered postings stay in the
+        // JobPosting table so the user can resurface them by toggling the
+        // filter off; they're only excluded from this digest dispatch.
+        const trackKey: "career" | "side" = w.track === "side" ? "side" : "career";
+        const trackNegativeRegexes = trackRegexes[trackKey];
+        const watchlistNegativeRegexes = compileNegativeFilters(w.negativeFilters);
+        const filteredPostings = postings.filter(p =>
+            !matchesNegativeFilters(p, trackNegativeRegexes) &&
+            !matchesNegativeFilters(p, watchlistNegativeRegexes)
+        );
 
         // PB-2 (was RAH-2): advance the watermark to the MAX firstSeenAt actually
         // included in this run — not to runAt. Two postings inserted in the
@@ -73,12 +107,12 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
             : null;
 
         let dispatchedOk = false;
-        if (postings.length > 0) {
-            const preview = postings.slice(0, BODY_PREVIEW_LIMIT)
+        if (filteredPostings.length > 0) {
+            const preview = filteredPostings.slice(0, BODY_PREVIEW_LIMIT)
                 .map(p => `• ${p.company} — ${p.title}${p.location ? ` (${p.location})` : ""}`)
                 .join("\n");
-            const more = postings.length > BODY_PREVIEW_LIMIT
-                ? `\n…and ${postings.length - BODY_PREVIEW_LIMIT} more`
+            const more = filteredPostings.length > BODY_PREVIEW_LIMIT
+                ? `\n…and ${filteredPostings.length - BODY_PREVIEW_LIMIT} more`
                 : "";
 
             try {
@@ -86,13 +120,13 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
                     userId: w.userId,
                     tier: "low",
                     kind: "posting",
-                    title: `${w.name} — ${postings.length} new posting${postings.length === 1 ? "" : "s"}`,
+                    title: `${w.name} — ${filteredPostings.length} new posting${filteredPostings.length === 1 ? "" : "s"}`,
                     body: `${preview}${more}`,
                     payload: {
                         watchlistId: w.id,
                         type: "posting-digest",
-                        count: postings.length,
-                        postingIds: postings.map(p => p.id),
+                        count: filteredPostings.length,
+                        postingIds: filteredPostings.map(p => p.id),
                     },
                     // PB-8: key on the BATCH watermark (maxIncluded) rather
                     // than the calendar day. Two concurrent ticks of this job
@@ -109,14 +143,20 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
                 dispatchedOk = true;
                 if (result) {
                     summarized++;
-                    totalPostings += postings.length;
+                    totalPostings += filteredPostings.length;
                 }
             } catch (e) {
                 console.warn(`[posting-digest] dispatch failed for watchlist ${w.id}:`, e);
             }
         }
 
-        if (dispatchedOk && maxIncluded !== null) {
+        // Advance the watermark when (a) we successfully dispatched, OR (b) the
+        // window had postings but every one was culled by negative filters —
+        // those have been "considered and rejected", and we don't want to keep
+        // re-evaluating the same culled set forever. Don't advance on dispatch
+        // failure (PB-3): the transient error should retry next tick.
+        const culledOnly = postings.length > 0 && filteredPostings.length === 0;
+        if ((dispatchedOk || culledOnly) && maxIncluded !== null) {
             await prisma.watchlist.update({
                 where: { id: w.id },
                 data: { lastDigestAt: maxIncluded },

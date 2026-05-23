@@ -1,14 +1,35 @@
 "use client";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronDown, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X } from "lucide-react";
+import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Briefcase } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
 import { useAppStore } from "../providers/state";
 import { AddWatchlistModal } from "../overlays/AddWatchlistModal";
 import { Card } from "../ui/Card";
+import { FilterButton } from "../ui/FilterButton";
 import type { WatchlistWire } from "@/lib/schemas/watchlists";
+
+// MB Phase 4. Per-track presentation. Crawl mechanism is identical between
+// tracks (same fetcher fleet, same schedule loop) — only the surfaces differ.
+const TRACK_PRESETS = {
+    career: {
+        title: "Watchlists",
+        icon: Eye,
+        iconColorClass: "text-cyan-300",
+        addBtnClass: "bg-cyan-500/20 hover:bg-cyan-500/30 border-cyan-400/30 text-cyan-100",
+        emptyText: "No watchlists yet. Add one above to start hunting on your behalf.",
+    },
+    side: {
+        title: "Side Watchlists",
+        icon: Briefcase,
+        iconColorClass: "text-amber-300",
+        addBtnClass: "bg-amber-500/20 hover:bg-amber-500/30 border-amber-400/30 text-amber-100",
+        emptyText: "No side watchlists. Add a keyword search (e.g. \"warehouse Los Angeles\") to find gig listings.",
+    },
+} as const;
+type TrackKey = keyof typeof TRACK_PRESETS;
 
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
@@ -54,30 +75,83 @@ function fmtSchedule(scheduleMinutes: number): string {
 
 const PAGE_SIZE = 12;
 
-export function WatchlistsCard() {
+interface WatchlistsCardProps {
+    /** MB Phase 4: defaults to "career" so existing call sites keep working. */
+    track?: TrackKey;
+}
+
+export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
     const queryClient = useQueryClient();
+    const preset = TRACK_PRESETS[track];
     const [adding, setAdding] = useState(false);
     const [busyId, setBusyId] = useState<string | null>(null);
     const [page, setPage] = useState(0);
+    const [search, setSearch] = useState("");
+    // Per-track negative filters: dropdown open state lives here so the
+    // trigger button in `action` controls it (parity with NewPostingsCard's
+    // Filters dropdown). The chip editor itself is `TrackNegativeFiltersEditor`
+    // below, rendered conditionally on this flag and scoped to `track` so
+    // the career + side cards edit independent lists.
+    const [filtersOpen, setFiltersOpen] = useState(false);
+    const filterCount = useAppStore(s => s.negativeFiltersByTrack[track]?.length ?? 0);
+
+    // MB Phase 4: per-track cache scoping. Career uses the original key
+    // [queryKeys.watchlists] so existing useServerEvents listeners + manual
+    // invalidations elsewhere in the app keep hitting it; side gets a
+    // dedicated key. SSE invalidation below invalidates by predicate so a
+    // single Watchlist event from the server refreshes both lists.
+    const queryKey = track === "career" ? queryKeys.watchlists : [...queryKeys.watchlists, "side"] as const;
 
     const { data, isLoading } = useQuery({
-        queryKey: queryKeys.watchlists,
-        queryFn: () => api.watchlists.list(),
+        queryKey,
+        queryFn: () => api.watchlists.list({ track }),
     });
 
     useServerEvents("Watchlist", () => {
-        queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
+        queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "watchlists",
+        });
     });
 
     const watchlists = data?.watchlists ?? [];
 
+    // Client-side name search. Filters before pagination so the page meta /
+    // counter reflect the matching subset, not the whole list.
+    const trimmedSearch = search.trim().toLowerCase();
+    const filteredWatchlists = useMemo(() => {
+        if (!trimmedSearch) return watchlists;
+        return watchlists.filter(w => w.name.toLowerCase().includes(trimmedSearch));
+    }, [watchlists, trimmedSearch]);
+
+    // Reset to page 0 when the search narrows the list so an in-progress query
+    // doesn't land on an empty page. Render-time adjustment matches the
+    // pattern in NewPostingsCard.tsx.
+    const [lastSearch, setLastSearch] = useState(trimmedSearch);
+    if (lastSearch !== trimmedSearch) {
+        setLastSearch(trimmedSearch);
+        setPage(0);
+    }
+
     // Pagination — mirrors the pattern in NewPostingsCard.tsx. safePage
     // clamps the live `page` against the current count so deleting the last
     // watchlist on page 3 doesn't strand the view on an empty page.
-    const pageCount = Math.max(1, Math.ceil(watchlists.length / PAGE_SIZE));
+    const pageCount = Math.max(1, Math.ceil(filteredWatchlists.length / PAGE_SIZE));
     const safePage = Math.min(page, pageCount - 1);
     const pageStart = safePage * PAGE_SIZE;
-    const pageWatchlists = watchlists.slice(pageStart, pageStart + PAGE_SIZE);
+    const pageWatchlists = filteredWatchlists.slice(pageStart, pageStart + PAGE_SIZE);
+
+    // MB Phase 4: predicate-based invalidation. A watchlist mutation in
+    // either track is interesting to both lists (e.g. you might rename a
+    // career row), and postings keys vary by filter so we can't enumerate
+    // them — predicate match by prefix covers both bases.
+    const invalidateWatchlists = () =>
+        queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "watchlists",
+        });
+    const invalidatePostings = () =>
+        queryClient.invalidateQueries({
+            predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === "postings",
+        });
 
     async function runNow(id: string) {
         setBusyId(id);
@@ -89,8 +163,8 @@ export function WatchlistsCard() {
                 message: `Run complete — ${result.newPostings} new, ${result.seenAgain} seen-again`,
                 type: "info",
             });
-            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
-            queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
+            invalidateWatchlists();
+            invalidatePostings();
             queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
         } catch (e) {
             toastStore.push({ message: `Run failed: ${errMessage(e)}`, type: "error" });
@@ -103,7 +177,7 @@ export function WatchlistsCard() {
         setBusyId(id);
         try {
             await api.watchlists.update(id, { active: !currentlyActive });
-            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
+            invalidateWatchlists();
         } catch (e) {
             toastStore.push({ message: `Pause toggle failed: ${errMessage(e)}`, type: "error" });
         } finally {
@@ -115,7 +189,7 @@ export function WatchlistsCard() {
         setBusyId(id);
         try {
             await api.watchlists.update(id, { notificationMode: mode });
-            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
+            invalidateWatchlists();
         } catch (e) {
             toastStore.push({ message: `Notification mode change failed: ${errMessage(e)}`, type: "error" });
         } finally {
@@ -133,8 +207,8 @@ export function WatchlistsCard() {
                     : `Saved ${patterns.length} filter${patterns.length === 1 ? "" : "s"}`,
                 type: "info",
             });
-            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
-            queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
+            invalidateWatchlists();
+            invalidatePostings();
         } catch (e) {
             toastStore.push({ message: `Filter save failed: ${errMessage(e)}`, type: "error" });
         } finally {
@@ -148,8 +222,8 @@ export function WatchlistsCard() {
         try {
             await api.watchlists.delete(id);
             toastStore.push({ message: `Deleted: ${name}`, type: "info" });
-            queryClient.invalidateQueries({ queryKey: queryKeys.watchlists });
-            queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
+            invalidateWatchlists();
+            invalidatePostings();
         } catch (e) {
             toastStore.push({ message: `Delete failed: ${errMessage(e)}`, type: "error" });
         } finally {
@@ -159,29 +233,67 @@ export function WatchlistsCard() {
 
     return (
         <Card
-            title="Watchlists"
-            icon={Eye}
-            iconColorClass="text-cyan-300"
+            title={preset.title}
+            icon={preset.icon}
+            iconColorClass={preset.iconColorClass}
             action={
-                <button
-                    onClick={() => setAdding(true)}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/20 hover:bg-cyan-500/30 border border-cyan-400/30 text-xs font-semibold text-cyan-100 transition-colors"
-                >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add watchlist
-                </button>
+                <div className="flex items-center gap-2">
+                    <FilterButton
+                        active={filtersOpen}
+                        count={filterCount}
+                        onClick={() => setFiltersOpen(o => !o)}
+                    />
+                    <button
+                        onClick={() => setAdding(true)}
+                        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs font-semibold transition-colors ${preset.addBtnClass}`}
+                    >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add watchlist
+                    </button>
+                </div>
             }
         >
-            <GlobalNegativeFiltersEditor
-                onSaved={() => queryClient.invalidateQueries({ queryKey: queryKeys.postings() })}
-            />
+            {filtersOpen && (
+                <TrackNegativeFiltersEditor
+                    track={track}
+                    onSaved={() => invalidatePostings()}
+                />
+            )}
+
+            {watchlists.length > 0 && (
+                <div className="mb-2 relative shrink-0">
+                    <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30 pointer-events-none" />
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Search watchlists by name…"
+                        className="w-full pl-7 pr-7 py-1.5 rounded bg-black/30 border border-white/10 text-[12px] text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
+                    />
+                    {search && (
+                        <button
+                            onClick={() => setSearch("")}
+                            title="Clear search"
+                            aria-label="Clear search"
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 p-0.5 text-white/40 hover:text-white/80"
+                        >
+                            <X className="w-3.5 h-3.5" />
+                        </button>
+                    )}
+                </div>
+            )}
 
             {isLoading ? (
                 <div className="flex items-center justify-center py-6 text-white/40">
                     <Loader2 className="w-4 h-4 animate-spin" />
                 </div>
             ) : watchlists.length === 0 ? (
-                <p className="text-xs text-white/40 italic">No watchlists yet. Add one above to start hunting on your behalf.</p>
+                <p className="text-xs text-white/40 italic">{preset.emptyText}</p>
+            ) : filteredWatchlists.length === 0 ? (
+                <p className="text-xs text-white/40 italic">
+                    No watchlists match &quot;{search}&quot;.{" "}
+                    <button onClick={() => setSearch("")} className="underline text-cyan-300/80 hover:text-cyan-200">Clear</button>
+                </p>
             ) : (
                 <ul className="space-y-2">
                     {pageWatchlists.map(w => (
@@ -210,7 +322,7 @@ export function WatchlistsCard() {
                         Prev
                     </button>
                     <span className="text-[11px] text-white/40 tabular-nums">
-                        {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, watchlists.length)} of {watchlists.length} · page {safePage + 1}/{pageCount}
+                        {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredWatchlists.length)} of {filteredWatchlists.length} · page {safePage + 1}/{pageCount}
                     </span>
                     <button
                         onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}
@@ -226,8 +338,9 @@ export function WatchlistsCard() {
             <AddWatchlistModal
                 open={adding}
                 onClose={() => setAdding(false)}
-                onCreated={() => queryClient.invalidateQueries({ queryKey: queryKeys.watchlists })}
+                onCreated={() => invalidateWatchlists()}
                 existingWatchlists={watchlists}
+                defaultTrack={track}
             />
         </Card>
     );
@@ -294,15 +407,12 @@ function WatchlistRow({
     const filterCount = w.negativeFilters?.length ?? 0;
     return (
         <li className="rounded-lg bg-black/30 border border-white/10 px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
                         <span className="text-sm font-semibold text-white truncate">{w.name}</span>
-                        <span className="text-[10px] uppercase tracking-wide text-cyan-300/70 bg-cyan-500/10 px-1.5 py-0.5 rounded">
-                            {w.kind}
-                        </span>
                         {!w.active && (
-                            <span className="text-[10px] uppercase tracking-wide text-yellow-300/80 bg-yellow-500/10 px-1.5 py-0.5 rounded">
+                            <span className="text-[10px] uppercase tracking-wide text-yellow-300/80 bg-yellow-500/10 px-1.5 py-0.5 rounded shrink-0">
                                 paused
                             </span>
                         )}
@@ -320,55 +430,60 @@ function WatchlistRow({
                         )}
                     </div>
                 </div>
-                <div className="flex items-center gap-1 shrink-0">
-                    <NotificationModeToggle
-                        mode={(w.notificationMode as "each" | "digest" | "silent") ?? "each"}
-                        busy={busy}
-                        onChange={m => onSetNotificationMode(w.id, m)}
-                    />
-                    <button
-                        onClick={() => setFiltersExpanded(v => !v)}
-                        disabled={busy}
-                        title={`Negative filters${filterCount > 0 ? ` (${filterCount})` : ""}`}
-                        aria-pressed={filtersExpanded}
-                        className={[
-                            "p-1.5 rounded flex items-center gap-0.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed",
-                            filtersExpanded
-                                ? "bg-cyan-500/20 text-cyan-200"
-                                : filterCount > 0
-                                    ? "text-cyan-300/80 hover:text-cyan-200 hover:bg-cyan-500/10"
-                                    : "text-white/50 hover:text-white/90 hover:bg-white/10",
-                        ].join(" ")}
-                    >
-                        <Filter className="w-3.5 h-3.5" />
-                        {filterCount > 0 && (
-                            <span className="text-[10px] font-semibold tabular-nums">{filterCount}</span>
-                        )}
-                    </button>
-                    <button
-                        onClick={() => onRunNow(w.id)}
-                        disabled={busy || !w.active}
-                        title="Run now"
-                        className="p-1.5 rounded text-white/50 hover:text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
-                    >
-                        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                        onClick={() => onTogglePause(w.id, w.active)}
-                        disabled={busy}
-                        title={w.active ? "Pause" : "Resume"}
-                        className="p-1.5 rounded text-white/50 hover:text-white/90 hover:bg-white/10 disabled:opacity-30"
-                    >
-                        {w.active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                    </button>
-                    <button
-                        onClick={() => onRemove(w.id, w.name)}
-                        disabled={busy}
-                        title="Delete"
-                        className="p-1.5 rounded text-white/50 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30"
-                    >
-                        <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                <div className="flex flex-col items-end gap-1 shrink-0">
+                    <span className="text-[10px] uppercase tracking-wide text-cyan-300/70 bg-cyan-500/10 px-1.5 py-0.5 rounded">
+                        {w.kind}
+                    </span>
+                    <div className="flex items-center gap-1">
+                        <NotificationModeToggle
+                            mode={(w.notificationMode as "each" | "digest" | "silent") ?? "each"}
+                            busy={busy}
+                            onChange={m => onSetNotificationMode(w.id, m)}
+                        />
+                        <button
+                            onClick={() => setFiltersExpanded(v => !v)}
+                            disabled={busy}
+                            title={`Negative filters${filterCount > 0 ? ` (${filterCount})` : ""}`}
+                            aria-pressed={filtersExpanded}
+                            className={[
+                                "p-1.5 rounded flex items-center gap-0.5 transition-colors disabled:opacity-30 disabled:cursor-not-allowed",
+                                filtersExpanded
+                                    ? "bg-cyan-500/20 text-cyan-200"
+                                    : filterCount > 0
+                                        ? "text-cyan-300/80 hover:text-cyan-200 hover:bg-cyan-500/10"
+                                        : "text-white/50 hover:text-white/90 hover:bg-white/10",
+                            ].join(" ")}
+                        >
+                            <Filter className="w-3.5 h-3.5" />
+                            {filterCount > 0 && (
+                                <span className="text-[10px] font-semibold tabular-nums">{filterCount}</span>
+                            )}
+                        </button>
+                        <button
+                            onClick={() => onRunNow(w.id)}
+                            disabled={busy || !w.active}
+                            title="Run now"
+                            className="p-1.5 rounded text-white/50 hover:text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                            onClick={() => onTogglePause(w.id, w.active)}
+                            disabled={busy}
+                            title={w.active ? "Pause" : "Resume"}
+                            className="p-1.5 rounded text-white/50 hover:text-white/90 hover:bg-white/10 disabled:opacity-30"
+                        >
+                            {w.active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                        </button>
+                        <button
+                            onClick={() => onRemove(w.id, w.name)}
+                            disabled={busy}
+                            title="Delete"
+                            className="p-1.5 rounded text-white/50 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30"
+                        >
+                            <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                    </div>
                 </div>
             </div>
             <FiltersEditor
@@ -464,19 +579,23 @@ function FiltersEditor({
     );
 }
 
-// Cross-watchlist negative filters, stored on GlobalSetting.globalNegativeFilters
-// and hydrated into the Zustand store by ThemeProvider on mount. Auto-saves on
-// every add/remove (no Save button); shows each pattern as a chip with hover-X
-// to remove.
-function GlobalNegativeFiltersEditor({ onSaved }: { onSaved?: () => void }) {
-    const filters = useAppStore(s => s.globalNegativeFilters);
-    const [expanded, setExpanded] = useState(false);
+// Per-track negative filters, stored on GlobalSetting.globalNegativeFilters
+// (legacy column name) as a `{career, side}` JSON map and hydrated into the
+// Zustand store by ThemeProvider on mount. Auto-saves on every add/remove
+// (no Save button); shows each pattern as a chip with hover-X to remove.
+// Open/close is controlled by the parent — this component is only rendered
+// when the Filters button in WatchlistsCard's action slot is toggled on,
+// matching NewPostingsCard's filter-panel pattern. The `track` prop scopes
+// reads + writes so the career and side card instances edit independent
+// lists, even though they share the same DB row.
+function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSaved?: () => void }) {
+    const filters = useAppStore(s => s.negativeFiltersByTrack[track] ?? []);
     const [input, setInput] = useState("");
     const [busy, setBusy] = useState(false);
 
     async function persist(next: string[]) {
         if (next.length > 20) {
-            toastStore.push({ message: "Max 20 global filters", type: "error" });
+            toastStore.push({ message: "Max 20 filters per track", type: "error" });
             return;
         }
         setBusy(true);
@@ -484,8 +603,13 @@ function GlobalNegativeFiltersEditor({ onSaved }: { onSaved?: () => void }) {
             // Read the version at fire time — ThemeProvider may have bumped it
             // (theme change in a sibling component) since this card rendered.
             const expectedVersion = useAppStore.getState().version;
+            // Merge with the OTHER track's current value so the partial update
+            // doesn't clobber it. The server replaces `negativeFiltersByTrack`
+            // wholesale on a write.
+            const current = useAppStore.getState().negativeFiltersByTrack;
+            const merged = { ...current, [track]: next };
             const result = await api.settings.update(
-                { globalNegativeFilters: next },
+                { negativeFiltersByTrack: merged },
                 expectedVersion,
             );
             if (!result.ok) {
@@ -497,10 +621,10 @@ function GlobalNegativeFiltersEditor({ onSaved }: { onSaved?: () => void }) {
                 });
                 return;
             }
-            useAppStore.setState({ globalNegativeFilters: next, version: result.version });
+            useAppStore.setState({ negativeFiltersByTrack: merged, version: result.version });
             onSaved?.();
         } catch (e) {
-            toastStore.push({ message: `Global filter save failed: ${errMessage(e)}`, type: "error" });
+            toastStore.push({ message: `Filter save failed: ${errMessage(e)}`, type: "error" });
         } finally {
             setBusy(false);
         }
@@ -550,78 +674,65 @@ function GlobalNegativeFiltersEditor({ onSaved }: { onSaved?: () => void }) {
     }
 
     return (
-        <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 shrink-0">
+        <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 flex flex-col gap-2 shrink-0">
             <div className="flex items-center justify-between">
-                <button
-                    onClick={() => setExpanded(v => !v)}
-                    className="flex items-center gap-1 text-[11px] text-white/50 hover:text-white/80"
-                >
-                    {expanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-                    <Filter className="w-3 h-3" />
-                    <span>Global negative filters</span>
-                    {filters.length > 0 && (
-                        <span className="text-[10px] text-cyan-300/70 bg-cyan-500/10 px-1.5 py-0.5 rounded">
-                            {filters.length}
-                        </span>
-                    )}
-                </button>
-                {expanded && filters.length > 0 && (
+                <span className="text-[10px] uppercase tracking-wide text-white/40">
+                    {track === "career" ? "Career negative filters" : "Side negative filters"}
+                </span>
+                {filters.length > 0 && (
                     <button
                         onClick={() => persist([])}
                         disabled={busy}
                         className="flex items-center gap-1 text-[10px] text-white/40 hover:text-white/80 disabled:opacity-30"
                     >
                         <X className="w-3 h-3" />
-                        Clear all
+                        Clear
                     </button>
                 )}
             </div>
-            {expanded && (
-                <div className="mt-2 space-y-2">
-                    <p className="text-[10px] text-white/40 leading-tight">
-                        Applies to every watchlist below. Each entry is a case-insensitive regex matched against
-                        the title, snippet, and location. Comma or Enter to add. Hover a tag and click × to remove.
-                    </p>
-                    <div className="flex flex-wrap items-center gap-1.5">
-                        {filters.map(kw => (
-                            <span
-                                key={kw}
-                                className="group inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[10px] font-semibold font-mono bg-rose-500/15 text-rose-100 border border-rose-400/30"
-                            >
-                                <span>{kw}</span>
-                                <button
-                                    onClick={() => removeFilter(kw)}
-                                    disabled={busy}
-                                    title={`Remove "${kw}"`}
-                                    aria-label={`Remove ${kw}`}
-                                    className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-rose-100/70 hover:text-rose-50 transition-opacity disabled:opacity-30"
-                                >
-                                    <X className="w-2.5 h-2.5" />
-                                </button>
-                            </span>
-                        ))}
-                        <input
-                            type="text"
-                            value={input}
-                            onChange={e => setInput(e.target.value)}
-                            onKeyDown={e => {
-                                if (e.key === "Enter" || e.key === ",") {
-                                    e.preventDefault();
-                                    commitInput();
-                                } else if (e.key === "Backspace" && input === "" && filters.length > 0 && !busy) {
-                                    e.preventDefault();
-                                    removeFilter(filters[filters.length - 1]);
-                                }
-                            }}
-                            onBlur={commitInput}
-                            placeholder={filters.length === 0 ? "e.g. senior, staff, manager" : "add another…"}
+            <p className="text-[10px] text-white/40 leading-tight">
+                Applies to every {track === "career" ? "career" : "side"} watchlist below. Each entry is a
+                case-insensitive regex matched against the title, snippet, and location. Comma or Enter to add.
+                Hover a tag and click × to remove.
+            </p>
+            <div className="flex flex-wrap items-center gap-1.5">
+                {filters.map(kw => (
+                    <span
+                        key={kw}
+                        className="group inline-flex items-center gap-1 pl-2 pr-1.5 py-0.5 rounded-full text-[10px] font-semibold font-mono bg-rose-500/15 text-rose-100 border border-rose-400/30"
+                    >
+                        <span>{kw}</span>
+                        <button
+                            onClick={() => removeFilter(kw)}
                             disabled={busy}
-                            className="flex-1 min-w-[8rem] px-2 py-1 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-rose-400/40 disabled:opacity-50"
-                        />
-                        {busy && <Loader2 className="w-3 h-3 animate-spin text-white/40" />}
-                    </div>
-                </div>
-            )}
+                            title={`Remove "${kw}"`}
+                            aria-label={`Remove ${kw}`}
+                            className="opacity-0 group-hover:opacity-100 focus:opacity-100 text-rose-100/70 hover:text-rose-50 transition-opacity disabled:opacity-30"
+                        >
+                            <X className="w-2.5 h-2.5" />
+                        </button>
+                    </span>
+                ))}
+                <input
+                    type="text"
+                    value={input}
+                    onChange={e => setInput(e.target.value)}
+                    onKeyDown={e => {
+                        if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            commitInput();
+                        } else if (e.key === "Backspace" && input === "" && filters.length > 0 && !busy) {
+                            e.preventDefault();
+                            removeFilter(filters[filters.length - 1]);
+                        }
+                    }}
+                    onBlur={commitInput}
+                    placeholder={filters.length === 0 ? "e.g. senior, staff, manager" : "add another…"}
+                    disabled={busy}
+                    className="flex-1 min-w-[8rem] px-2 py-1 rounded bg-black/40 border border-white/10 text-[11px] text-white placeholder-white/30 focus:outline-none focus:border-rose-400/40 disabled:opacity-50"
+                />
+                {busy && <Loader2 className="w-3 h-3 animate-spin text-white/40" />}
+            </div>
         </div>
     );
 }

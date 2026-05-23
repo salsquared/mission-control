@@ -33,6 +33,20 @@ async function main() {
     const watchlistIds: string[] = [];
     let createdNotificationIds: string[] = [];
 
+    // Snapshot + neutralize GlobalSetting.globalNegativeFilters for the run.
+    // The test uses "Senior Engineer N" titles; Sal's real dev.db has "Senior"
+    // (and similar) in the global filter, which would correctly suppress
+    // dispatch and break our count assertions. The negative-filter pathway
+    // itself is covered by notification-negative-filter-smoke.
+    const globalRow = await prisma.globalSetting.findUnique({ where: { id: "global" } });
+    const globalFilterSnapshot = globalRow?.globalNegativeFilters ?? null;
+    if (globalRow && globalFilterSnapshot !== "[]") {
+        await prisma.globalSetting.update({
+            where: { id: "global" },
+            data: { globalNegativeFilters: "[]" },
+        });
+    }
+
     try {
         await prisma.user.create({ data: { id: userId, email: `digest-smoke-${tag}@example.invalid` } });
 
@@ -224,6 +238,12 @@ async function main() {
             await prisma.watchlist.delete({ where: { id } }).catch(() => undefined);
         }
         await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
+        if (globalFilterSnapshot !== null && globalFilterSnapshot !== "[]") {
+            await prisma.globalSetting.update({
+                where: { id: "global" },
+                data: { globalNegativeFilters: globalFilterSnapshot },
+            }).catch(() => undefined);
+        }
         await prisma.$disconnect();
         console.log(`\n${passes}/${passes + fails} steps passed`);
         if (fails === 0) console.log("All checks passed.");

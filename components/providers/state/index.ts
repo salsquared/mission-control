@@ -20,11 +20,13 @@ interface ThemeSlice {
     dashTitles: Record<string, string>;
     defaultDashTitles: Record<string, string>;
     viewScreenshots: Record<string, string>;
-    // Cross-device global negative filters (regex patterns). Hydrated from
-    // /api/settings GET alongside the theme fields. Excluded from
+    // Cross-device per-track negative filters (regex patterns). Hydrated
+    // from /api/settings GET alongside the theme fields. Excluded from
     // ThemeProvider's auto-sync diff (it has its own explicit Save UX in
     // WatchlistsCard); writes update both this field and `version` directly.
-    globalNegativeFilters: string[];
+    // The career and side WatchlistsCard instances each edit their own slice
+    // so adding "Senior" to career doesn't hide gigs on the side card.
+    negativeFiltersByTrack: { career: string[]; side: string[] };
     // Optimistic-concurrency counter. Hydrated from /api/settings GET, sent
     // back as If-Match on POST, bumped on successful save. Deliberately
     // excluded from the synced-state diff so updating it doesn't trigger a
@@ -81,14 +83,26 @@ const DEFAULT_POSTING_FILTERS: PostingFilters = {
     excludedCompanies: [],
 };
 
+// MB Phase 4: filter slice is keyed by track. Both NewPostingsCard instances
+// (career + side) mount simultaneously on ApplicationsView, so a single
+// `postingFilters` object would mean toggling a chip on one card mirrors it
+// onto the other. Per-track slices keep them independent and persist
+// separately.
+export type PostingsTrackKey = "career" | "side";
+
+const DEFAULT_POSTING_FILTERS_BY_TRACK: Record<PostingsTrackKey, PostingFilters> = {
+    career: DEFAULT_POSTING_FILTERS,
+    side: DEFAULT_POSTING_FILTERS,
+};
+
 interface DevicePrefsSlice {
     autoResearch: boolean;
     aiCompanionEnabled: boolean;
-    postingFilters: PostingFilters;
+    postingFilters: Record<PostingsTrackKey, PostingFilters>;
 
     setAutoResearch: (v: boolean) => void;
     setAiCompanionEnabled: (v: boolean) => void;
-    setPostingFilters: (next: PostingFilters) => void;
+    setPostingFilters: (track: PostingsTrackKey, next: PostingFilters) => void;
 }
 
 // ---------- Combined store ----------
@@ -117,7 +131,7 @@ export const useAppStore = create<AppState>()(
             dashTitles: {},
             defaultDashTitles: DEFAULT_DASH_TITLES,
             viewScreenshots: {},
-            globalNegativeFilters: [],
+            negativeFiltersByTrack: { career: [], side: [] },
             version: 0,
 
             setViewHuesEnabled: (viewHuesEnabled) => set({ viewHuesEnabled }),
@@ -147,10 +161,11 @@ export const useAppStore = create<AppState>()(
             // ---------- DevicePrefsSlice defaults ----------
             autoResearch: false,
             aiCompanionEnabled: false,
-            postingFilters: DEFAULT_POSTING_FILTERS,
+            postingFilters: DEFAULT_POSTING_FILTERS_BY_TRACK,
             setAutoResearch: (autoResearch) => set({ autoResearch }),
             setAiCompanionEnabled: (aiCompanionEnabled) => set({ aiCompanionEnabled }),
-            setPostingFilters: (postingFilters) => set({ postingFilters }),
+            setPostingFilters: (track, next) =>
+                set((s) => ({ postingFilters: { ...s.postingFilters, [track]: next } })),
         }),
         {
             name: 'app-state',
@@ -162,7 +177,7 @@ export const useAppStore = create<AppState>()(
                 viewScreenshots: state.viewScreenshots,
                 postingFilters: state.postingFilters,
             }),
-            version: 6,
+            version: 7,
             migrate: (persisted: any, fromVersion: number) => {
                 // v2 → v3: flip includeUnspecified to false. Existing users
                 // would otherwise inherit the old `true` default and the
@@ -172,33 +187,54 @@ export const useAppStore = create<AppState>()(
                 //          Wrap any prior single substring into a 1-chip array
                 //          so users don't lose their saved location filter.
                 // v5 → v6: introduce `excludedCompanies` filter (default []).
+                // v6 → v7 (MB Phase 4): `postingFilters` becomes per-track
+                //          (Record<"career"|"side", PostingFilters>). Splay the
+                //          existing single filter set across BOTH tracks so a
+                //          mid-session migration doesn't reset filters the user
+                //          had configured for career; side starts as the same
+                //          shape (sensible: their current company/location
+                //          filters were career-flavored, so career inherits).
                 const pf = persisted.postingFilters;
-                let locations: string[] = [];
-                if (pf) {
-                    if (Array.isArray(pf.locations)) {
-                        locations = pf.locations
+                // Normalize whatever's at persisted.postingFilters into the
+                // current PostingFilters shape. Handles either an old single-
+                // object (v6 and below) or a new record (v7+).
+                const normalizeOne = (raw: any): PostingFilters => {
+                    if (!raw) return DEFAULT_POSTING_FILTERS;
+                    let locations: string[] = [];
+                    if (Array.isArray(raw.locations)) {
+                        locations = raw.locations
                             .filter((s: unknown): s is string => typeof s === 'string')
                             .map((s: string) => s.trim())
                             .filter((s: string) => s.length > 0);
-                    } else if (typeof pf.locationContains === 'string' && pf.locationContains.trim()) {
-                        locations = [pf.locationContains.trim()];
+                    } else if (typeof raw.locationContains === 'string' && raw.locationContains.trim()) {
+                        locations = [raw.locationContains.trim()];
                     }
-                }
-                const postingFilters: PostingFilters = pf
-                    ? {
-                        employmentTypes: Array.isArray(pf.employmentTypes) ? pf.employmentTypes : [],
-                        remoteOnly: !!pf.remoteOnly,
+                    return {
+                        employmentTypes: Array.isArray(raw.employmentTypes) ? raw.employmentTypes : [],
+                        remoteOnly: !!raw.remoteOnly,
                         locations,
-                        includeUnspecified: fromVersion < 3 ? false : (pf.includeUnspecified ?? false),
-                        companies: Array.isArray(pf.companies) ? pf.companies : [],
-                        excludedCompanies: Array.isArray(pf.excludedCompanies)
-                            ? pf.excludedCompanies
+                        includeUnspecified: fromVersion < 3 ? false : (raw.includeUnspecified ?? false),
+                        companies: Array.isArray(raw.companies) ? raw.companies : [],
+                        excludedCompanies: Array.isArray(raw.excludedCompanies)
+                            ? raw.excludedCompanies
                                 .filter((s: unknown): s is string => typeof s === 'string')
                                 .map((s: string) => s.trim())
                                 .filter((s: string) => s.length > 0)
                             : [],
-                    }
-                    : DEFAULT_POSTING_FILTERS;
+                    };
+                };
+                let postingFilters: Record<PostingsTrackKey, PostingFilters>;
+                if (pf && typeof pf === 'object' && 'career' in pf) {
+                    // Already v7+ shape (defensive — covers re-migration).
+                    postingFilters = {
+                        career: normalizeOne(pf.career),
+                        side: normalizeOne(pf.side),
+                    };
+                } else {
+                    // v6 and earlier: single filter object. Splay across both.
+                    const one = normalizeOne(pf);
+                    postingFilters = { career: one, side: one };
+                }
                 return {
                     autoResearch: persisted.autoResearch ?? false,
                     aiCompanionEnabled: persisted.aiCompanionEnabled ?? persisted.backgroundTasks ?? false,

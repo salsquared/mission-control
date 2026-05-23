@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
-import { JobPostingStatusSchema, EMPLOYMENT_TYPE_VALUES } from "@/lib/schemas/watchlists";
+import { JobPostingStatusSchema, EMPLOYMENT_TYPE_VALUES, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { compileNegativeFilters, compileNegativeFiltersFromArray, matchesNegativeFilters } from "@/lib/postings/negative-filters";
 import { expandLocationFilters } from "@/lib/postings/location-expansion";
 import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
@@ -84,10 +84,19 @@ export async function GET(req: NextRequest) {
         ? locationsRaw.split(",").map(s => s.trim()).filter(Boolean)
         : [];
 
+    // MB Phase 4: optional ?track=career|side filter joins through to the
+    // parent watchlist. Unrecognized values fall through to "all" rather than
+    // 400 (matches the lenient ?status= handling below — we silently ignore
+    // unknown values there too).
+    const trackParam = url.searchParams.get("track");
+    const trackFilter = trackParam ? WatchlistTrackSchema.safeParse(trackParam) : null;
+    const watchlistMatch: { userId: string; track?: string } = { userId };
+    if (trackFilter?.success) watchlistMatch.track = trackFilter.data;
+
     // Each clause is independently AND-combined. Doing it as an array keeps
     // the per-filter OR groups (employmentType ∪ null, remoteOnly's keyword
     // list) from colliding with each other.
-    const conditions: Record<string, unknown>[] = [{ watchlist: { userId } }];
+    const conditions: Record<string, unknown>[] = [{ watchlist: watchlistMatch }];
     if (statusParam) {
         const s = JobPostingStatusSchema.safeParse(statusParam);
         if (!s.success) return NextResponse.json({ error: "Invalid status filter" }, { status: 400 });
@@ -145,20 +154,27 @@ export async function GET(req: NextRequest) {
                 where,
                 orderBy: { lastSeenAt: "desc" },
                 take: fetchTake,
-                include: { watchlist: { select: { negativeFilters: true } } },
+                // Need `watchlist.track` so per-track filters can be applied
+                // per row when the query doesn't restrict by track.
+                include: { watchlist: { select: { negativeFilters: true, track: true } } },
             }),
             includeFiltered ? Promise.resolve(null) : findGlobalSetting(),
         ]);
 
-        // Global filters apply to every watchlist. Compile once per request.
-        const globalRegexes = globalSettingRow
-            ? compileNegativeFiltersFromArray(parseGlobalSetting(globalSettingRow).globalNegativeFilters)
-            : [];
+        // Per-track negative filters (see lib/repositories/settings.ts). Compile
+        // each track's pattern set once per request; the per-row check picks
+        // the right slice based on that row's watchlist.track.
+        const filtersByTrack = globalSettingRow
+            ? parseGlobalSetting(globalSettingRow).negativeFiltersByTrack
+            : { career: [] as string[], side: [] as string[] };
+        const careerRegexes = compileNegativeFiltersFromArray(filtersByTrack.career);
+        const sideRegexes = compileNegativeFiltersFromArray(filtersByTrack.side);
 
         const filtered = includeFiltered
             ? rows
             : rows.filter(r => {
-                if (globalRegexes.length > 0 && matchesNegativeFilters(r, globalRegexes)) return false;
+                const rowRegexes = r.watchlist.track === "side" ? sideRegexes : careerRegexes;
+                if (rowRegexes.length > 0 && matchesNegativeFilters(r, rowRegexes)) return false;
                 const perWatchlist = compileNegativeFilters(r.watchlist.negativeFilters);
                 return !matchesNegativeFilters(r, perWatchlist);
             });
