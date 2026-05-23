@@ -20,7 +20,15 @@ const WINDOW_MS: Record<WindowKey, number> = {
 function pm2LogPath(): string {
     const envPath = process.env.PM2_LOG_PATH;
     if (envPath) return envPath;
-    return path.join(os.homedir(), '.pm2', 'logs', 'mission-control-out.log');
+    // Two mission-control processes write to two PM2 log files
+    // (mission-control-out.log for prod, mission-control-dev-out.log for
+    // dev). Picking the wrong one means this route reports the *other*
+    // tier's fetcher activity — silently empty if that tier is idle. PM2
+    // sets NODE_ENV per process in ecosystem.config.cjs, so we route off
+    // that.
+    const isDev = process.env.NODE_ENV === 'development';
+    const file = isDev ? 'mission-control-dev-out.log' : 'mission-control-out.log';
+    return path.join(os.homedir(), '.pm2', 'logs', file);
 }
 
 // Mirror of the client-side parser previously in InternalView.tsx. Same shape:
@@ -40,9 +48,6 @@ function parseHostFromLog(message: string): string | null {
 
 async function getHandler(req: Request): Promise<NextResponse> {
     void req; // signature dictated by withCache; req is unused — handler reads from the PM2 log file
-    const guard = await requireSession();
-    if ('error' in guard && guard.error) return guard.error;
-
     const logFile = pm2LogPath();
     const now = Date.now();
     const cutoffs: Record<WindowKey, number> = {
@@ -100,4 +105,12 @@ async function getHandler(req: Request): Promise<NextResponse> {
 }
 
 const cachedGET = withCache(getHandler, 3600);
-export const GET = async (req: Request) => cachedGET(req);
+export const GET = async (req: Request) => {
+    // Auth lives outside withCache — otherwise the cached response would
+    // be served to unauthenticated callers once the first authenticated
+    // hit populated the entry. Matches the pattern used by /api/finance,
+    // /api/company-news, etc.
+    const guard = await requireSession();
+    if ('error' in guard) return guard.error;
+    return cachedGET(req);
+};
