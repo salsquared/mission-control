@@ -72,6 +72,7 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
 
     const maxPages = config.maxPages ?? DEFAULT_MAX_PAGES;
     const out: RawPosting[] = [];
+    let partial = false;
     let skipped = 0;
     // Throttle per-job warn logs so a chronically misbehaving source doesn't
     // spam PM2 logs. We log the first few in full and rely on the summary at
@@ -98,7 +99,12 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
                 signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
             });
             if (!res.ok) {
-                if (page > 0) break; // got some pages, stop early instead of failing
+                // Got some pages, stop early instead of failing — but flag the
+                // result `partial` so job-watcher's close-detection skips this
+                // run. Without this flag, Boeing (1462 active) / Blue Origin
+                // (1040) could mass-close hundreds of postings on the next
+                // crawl whenever Workday pagination hiccups mid-fetch.
+                if (page > 0) { partial = true; break; }
                 return { ok: false, error: `HTTP ${res.status} ${res.statusText} from ${endpoint}` };
             }
             const json = await res.json();
@@ -139,13 +145,15 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
         }
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        // If we collected anything before the failure, return what we have.
-        if (out.length > 0) return { ok: true, postings: out };
+        // If we collected anything before the failure, return what we have —
+        // but flag partial so close-detection doesn't mass-close on a flaky
+        // crawl. See careers-page-fetcher.ts FetcherResult docstring.
+        if (out.length > 0) return { ok: true, postings: out, partial: true };
         return { ok: false, error: `Fetch failed: ${msg}` };
     }
 
     if (skipped > 0) {
         console.warn(`[workday] ${config.companyName}: ingested ${out.length} postings, skipped ${skipped} malformed entries`);
     }
-    return { ok: true, postings: out };
+    return partial ? { ok: true, postings: out, partial: true } : { ok: true, postings: out };
 }

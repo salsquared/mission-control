@@ -28,8 +28,16 @@ export interface RawPosting {
 }
 
 export type FetcherResult =
-    | { ok: true; postings: RawPosting[] }
+    | { ok: true; postings: RawPosting[]; partial?: boolean }
     | { ok: false; error: string };
+
+// `partial: true` tells job-watcher's close-detection to NOT mark stale rows
+// as closed for this run — the fetch returned a partial-but-non-empty result
+// (pagination broke mid-way, etc.) and we can't tell what's actually still
+// posted vs what dropped off the source feed. Without this flag, a partial
+// fetch over a 6h window would mass-close legitimate postings the next time
+// close-detection fired. See lib/fetchers/{linkedin,workday}-fetcher.ts for
+// the `if (page > 0) break` paths that legitimately set this.
 
 const USER_AGENT = "mission-control-watcher/1.0 (+https://mc.local; personal job-search agent)";
 const FETCH_TIMEOUT_MS = 8_000;

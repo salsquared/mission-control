@@ -367,8 +367,18 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                     title: `${raw.company} — ${raw.title}`,
                     body: raw.location ?? null,
                     payload: { postingId: created.id, watchlistId, sourceUrl: raw.sourceUrl },
-                    // PB-8: one notification per posting, ever.
-                    dedupKey: `posting:${created.id}`,
+                    // PB-8: one notification per externalId, ever. Originally
+                    // keyed on `posting:${created.id}` which made the dedup
+                    // per-row — same job in two watchlists got the user two
+                    // notifications (verified in prod for Securitas /
+                    // Rocket Lab / Raytheon overlap between cmpj4qgm and
+                    // cmphm3g7). externalId is the same hash across
+                    // watchlists when company+title+sourceUrl match, so
+                    // keying on it collapses cross-watchlist dups at the
+                    // notification layer. The first watchlist that surfaces
+                    // the posting wins the notification (its postingId +
+                    // watchlistId end up in the payload).
+                    dedupKey: `posting:${externalId}`,
                 });
             } catch (e) {
                 console.warn(`[job-watcher] dispatchNotification failed for posting ${created.id}:`, e);
@@ -381,23 +391,47 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // that we *didn't* see in this run, that's been silent for > 6h, and that
     // isn't already terminal (closed/hidden), gets marked closed.
     //
-    // SAFETY: skip when the fetch returned zero postings. An empty fetch can
+    // SAFETY 1: skip when the fetch returned zero postings. An empty fetch can
     // happen for benign reasons (source temporarily blank, SPA misrender,
     // CDN hiccup) and would otherwise nuke the entire feed via `notIn: []`
     // matching every row. Better to wait for the next tick than to mass-close.
+    //
+    // SAFETY 2: skip when fetchResult.partial — pagination broke mid-crawl
+    // and we got an unknown subset. Mass-closing what's not in the partial
+    // subset would silently nuke legitimate postings. Postings still get
+    // created/updated normally (better to have a posting we missed an edit
+    // on than no posting at all); just don't mark stale ones closed.
+    //
+    // SQLite-param-limit caveat: Prisma's effective parameter cap for a
+    // SQLite `notIn (…)` is 999, and `notIn` is a negation filter that
+    // Prisma refuses to auto-split into multiple sub-queries (P2029 — would
+    // change semantics). The naive `externalId: { notIn: seenExternalIds }`
+    // shape silently P2029'd in prod for SpaceX (1688 active rows), Boeing
+    // (1114), and Blue Origin (981) on every crawl — postings removed from
+    // those sources stayed visible as "active" forever. Rewrite as a two-
+    // step: select stale candidates (no notIn), diff against the in-memory
+    // seenExternalIds set in JS, then update by id (in {…} IS splittable).
     let closed = 0;
-    if (!isFirstRun && fetchResult.postings.length > 0) {
+    if (!isFirstRun && fetchResult.postings.length > 0 && !fetchResult.partial) {
         const sixHoursAgo = new Date(runAt.getTime() - 6 * 60 * 60 * 1000);
-        const closeResult = await prisma.jobPosting.updateMany({
+        const staleCandidates = await prisma.jobPosting.findMany({
             where: {
                 watchlistId,
                 status: { notIn: ["closed", "hidden"] },
-                externalId: { notIn: Array.from(seenExternalIds) },
                 lastSeenAt: { lt: sixHoursAgo },
             },
-            data: { status: "closed", removedAt: runAt },
+            select: { id: true, externalId: true },
         });
-        closed = closeResult.count;
+        const toCloseIds = staleCandidates
+            .filter(c => !seenExternalIds.has(c.externalId))
+            .map(c => c.id);
+        if (toCloseIds.length > 0) {
+            const closeResult = await prisma.jobPosting.updateMany({
+                where: { id: { in: toCloseIds } },
+                data: { status: "closed", removedAt: runAt },
+            });
+            closed = closeResult.count;
+        }
         if (closed > 0) {
             // Standard tier — important enough to flag in the bell, but no
             // email blast. The user will see it next time they open MC.

@@ -36,6 +36,7 @@ function clean(s: string): string {
 export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResult> {
     const out: RawPosting[] = [];
     const seenUrls = new Set<string>();
+    let partial = false;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS * MAX_PAGES);
 
@@ -67,7 +68,11 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
                     signal: controller.signal,
                 });
             } catch (e) {
-                if (page > 0) break;
+                // Pagination failed mid-crawl. Keep the postings we already
+                // have from earlier pages but mark the result partial so
+                // close-detection doesn't mass-close postings we never got
+                // a chance to re-see this run.
+                if (page > 0) { partial = true; break; }
                 return { ok: false, error: `Fetch failed: ${e instanceof Error ? e.message : String(e)}` };
             }
 
@@ -75,7 +80,7 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
                 return { ok: false, error: "LinkedIn rate-limited (HTTP 429). Slow the cadence." };
             }
             if (!res.ok) {
-                if (page > 0) break;
+                if (page > 0) { partial = true; break; }
                 return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
             }
 
@@ -131,5 +136,5 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
         clearTimeout(timeoutId);
     }
 
-    return { ok: true, postings: out };
+    return partial ? { ok: true, postings: out, partial: true } : { ok: true, postings: out };
 }
