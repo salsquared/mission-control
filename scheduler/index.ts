@@ -112,8 +112,8 @@ const disabledJobs = new Set<string>();
 
 console.info(`${TAG} starting with ${JOBS.length} job(s): ${JOBS.map(j => j.name).join(', ')}`);
 
-for (const job of JOBS) {
-    setInterval(async () => {
+for (const [i, job] of JOBS.entries()) {
+    const tick = async () => {
         if (disabledJobs.has(job.name)) return;
         try {
             console.info(`${TAG} running ${job.name}`);
@@ -128,7 +128,16 @@ for (const job of JOBS) {
             }
             console.error(`${TAG} ${job.name} failed:`, e);
         }
-    }, job.intervalMs);
+    };
+    // Kick once at startup, staggered by 10s per job so a fresh boot doesn't
+    // all-fire at once. setInterval otherwise waits `intervalMs` BEFORE the
+    // first invocation — daily jobs (stale-applications, deadline-nudges,
+    // posting-digest) would sit idle for 24h after every scheduler restart,
+    // and a flapping process never gets to dispatch anything. Cooldown /
+    // dedup keys on each job's dispatch path make duplicate startup runs
+    // (rapid restart) idempotent.
+    setTimeout(tick, 10_000 * (i + 1));
+    setInterval(tick, job.intervalMs);
 }
 
 const shutdown = (signal: string) => {
