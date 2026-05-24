@@ -32,6 +32,7 @@ import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
 import { broadcastEvent } from "@/lib/events";
 import { dispatchNotification } from "@/lib/notifications/dispatch";
 import { classifyEmploymentTypes } from "@/lib/ai/classify-employment-type";
+import { EMPLOYMENT_TYPES, type EmploymentType } from "@/lib/fetchers/employment-type";
 import {
     compileNegativeFilters,
     compileNegativeFiltersFromArray,
@@ -186,21 +187,74 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // DB pass, (2) one indexed `in (…)` query is cheaper than N findUniques.
     // The P2002 fallback below still handles the unique-constraint race
     // between this lookup and the create.
+    //
+    // SELECT also pulls existing `employmentType` so the seen-again UPDATE
+    // below can preserve a previously-classified value when this crawl's
+    // heuristic returns null (the title was always heuristic-resistant; we
+    // already paid for the LLM call last time).
     const postingsWithIds = fetchResult.postings.map(raw => ({
         raw,
         externalId: externalIdFor(raw.company, raw.title, raw.sourceUrl),
     }));
     const existingRows = await prisma.jobPosting.findMany({
         where: { watchlistId, externalId: { in: postingsWithIds.map(p => p.externalId) } },
-        select: { id: true, externalId: true },
+        select: { id: true, externalId: true, employmentType: true },
     });
-    const existingByExternalId = new Map(existingRows.map(r => [r.externalId, r.id]));
+    const existingByExternalId = new Map(
+        existingRows.map(r => [r.externalId, { id: r.id, employmentType: r.employmentType }] as const),
+    );
+
+    // Cross-watchlist classification reuse — before reaching for the LLM,
+    // check whether any OTHER watchlist has already classified the same
+    // externalId. Same externalId means same `company|title|sourceUrl`, so
+    // the classification is portable across watchlists. Cuts duplicate LLM
+    // spend on aggregator-style watchlists (LinkedIn search, careers-page)
+    // that overlap on the same posting. Candidates are (a) brand-new
+    // postings whose heuristic returned null, AND (b) existing rows in this
+    // watchlist that have null employmentType (self-heal path for rows
+    // that got wiped by the pre-2026-05-24 update bug).
+    const lookupCandidates = postingsWithIds.filter(p => {
+        if (p.raw.employmentType != null) return false;
+        const existing = existingByExternalId.get(p.externalId);
+        if (existing == null) return true; // new posting
+        return existing.employmentType == null; // existing but never successfully classified
+    });
+    if (lookupCandidates.length > 0) {
+        const crossRows = await prisma.jobPosting.findMany({
+            where: {
+                externalId: { in: lookupCandidates.map(p => p.externalId) },
+                employmentType: { not: null },
+            },
+            select: { externalId: true, employmentType: true },
+            distinct: ["externalId"],
+        });
+        const cross = new Map(crossRows.map(r => [r.externalId, r.employmentType]));
+        let reused = 0;
+        for (const p of lookupCandidates) {
+            const t = cross.get(p.externalId);
+            // Narrow Prisma's `string | null` to the EmploymentType enum.
+            // Anything outside the enum (shouldn't happen — every write to
+            // this column goes through normalizeEmploymentType or the
+            // classifier's enum schema) gets ignored rather than corrupting
+            // raw.employmentType.
+            if (t != null && (EMPLOYMENT_TYPES as readonly string[]).includes(t)) {
+                p.raw.employmentType = t as EmploymentType;
+                reused++;
+            }
+        }
+        if (reused > 0) {
+            console.info(
+                `[job-watcher] employment-type cross-watchlist reuse: ${reused}/${lookupCandidates.length} postings classified without LLM call`,
+            );
+        }
+    }
 
     // Tier B (employment-type classifier): for postings that are NEW to this
     // watchlist AND whose heuristic in lib/fetchers/employment-type.ts returned
-    // null, batch-classify via Gemini Flash. Backfills `raw.employmentType` in
-    // place so the create branch below picks it up. Strictly degrades — any
-    // failure logs and falls through to ingest as Unspecified.
+    // null AND weren't backfilled by cross-watchlist reuse above, batch-
+    // classify via Gemini Flash. Backfills `raw.employmentType` in place so
+    // the create branch below picks it up. Strictly degrades — any failure
+    // logs and falls through to ingest as Unspecified.
     const classifyInputs = postingsWithIds
         .filter(p => !existingByExternalId.has(p.externalId) && p.raw.employmentType == null)
         .map(p => ({
@@ -226,15 +280,21 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
 
     for (const { raw, externalId } of postingsWithIds) {
         seenExternalIds.add(externalId);
-        const existingId = existingByExternalId.get(externalId);
-        if (existingId) {
-            // Always refresh lastSeenAt; also refresh employmentType so that
-            // improvements to the classifier (or to the company's Greenhouse
-            // metadata configuration) propagate to rows ingested before the
-            // change. Cheap — same row, single UPDATE.
+        const existing = existingByExternalId.get(externalId);
+        if (existing) {
+            // Always refresh lastSeenAt. Refresh employmentType ONLY when
+            // raw.employmentType is non-null — otherwise we'd wipe a value
+            // previously set by the LLM classifier (the heuristic can't
+            // classify the title; that's why we paid for the LLM call) or
+            // by cross-watchlist reuse above. Promote a null stored value
+            // to a non-null raw value when the heuristic / cross-watchlist
+            // reuse improves later.
             await prisma.jobPosting.update({
-                where: { id: existingId },
-                data: { lastSeenAt: runAt, employmentType: raw.employmentType ?? null },
+                where: { id: existing.id },
+                data: {
+                    lastSeenAt: runAt,
+                    ...(raw.employmentType != null ? { employmentType: raw.employmentType } : {}),
+                },
             });
             seenAgain++;
             continue;
@@ -275,9 +335,16 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         } catch (e) {
             const code = (e as { code?: string } | null)?.code;
             if (code === "P2002") {
+                // Lost race against a parallel run that just created this
+                // row. Same preserve-on-null rule as the regular seen-again
+                // path above — don't wipe an LLM-classified value with a
+                // null heuristic result.
                 await prisma.jobPosting.update({
                     where: { watchlistId_externalId: { watchlistId, externalId } },
-                    data: { lastSeenAt: runAt, employmentType: raw.employmentType ?? null },
+                    data: {
+                        lastSeenAt: runAt,
+                        ...(raw.employmentType != null ? { employmentType: raw.employmentType } : {}),
+                    },
                 });
                 seenAgain++;
                 continue;
