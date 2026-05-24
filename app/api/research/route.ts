@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
+import { loggedFetch, logExternalCall } from '@/lib/external-fetch';
 import Parser from 'rss-parser';
 
 const parser = new Parser({
@@ -22,8 +23,7 @@ async function getHandler(request: Request) {
 
         // 1. Fetch from source based on topic
         if (topic.toLowerCase() === 'ai' && type !== 'review') {
-            console.info(`[EXTERNAL API] Fetching daily papers from Hugging Face...`);
-            const hfRes = await fetch('https://huggingface.co/api/daily_papers', { cache: 'no-store' });
+            const hfRes = await loggedFetch('https://huggingface.co/api/daily_papers', { cache: 'no-store' });
             if (hfRes.ok) {
                 const data = await hfRes.json();
                 const sorted = data;
@@ -158,12 +158,12 @@ async function getHandler(request: Request) {
             const searchQuery = searchQueryParts.join('+AND+');
             const arxivApiUrl = `https://export.arxiv.org/api/query?search_query=${searchQuery}&start=0&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
 
-            console.info(`[EXTERNAL API] Fetching from arXiv: ${arxivApiUrl}`);
             // arxiv has a 1-req-per-3s soft policy; over the limit it returns a 200
             // with plaintext "Rate exceeded." — bypassing rss-parser's normal error
             // path. Throw on that so withCache serves the stale entry instead of
             // freezing an empty result for the full TTL.
             await acquireArxivSlot();
+            logExternalCall(arxivApiUrl);
             const feed = await parser.parseURL(arxivApiUrl);
             initialPapers = feed.items.map(item => {
                 const rawId = item.id || item.link || Math.random().toString();
@@ -186,8 +186,7 @@ async function getHandler(request: Request) {
         if (initialPapers.length > 0) {
             const arxivIds = initialPapers.map(p => `ArXiv:${p.paperId}`);
 
-            console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${arxivIds.length} papers...`);
-            const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
+            const ssRes = await loggedFetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ids: arxivIds }),

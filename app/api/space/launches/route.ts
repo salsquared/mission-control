@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { loggedFetch } from '@/lib/external-fetch';
 
 async function getHandler(req: Request) {
     try {
@@ -22,8 +23,7 @@ async function getHandler(req: Request) {
             url = `https://ll.thespacedevs.com/2.2.0/launch/?limit=100&net__gte=${gte}&net__lte=${lte}`;
         }
 
-        console.info(`[EXTERNAL API] Fetching from The Space Devs (Launches): ${url}`);
-        const res = await fetch(url, {
+        const res = await loggedFetch(url, {
             cache: 'no-store', // Let withCache handle the caching to prevent stale-while-revalidate overlap
             headers: {
                 'User-Agent': 'MissionControl/1.0',

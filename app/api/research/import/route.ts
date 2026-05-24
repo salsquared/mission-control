@@ -3,6 +3,7 @@ import Parser from 'rss-parser';
 import { ResearchImportSchema } from '@/lib/schemas/research-import';
 import { requireSession } from '@/lib/auth-guards';
 import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
+import { loggedFetch, logExternalCall } from '@/lib/external-fetch';
 
 const parser = new Parser({
     customFields: {
@@ -72,8 +73,7 @@ export async function POST(request: Request) {
         let paperMetadata: any = null;
 
         // Try Semantic Scholar first for comprehensive metadata
-        console.info(`[EXTERNAL API] Fetching from Semantic Scholar for ${ssQueryId}`);
-        const ssRes = await fetch(`https://api.semanticscholar.org/graph/v1/paper/${ssQueryId}?fields=title,authors,abstract,citationCount,year,url,externalIds`, {
+        const ssRes = await loggedFetch(`https://api.semanticscholar.org/graph/v1/paper/${ssQueryId}?fields=title,authors,abstract,citationCount,year,url,externalIds`, {
             cache: 'no-store'
         });
 
@@ -103,10 +103,10 @@ export async function POST(request: Request) {
 
         // Fallback to ArXiv API if Semantic Scholar failed OR if it didn't return an abstract for an ArXiv paper
         if ((!ssRes.ok || !paperMetadata?.summary || paperMetadata.summary === "No abstract available.") && paperIdFallback) {
-            console.info(`[EXTERNAL API] Fetching fallback from arXiv for ${paperIdFallback}`);
             try {
                 const arxivApiUrl = `https://export.arxiv.org/api/query?id_list=${paperIdFallback}`;
                 await acquireArxivSlot();
+                logExternalCall(arxivApiUrl);
                 const feed = await parser.parseURL(arxivApiUrl);
 
                 if (feed.items && feed.items.length > 0) {

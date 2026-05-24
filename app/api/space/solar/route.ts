@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { loggedFetch } from '@/lib/external-fetch';
 
 export const revalidate = 300; // Cache for 5 minutes
 
@@ -22,8 +23,7 @@ function getStatusFromFlux(category: string): string {
 
 async function getHandler() {
     try {
-        console.info('[EXTERNAL API] Fetching from NOAA Space Weather Prediction Center...');
-        const res = await fetch("https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json");
+        const res = await loggedFetch("https://services.swpc.noaa.gov/json/goes/primary/xrays-1-day.json");
 
         if (!res.ok) {
             throw new Error(`Failed to fetch solar data: ${res.status} ${res.statusText}`);

@@ -8,6 +8,7 @@ import ogs from 'open-graph-scraper';
 import { MAX_NEWS_ARTICLES } from '../constants';
 import { ScraperBrokenError } from './errors';
 import type { NewsArticle } from './types';
+import { logExternalCall } from '../external-fetch';
 
 const parser = new Parser();
 
@@ -16,7 +17,7 @@ const parser = new Parser();
  * then enrich with Open Graph images.
  */
 export async function fetchRSS(name: string, rssUrl: string): Promise<NewsArticle[]> {
-    console.info(`[EXTERNAL API] Fetching RSS from ${name}: ${rssUrl}`);
+    logExternalCall(rssUrl);
     const feed = await parser.parseURL(rssUrl);
 
     if (feed.items.length === 0) {

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache, readCachedDataIgnoringExpiry } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { loggedFetch } from '@/lib/external-fetch';
 
 const UPSTREAM_HOST = 'celestrak.org';
 const CACHE_KEY = '/api/space/satellites';
@@ -16,8 +17,7 @@ export const revalidate = 21600;
 
 async function getHandler() {
     try {
-        console.info('[EXTERNAL API] Fetching from Celestrak (Active Satellites)...');
-        const res = await fetch(
+        const res = await loggedFetch(
             "https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json",
             {
                 headers: {

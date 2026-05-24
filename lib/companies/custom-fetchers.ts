@@ -1,13 +1,13 @@
 import { MAX_NEWS_ARTICLES } from '../constants';
 import type { NewsArticle } from '../fetchers/types';
+import { loggedFetch, logExternalCall } from '../external-fetch';
 
 export const TTL_STANDARD = 3600;
 export const TTL_LOW_VOLUME = 86400;
 export const TTL_VERY_LOW = 604800;
 
 export async function fetchSpaceX(): Promise<NewsArticle[]> {
-    console.info('[EXTERNAL API] Fetching from SpaceX API...');
-    const res = await fetch('https://content.spacex.com/api/spacex-website/updates');
+    const res = await loggedFetch('https://content.spacex.com/api/spacex-website/updates');
     if (!res.ok) throw new Error(`Failed to fetch SpaceX news: ${res.status}`);
     const data = await res.json();
 
@@ -25,7 +25,7 @@ export async function fetchSpaceX(): Promise<NewsArticle[]> {
 export async function fetchOpenAI(): Promise<NewsArticle[]> {
     const Parser = (await import('rss-parser')).default;
     const parser = new Parser();
-    console.info('[EXTERNAL API] Fetching RSS from OpenAI...');
+    logExternalCall('https://openai.com/news/rss.xml');
     const feed = await parser.parseURL('https://openai.com/news/rss.xml');
     const items = feed.items.slice(0, MAX_NEWS_ARTICLES);
 
@@ -33,8 +33,7 @@ export async function fetchOpenAI(): Promise<NewsArticle[]> {
         let image_url = "";
         if (i < 4 && item.link) {
             try {
-                console.info(`[EXTERNAL API] Fetching image via Microlink API...`);
-                const res = await fetch(`https://api.microlink.io?url=${encodeURIComponent(item.link)}`);
+                const res = await loggedFetch(`https://api.microlink.io?url=${encodeURIComponent(item.link)}`);
                 if (res.ok) {
                     const data = await res.json();
                     image_url = data?.data?.image?.url || "";
@@ -63,8 +62,7 @@ export async function fetchGroq(): Promise<NewsArticle[]> {
     const allArticles: NewsArticle[] = [];
 
     const results = await Promise.allSettled(pages.map(async (pageUrl) => {
-        console.info(`[EXTERNAL API] Scraping Groq from: ${pageUrl}`);
-        const res = await fetch(pageUrl, { headers: { 'User-Agent': UA } });
+        const res = await loggedFetch(pageUrl, { headers: { 'User-Agent': UA } });
         if (!res.ok) throw new Error(`Failed to fetch ${pageUrl}: ${res.status}`);
         const html = await res.text();
         const re = new RegExp(cardRegex.source, cardRegex.flags);
@@ -97,8 +95,7 @@ export async function fetchGroq(): Promise<NewsArticle[]> {
 
 export async function fetchCerebras(): Promise<NewsArticle[]> {
     const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-    console.info(`[EXTERNAL API] Scraping Cerebras from: https://cerebras.ai/blog`);
-    const res = await fetch('https://cerebras.ai/blog', { headers: { 'User-Agent': UA } });
+    const res = await loggedFetch('https://cerebras.ai/blog', { headers: { 'User-Agent': UA } });
     if (!res.ok) throw new Error(`Failed to fetch cerebras blog: ${res.status}`);
     const html = await res.text();
 
@@ -139,8 +136,7 @@ export async function fetchCerebras(): Promise<NewsArticle[]> {
 
 export async function fetchMetaAI(): Promise<NewsArticle[]> {
     const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
-    console.info('[EXTERNAL API] Scraping Meta AI from: https://ai.meta.com/blog/');
-    const res = await fetch('https://ai.meta.com/blog/', { headers: { 'User-Agent': UA } });
+    const res = await loggedFetch('https://ai.meta.com/blog/', { headers: { 'User-Agent': UA } });
     if (!res.ok) throw new Error(`Failed to fetch Meta AI blog: ${res.status}`);
     const html = await res.text();
 

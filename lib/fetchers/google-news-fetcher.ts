@@ -8,6 +8,7 @@
 import Parser from 'rss-parser';
 import { MAX_NEWS_ARTICLES } from '../constants';
 import type { NewsArticle } from './types';
+import { logExternalCall } from '../external-fetch';
 
 const parser = new Parser();
 
@@ -18,7 +19,7 @@ const parser = new Parser();
 export async function fetchGoogleNews(name: string, query: string): Promise<NewsArticle[]> {
     const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(query)}+when:7d&hl=en-US&gl=US&ceid=US:en`;
 
-    console.info(`[EXTERNAL API] Fetching Google News RSS for ${name}: ${rssUrl}`);
+    logExternalCall(rssUrl);
 
     const feed = await parser.parseURL(rssUrl);
 

@@ -2,13 +2,13 @@ import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
+import { loggedFetch } from '@/lib/external-fetch';
 
 const SNAPI_URL = `https://api.spaceflightnewsapi.net/v4/articles/?limit=100`;
 
 async function getHandler() {
     try {
-        console.info(`[EXTERNAL API] Fetching from Spaceflight News API...`);
-        const res = await fetch(SNAPI_URL, {
+        const res = await loggedFetch(SNAPI_URL, {
             next: { revalidate: 3600 }, // Cache for 1 hour
         });
 

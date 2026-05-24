@@ -8,6 +8,7 @@ import ogs from 'open-graph-scraper';
 import { MAX_NEWS_ARTICLES } from '../constants';
 import { ScraperBrokenError } from './errors';
 import type { NewsArticle, CompanyFeedConfig } from './types';
+import { loggedFetch } from '../external-fetch';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
@@ -21,9 +22,7 @@ export async function fetchScrape(config: CompanyFeedConfig): Promise<NewsArticl
         throw new Error(`[SCRAPE] Missing scrapeUrl or scrapeConfig for ${name}`);
     }
 
-    console.info(`[EXTERNAL API] Scraping ${name} from: ${scrapeUrl}`);
-
-    const res = await fetch(scrapeUrl, {
+    const res = await loggedFetch(scrapeUrl, {
         headers: {
             'User-Agent': scrapeConfig.userAgent || DEFAULT_USER_AGENT
         }

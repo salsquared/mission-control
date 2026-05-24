@@ -1,14 +1,14 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { loggedFetch } from '@/lib/external-fetch';
 
 async function getHandler(request: Request) {
     try {
         const { searchParams } = new URL(request.url);
         const limit = parseInt(searchParams.get('limit') || '10', 10);
 
-        console.info('[EXTERNAL API] Fetching daily papers from Hugging Face...');
-        const res = await fetch('https://huggingface.co/api/daily_papers', {
+        const res = await loggedFetch('https://huggingface.co/api/daily_papers', {
             headers: {
                 'User-Agent': 'mission-control-app'
             }

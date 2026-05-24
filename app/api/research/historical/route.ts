@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
+import { loggedFetch } from '@/lib/external-fetch';
 import {
     findCurrentHistoricalPick,
     listPickedHistoricalIds,
@@ -30,9 +31,8 @@ async function getHandler(request: Request) {
         const existingSelection = await findCurrentHistoricalPick(topic.toLowerCase(), weekStart);
 
         if (existingSelection) {
-            console.info(`[EXTERNAL API] Fetching existing historical paper from arXiv: ${existingSelection.paperId}`);
             await acquireArxivSlot();
-            const res = await fetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
+            const res = await loggedFetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 
             // Throw on non-ok (e.g. 429 "Rate exceeded.") so withCache STALE-FALLBACKs
             // to the last good response instead of falling through to a new search,
@@ -70,8 +70,7 @@ async function getHandler(request: Request) {
                         };
 
                         // fetch Semantic scholar details
-                        console.info(`[EXTERNAL API] Fetching enrichment from Semantic Scholar for ${existingSelection.paperId}...`);
-                        const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
+                        const ssRes = await loggedFetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=title,authors,abstract,citationCount,year,url', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify({ ids: [`ArXiv:${existingSelection.paperId}`] })
@@ -106,9 +105,8 @@ async function getHandler(request: Request) {
         const fullQuery = `${arxivQuery} AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
         const fetchUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=100&sortBy=relevance&sortOrder=descending`;
 
-        console.info(`[EXTERNAL API] Fetching new historical papers from arXiv: ${fullQuery}`);
         await acquireArxivSlot();
-        const res2 = await fetch(fetchUrl);
+        const res2 = await loggedFetch(fetchUrl);
         if (!res2.ok) {
             throw new Error(`arXiv responded ${res2.status} ${res2.statusText} for ${fullQuery}`);
         }
@@ -141,8 +139,7 @@ async function getHandler(request: Request) {
                 const batchIds = entryRecords.map(r => `ArXiv:${r.id}`);
                 // Semantic Scholar limits batch to 500, we have <= 100
                 try {
-                    console.info(`[EXTERNAL API] Fetching citations from Semantic Scholar for ${batchIds.length} historical candidates...`);
-                    const ssRes = await fetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=citationCount', {
+                    const ssRes = await loggedFetch('https://api.semanticscholar.org/graph/v1/paper/batch?fields=citationCount', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ ids: batchIds })

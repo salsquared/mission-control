@@ -2,14 +2,14 @@ import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
+import { loggedFetch } from '@/lib/external-fetch';
 
 // Using Hacker News Algolia Search API for "AI" or "Artificial Intelligence"
 const HN_SEARCH_URL = `https://hn.algolia.com/api/v1/search_by_date?query="Artificial Intelligence" OR "AI"&tags=story&hitsPerPage=${MAX_NEWS_ARTICLES}`;
 
 async function getHandler() {
     try {
-        console.info('[EXTERNAL API] Fetching from Hacker News API...');
-        const res = await fetch(HN_SEARCH_URL, {
+        const res = await loggedFetch(HN_SEARCH_URL, {
             next: { revalidate: 3600 }, // Cache for 1 hour
         });
 
