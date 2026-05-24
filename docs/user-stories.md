@@ -1,8 +1,10 @@
-# Applications — User Stories
+# User Stories
 
 Working list. Priority emoji: **🔴** must-have for next ship, **🟡** important, **🔵** nice-to-have / later. **✅** = shipped end-to-end (verified against the codebase on 2026-05-15). **◐** = partial / in-scope-only (one half shipped, other half explicitly out-of-scope by Decision). **⛔** = user-declined.
 
 **Implementation status, sub-milestones, file paths, and concrete API/schema shapes live in [`docs/implementation.md`](./implementation.md).** This doc says *what* and *why*; that one says *how* and *in what order*. Cross-session running state lives in [`docs/next_steps.md`](./next_steps.md).
+
+Sections §1–§14 cover the applications/job-search feature set (umbrella goal: *apply to jobs*). Section §15 adds the cross-cutting application-lock infrastructure. Future cross-cutting concerns slot in as new sections in the same scheme.
 
 ## 1. Capture from email
 
@@ -115,16 +117,137 @@ Story S12.1 already proved the schema can carry multiple `kind`s through one pip
 - **S14.3** 🔵 Interview prep tracker — questions asked per company, my answers, what to brush up on.
 - **S14.4** 🔵 Salary research per company (Levels.fyi / public filings / glassdoor) auto-attached to applications.
 
+## 15. Local auth — app-wide passcode gate
+
+*Draft 2026-05-23. No code yet — stories below define what the gate should do; implementation order moves into `implementation.md` once approved. **Open questions** at the bottom of this section need user input before building begins.*
+
+**Why this exists.** Mission Control is a single-user personal app exposed two ways: directly on the LAN (`localhost`, `mc.local`, phone-on-WiFi) and to the public internet through a Cloudflare tunnel. Today the only thing standing between the open internet and the UI is the Google OAuth sign-in screen — which was never intended as the front door. It was added so Gmail / Calendar features could read tokens, and grew into the de-facto application lock by accident. Concretely, over cellular today: `app/page.tsx` is `"use client"` with `ssr: false`, so the React shell + dash carousel + Launchpad render for *anyone* who reaches the hostname; data-heavy routes 401 cleanly via `requireSession` but the empty card frames are already visible. That's the "spotty" feel. The fix is a small, separate, application-level passcode that gates the entire UI surface and every protected API route, regardless of network. Google OAuth then goes back to its real job: holding Gmail / Calendar tokens for the features that actually need them.
+
+**Goals.**
+- Every page render and every protected API call require Local Auth — same gate from LAN, WiFi, cellular, tunnel, PWA install. No network-based exceptions.
+- Google OAuth is decoupled and demoted to a feature-level capability ("connect Google" rather than "sign in").
+- A locked browser sees a single overlay over a blank shell. No dash content, no launchpad, no AI Companion, no internal-systems telemetry leakage.
+- Server restart = everyone is Locked again. Acceptable trade-off for a personal app; doubles as a panic-button (`pm2 restart mission-control` = "lock everything").
+- Idle auto-lock so an unattended laptop or backgrounded phone tab eventually requires the passcode again.
+- Easy local recovery: forgot password = edit a config file / DB row on the host, no out-of-band identity-verification dance.
+
+**Non-goals.** Multi-user accounts. Federated identity, magic links, MFA, hardware-key support. Replacing service-token auth (Pulsar / scheduler keep `requireServiceToken`). Replacing OIDC verification on the Gmail Pub/Sub webhook (the OIDC JWT is the auth). Brute-force hardening beyond a basic per-IP throttle. Per-feature secondary passcodes. Biometric unlock (passkeys are a possible follow-up but not v1). Encrypting data at rest based on the passcode (the SQLite file remains plaintext locally; it's already encrypted at backup-time per RAH-13).
+
+**Glossary.**
+- **Local Auth** — the new app-wide passcode gate. Single secret, no username. Server-side session. Independent of any external identity provider.
+- **Google OAuth** — existing NextAuth sign-in with `access_type=offline`. Sole purpose post-redesign: hold a refresh token for Gmail readonly/send and Calendar events. Not a UI gate.
+- **Locked / Unlocked** — Local Auth states for the current browser. Unlocked = the server has issued a Local Auth session cookie that's still valid.
+- **Signed in (to Google) / Not signed in** — orthogonal to Locked/Unlocked. You can be Unlocked but Not signed in, in which case Gmail/Calendar-dependent features degrade gracefully.
+
+**State machine.**
+
+```mermaid
+flowchart TD
+    Start([Start]) -->|"no passcode<br/>set"| AwaitingSetup(["Awaiting<br/>Setup"])
+    Start -->|"passcode set,<br/>no session"| Locked([Locked])
+    AwaitingSetup -->|"set passcode<br/>(bootstrap form)"| Unlocked([Unlocked])
+    Locked -->|"correct passcode"| Unlocked
+    Locked -->|"wrong passcode<br/>(throttle on repeats)"| Locked
+    Unlocked -->|"server restart<br/>(sessions evicted)"| Locked
+    Unlocked -->|"idle timeout<br/>(client inactivity)"| Locked
+    Unlocked -->|"manual lock<br/>(Lock now button)"| Locked
+    Unlocked -->|"passcode rotated<br/>(other sessions evicted)"| Locked
+```
+
+**Bootstrap (first run).**
+- **S15.1** 🔴 As the sole user, on the very first time the app starts after this feature lands, I want to be guided through setting a Local Auth passcode before the UI becomes usable, so the gate is never accidentally left off.
+- **S15.2** 🔴 As the user, I want the bootstrap form to enforce a minimum passcode length (e.g. ≥ 8 chars) and require confirming the entry, so I don't lock myself out by typo on the very first set.
+- **S15.3** 🟡 As the user, I want the option to set the bootstrap passcode via an env var or one-time CLI flow on the host, so I can stand the app up over SSH without first exposing an unprotected `/setup` page.
+- **S15.4** 🟡 As the user, until I've set a passcode, the app must refuse to serve any UI or protected API beyond the bootstrap surface — even on the LAN. No "you haven't set a password yet, here's your dashboard anyway."
+
+**Daily unlock flow.**
+- **S15.5** 🔴 As the user, when I open the app and I'm not currently in an Unlocked session, I see a full-screen lock overlay with a single passcode field — no other UI is visible behind it.
+- **S15.6** 🔴 As the user, after I enter the correct passcode, the overlay dismisses and the dashboard hydrates normally — no manual refresh, no re-navigation.
+- **S15.7** 🔴 As the user, when I enter the wrong passcode, I get an immediate inline error and the field stays focused. After N consecutive failures from the same IP (suggest 5), the API delays its response by an increasing backoff (suggest 1s → 2s → 4s, capped). No silent lockout — just rate limiting.
+- **S15.8** 🟡 As the user, the lock overlay supports paste (for password managers) and submits on Enter. On iOS it should not trigger autocomplete heuristics (`autocomplete="current-password"` + `inputmode` appropriate so 1Password / iCloud Keychain offers fill).
+- **S15.9** 🟡 As the user, I want to see a small "you'll be locked again on server restart" hint on the overlay so the ephemeral-session behavior isn't surprising.
+
+**Session lifetime + idle sleep.**
+- **S15.10** 🔴 As the user, an Unlocked session persists across browser tab close/reopen as long as the server process keeps running. When the server (PM2 process) restarts, every existing session is invalid and every browser drops back to the lock overlay on the next request.
+- **S15.11** 🔴 As the user, after the UI has been idle for some configurable duration (default: 30 minutes, no mouse / keyboard / touch / scroll), the frontend transitions to Locked locally *and* notifies the server to invalidate that session. Re-opening any other tab from the same browser is also Locked (sessions are server-side).
+- **S15.12** 🟡 As the user, idle timeout is configurable from the Profile/Settings dash — values like 5 min, 15 min, 30 min, 1 h, 4 h, "never (only manual + restart)". Default 30 minutes; "never" is allowed and stored in `GlobalSetting`.
+- **S15.13** 🟡 As the user, there's a "Lock now" action somewhere always-reachable (top-right menu, Internal Systems dash, keyboard shortcut — at least one). Useful when stepping away from the desk.
+- **S15.14** 🔵 As the user, if my browser tab is backgrounded for longer than the idle threshold, I want the next time I switch back to the tab to find the lock overlay already up — not a stale dashboard that flashes data for 200 ms before the API call returns 401.
+
+**Google OAuth interaction (the decoupling).**
+- **S15.15** 🔴 As the user, when I'm Unlocked but have not signed in with Google, the dashboard loads and every feature that *doesn't* need Gmail/Calendar works normally (tasks, life goals, watchlists, postings, research, internal systems). Features that need Google show an inline "Connect Google to enable" affordance instead of an empty error state.
+- **S15.16** 🔴 As the user, the Google sign-in flow is reachable from inside the Unlocked app (e.g. a "Connect Google" button in Settings, or directly inline on the first card that needs it) — *not* the front door.
+- **S15.17** 🔴 As the user, if my Google session/refresh-token is revoked or expires, the app stays Unlocked and only the Google-dependent surfaces degrade. I'm not booted to a sign-in screen.
+- **S15.18** 🟡 As the user, I want a single source of truth in the UI for "Google capabilities currently available" (scopes granted, last successful Gmail call, last successful Calendar call) so I can tell at a glance whether the degradation is on my side or theirs.
+- **S15.19** 🟡 As the user, signing out of Google does *not* lock the app. Locking the app does *not* sign me out of Google.
+
+**Multi-device / multi-network.**
+- **S15.20** 🔴 As the user, the same gate applies whether I reach the app via `localhost`, `mc.local`, the phone-on-WiFi LAN IP, or the public Cloudflare-tunnel hostname. No network-based bypass. (This explicitly replaces `requireLocalOrSession`'s LAN-trusts-the-network behavior for browser-facing routes.)
+- **S15.21** 🔴 As the user, each browser maintains its own Unlocked session — unlocking on my laptop does not unlock my phone. The shared secret is the passcode, not the session.
+- **S15.22** 🟡 As the user, I can see a list of currently-active Local Auth sessions (rough identifier: User-Agent + IP + last-seen) on an "Active sessions" surface, with a per-row "Revoke" button.
+- **S15.23** 🟡 As the user, "Revoke all other sessions" is a single button on the same surface. Useful after I've rotated the passcode or after I think I left a session open somewhere.
+- **S15.24** 🔵 As the user, I want a notification (via the existing in-app `Notification` table) when a new device unlocks for the first time, so the first successful auth from a brand-new IP/User-Agent is visible to me after the fact.
+
+**Passcode rotation.**
+- **S15.25** 🔴 As the user, I can change my Local Auth passcode from inside the Unlocked app. The change requires the current passcode (typed) plus the new passcode (twice).
+- **S15.26** 🔴 As the user, rotating the passcode immediately invalidates every other Local Auth session, but does *not* lock the session that performed the rotation. (One less surprise: the device I just typed the new password on stays usable.)
+- **S15.27** 🟡 As the user, the same rotation flow lets me update the idle-timeout setting at the same time without a separate trip to Settings.
+
+**Recovery / lockout.**
+- **S15.28** 🔴 As the user, if I forget the passcode, the documented recovery path is: SSH to the host, run a one-liner (e.g. `npx tsx scripts/reset-local-auth.ts`) that clears the stored hash, then visit the app and re-bootstrap via S15.1. No emailed reset links, no recovery questions.
+- **S15.29** 🔴 As the user, the recovery script must require the host's filesystem access (i.e. it manipulates the SQLite DB directly) and not be exposed as an API endpoint. The point is that physical/SSH access to the host is the recovery factor; nothing else.
+- **S15.30** 🟡 As the user, the runbook for S15.28 lives in CLAUDE.md (or a linked doc) so a future me/Claude session can find it without rediscovery.
+
+**Bypass allowlist (system + integrations).** The gate must *not* block these — they have their own stronger auth or no auth by design:
+
+- **S15.31** 🔴 The NextAuth OAuth callback routes (`/api/auth/[...nextauth]/*`) must be reachable without Local Auth. They handle the Google OAuth handshake itself — gating them would create a chicken-and-egg loop.
+- **S15.32** 🔴 The Gmail Pub/Sub webhook (`/api/gmail/webhook`) bypasses Local Auth. It's OIDC-verified via `verifyPubSubOIDC` — that's a stronger gate than a single shared passcode.
+- **S15.33** 🔴 Service-token routes (anything currently using `requireServiceToken` / `requireSessionOrService` with a configured bearer) bypass Local Auth when the bearer matches. Pulsar / scheduler call paths shouldn't be required to know a UI passcode.
+- **S15.34** 🔴 Static assets, `/manifest.json`, the service worker (`/sw.js`), favicons, and Next.js's build assets (`/_next/*`) bypass. (Otherwise the lock overlay itself can't load.)
+- **S15.35** 🟡 A small unauthenticated healthcheck (`GET /api/health` returning `{ ok: true }` with no app-internal info) so external uptime monitoring doesn't need to be passcode-aware.
+- **S15.36** 🟡 The Local Auth API itself (`POST /api/local-auth/unlock`, `GET /api/local-auth/session`) is unauthenticated for obvious reasons; the `unlock` endpoint must implement the S15.7 backoff.
+
+**Server-side enforcement (truth, not just UX).**
+- **S15.37** 🔴 As a security property, the overlay is the UX but never the truth. Every page route (`/`) and every non-bypass API route checks Local Auth server-side. A motivated attacker stripping the overlay client-side still gets 401s on every fetch and an empty HTML body on the page render.
+- **S15.38** 🔴 As a refactor target, all current `requireSession` and `requireLocalOrSession` call sites should compose with a new `requireLocalAuth` such that the API layer enforces the gate in exactly one well-named place. Concretely: `requireLocalAuth` becomes the always-required outermost check; `requireGoogleSession` (renamed from today's `requireSession`) is layered on only where the route actually needs the Google identity.
+- **S15.39** 🟡 `requireLocalOrSession`'s LAN-bypass behavior is removed for browser-facing routes. The two callers it currently has (`/api/settings`, `/api/system`) move to `requireLocalAuth` like everything else. (If a true LAN-only endpoint emerges later — e.g. local-network admin — it can use a renamed `requireLocalOrigin` without the session fallback.)
+
+**Open questions for §15 (need user input before implementation):**
+
+1. **Server-side session storage.** Three reasonable options for "lives as long as the server is alive":
+   - **(a) In-memory only** — `Map<sessionId, expiresAt>` on `globalThis`, HMR-safe like the cache. Cleanest match to "as long as the server is alive"; restart = everyone Locked. Loses sessions on dev HMR though.
+   - **(b) Signed cookie + server secret** — JWT signed by a process-startup secret. Restart rotates the secret → all old cookies invalid. Survives HMR.
+   - **(c) DB-backed session table** — Survives restart unless you also wipe the table. Doesn't match "as long as the server is alive."
+
+   Leaning **(a)** with **(b)** as a fallback if HMR pain is real.
+
+2. **Where the password hash lives.** Options: a new `LocalAuthConfig` table (1 row), a new field on the existing single-row `GlobalSetting`, or a file at `~/.config/mission-control/local-auth.json`. The `GlobalSetting` route is the lightest touch. The file route makes recovery from another tool trivial.
+
+3. **Default idle timeout.** Proposed 30 min. macOS screensaver is typically 5–15. Tighter (15) or looser (1 h)?
+
+4. **Where the unlock UI mounts.** Two natural homes:
+   - **As a sibling overlay in `components/Dashboard.tsx`** (alongside Launchpad / SavedPapers / AICompanion) — minimal blast radius, matches the existing overlay pattern.
+   - **Wrapping `app/layout.tsx`** as a `LocalAuthGate` provider that holds children until the session check resolves — guarantees nothing renders pre-check (even auth-irrelevant UI primitives).
+
+   Leaning overlay-in-Dashboard for symmetry; layout-level is slightly safer against accidental leakage of pre-unlock chrome.
+
+5. **Internal Systems dash while Locked?** Argument for: it's how you'd debug a stuck unlock loop. Argument against: "all views require auth" was the explicit ask. Default to **no exception** unless overridden.
+
+6. **PWA / installed-app behavior.** When installed via the manifest, the same lock applies. Anything we want differently for the installed PWA, e.g. a shorter idle timeout because the device is more likely to be a phone?
+
+7. **Naming.** Using "Local Auth" / "passcode" throughout. Alternatives: "App Lock", "Site password", "Console password". Picking now keeps later renames cheap.
+
 ---
 
 ## Status snapshot (2026-05-23)
 
-- **All 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories S13.1–S13.4). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
+- **Sections §1–§14 (applications): all 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories S13.1–S13.4). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
 - **🟡: 29 total, 25 ✅ + 1 ◐ + 1 ⛔ + 2 ⏳.** Story **S10.1** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story S8.7). Story **S8.4** is ⛔ user-declined (2026-05-15). Open 🟡: **S7.7** (⏳ LLM bullet fill) and **S7.9** (⏳ resume-upload archive) — both added 2026-05-23, both ship together as M7.6.
 - **🔵: 14 total, 12 ✅ + 1 ◐ + 1 ⛔ + 1 ⏳** (shipped: **S5.8** negative filters, **S5.9** comp parsing, **S6.4** quiet hours, **S8.8** skills-gap, **S9.4** suggested rewrites, **S9.5** README ingestion, **S10.2** resume diff, **S11.2** recruiter contacts, **S12.1** multi-kind, **S13.7** same-employer-both-tracks, **S13.8** bulk-move tracks, **S7.6** ◐ capture-only). User-declined: **S8.7** (cover letter). Open: **S7.8** (⏳ LLM bullet rewrite, added 2026-05-23) and **S7.6**'s deferred rollback half.
 - **🔵 future / OOS:** S14.1–S14.4.
+- **Section §15 (local auth): greenfield as of 2026-05-23.** 22 🔴, 15 🟡, 2 🔵 — all unbuilt. Sees no code change until the seven Open Questions inside §15 are answered.
 
-**Next-up candidates** (small surface, real leverage): **M7.6** — ships S7.9 (resume-upload archive) → S7.7 (LLM bullet fill, uses the archive) → S7.8 (LLM bullet rewrite, uses the archive) in that order. **S7.6** rollback UX remains deferred-by-design.
+**Next-up candidates** (small surface, real leverage): **M7.6** — ships S7.9 (resume-upload archive) → S7.7 (LLM bullet fill, uses the archive) → S7.8 (LLM bullet rewrite, uses the archive) in that order. **S7.6** rollback UX remains deferred-by-design. **M14 (local auth)** queues behind §15 question-resolution.
 
 ---
 

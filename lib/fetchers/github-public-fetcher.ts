@@ -1,7 +1,7 @@
 /**
  * Public GitHub metrics fetcher (M9 Phase 1).
  *
- * Per Decision 5 in user-stories-applications.md — public API only, no OAuth.
+ * Per Decision 5 in user-stories.md — public API only, no OAuth.
  * Public read endpoints are rate-limited at 60 requests/hour unauthenticated,
  * which is plenty for personal portfolio-scale use (3-10 projects, daily tick).
  *
