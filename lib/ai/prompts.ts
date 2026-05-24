@@ -36,7 +36,14 @@ export interface LoadedPrompt {
 
 export type PromptVars = Record<string, string | number | boolean | null | undefined>;
 
-const LUNARY_ENABLED = Boolean(process.env.LUNARY_PUBLIC_KEY);
+// Read at call time, NOT module-init. Lets hermetic smokes that exercise
+// loadPrompt force the disk path by `delete process.env.LUNARY_PUBLIC_KEY`
+// at the top of the test file, even if a developer happens to have the key
+// exported in their shell. Module-init read would freeze the choice and
+// silently turn the smoke into a Lunary network call.
+function lunaryEnabled(): boolean {
+    return Boolean(process.env.LUNARY_PUBLIC_KEY);
+}
 
 // ---------------------------------------------------------------------------
 // Disk-fallback parser (mirrors scripts/sync-lunary-templates.ts:parsePromptDoc)
@@ -66,18 +73,42 @@ function stripAnnotations(s: string): string {
 }
 
 function extractCodeBlock(text: string, sectionTitle: string): string | null {
+    // Anchor on `## SectionTitle` at line start; allow trailing text on the
+    // header line (email-parser uses `## User template (the full \`prompt\`
+    // argument)`).
     const headerRe = new RegExp(`^## ${sectionTitle}\\b[^\\n]*\\n`, "m");
     const headerMatch = text.match(headerRe);
     if (!headerMatch || headerMatch.index === undefined) return null;
     const after = text.slice(headerMatch.index + headerMatch[0].length);
-    const openRe = /(^|\n)```[a-z]*\n/;
-    const openMatch = after.match(openRe);
-    if (!openMatch || openMatch.index === undefined) return null;
-    const contentStart = openMatch.index + openMatch[0].length;
-    const rest = after.slice(contentStart);
-    const closeMatch = rest.search(/\n```(\n|$)/);
-    if (closeMatch < 0) return null;
-    return rest.slice(0, closeMatch);
+
+    // Walk line-by-line. While we haven't entered a fence yet, treat the
+    // next `## ` line as the section boundary (the System section in
+    // discovery-suggest / email-parser is prose-only with no fence — bail
+    // there so we don't bleed into User template's fence below). Once
+    // inside a fence, `## Output schema` etc. inside the template body are
+    // content, not section boundaries. Match 3- OR 4-backtick fences; the
+    // close must use the exact same fence-char count and no language tag
+    // (so a 4-backtick outer survives nested ```json blocks unscathed,
+    // which is what profile-synthesize's body needs).
+    const lines = after.split("\n");
+    let openIdx = -1;
+    let openChars: "```" | "````" | null = null;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const fenceMatch = line.match(/^(````|```)([a-z]*)$/);
+        if (fenceMatch) {
+            openChars = fenceMatch[1] as "```" | "````";
+            openIdx = i;
+            break;
+        }
+        if (/^## /.test(line)) return null; // section has no fence
+    }
+    if (openIdx < 0 || openChars === null) return null;
+
+    for (let i = openIdx + 1; i < lines.length; i++) {
+        if (lines[i] === openChars) return lines.slice(openIdx + 1, i).join("\n");
+    }
+    return null;
 }
 
 function parseDiskPrompt(slug: string): DiskPrompt {
@@ -171,7 +202,7 @@ function fromLunaryShape(raw: LunaryRendered): LoadedPrompt {
  * calls don't re-read.
  */
 export async function loadPrompt(slug: string, vars: PromptVars = {}): Promise<LoadedPrompt> {
-    if (LUNARY_ENABLED) {
+    if (lunaryEnabled()) {
         try {
             const raw = await lunary.renderTemplate(slug, vars) as LunaryRendered;
             return fromLunaryShape(raw);

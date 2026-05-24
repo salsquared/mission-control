@@ -40,7 +40,9 @@ Output strictly the JSON shape requested — no commentary, no markdown fences.
 
 ## User template
 
-```
+Outer fence uses 4 backticks because the template body contains nested ` ```json ` fences. The parser allows 3 or 4 backtick outer fences; a 4-backtick fence is closed only by a 4-backtick close.
+
+````
 EXISTING profile (do not duplicate; merge into these where applicable):
 ```json
 {{existingJson}}
@@ -58,7 +60,7 @@ Return JSON with this exact shape:
   "projects": Array<{ "name": string, "description": string|null, "repoUrl": string|null, "liveUrl": string|null, "bullets": string[] }>,
   "education": Array<{ "institution": string, "degree": string|null, "field": string|null, "startDate": string|null, "endDate": string|null, "bullets": string[] }>
 }
-```
+````
 
 ## Variables
 

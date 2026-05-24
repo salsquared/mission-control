@@ -144,10 +144,20 @@ export async function synthesizeMasterResume(
         draftsJson,
     });
 
+    // Final clamp — matches the old `truncateIfTooLong(body)` behavior. The
+    // pre-render draftsJson truncation above keeps the common case well under
+    // cap; this is the pathological-existing-profile backstop (where
+    // `existingJson.length` alone exceeds the budget and the `budget > 0`
+    // guard above can't run). Without this clamp a power user with a huge
+    // master profile could send Gemini a prompt larger than MAX_SYNTHESIS_INPUT_CHARS.
+    const user = prompt.user.length <= MAX_SYNTHESIS_INPUT_CHARS
+        ? prompt.user
+        : prompt.user.slice(0, MAX_SYNTHESIS_INPUT_CHARS) + "\n\n[…truncated — rendered prompt exceeded cap]";
+
     return chatJSON({
         name: "profile-synthesize",
         system: prompt.system,
-        user: prompt.user,
+        user,
         schema: SynthesizedSchema,
         model: MODEL_FLASH,
         // Slightly above 0 so the model can pick between competing wordings

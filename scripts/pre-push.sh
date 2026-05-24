@@ -25,6 +25,14 @@ export DATABASE_URL
 # Defense in depth: any direct-tsx suite that doesn't go through PM2 picks this
 # value up from the hook's exported env.
 export EMAIL_ENABLED=0
+# Force the loadPrompt disk-fallback path for hermetic tests. Prisma's runtime
+# loads .env on import (transitive dep via dotenv), which would populate
+# LUNARY_PUBLIC_KEY late in import order. Setting it explicitly to empty here
+# defeats dotenv's "don't overwrite" rule — `Boolean('')` is false, so
+# lunaryEnabled() in lib/ai/prompts.ts returns false and the disk path runs.
+# Without this, smokes that fetch (e.g. discovery-suggest-smoke) see an
+# extra Lunary HTTP call slip through their fetch mocks.
+export LUNARY_PUBLIC_KEY=""
 
 # Suites are listed in dependency order: pure ones first so they fail fast.
 # All entries live under scripts/tests/hermetic/ — no PM2, no real network.
@@ -40,6 +48,7 @@ SUITES=(
     "scripts/tests/hermetic/archive-spans-smoke.ts"
     "scripts/tests/hermetic/resume-uploads-smoke.ts"
     "scripts/tests/hermetic/bullet-assist-smoke.ts"
+    "scripts/tests/hermetic/prompt-render-smoke.ts"
     "scripts/tests/hermetic/contacts-smoke.ts"
     "scripts/tests/hermetic/bulk-track-smoke.ts"
     "scripts/tests/hermetic/compensation-smoke.ts"

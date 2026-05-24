@@ -40,27 +40,36 @@ function stripAnnotations(s: string): string {
 }
 
 function extractCodeBlock(text: string, sectionTitle: string): string | null {
-    // Find the section header at line-start. Allow trailing text on the header
-    // line (email-parser uses `## User template (the full \`prompt\` argument)`).
+    // Line-by-line walker that handles two subtleties: (a) sections without
+    // a fence (e.g. discovery-suggest's System) bail at the next `## ` line
+    // instead of bleeding into the next section's fence; (b) `## Output
+    // schema` inside a fence body is content, not a section boundary; (c)
+    // 3- vs 4-backtick fences are matched exactly, so a 4-backtick outer
+    // (e.g. profile-synthesize) survives nested ```json blocks intact.
     const headerRe = new RegExp(`^## ${sectionTitle}\\b[^\\n]*\\n`, "m");
     const headerMatch = text.match(headerRe);
     if (!headerMatch || headerMatch.index === undefined) return null;
     const after = text.slice(headerMatch.index + headerMatch[0].length);
+    const lines = after.split("\n");
 
-    // Find the first opening fence (newline + ``` + optional language + newline)
-    // — anchored as own line. Section prose between header and fence is fine.
-    const openRe = /(^|\n)```[a-z]*\n/;
-    const openMatch = after.match(openRe);
-    if (!openMatch || openMatch.index === undefined) return null;
-    const contentStart = openMatch.index + openMatch[0].length;
-    const rest = after.slice(contentStart);
+    let openIdx = -1;
+    let openChars: "```" | "````" | null = null;
+    for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        const fenceMatch = line.match(/^(````|```)([a-z]*)$/);
+        if (fenceMatch) {
+            openChars = fenceMatch[1] as "```" | "````";
+            openIdx = i;
+            break;
+        }
+        if (/^## /.test(line)) return null;
+    }
+    if (openIdx < 0 || openChars === null) return null;
 
-    // Find the first closing fence on its own line. Doesn't care about nested
-    // `##` headings inside the fenced content (e.g. `## Output schema`).
-    const closeRe = /\n```(\n|$)/;
-    const closeMatch = rest.search(closeRe);
-    if (closeMatch < 0) return null;
-    return rest.slice(0, closeMatch);
+    for (let i = openIdx + 1; i < lines.length; i++) {
+        if (lines[i] === openChars) return lines.slice(openIdx + 1, i).join("\n");
+    }
+    return null;
 }
 
 function parsePromptDoc(text: string, slug: string): ParsedTemplate {
@@ -135,7 +144,11 @@ function contentEquals(a: unknown, b: unknown): boolean {
 }
 
 async function findBySlug(slug: string): Promise<LunaryTemplate | null> {
-    const list = await lunary<LunaryTemplate[]>("GET", "/templates");
+    // `?limit=200` is defensive — without it Lunary may paginate and we'd
+    // miss existing templates beyond the default page size, then incorrectly
+    // POST a duplicate. 200 is comfortably above any realistic LLM-callsite
+    // count for a single project.
+    const list = await lunary<LunaryTemplate[]>("GET", "/templates?limit=200");
     return list.find(t => t.slug === slug) ?? null;
 }
 
