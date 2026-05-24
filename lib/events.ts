@@ -19,7 +19,16 @@ if (!globalForEvents.__EVENT_LISTENERS) {
 
 export function broadcastEvent(event: ServerEvent) {
     for (const listener of globalForEvents.__EVENT_LISTENERS) {
-        listener(event);
+        try {
+            listener(event);
+        } catch (e) {
+            // A throwing listener (e.g. an SSE client whose underlying
+            // socket closed between subscribe and the next write) would
+            // otherwise abort the for-loop and skip every listener that
+            // comes after it in the Set. Trap + log so one dead client
+            // can't blackhole broadcasts for the rest.
+            console.warn('[events] listener threw during broadcast:', e);
+        }
     }
 }
 
