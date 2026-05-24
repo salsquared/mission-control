@@ -274,8 +274,12 @@ async function main(): Promise<void> {
             user.includes('## Current bullet to rewrite') && user.includes('Worked on stuff'),
         );
         record(
-            'rewrite: output schema mentions "text" not "bullets"',
-            user.includes('"text"') && !/3.{0,5}5\s+bullets/i.test(user),
+            'rewrite: output schema includes "text" AND "tags" (not "bullets")',
+            user.includes('"text"') && user.includes('"tags"') && !/3.{0,5}5\s+bullets/i.test(user),
+        );
+        record(
+            'rewrite: task statement instructs the LLM to return updated tags',
+            /updated tags|tags.*reflect/i.test(user),
         );
 
         // Section ordering for rewrite: Entry → Siblings → Archive → Current bullet → Output schema

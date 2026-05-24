@@ -48,7 +48,7 @@ One row per `###` section below — this table is the doc's ToC.
 | C | M7.4 — Multi-resume import (append-merge) | ✅ | PDF/DOCX/TXT/JSON → LLM extract → append-merge |
 | C | M7.5 — Profile snapshots | ◐ | Capture shipped (33); rollback/restore UX deferred until needed |
 | C | M7.4 followups — Fuzzy dedup + extra formats | ◐ | Tag editing UI ✅; LLM fuzzy dedup, LinkedIn ZIP, legacy `.doc` 💤 |
-| C | M7.6 — LLM bullet assist + resume-upload archive | ⏳ | Stories S7.7 (🟡 fill) + S7.8 (🔵 rewrite) + S7.9 (🟡 archive). 11 tasks M7.6.1–M7.6.11; archive primitive ships first (M7.6.1–M7.6.4), then prompt + route, then UI, then smokes. `gemini-3.1-flash`. New `ResumeUpload` table + `data/resume-uploads/` storage. |
+| C | M7.6 — LLM bullet assist + resume-upload archive | ⏳ | Stories S7.7 (🟡 fill) + S7.8 (🔵 rewrite) + S7.9 (🟡 archive). 11 tasks M7.6.1–M7.6.11; archive primitive ships first (M7.6.1–M7.6.4), then prompt + route, then UI, then smokes. `MODEL_LITE` (`gemini-3.1-flash-lite`). New `ResumeUpload` table + `data/resume-uploads/` storage. |
 | C | M8 Phase 1 — Tailored resume generation | ✅ | posting → keywords → selection → rewrite → PDF |
 | C | M8 — DOCX export | ✅ | html-to-docx renderer + PDF/DOCX toggle |
 | C | M8 Phase 2 — Archival + traceability + Application linkage | ✅ | `GeneratedResume` + "Why these bullets?" trace (S8.2, S8.6) |
@@ -111,7 +111,7 @@ One row per user story from [`user-stories-applications.md`](./user-stories-appl
 | **S7.4** | 🟡 | ✅ | Edit any history entry | M7 | — |
 | **S7.5** | 🟡 | ✅ | Tag bullets | M7.4 followups | — |
 | **S7.6** | 🔵 | ◐ | Profile snapshots + rollback | M7.5 | **Rollback UI**: open snapshot row → destructive-overwrite confirm → single-transaction bulk-replace of `WorkRole` / `Project` / `Education` rows (+ bullet JSON) from the stored payload. Deferred until the read-only safety net proves useful enough to warrant a destructive path. |
-| **S7.7** | 🟡 | ⏳ | LLM bullet fill (empty entry → 3–5 starter bullets) | M7.6 (tasks .5–.8 + .11) | **Build M7.6 fill mode** after S7.9's archive primitive lands. Prompt grounds on spine + sibling tags + archive spans + README. `gemini-3.1-flash`. Empty-state "Draft with LLM" button on each entry card. |
+| **S7.7** | 🟡 | ⏳ | LLM bullet fill (empty entry → 3–5 starter bullets) | M7.6 (tasks .5–.8 + .11) | **Build M7.6 fill mode** after S7.9's archive primitive lands. Prompt grounds on spine + sibling tags + archive spans + README. `MODEL_LITE` (`gemini-3.1-flash-lite`). Empty-state "Draft with LLM" button on each entry card. |
 | **S7.8** | 🔵 | ⏳ | LLM bullet rewrite (existing bullet → diff + Accept/Discard) | M7.6 (tasks .5–.7 + .9 + .11) | **Build M7.6 rewrite mode**: wand icon on `BulletRow` (hidden when `locked`) + inline diff panel + Accept persists via existing PATCH. Same prompt builder + route + rate-limit as S7.7; same archive grounding. |
 | **S7.9** | 🟡 | ⏳ | Resume-upload archive (raw text + extracted JSON + bytes retained per import) | M7.6 (tasks .1–.4 + .11) | **Ship the archive primitive first**: `ResumeUpload` table + `data/resume-uploads/` storage + retain raw upload at M7.4 import time + retrieval helper `findArchiveSpansFor(parent, uploads)`. Append-only — no backfill of pre-M7.6 uploads. |
 | **§8 Tailored resume** | | | | | |
@@ -158,7 +158,7 @@ One row per user story from [`user-stories-applications.md`](./user-stories-appl
 
 Story S8.4 (multi-template) and Story S8.7 (cover letter) are ⛔ user-declined; not in this list. Track D (MD-0 → MD-7) shipped 2026-05-23 in `893628a`. Story S7.6 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful.
 
-1. **M7.6 — LLM bullet assist + resume-upload archive** (stories S7.7 🟡 + S7.8 🔵 + S7.9 🟡, bundled into one phase, 11 tasks). The archive primitive (M7.6.1–M7.6.4) ships first and unlocks S7.7's cold-start quality + S7.8's polish quality + future grounding for other LLM features. See §M7.6 for the full design — `ResumeUpload` table + `gemini-3.1-flash` + 20 / 10 min rate-limit + three hermetic smokes wired into pre-push. Ship order: **archive → prompt + route → UI → smoke**.
+1. **M7.6 — LLM bullet assist + resume-upload archive** (stories S7.7 🟡 + S7.8 🔵 + S7.9 🟡, bundled into one phase, 11 tasks). The archive primitive (M7.6.1–M7.6.4) ships first and unlocks S7.7's cold-start quality + S7.8's polish quality + future grounding for other LLM features. See §M7.6 for the full design — `ResumeUpload` table + `MODEL_LITE` (`gemini-3.1-flash-lite`) + 20 / 10 min rate-limit + three hermetic smokes wired into pre-push. Ship order: **archive → prompt + route → UI → smoke**.
 2. **Story S7.6 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Deferred-by-design — wait until you've actually made an edit you want to undo.
 
 ### User-declined
@@ -464,7 +464,7 @@ Stories: **S7.7** (🟡 fill empty entries) + **S7.8** (🔵 rewrite existing bu
 
 S7.9 is the load-bearing primitive: today's M7.4 import path extracts → merges → discards. That discard is lossy — wording variants and details that lose the dedup race vanish forever. M7.6 closes the discard (raw text + extracted JSON + original bytes persisted) and exposes the archive as a retrieval surface that S7.7 and S7.8 query alongside the live profile. Ship order is **archive first** (M7.6.1–M7.6.4) → **prompt + route** (M7.6.5–M7.6.7) → **UI** (M7.6.8–M7.6.9) → **smoke + telemetry** (M7.6.10–M7.6.11). Each numbered task is a discrete shippable chunk.
 
-**Model**: `gemini-3.1-flash` (per user direction). Distinct from the `MODEL_FLASH` pin used by the resume-rewrite path — picked for the cost/latency profile of a per-bullet call surface.
+**Model**: `MODEL_LITE` (`gemini-3.1-flash-lite`). User-direction was "3.1" — the non-lite `gemini-3.1-flash` SKU doesn't exist (Google only ships the `-lite` variant at the 3.1 tier; 404 on first live call 2026-05-24). Distinct from the `MODEL_FLASH` (`gemini-3.5-flash`) used by the resume-rewrite path — bullet-assist tolerates lower quality because the user vets every output (Accept/Discard on rewrite, edit-before-save on fill).
 
 **Grounding surface for both modes**:
 1. Entry spine — `company` / `title` / `location` / `startDate`–`endDate` (or `name` / `description` for Project, `institution` / `degree` for Education).
@@ -474,7 +474,7 @@ S7.9 is the load-bearing primitive: today's M7.4 import path extracts → merges
 
 **Two modes behind one API**:
 - **Fill** (`mode: 'fill'`) — entry has zero bullets. Returns 3–5 starter bullets in the standard `{id, text, tags[], locked: false, excluded: false}` shape. New cuids generated server-side.
-- **Rewrite** (`mode: 'rewrite'`) — user picks one existing bullet. Returns a single proposal — same `id`, same `tags`, same `locked` / `excluded`, only `text` changes. User sees a diff and Accept / Discard; never silently applied.
+- **Rewrite** (`mode: 'rewrite'`) — user picks one existing bullet. Returns a single proposal — same `id`, same `locked` / `excluded`; both `text` AND `tags` change. The LLM is instructed to update tags reflecting the new wording (the rewrite often shifts which skills / themes the bullet emphasizes; tags should follow). The UI's diff panel surfaces both the text diff AND the tag diff (removed in rose line-through, added in emerald), so the user can see exactly what's changing before Accept. User can hand-edit tags after Accept if a specific tag matters and was dropped.
 
 **Hallucination guardrails** (system-prompt rules — same posture as the resume-rewrite path):
 - "Do not invent specific quantitative claims (percentages, dollar amounts, user counts, performance numbers). If you have no source for a number, phrase the contribution qualitatively."
@@ -554,7 +554,7 @@ Total prompt budget aims at ≤ 8 KB to leave headroom for the response. Hermeti
 ##### M7.6.6 — Gemini caller ⏳ (S7.7 / S7.8)
 
 `lib/profile/bullet-assist.ts:callBulletAssist({prompt, mode})`:
-- Calls `chatJSON({model: 'gemini-3.1-flash', maxOutputTokens: mode === 'fill' ? 4096 : 2048, ...})`.
+- Calls `chatJSON({model: MODEL_LITE /* gemini-3.1-flash-lite */, maxOutputTokens: mode === 'fill' ? 4096 : 2048, ...})`.
 - Validates response against a zod schema per mode.
 - Server fills in `id` (new cuid) / `locked: false` / `excluded: false` for fill bullets.
 - Server preserves `id` / `tags` / `locked` / `excluded` for rewrite proposal; only `text` flows from the LLM.
@@ -583,7 +583,7 @@ Empty-state pane on the entry cards (`components/cards/WorkRoleCard.tsx` / `Proj
 ##### M7.6.10 — Telemetry + llm-calls doc ⏳
 
 - Each assist call logs `[LLM] bullet-assist:<mode>:<parentKind>:<parentId>` to the in-app log buffer (`lib/logger.ts`). Surfaces on the Internal Systems dash via the existing log-tail SSE — no new metric.
-- Add a row to `docs/llm-calls.md`: caller `lib/profile/bullet-assist.ts`, model `gemini-3.1-flash`, `maxOutputTokens` 2048 (rewrite) / 4096 (fill), scope "Profile bullet drafting + rewriting + archive grounding (S7.7 / S7.8 / S7.9)".
+- Add a row to `docs/llm-calls.md`: caller `lib/profile/bullet-assist.ts`, model `MODEL_LITE` (`gemini-3.1-flash-lite`), `maxOutputTokens` 2048 (rewrite) / 4096 (fill), scope "Profile bullet drafting + rewriting + archive grounding (S7.7 / S7.8 / S7.9)".
 
 ##### M7.6.11 — Hermetic smokes ⏳
 

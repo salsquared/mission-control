@@ -90,7 +90,10 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
 
     const acceptProposal = () => {
         if (!proposal) return;
-        onChange({ ...bullet, text: proposal.text });
+        // Apply BOTH text and tags — the rewrite often shifts emphasis, so the
+        // LLM's proposed tags follow the new wording. User can hand-edit tags
+        // afterward if a specific tag matters and was dropped.
+        onChange({ ...bullet, text: proposal.text, tags: proposal.tags });
         setProposal(null);
     };
 
@@ -243,38 +246,91 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
                 </div>
             )}
 
-            {proposal && (
-                <div className="ml-5 mt-1 flex flex-col gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/[0.04] p-2">
-                    <div>
-                        <span className="text-[10px] uppercase tracking-wider text-white/40">Original</span>
-                        <p className="text-sm text-white/40 line-through decoration-rose-400/50 whitespace-pre-wrap">
-                            {bullet.text}
-                        </p>
+            {proposal && (() => {
+                // Tag diff: classify each tag as removed (was in original, not in
+                // proposal), kept (in both), or added (in proposal, not in original).
+                // Lower-cased for set membership; preserves display casing from source.
+                const origTags = bullet.tags;
+                const propTags = proposal.tags;
+                const origSet = new Set(origTags.map(t => t.toLowerCase()));
+                const propSet = new Set(propTags.map(t => t.toLowerCase()));
+                const removed = origTags.filter(t => !propSet.has(t.toLowerCase()));
+                const added = propTags.filter(t => !origSet.has(t.toLowerCase()));
+                const kept = propTags.filter(t => origSet.has(t.toLowerCase()));
+                const tagsChanged = removed.length > 0 || added.length > 0;
+                return (
+                    <div className="ml-5 mt-1 flex flex-col gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/[0.04] p-2">
+                        <div>
+                            <span className="text-[10px] uppercase tracking-wider text-white/40">Original</span>
+                            <p className="text-sm text-white/40 line-through decoration-rose-400/50 whitespace-pre-wrap">
+                                {bullet.text}
+                            </p>
+                            {origTags.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                    {origTags.map(t => (
+                                        <span
+                                            key={`orig-${t}`}
+                                            className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                                                propSet.has(t.toLowerCase())
+                                                    ? 'text-white/30 border-white/10'
+                                                    : 'text-rose-300/70 border-rose-500/30 line-through decoration-rose-400/50'
+                                            }`}
+                                        >
+                                            {t}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                        <div>
+                            <span className="text-[10px] uppercase tracking-wider text-white/40">Proposed</span>
+                            <p className="text-sm text-emerald-300 whitespace-pre-wrap">
+                                {proposal.text}
+                            </p>
+                            {propTags.length > 0 && (
+                                <div className="mt-1 flex flex-wrap gap-1">
+                                    {propTags.map(t => (
+                                        <span
+                                            key={`prop-${t}`}
+                                            className={`text-[10px] px-1.5 py-0.5 rounded border ${
+                                                origSet.has(t.toLowerCase())
+                                                    ? 'text-white/40 border-white/15'
+                                                    : 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10'
+                                            }`}
+                                        >
+                                            {t}
+                                        </span>
+                                    ))}
+                                </div>
+                            )}
+                            {tagsChanged && (
+                                <p className="mt-1 text-[10px] text-white/40 italic">
+                                    {removed.length > 0 && `Drops ${removed.length}`}
+                                    {removed.length > 0 && added.length > 0 && ' · '}
+                                    {added.length > 0 && `Adds ${added.length}`}
+                                    {kept.length > 0 && ` · keeps ${kept.length}`}
+                                </p>
+                            )}
+                        </div>
+                        <div className="flex items-center gap-2 pt-0.5">
+                            <button
+                                onClick={acceptProposal}
+                                className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors"
+                                title="Replace the bullet with the proposed text + tags"
+                            >
+                                Accept
+                            </button>
+                            <button
+                                onClick={discardProposal}
+                                className="px-2 py-1 text-xs font-medium rounded bg-white/5 hover:bg-white/10 text-white/60 border border-white/15 transition-colors"
+                                title="Keep the original; discard the proposal"
+                            >
+                                Discard
+                            </button>
+                        </div>
                     </div>
-                    <div>
-                        <span className="text-[10px] uppercase tracking-wider text-white/40">Proposed</span>
-                        <p className="text-sm text-emerald-300 whitespace-pre-wrap">
-                            {proposal.text}
-                        </p>
-                    </div>
-                    <div className="flex items-center gap-2 pt-0.5">
-                        <button
-                            onClick={acceptProposal}
-                            className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors"
-                            title="Replace the bullet with the proposed text"
-                        >
-                            Accept
-                        </button>
-                        <button
-                            onClick={discardProposal}
-                            className="px-2 py-1 text-xs font-medium rounded bg-white/5 hover:bg-white/10 text-white/60 border border-white/15 transition-colors"
-                            title="Keep the original; discard the proposal"
-                        >
-                            Discard
-                        </button>
-                    </div>
-                </div>
-            )}
+                );
+            })()}
         </div>
     );
 };

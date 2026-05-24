@@ -30,7 +30,7 @@
  */
 
 import { z } from 'zod';
-import { chatJSON } from '@/lib/ai/gemini';
+import { chatJSON, MODEL_LITE } from '@/lib/ai/gemini';
 import { newBulletId } from '@/lib/profile/bullets';
 import type { Bullet } from '@/lib/profile/types';
 import type { ArchiveSpan } from '@/lib/profile/upload-archive';
@@ -243,7 +243,7 @@ function renderTaskStatement(mode: AssistMode): string {
     if (mode === 'fill') {
         return 'Fill 3 to 5 starter bullets for this entry.';
     }
-    return 'Rewrite this one bullet, preserving its id and tags.';
+    return 'Rewrite this one bullet. Return both the new text AND updated tags reflecting the new wording — when the rewrite changes which skills / technologies / themes the bullet emphasizes, the tags should change with it.';
 }
 
 function renderCurrentBullet(current: { text: string; tags: string[] } | null | undefined): string {
@@ -265,8 +265,8 @@ function renderOutputSchema(mode: AssistMode): string {
     }
     return [
         '## Output schema',
-        '{ "text": "<rewritten bullet text>" }',
-        'Return only the new text. Keep the same length range as the current bullet (±20%). Do not echo the id or tags — those are preserved by the server.',
+        '{ "text": "<rewritten bullet text>", "tags": ["<tag1>", "<tag2>"] }',
+        'Return the new text plus 1–3 lowercase keyword tags reflecting the rewritten wording (typically skills, technologies, or themes the rewrite emphasizes). Keep the text length range close to the original (±20%). Tags MAY repeat the originals when the rewrite preserves the same concepts; tags MUST change when the rewrite shifts emphasis. Do not echo the id — that is preserved by the server.',
     ].join('\n');
 }
 
@@ -343,14 +343,15 @@ export interface FillResult {
 
 export interface RewriteResult {
     mode: 'rewrite';
-    proposal: Bullet; // id/tags/locked/excluded copied from currentBullet; text from LLM
+    proposal: Bullet; // id/locked/excluded copied from currentBullet; text + tags from LLM
 }
 
 export interface CallBulletAssistInput {
     mode: AssistMode;
     prompt: { system: string; user: string }; // output of buildBulletAssistPrompt
     // Passed through so the caller can construct the rewrite proposal with the
-    // original bullet's id / tags / locked / excluded preserved.
+    // original bullet's id / locked / excluded preserved. Tags are LLM-supplied
+    // (the rewrite often shifts emphasis, and tags should follow).
     currentBullet?: Bullet | null;
     // Telemetry — used only for the `[LLM] bullet-assist:<mode>:<kind>:<id>` log line.
     parentKind: ParentKind;
@@ -373,9 +374,19 @@ const FillResponseSchema = z.object({
 
 const RewriteResponseSchema = z.object({
     text: z.string().min(1).max(2_000),
+    // Tags default to [] when the LLM omits them — keeps a malformed response
+    // from blocking the rewrite. The route still applies whatever the LLM
+    // returned (possibly empty); the user can hand-edit tags after Accept.
+    tags: z.array(z.string()).default([]),
 });
 
-const BULLET_MODEL = 'gemini-3.1-flash';
+// The "3.1" SKU the user asked for. `gemini-3.1-flash` (non-lite) does NOT
+// exist — Google only ships `gemini-3.1-flash-lite` at the 3.1 tier.
+// MODEL_LITE is the project default for mechanical extraction work and is
+// well-suited here because the user vets every output (Accept/Discard on
+// rewrite, edit-before-save on fill). Reach for MODEL_FLASH (3.5) only if
+// cold-start draft quality proves weak in practice.
+const BULLET_MODEL = MODEL_LITE;
 const FILL_MAX_OUTPUT_TOKENS = 4_096;
 const REWRITE_MAX_OUTPUT_TOKENS = 2_048;
 const TEMPERATURE = 0.4;
@@ -435,7 +446,12 @@ export async function callBulletAssist(
     const proposal: Bullet = {
         id: input.currentBullet.id,
         text: response.text,
-        tags: input.currentBullet.tags,
+        // LLM-supplied tags reflecting the new wording. Empty LLM response →
+        // empty tags (the user can re-tag manually after Accept). This is a
+        // deliberate change from the original M7.6 design which preserved the
+        // original bullet's tags verbatim — the rewrite often shifts emphasis,
+        // and the tags should follow.
+        tags: response.tags,
         locked: input.currentBullet.locked,
         excluded: input.currentBullet.excluded,
     };
