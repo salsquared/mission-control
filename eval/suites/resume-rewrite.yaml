@@ -1,0 +1,66 @@
+# Suite for `resume-rewrite` (lib/resumes/rewrite.ts) — single Gemini call
+# that takes selected bullets + parsed posting and rewrites each bullet to
+# emphasize the posting's keywords.
+
+- description: "Rewrite preserves bullet ids and keyword alignment"
+  vars:
+    callsite: resume-rewrite
+    input:
+      selections:
+        - bulletId: "blt_eval_001"
+          originalText: "Built a TypeScript microservice for log aggregation"
+          matchedTags: ["typescript"]
+          matchedKeywords: ["typescript"]
+          sourceLabel: "Acme — Backend Engineer"
+          kind: "work-role"
+          sourceId: "wr_eval_2"
+          score: 5
+          locked: false
+        - bulletId: "blt_eval_002"
+          originalText: "Cut deploy time from 12 minutes to 4 by parallelizing CI stages"
+          matchedTags: ["ci"]
+          matchedKeywords: ["ci/cd"]
+          sourceLabel: "Acme — Backend Engineer"
+          kind: "work-role"
+          sourceId: "wr_eval_2"
+          score: 8
+          locked: false
+      posting:
+        title: "Senior Backend Engineer, Observability"
+        company: "Beta Labs"
+        location: "Remote"
+        seniority: "Senior"
+        rawText: ""
+        sourceUrl: null
+        keywords:
+          - "TypeScript"
+          - "observability"
+          - "distributed-systems"
+          - "CI/CD"
+          - "Kubernetes"
+          - "Prometheus"
+          - "Grafana"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        Array.isArray(r) &&
+        r.length === 2 &&
+        r.find(b => b.id === 'blt_eval_001') &&
+        r.find(b => b.id === 'blt_eval_002') &&
+        r.every(b => typeof b.rewrittenText === 'string' && Array.isArray(b.matchedKeywords))
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // Word-count guardrail per system rule "≤25 words per bullet".
+        r.every(b => b.rewrittenText.split(/\s+/).filter(Boolean).length <= 25)
+    - type: llm-rubric
+      value: |
+        Both rewrites must lead with a strong action verb (Built, Shipped,
+        Designed, Led, Reduced, Authored, etc.) and stay within the original
+        bullet's factual claims — must NOT invent new technologies, metrics,
+        or domains beyond what the source bullet contains. PASS iff both
+        rewrites satisfy this. The bullet about CI parallelization MAY keep
+        its existing 12→4 minute metric (already in the source) but MUST NOT
+        invent a new percentage or count.

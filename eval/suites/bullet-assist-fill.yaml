@@ -1,0 +1,81 @@
+# Suite for `bullet-assist-fill` — empty entry → 3-5 starter bullets.
+# The provider takes a `BuildBulletAssistPromptInput` shape minus `mode`
+# (which the provider forces to 'fill').
+
+- description: "Cold-start fill on a work role — no siblings, no archive"
+  vars:
+    callsite: bullet-assist-fill
+    input:
+      parent:
+        kind: "work-role"
+        id: "wr_eval_1"
+        company: "Acme Logistics"
+        title: "Backend Engineer"
+        location: "Remote"
+        startDate: "2023-06-01"
+        endDate: null
+      siblingBullets: []
+      archiveSpans: []
+      readmeContext: null
+      currentBullet: null
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        r.mode === 'fill' &&
+        Array.isArray(r.bullets) &&
+        r.bullets.length >= 3 && r.bullets.length <= 5 &&
+        r.bullets.every(b => typeof b.text === 'string' && b.text.length > 0 && Array.isArray(b.tags))
+    - type: llm-rubric
+      value: |
+        The bullets must read as professional resume bullets for a Backend Engineer.
+        PASS iff ALL of:
+        1. No bullet uses first-person pronouns (I, my, me, we, our).
+        2. No bullet invents specific quantitative claims (percentages, dollar
+           amounts, user counts, "Reduced X by N%", "Served M users") since the
+           input has zero source material for numbers.
+        3. Each bullet leads with an action verb.
+
+- description: "Project fill with sibling voice grounding"
+  vars:
+    callsite: bullet-assist-fill
+    input:
+      parent:
+        kind: "project"
+        id: "p_eval_1"
+        name: "Pulsar"
+        description: "Financial data ingestion engine"
+        repoUrl: "https://github.com/example/pulsar"
+        liveUrl: null
+      siblingBullets:
+        - text: "Built a fault-tolerant ingestion pipeline for crypto and equity tickers using TypeScript and Bun"
+          tags: ["typescript", "bun"]
+        - text: "Architected a normalized schema bridging FRED macro data with intraday crypto candles"
+          tags: ["postgres", "data-modeling"]
+        - text: "Shipped a streaming-replay tool that lets the backend replay any historical day's tape"
+          tags: ["typescript"]
+      archiveSpans: []
+      readmeContext:
+        projectId: "p_eval_1"
+        projectName: "Pulsar"
+        excerpt: |
+          Pulsar is a financial data ingestion engine that pulls real-time crypto, equity, and macro indicator data from
+          Coinbase, IEX, and FRED. Built on Bun and TypeScript with a Postgres-backed normalization layer that maps
+          heterogeneous source schemas into a single tick model. Ships with a websocket relay for live feeds and a
+          replay system for backtesting.
+      currentBullet: null
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        r.bullets.length >= 3 && r.bullets.length <= 5
+    - type: llm-rubric
+      value: |
+        The bullets describe Pulsar (a financial data ingestion engine). PASS iff:
+        1. The bullets mention technologies from the README/siblings (TypeScript, Bun,
+           Postgres, Coinbase/IEX/FRED, or similar). The model should pick up the
+           project's actual tech stack rather than inventing one.
+        2. No bullet uses first-person.
+        3. No invented specific numbers.

@@ -408,6 +408,7 @@ export async function callBulletAssist(
 
     if (input.mode === 'fill') {
         const response = await chatJSON({
+            name: "bullet-assist-fill",
             system: input.prompt.system,
             user: input.prompt.user,
             schema: FillResponseSchema,
@@ -435,6 +436,7 @@ export async function callBulletAssist(
     }
 
     const response = await chatJSON({
+        name: "bullet-assist-rewrite",
         system: input.prompt.system,
         user: input.prompt.user,
         schema: RewriteResponseSchema,

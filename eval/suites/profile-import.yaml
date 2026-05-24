@@ -1,0 +1,63 @@
+# Suite for `profile-import` (lib/profile/import-llm.ts) — per-file resume
+# extraction. The cheap LITE model parses verbatim into the canonical shape.
+#
+# Real fixtures: replace these synthetic strings with actual resume text
+# captured via CAPTURE_FIXTURES=1 during a real import.
+
+- description: "Mixed work + project + education extraction"
+  vars:
+    callsite: profile-import
+    input:
+      filename: "eval-fixture.txt"
+      text: |
+        Jane Doe
+        jane@example.com · +1-555-0100 · San Francisco, CA
+        github.com/janedoe · linkedin.com/in/janedoe
+
+        EXPERIENCE
+
+        Northstar Logistics — Software Engineer
+        Aug 2022 – Jun 2024 · Remote
+        - Migrated 17 services from Express to Fastify, cutting median request latency by 35%
+        - Built a CI parallelization scheme that reduced deploy time from 12 minutes to 4
+        - Mentored two junior engineers through their first production rollouts
+
+        Acme Logistics — Backend Engineer Intern
+        May 2022 – Aug 2022 · Remote
+        - Designed and shipped the v2 driver-tracking schema in PostgreSQL
+        - Wrote the Prometheus rules that caught the 4 a.m. outage during week 8
+
+        PROJECTS
+
+        Pulsar — Creator & Lead Developer
+        Feb 2024 – Present
+        Financial data ingestion engine for crypto, equities, and macro data
+        - Built end-to-end pipeline with TypeScript + Bun pulling from Coinbase, IEX, and FRED
+        - Open-sourced the normalization layer under MIT (github.com/janedoe/pulsar)
+
+        EDUCATION
+
+        UC Berkeley — B.S. Electrical Engineering & Computer Science
+        Aug 2018 – May 2022
+        - Honors thesis on lattice-based cryptography
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        r.header && r.header.email === 'jane@example.com' &&
+        r.workRoles.length >= 2 &&
+        r.projects.length >= 1 &&
+        r.education.length >= 1
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // Pulsar must be classified as a PROJECT, not a work role — system
+        // prompt rule 4 (named self-started entity with Creator title).
+        r.projects.find(p => /pulsar/i.test(p.name)) &&
+        !r.workRoles.find(w => /pulsar/i.test(w.company))
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // Verbatim preservation — original bullets must appear in output text.
+        r.workRoles.some(w => w.bullets.some(b => /Express to Fastify/.test(b)))

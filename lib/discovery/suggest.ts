@@ -144,6 +144,7 @@ export async function suggestCompanies(opts: SuggestOptions): Promise<SuggestRes
     const response = opts._suggestFn
         ? await opts._suggestFn(prompt)
         : await chatJSON({
+            name: "discovery-suggest",
             user: prompt,
             schema: GeminiResponseSchema,
             // Higher temp than the default 0.4 — discovery benefits from

@@ -1,0 +1,58 @@
+# Suite for `employment-type-classifier` (lib/ai/classify-employment-type.ts).
+# Cheapest model in the fleet — MODEL_LITE_CHEAP (gemini-2.5-flash-lite).
+# Pure enum picker; assertions check the title-vs-type mapping.
+
+- description: "Mixed batch — fellowship vs intern vs full-time vs contract-administrator"
+  vars:
+    callsite: employment-type-classifier
+    input:
+      items:
+        - id: "p1"
+          company: "Acme"
+          title: "Senior Backend Engineer"
+          snippet: null
+          location: "Remote"
+        - id: "p2"
+          company: "Beta Labs"
+          title: "Summer 2026 SWE Intern"
+          snippet: null
+          location: "SF"
+        - id: "p3"
+          company: "Anthropic"
+          title: "AI Safety Fellow"
+          snippet: null
+          location: "SF"
+        - id: "p4"
+          company: "Gamma"
+          title: "Contract Negotiator"
+          snippet: null
+          location: "Remote"
+        - id: "p5"
+          company: "Delta"
+          title: "Freelance React Developer"
+          snippet: null
+          location: "Remote"
+        - id: "p6"
+          company: "Epsilon"
+          title: "Part-time Customer Success Associate"
+          snippet: null
+          location: "Remote"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // Map → Object.fromEntries by provider — values must be valid enum or null.
+        const valid = new Set(['full-time', 'part-time', 'internship', 'contract', 'temporary', null]);
+        Object.keys(r).length === 6 &&
+        Object.values(r).every(v => valid.has(v))
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // Key load-bearing classifications:
+        r.p1 === 'full-time' &&                    // senior engineer → full-time
+        r.p2 === 'internship' &&                   // Summer 2026 intern → intern
+        r.p3 === 'full-time' &&                    // AI Safety Fellow → full-time per system rule
+        r.p4 === 'full-time' &&                    // Contract Negotiator → full-time (NOT contract)
+        r.p5 === 'contract' &&                     // freelance → contract
+        r.p6 === 'part-time'                       // explicit "Part-time" → part-time

@@ -1,0 +1,74 @@
+# Suite for `email-parser` (lib/email-parser.ts) — highest-volume caller.
+# Bypasses chatJSON (Vercel AI SDK) so tracing is manual via lunary.trackEvent.
+
+- description: "Real application status update — must classify as related, extract company + status"
+  vars:
+    callsite: email-parser
+    input:
+      emailContent: |
+        Hi Jane,
+
+        Thanks for applying to the Senior Backend Engineer role at Beta Labs. We've reviewed your application and would like to invite you to a 45-minute technical phone screen.
+
+        Could you let us know your availability for some time next week? We're open to slots between Tuesday and Friday, 9am–4pm PT.
+
+        Looking forward to chatting,
+        Sam from Recruiting
+      subject: "Beta Labs — Senior Backend Engineer — phone screen invitation"
+      from: "recruiting@betalabs.com"
+      sentAt: "2026-05-20T15:30:00.000Z"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        r.isApplicationRelated === true &&
+        /beta labs/i.test(r.company) &&
+        ['INTERVIEW_REQUESTED', 'INTERVIEW'].includes(r.status)
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // nextSteps must mention sending availability / scheduling
+        typeof r.nextSteps === 'string' &&
+        /avail|sched|reply|time/i.test(r.nextSteps)
+
+- description: "Marketing email — must classify as NOT application-related"
+  vars:
+    callsite: email-parser
+    input:
+      emailContent: |
+        We're hiring! 200+ open roles across engineering, design, and product at companies hiring on TechBoard.
+
+        Browse our latest postings, get matched with recruiters, and find your next role. Unsubscribe at any time.
+      subject: "200+ new roles this week on TechBoard"
+      from: "newsletter@techboard.com"
+      sentAt: "2026-05-20T08:00:00.000Z"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: "JSON.parse(output).isApplicationRelated === false"
+
+- description: "College admission decision — must use full official name, classify as OFFER"
+  vars:
+    callsite: email-parser
+    input:
+      emailContent: |
+        Dear Jane,
+
+        Congratulations! On behalf of the admissions committee, I am delighted to offer you admission to the M.S. in Computer Science program at MIT for Fall 2026.
+
+        You have until May 1 to confirm your enrollment.
+      subject: "Your MIT graduate admission decision"
+      from: "admissions@mit.edu"
+      sentAt: "2026-03-15T20:00:00.000Z"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        r.isApplicationRelated === true &&
+        r.status === 'OFFER' &&
+        r.kind === 'college' &&
+        // FULL OFFICIAL name — system prompt requires "Massachusetts Institute of Technology",
+        // not "MIT". This catches a known classifier failure that would defeat normalizedCompany dedup.
+        /massachusetts institute of technology/i.test(r.company)

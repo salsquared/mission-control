@@ -105,6 +105,7 @@ function buildUserPrompt(text: string, filename: string): string {
 
 export async function extractProfileFromText(text: string, filename: string): Promise<ExtractedProfile> {
     return chatJSON({
+        name: "profile-import",
         system: SYSTEM_PROMPT,
         user: buildUserPrompt(text, filename),
         schema: ExtractedProfileSchema,

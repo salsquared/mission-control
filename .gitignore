@@ -89,3 +89,10 @@ public/swe-worker-*.js
 # perf-monitor JSONL + markdown summaries (scripts/perf-monitor.ts).
 /data/perf/*
 !/data/perf/.gitkeep
+
+# Promptfoo eval output — JSON results + per-run dirs from `npm run test:prompts`.
+# LOP-9. The fixtures themselves (eval/fixtures/, eval/suites/) ARE checked in;
+# results are not.
+/eval/output/
+/eval/results.json
+/eval/.promptfoo/

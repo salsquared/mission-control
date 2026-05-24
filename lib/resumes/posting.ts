@@ -88,6 +88,7 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
     }
 
     const extracted = await chatJSON({
+        name: "posting-parse",
         system:
             "You extract structured signals from job postings to drive resume tailoring. " +
             "Be conservative — if a field is not clearly stated, return null. " +

@@ -1,6 +1,12 @@
 import { GoogleGenAI } from "@google/genai";
+import lunary from "lunary";
 import type { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
+
+// LOP-3: gate Lunary wrapping at module-init so dev / test / CI runs without
+// the public key are a true no-op (no queueing, no event loop hits). When
+// LUNARY_PUBLIC_KEY is unset, `tracedGenerate` is just `rawGenerate`.
+const LUNARY_ENABLED = Boolean(process.env.LUNARY_PUBLIC_KEY);
 
 // Three-tier model fleet. See `docs/llm-calls.md` for the per-callsite
 // rationale; the short version:
@@ -56,6 +62,13 @@ function getClient(): GoogleGenAI {
 }
 
 interface ChatJSONOptions<T> {
+    /**
+     * Stable kebab-case callsite identifier (e.g. `bullet-assist-fill`,
+     * `posting-parse`). Required by LOP-2 — used as the run name in Lunary,
+     * the Promptfoo eval suite key, and the future prompt-registry slug.
+     * Canonical list lives in `docs/implementation.md` §LLM observability.
+     */
+    name: string;
     system?: string;
     user: string;
     schema: z.ZodSchema<T>;
@@ -103,15 +116,75 @@ async function withRetry<T>(fn: () => Promise<T>, config: RetryConfig = DEFAULT_
     throw lastErr;
 }
 
+// LOP-3: inner generate function — the actual Gemini SDK call. Wrapped below
+// by lunary.wrapModel when LUNARY_ENABLED so every call is traced; bypassed
+// entirely when the public key is unset.
+interface GenerateArgs {
+    name: string;
+    model: string;
+    system?: string;
+    user: string;
+    temperature: number;
+    maxOutputTokens: number;
+}
+
+async function rawGenerate(args: GenerateArgs) {
+    return getClient().models.generateContent({
+        model: args.model,
+        contents: args.user,
+        config: {
+            responseMimeType: "application/json",
+            temperature: args.temperature,
+            // Gemini 2.5 Flash defaults to thinking mode, which (a) adds
+            // 30s–2min of latency to what should be sub-10s structured
+            // extraction and (b) eats the output budget so JSON responses
+            // get truncated mid-string. All current callers are mechanical
+            // extraction/transformation — no chain-of-thought needed.
+            thinkingConfig: { thinkingBudget: 0 },
+            // Per-call cap. Defaults to 4096 — enough for typical structured
+            // extraction. Profile import passes 32768 explicitly because nested
+            // bullet arrays legitimately need it. Tightening this defends
+            // against a runaway response burning the output budget and surfaces
+            // a MAX_TOKENS error (caught below) instead of silently returning
+            // truncated JSON.
+            maxOutputTokens: args.maxOutputTokens,
+            ...(args.system ? { systemInstruction: args.system } : {}),
+        },
+    });
+}
+
+const tracedGenerate = LUNARY_ENABLED
+    ? lunary.wrapModel(rawGenerate, {
+        nameParser: (args) => args.name,
+        inputParser: (args) => {
+            const messages: { role: "system" | "user"; content: string }[] = [];
+            if (args.system) messages.push({ role: "system", content: args.system });
+            messages.push({ role: "user", content: args.user });
+            return messages;
+        },
+        paramsParser: (args) => ({
+            model: args.model,
+            temperature: args.temperature,
+            maxOutputTokens: args.maxOutputTokens,
+        }),
+        outputParser: (res) => ({ role: "assistant", content: res?.text ?? "" }),
+        tokensUsageParser: async (res) => ({
+            prompt: res?.usageMetadata?.promptTokenCount ?? 0,
+            completion: res?.usageMetadata?.candidatesTokenCount ?? 0,
+        }),
+    })
+    : rawGenerate;
+
 /**
  * Run a single-turn JSON-mode prompt against Gemini and validate the response
  * against the provided Zod schema. Returns the typed, validated result.
  *
  * Adding a real prompt? Route it through this helper, not the SDK directly —
- * one place to handle retries, env-var checks, and token logging.
+ * one place to handle retries, env-var checks, token logging, and (LOP-3)
+ * Lunary tracing. Pick a stable `name` per the inventory in
+ * `docs/implementation.md` §LLM observability.
  */
 export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
-    const client = getClient();
     const model = opts.model ?? DEFAULT_MODEL;
 
     const response = await withRetry(async () => {
@@ -120,27 +193,13 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
         // with lib/email-parser.ts so resume gen + classifier compete fairly
         // for the same Gemini free-tier quota.
         await acquireGeminiSlot();
-        return client.models.generateContent({
+        return tracedGenerate({
+            name: opts.name,
             model,
-            contents: opts.user,
-            config: {
-                responseMimeType: "application/json",
-                temperature: opts.temperature ?? 0.4,
-                // Gemini 2.5 Flash defaults to thinking mode, which (a) adds
-                // 30s–2min of latency to what should be sub-10s structured
-                // extraction and (b) eats the output budget so JSON responses
-                // get truncated mid-string. All current callers are mechanical
-                // extraction/transformation — no chain-of-thought needed.
-                thinkingConfig: { thinkingBudget: 0 },
-                // Per-call cap. Defaults to 4096 — enough for typical
-                // structured extraction. Profile import passes 32768
-                // explicitly because nested bullet arrays legitimately need
-                // it. Tightening this defends against a runaway response
-                // burning the output budget and surfaces a MAX_TOKENS error
-                // (caught below) instead of silently returning truncated JSON.
-                maxOutputTokens: opts.maxOutputTokens ?? 4096,
-                ...(opts.system ? { systemInstruction: opts.system } : {}),
-            },
+            system: opts.system,
+            user: opts.user,
+            temperature: opts.temperature ?? 0.4,
+            maxOutputTokens: opts.maxOutputTokens ?? 4096,
         });
     }).catch((err: unknown) => {
         throw new AIError(`Gemini request failed: ${err instanceof Error ? err.message : String(err)}`, err, "request");
@@ -149,7 +208,7 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
     const usage = response.usageMetadata;
     if (usage) {
         console.info(
-            `[AI] ${model} tokens: prompt=${usage.promptTokenCount ?? "?"} candidates=${usage.candidatesTokenCount ?? "?"} total=${usage.totalTokenCount ?? "?"}`,
+            `[AI] ${opts.name} ${model} tokens: prompt=${usage.promptTokenCount ?? "?"} candidates=${usage.candidatesTokenCount ?? "?"} total=${usage.totalTokenCount ?? "?"}`,
         );
     }
 

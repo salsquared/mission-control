@@ -1,0 +1,40 @@
+# Suite for `discovery-suggest` (lib/discovery/suggest.ts) — anti-repetition
+# is the load-bearing thing here. The exclude list is passed AS A FIRST-CLASS
+# instruction; without it Gemini loops the same canonical 5-7 names.
+#
+# Note: this provider actually hits Greenhouse/Lever/Ashby to RESOLVE the
+# suggested company names. That's 5–20 outbound HTTP probes per test. Slower
+# than the other suites — keep fixture count low for this one.
+
+- description: "Topic with exclude list — output must avoid excludes"
+  vars:
+    callsite: discovery-suggest
+    input:
+      topic: "space"
+      exclude:
+        - "SpaceX"
+        - "Blue Origin"
+        - "Rocket Lab"
+        - "Anduril"
+      count: 8
+      companyConcurrency: 3
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        r.topic === 'space' &&
+        Array.isArray(r.verified) &&
+        Array.isArray(r.unverified) &&
+        typeof r.excludedCount === 'number' &&
+        typeof r.totalSuggested === 'number' &&
+        // Total = verified + unverified + excludedCount
+        r.totalSuggested === r.verified.length + r.unverified.length + r.excludedCount
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // The 4 excluded names must NOT appear in verified or unverified
+        // (case-insensitive match).
+        const all = [...r.verified, ...r.unverified].map(x => x.name.toLowerCase());
+        const excluded = ['spacex', 'blue origin', 'rocket lab', 'anduril'];
+        excluded.every(e => !all.includes(e))

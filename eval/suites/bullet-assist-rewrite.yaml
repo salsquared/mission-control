@@ -1,0 +1,48 @@
+# Suite for `bullet-assist-rewrite` — single bullet → diff proposal.
+# Same input shape as bullet-assist-fill PLUS a `currentBullet` field.
+
+- description: "Vague bullet → concrete rewrite with shifted tags"
+  vars:
+    callsite: bullet-assist-rewrite
+    input:
+      parent:
+        kind: "work-role"
+        id: "wr_eval_2"
+        company: "Northstar Logistics"
+        title: "Software Engineer"
+        location: "Remote"
+        startDate: "2022-08-01"
+        endDate: "2024-06-30"
+      siblingBullets:
+        - text: "Migrated 17 services from Express to Fastify, cutting median latency"
+          tags: ["nodejs", "performance"]
+        - text: "Designed the rollout playbook adopted by the platform team for all framework swaps"
+          tags: ["process"]
+      archiveSpans: []
+      readmeContext: null
+      currentBullet:
+        text: "Worked on backend stuff and helped the team"
+        tags: ["general"]
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        r.mode === 'rewrite' &&
+        typeof r.proposal === 'object' &&
+        typeof r.proposal.text === 'string' &&
+        r.proposal.text.length > 0 &&
+        Array.isArray(r.proposal.tags) &&
+        r.proposal.text !== 'Worked on backend stuff and helped the team'
+    - type: llm-rubric
+      value: |
+        The rewrite of "Worked on backend stuff and helped the team" must be a
+        sharper, more concrete resume bullet. PASS iff:
+        1. The rewritten text is meaningfully different from the original
+           (not just whitespace / punctuation).
+        2. The new text starts with an action verb.
+        3. No first-person pronouns.
+        4. The text doesn't invent specific numbers (since the original had none).
+        5. The new tags are not just ["general"] — they should reflect any new
+           emphasis (which could be empty array if no specific shift, but bonus
+           if they pull from the sibling tags like nodejs/performance).

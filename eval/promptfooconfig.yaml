@@ -1,0 +1,32 @@
+description: "mission-control LLM prompt regression suite (LOP-8 / LOP-9)"
+
+# Single custom provider — dispatches per-fixture to the real chatJSON-wrapped
+# functions in lib/. See eval/provider.ts. Tsx loader is auto-registered by
+# promptfoo when it detects a .ts provider path.
+providers:
+  - id: file://./provider.ts
+    label: mc-chatjson
+
+# Promptfoo requires a prompt template even though our provider ignores it
+# (the provider reads vars.callsite + vars.input and dispatches). Keep this as
+# a single dummy entry — every real "prompt" lives in lib/ + docs/llm-prompts/.
+prompts:
+  - "{{callsite}}: see eval/provider.ts for dispatch"
+
+# Each suite YAML is an array of TestCase objects — see eval/suites/<callsite>.yaml.
+# One file per callsite slug (matches the `name:` field in chatJSON + the inventory
+# in docs/implementation.md §LLM observability). Add a new callsite → drop a new
+# suite file; add a fixture → append to the existing suite.
+tests: file://suites/*.yaml
+
+# `llm-rubric` assertions need a grader provider. Point at MODEL_LITE_CHEAP via
+# the Google AI Studio key so qualitative checks stay cheap (~$0.001 each).
+# (Configured under the suites that use llm-rubric — Google provider config is
+# `google:gemini:<model>` with GOOGLE_GENERATIVE_AI_API_KEY in env.)
+defaultTest:
+  options:
+    provider:
+      id: google:gemini-2.5-flash-lite
+      config:
+        # Default temperature 0.1 — judge calls should be deterministic.
+        temperature: 0.1

@@ -1,0 +1,69 @@
+# Suite for the `posting-parse` callsite (lib/resumes/posting.ts).
+# Each entry below is one TestCase — promptfoo runs each through the provider.
+#
+# To capture real fixtures: set CAPTURE_FIXTURES=1, paste a real posting via
+# the UI, scrape the `[FIXTURE]` log line out of pm2 logs, paste here.
+
+- description: "Lever-style senior backend posting — keyword bucket"
+  vars:
+    callsite: posting-parse
+    input:
+      text: |
+        Senior Backend Engineer
+
+        About the role:
+        We're hiring a senior backend engineer to own the next generation of our
+        distributed payment-processing platform. You'll design and implement
+        services in Go and Python, work with PostgreSQL and Redis at scale, and
+        partner with our SRE team on observability via OpenTelemetry, Prometheus,
+        and Grafana.
+
+        Required:
+        - 5+ years building production backend systems
+        - Strong Go or Python; familiar with gRPC, Protocol Buffers
+        - Experience with Kafka, distributed transactions, idempotency
+        - PostgreSQL query optimization
+
+        Nice to have:
+        - Kubernetes, Terraform
+        - Payments / fintech background
+        - On-call experience
+
+        Location: Remote (US)
+        Comp: $180k–$240k base + equity
+  assert:
+    - type: is-json
+    - type: javascript
+      value: "JSON.parse(output).keywords.length >= 10 && JSON.parse(output).keywords.length <= 25"
+    - type: javascript
+      value: "JSON.parse(output).seniority === 'Senior' || JSON.parse(output).seniority?.toLowerCase().includes('senior')"
+    - type: llm-rubric
+      value: |
+        The extracted keywords MUST include several of: Go, Python, PostgreSQL, Kafka,
+        Kubernetes, gRPC, OpenTelemetry. They must NOT include generic words like
+        "you", "team", "role", "experience". Return PASS if at least 5 of the
+        named technologies appear (case-insensitive substring match in any keyword).
+
+- description: "Intern posting — seniority should be intern/junior"
+  vars:
+    callsite: posting-parse
+    input:
+      text: |
+        Summer 2026 Software Engineering Intern
+
+        Join our Platform team for a 12-week summer internship. You'll work on
+        TypeScript backend services, contribute to our internal tooling, and
+        ship code to production.
+
+        Requirements:
+        - Currently pursuing a BS/MS in Computer Science (graduating Dec 2026 or later)
+        - Comfort with at least one of: TypeScript, Python, Go
+        - Familiar with Git and the command line
+
+        Location: San Francisco, CA (hybrid)
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        /intern|junior/i.test(r.seniority || '') && r.keywords.length >= 5

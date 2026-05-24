@@ -3,6 +3,15 @@ export async function register() {
         const { initLogger } = await import('./lib/logger');
         initLogger();
 
+        // LOP-1: Lunary tracing. Gated on env var so dev / CI runs without
+        // the key are a true no-op. See docs/implementation.md §LLM
+        // observability for the integration design + the 9 callsite names.
+        if (process.env.LUNARY_PUBLIC_KEY) {
+            const lunary = (await import('lunary')).default;
+            lunary.init({ publicKey: process.env.LUNARY_PUBLIC_KEY });
+            console.info('[LUNARY] tracing enabled');
+        }
+
         // Cache pruning is owned by the mission-control-scheduler PM2 process
         // (scheduler/jobs/cache-prune.ts) — see MVP2 Phase E3.
 

@@ -81,6 +81,7 @@ async function classifyOneBatch(
 ): Promise<Map<string, EmploymentType | null>> {
     const start = Date.now();
     const result = await chatFn({
+        name: "employment-type-classifier",
         system: SYSTEM_PROMPT,
         user: buildUserPrompt(items),
         schema: ResultSchema,

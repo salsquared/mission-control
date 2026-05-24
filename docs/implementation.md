@@ -1,6 +1,6 @@
 # Implementation plan
 
-Operational companion to [`docs/user-stories-applications.md`](./user-stories-applications.md). That doc says **what** we're building and **why**; this doc says **how** and **in what order** — concrete file paths, table shapes, API contracts, and acceptance criteria.
+Operational companion to [`docs/user-stories.md`](./user-stories.md). That doc says **what** we're building and **why**; this doc says **how** and **in what order** — concrete file paths, table shapes, API contracts, and acceptance criteria.
 
 Cross-session running state lives in [`docs/next_steps.md`](./next_steps.md): what was just done, what's blocked on whom, today's critical path. This file is durable design; `next_steps.md` is fast-moving status. When a milestone ships, mark it ✅ here and `next_steps.md` gets compacted.
 
@@ -14,7 +14,7 @@ Cross-session running state lives in [`docs/next_steps.md`](./next_steps.md): wh
 - ⛔ Declined by user (kept in the doc so the decision doesn't get re-litigated)
 - ❌ Killed (decided against on technical grounds)
 
-Each milestone lists the **user stories** it satisfies (numbers refer to `user-stories-applications.md`). Story priority emoji from that doc: **🔴** = must-have for next ship, **🟡** = important, **🔵** = nice-to-have. Those are *priority*, not status — every 🔴 in this plan is already ✅.
+Each milestone lists the **user stories** it satisfies (numbers refer to `user-stories.md`). Story priority emoji from that doc: **🔴** = must-have for next ship, **🟡** = important, **🔵** = nice-to-have. Those are *priority*, not status — every 🔴 in this plan is already ✅.
 
 ---
 
@@ -60,13 +60,14 @@ One row per `###` section below — this table is the doc's ToC.
 | **Cross-cutting** | Route auth hardening | ✅ | 19/19 unguarded routes patched; all 24 RAH-N items closed (RAH-1/5/10/11/17–21/24 on 2026-05-16; RAH-12/13 on 2026-05-22) |
 | Cross-cutting | Polish backlog (PB-N) | ✅ | PB-2/3/4/7/9/10/11/12/13 on 2026-05-16; PB-1/5/6/8/14/15 on 2026-05-17. All 15 items closed |
 | Cross-cutting | Dev-server perf + stability | ✅ | Worker RSS −43 % median post-Turbopack + 9 fixes; investigation in [`docs/perf-profile.md`](./perf-profile.md) |
-| Cross-cutting | Prompt tuning | ⏳ | Ongoing — blocked on real-user observation of resume rewrites |
+| Cross-cutting | LLM observability + prompt registry | ⏳ | Lunary managed cloud for tracing all 9 LLM call names + prompt registry, plus Promptfoo eval harness for regression testing. 11 tasks LOP-1–LOP-11 — infra-first (no behavior change), then per-callsite template migration (incremental), then eval scaffold + docs. Subsumes the previously-ad-hoc Prompt tuning row once LOP-9 lands. |
+| Cross-cutting | Prompt tuning | ⏳ | Ongoing — blocked on real-user observation of resume rewrites. Folds into §LLM observability once the Promptfoo eval suite lands (LOP-9); the free-text observations below become canned fixtures + assertions. |
 | Cross-cutting | Decision log | — | Reference — Gemini model pin + DOCX converter choice |
 | Cross-cutting | Smoke matrix | — | Reference — hermetic + integration + E2E coverage map |
 
 ### Story implementation map
 
-One row per user story from [`user-stories-applications.md`](./user-stories-applications.md). **Phase** points at the section in this doc that ships the story; **Next action** is the concrete step for anything not yet closed. Stories S1.1–S1.4 and 9–12 predate this plan — they live in the foundational Gmail webhook / classifier / calendar-sync wiring documented in [`../CLAUDE.md`](../CLAUDE.md) (§Gmail webhook + ingest, §Auth) and have no implementation.md section of their own.
+One row per user story from [`user-stories.md`](./user-stories.md). **Phase** points at the section in this doc that ships the story; **Next action** is the concrete step for anything not yet closed. Stories S1.1–S1.4 and 9–12 predate this plan — they live in the foundational Gmail webhook / classifier / calendar-sync wiring documented in [`../CLAUDE.md`](../CLAUDE.md) (§Gmail webhook + ingest, §Auth) and have no implementation.md section of their own.
 
 | # | Pri | Status | What | Phase | Next action |
 |---|---|---|---|---|---|
@@ -678,7 +679,7 @@ Stories: S9.1, S9.2, S9.3 (🟡). Shipped 2026-05-15.
 
 First-class platform work: make the dashboard usable on a phone. **Shipped 2026-05-23 in `893628a`** — ~450 lines net across 11 files, no schema / API / repository / scheduler changes. The pre-existing desktop "card-on-a-canvas" frame (`max-w-7xl mx-auto bg-card/80 ... rounded-3xl p-12`) is preserved verbatim in `<DesktopShell>`; narrow viewports get a new edge-to-edge swipe-carousel `<MobileShell>` selected by `useEffectiveMobileLayout()`.
 
-Not tied to a `user-stories-applications.md` entry — this is platform UX rather than feature work — but treated as canonical phase work because the surface area (Dashboard shell, every view, Launchpad, NotificationBell) cuts across all three feature tracks and any future track ships into both shells from day one.
+Not tied to a `user-stories.md` entry — this is platform UX rather than feature work — but treated as canonical phase work because the surface area (Dashboard shell, every view, Launchpad, NotificationBell) cuts across all three feature tracks and any future track ships into both shells from day one.
 
 State of the tree (2026-05-23): all 8 phases shipped. Files added: `hooks/useMobileLayout.ts`, `components/dashboard/{DesktopShell,MobileShell,useDashCarousel,dashes}.tsx`. Files modified: `app/layout.tsx`, `components/Dashboard.tsx`, `components/providers/state/index.ts`, `components/overlays/LaunchpadOverlay.tsx`, plus three inner horizontal scrollers tagged `touch-pan-x` for MD-5.
 
@@ -947,6 +948,151 @@ Investigation lives in [`docs/perf-profile.md`](./perf-profile.md); the ranked f
 
 Total dev cut: −43 % median, −35 % max. The 100 % CPU peg is gone. Dev/prod ratio is now ~2.6 ×, normal for a Next app of this size.
 
+### LLM observability + prompt registry ⏳
+
+Cross-cutting infra. Today LLM calls fan out from 7 callsites through `chatJSON` in `lib/ai/gemini.ts` + 1 callsite (`lib/email-parser.ts`) that bypasses it via the Vercel AI SDK. Every prompt lives inline in code; every call is fire-and-forget aside from a single `[AI] ... tokens: ...` line in the log buffer. No way to A/B prompts, no way to regression-test a prompt change, no per-callsite cost breakdown beyond grepping logs.
+
+This phase wires three things:
+1. **Tracing** — every call (all 8 sites) lands in Lunary cloud free tier with input / output / model / token usage / latency, queryable + filterable per-callsite from their dashboard.
+2. **Prompt registry** — system prompts + output-schema descriptions + task statements move from inline constants to Lunary templates fetched via `lunary.renderTemplate(slug, vars)`, versioned + A/B-able from the dashboard without code deploys. Dynamic sections (sibling lists, archive spans with byte caps, JSON-stringified inputs) stay computed in code and get passed in AS variables.
+3. **Eval harness** — `eval/` directory with Promptfoo running fixture-driven regression tests against the live `chatJSON` wrapper, gated behind `npm run test:prompts` (NOT pre-push — burns real Gemini tokens).
+
+**Why now (decided 2026-05-23):** §Prompt tuning below previously waited on "observe real user data, capture failure modes in free text". Lunary + Promptfoo close that loop — every real call gets traced, and observed failures fold into the eval suite as fixtures + assertions rather than disappearing into prose. Expected ongoing cost: ~$1–5/month Gemini eval budget at 9 names × 3 fixtures × manual-trigger cadence; Lunary free tier covers traces.
+
+**Data posture:** Lunary cloud (managed). User-approved 2026-05-23 — only resume + posting text + bullet content flows through; no Gmail body, no Application timeline metadata. Self-hosted Lunary considered + rejected (Postgres + Clickhouse stack too heavy for one-Mac-mini infra). Switching off Lunary cloud later means swapping `lunary.init({ publicKey })` for a self-host URL; no code at call sites changes.
+
+**Naming convention:** every `chatJSON` call gets a required `name: string` field — stable kebab-case identifier per callsite. Used as the run name in Lunary, the Promptfoo suite key, and the prompt-registry slug. The 9 names are:
+
+| Callsite file | Name |
+|---|---|
+| `lib/email-parser.ts` | `email-parser` |
+| `lib/ai/classify-employment-type.ts` | `employment-type-classifier` |
+| `lib/discovery/suggest.ts` | `discovery-suggest` |
+| `lib/resumes/posting.ts` | `posting-parse` |
+| `lib/resumes/rewrite.ts` | `resume-rewrite` |
+| `lib/profile/bullet-assist.ts` (mode: fill) | `bullet-assist-fill` |
+| `lib/profile/bullet-assist.ts` (mode: rewrite) | `bullet-assist-rewrite` |
+| `lib/profile/import-llm.ts` | `profile-import` |
+| `lib/profile/synthesize.ts` | `profile-synthesize` |
+
+9 names for 8 files — bullet-assist traces as two distinct names because fill and rewrite have meaningfully different prompts + output schemas; A/B'ing them separately is a near-term goal.
+
+**Ship order:** infra first (LOP-1–LOP-3, no behavior change), then mass-update callsites (LOP-4–LOP-5), then template migration per-callsite as the user iterates (LOP-6, can land in batches), then Promptfoo skeleton (LOP-7–LOP-9), then docs (LOP-10–LOP-11).
+
+---
+
+#### Task list
+
+##### LOP-1 — Install + init Lunary SDK ⏳
+
+- `npm install lunary` (TS SDK, MIT, ~30 KB minified).
+- `LUNARY_PUBLIC_KEY` added to `.env` (untracked) per the existing pattern — sign up at lunary.ai → create project → copy public key.
+- `instrumentation.ts` gets `if (process.env.LUNARY_PUBLIC_KEY) lunary.init({ publicKey })` next to `initLogger()`. Guarded on env presence so dev tier + test runs without the key emit nothing to Lunary's servers — symmetrical with how `EMAIL_ENABLED=0` mutes Gmail sends in dev.
+
+##### LOP-2 — Required `name` on `ChatJSONOptions` ⏳
+
+`lib/ai/gemini.ts` `ChatJSONOptions<T>` gains required `name: string`. Forcing it required (not optional) means TypeScript flags every callsite — no quiet "unnamed" runs leak into Lunary. Naming convention enforced via the inventory table above plus a row in `docs/llm-calls.md` (see LOP-10).
+
+##### LOP-3 — Wrap inner `generateContent` with `lunary.wrapModel` ⏳
+
+In `chatJSON`, the `client.models.generateContent({...})` call inside `withRetry` is replaced by a `lunary.wrapModel(...)`-wrapped function. Parser mapping:
+- `nameParser` → `args.name` (the per-call name from LOP-2).
+- `inputParser` → ChatMessage shape: optional `{role:'system',text}` + `{role:'user',text}`.
+- `extraParser` → `{ model, temperature, maxOutputTokens }` for filter+search in Lunary's dashboard.
+- `outputParser` → `{role:'ai',text}` from the response text.
+- `tokensUsageParser` → `{prompt, completion}` from `res.usageMetadata`.
+
+Existing retry + rate-limit + Zod validation surround the wrapped call unchanged — observability sits below them so retries trace as separate runs but share a parent name. `withRetry` and `acquireGeminiSlot` are never instrumented; they're flow-control, not LLM events.
+
+##### LOP-4 — Pass `name` at every chatJSON callsite ⏳
+
+Mass mechanical edit — 7 chatJSON callers each gain `name: '<kebab-case-id>'` per the inventory above. Bullet-assist has a single `chatJSON` call but selects between `bullet-assist-fill` and `bullet-assist-rewrite` by `mode` so they show up as separate runs in Lunary. Compiler-driven — TypeScript flags the misses after LOP-2 lands.
+
+##### LOP-5 — Trace email-parser (bypasses chatJSON) ⏳
+
+`lib/email-parser.ts:parseApplicationEmail` uses the Vercel AI SDK directly (`generateObject` from `ai` package) so it doesn't pick up LOP-3's wrap. Wrap manually with `lunary.trackEvent('llm', 'start'/'end'/'error', {...})` around the `generateObject` call:
+- `runId` derived from the Gmail message id for trace correlation across retries.
+- `name: 'email-parser'`.
+- `input` = the truncated email body that goes into the prompt.
+- `output` + `tokensUsage` populated from `generateObject`'s return.
+- Error case fires `'error'` event and re-throws.
+
+Defensively guarded — failures in `trackEvent` itself must not block ingest. Wrap the trackEvent calls in a try/catch that logs warn-and-continue.
+
+##### LOP-6 — Migrate static prompts to Lunary template registry ⏳
+
+Per-callsite — incremental, can land in batches. For each callsite:
+1. Identify static prompt content: system prompt + task statements + output-schema descriptions + guardrail rules. Dynamic sections (sibling bullet lists, archive spans, posting text, JSON-stringified inputs) stay computed in code.
+2. Create a template in Lunary's UI named after the inventory slug. Paste system + user template text with `{{var}}` markers for the dynamic parts (e.g. `{{spine}}`, `{{siblings}}`, `{{archive}}`, `{{readme}}`, `{{currentBullet}}`).
+3. Code rewrites: replace inline `SYSTEM_PROMPT` constants with `const { messages, model, temperature, max_tokens } = await lunary.renderTemplate('<slug>', vars)`, then pass through to `chatJSON` (which gains an alternate `messages: ChatMessage[]` path alongside the existing `system + user` strings — back-compat for non-migrated callers).
+4. Migration order, highest iteration churn first: `bullet-assist-fill` + `bullet-assist-rewrite` + `resume-rewrite` first, then `posting-parse` + `employment-type-classifier`, then `discovery-suggest` + `profile-import` + `profile-synthesize` + `email-parser`.
+
+Per-callsite acceptance: prompt content visible + editable in Lunary UI; runtime call uses `renderTemplate`; no behavioral diff on the canonical fixture (verified via LOP-9 Promptfoo).
+
+##### LOP-7 — Extract prompt blobs for Lunary copy-paste ⏳
+
+New dir `docs/llm-prompts/` with one `.md` per callsite. Each file contains the system + user template text in Lunary's variable-substitution format ready to paste into their UI. Acts as:
+- The migration source-of-truth artifact during LOP-6 rollout.
+- A versioned snapshot of registry contents that survives a Lunary outage / migration to self-host.
+- A grep-friendly local copy for "what does the prompt currently say?" without dashboard round-trips.
+
+Updated as part of every prompt edit going forward — disk copy stays canonical, Lunary is the runtime live copy. Diff via `git log -p docs/llm-prompts/<slug>.md`.
+
+##### LOP-8 — Scaffold Promptfoo `eval/` directory ⏳
+
+- `eval/provider.mjs` — single custom JS provider that imports `chatJSON` and dispatches per-callsite by the `vars.name` field. Returns `{ output: JSON.stringify(result) }` or `{ error }`. Handles the `messages`-shape vs `system+user`-shape branch for mid-migration callsites.
+- `eval/promptfooconfig.yaml` — one suite per callsite (9 total per the name table). Each suite references `file://./provider.mjs` + a fixture dir + assertions.
+- `package.json` — new `test:prompts` script: `promptfoo eval -c eval/promptfooconfig.yaml`. **NOT** wired into `pre-push.sh` — burns real Gemini tokens (~$0.05/full-run at 9 × 3 fixtures × MODEL_LITE); pre-push stays hermetic.
+- `.gitignore` — `eval/results.json`, `eval/output/`.
+
+##### LOP-9 — Capture starter fixtures + write assertions ⏳
+
+For each callsite, 2–3 representative fixtures captured from real runs. Per fixture:
+- `eval/fixtures/<name>/<scenario>.json` — input shape (whatever the prompt builder consumes: `BuildBulletAssistPromptInput`, posting raw text, etc.) + optional expected-output snapshot.
+- Assertions stack:
+  - `is-json` (always — every callsite is structured-output).
+  - Schema-shape `javascript` assertion (e.g. `bullets.length >= 3 && bullets.length <= 5 && bullets.every(b => b.text && Array.isArray(b.tags))`).
+  - `llm-rubric` for qualitative checks (e.g. "no invented quantitative claims; no first-person pronouns; preserves original tense"). Judge model points at `MODEL_LITE_CHEAP` to keep eval cost low (~$0.001/rubric).
+
+Capture path: gate `console.info('[FIXTURE]', JSON.stringify({ name, system, user }))` inside `chatJSON` behind `CAPTURE_FIXTURES=1`, use the app for ~30 min, grep + manually clean into `eval/fixtures/`.
+
+##### LOP-10 — Update `docs/llm-calls.md` ⏳
+
+- Add an "Observability" section noting Lunary integration, the `name` field convention, the `renderTemplate` migration path, and the Promptfoo eval workflow.
+- Inventory table gains a "Lunary slug" column + a "Template migrated?" status column. Cross-references this section for the canonical naming list.
+
+##### LOP-11 — `CLAUDE.md` additions ⏳
+
+New subsection under "Gemini rate limiting + model fleet" → "LLM observability". Captures the three invariants:
+- Every new `chatJSON` caller MUST pass `name`. TypeScript enforces this; the inventory table in this section is the canonical list.
+- Every prompt iteration goes through the Lunary registry (`renderTemplate`), not inline string edits — once LOP-6 lands for that callsite.
+- Prompt changes that affect output shape must come with a Promptfoo fixture + assertion update; run `npm run test:prompts` before pushing prompt changes.
+
+---
+
+#### Acceptance (whole phase)
+
+- 9 distinct names visible in Lunary's runs dashboard within 24 h of mainline rollout (post-LOP-4 / LOP-5), each with token + latency stats per call.
+- All 9 prompts editable in Lunary's UI; runtime calls fetch via `renderTemplate` (post-LOP-6, per-callsite acceptance).
+- `npm run test:prompts` runs end-to-end against all 9 callsites with ≥ 2 fixtures each; failures emit diffable output to `eval/output/`.
+- Pre-push hook unchanged — no real Gemini in pre-push, no new hermetic suites required for this phase.
+- `docs/llm-calls.md` + `CLAUDE.md` reference the system.
+
+#### Out of scope for this phase
+
+- Self-host Lunary — managed cloud is the chosen tier; swap is a one-line `lunary.init` change later if data posture shifts.
+- Embeddings or eval-based scoring beyond `llm-rubric` (e.g. semantic similarity, BLEU, ROUGE — overkill for our prompt sizes + iteration cadence).
+- Automated prompt optimization (DSPy, GEPA, OPRO — flagged for review only when iteration ceiling hits).
+- CI gating on prompt regressions — `npm run test:prompts` stays manual / on-prompt-edit only. The token cost + flakiness of `llm-rubric` judges makes auto-gating expensive and noisy.
+- Replacing the `[AI] tokens=` log line — Lunary is additive observability, not a replacement for in-process logs.
+- A separate Lunary "user" identifier per session — single-tenant app, every call is the same user.
+
+#### Prerequisites (user-side)
+
+- Sign up at lunary.ai → create project → copy public key. Free tier sufficient for current call volume.
+- Add `LUNARY_PUBLIC_KEY=<key>` to `.env` (untracked per `.env*` gitignore convention).
+- For LOP-6 per-callsite migration: paste each `docs/llm-prompts/<slug>.md` into Lunary's template UI with the matching slug. Code rewrite + cutover happens in a follow-up commit per callsite.
+
 ### Prompt tuning ⏳
 
 Not a milestone; an ongoing concern. Needs real user data (real resume + real posting) to evaluate, so it's blocked on the user actually applying. Capture failure modes in this section as they're observed:
@@ -956,7 +1102,7 @@ Not a milestone; an ongoing concern. Needs real user data (real resume + real po
 
 ### Decision log
 
-The five canonical decisions live in `user-stories-applications.md`. Implementation has revealed two extra:
+The five canonical decisions live in `user-stories.md`. Implementation has revealed two extra:
 
 - **Gemini default model = `gemini-3.5-flash`** (2026-05-19). Explicitly pinned to the version released today. Previously used the `gemini-flash-latest` alias (2026-05-15 → 2026-05-19), which was 30–42% faster than the prior `gemini-2.5-flash` pin. Switched to explicit pin so future model bumps are deliberate code changes rather than silent shifts in behavior + free-tier quota class. Override per-call by passing `model` to `chatJSON`.
 - **DOCX converter = `html-to-docx`** (2026-05-15). Considered `docx` (lower-level builder) and `mammoth` (reverse direction). Picked html-to-docx so the same React template HTML feeds both PDF and DOCX with zero divergence.

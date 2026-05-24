@@ -1,7 +1,25 @@
 import { generateObject } from "ai";
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
+import lunary from "lunary";
 import { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
+
+// LOP-5: this callsite bypasses `chatJSON` (uses Vercel AI SDK directly) so
+// LOP-3's wrapModel can't reach it. Track manually instead. Same gate as
+// gemini.ts so dev / CI runs without the key are a no-op.
+const LUNARY_ENABLED = Boolean(process.env.LUNARY_PUBLIC_KEY);
+
+// Defensive wrapper — a Lunary failure must never disrupt email ingest.
+function safeTrack(event: "start" | "end" | "error", data: Record<string, unknown>): void {
+    if (!LUNARY_ENABLED) return;
+    try {
+        // trackEvent's `Partial<RunEvent>` has an index signature, so the
+        // top-level `name` from this object lands as the run name.
+        lunary.trackEvent("llm", event, data);
+    } catch (e) {
+        console.warn(`[LUNARY] email-parser ${event} track failed:`, e);
+    }
+}
 
 // `@ai-sdk/google` defaults to reading `GOOGLE_GENERATIVE_AI_API_KEY`. The rest
 // of the codebase (lib/ai/gemini.ts) uses `GOOGLE_GENERATIVE_AI_KEY` and falls
@@ -126,16 +144,7 @@ export async function parseApplicationEmail(
   // seconds otherwise.
   await acquireGeminiSlot();
 
-  const result = await generateObject({
-    // Pinned to Gemini 3.1 Flash-lite — the highest-volume caller in the
-    // app (one call per inbound Gmail message + backfill). Mechanical
-    // extraction (relevance gate + a handful of structured fields) doesn't
-    // need full Flash. Kept in sync with `MODEL_LITE` in lib/ai/gemini.ts;
-    // there's no shared symbol because the Vercel AI SDK wraps the model
-    // name into a provider call inline. See docs/llm-calls.md.
-    model: getProvider()("gemini-3.1-flash-lite"),
-    schema: applicationSchema,
-    prompt: `You are classifying an email related to a job, internship, or college/university application.
+  const prompt = `You are classifying an email related to a job, internship, or college/university application.
 
 First, decide whether this email is actually about the user's own application (they submitted something and this is a status update or related message). Marketing, job-board digests, recruiter cold-outreach to someone who never applied, and "we're hiring" company announcements are NOT application-related — set isApplicationRelated=false.
 
@@ -149,8 +158,46 @@ Email send-date (anchor): ${anchor}
 From: ${from ?? "(unknown)"}
 Subject: ${subject}
 Body:
-${trimmedBody}`,
+${trimmedBody}`;
+
+  // LOP-5: trace start. RunId is a fresh cuid-ish — the Gmail msgId isn't in
+  // scope here (caller has it), and Lunary just needs uniqueness.
+  const runId = `email-parser:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
+  safeTrack("start", {
+    runId,
+    name: "email-parser",
+    input: [{ role: "user", content: prompt }],
+    extra: { model: "gemini-3.1-flash-lite", anchor, from, subject },
   });
 
-  return result.object;
+  try {
+    const result = await generateObject({
+      // Pinned to Gemini 3.1 Flash-lite — the highest-volume caller in the
+      // app (one call per inbound Gmail message + backfill). Mechanical
+      // extraction (relevance gate + a handful of structured fields) doesn't
+      // need full Flash. Kept in sync with `MODEL_LITE` in lib/ai/gemini.ts;
+      // there's no shared symbol because the Vercel AI SDK wraps the model
+      // name into a provider call inline. See docs/llm-calls.md.
+      model: getProvider()("gemini-3.1-flash-lite"),
+      schema: applicationSchema,
+      prompt,
+    });
+
+    safeTrack("end", {
+      runId,
+      output: { role: "assistant", content: JSON.stringify(result.object) },
+      tokensUsage: {
+        prompt: result.usage?.inputTokens ?? 0,
+        completion: result.usage?.outputTokens ?? 0,
+      },
+    });
+
+    return result.object;
+  } catch (err) {
+    safeTrack("error", {
+      runId,
+      error: { message: err instanceof Error ? err.message : String(err) },
+    });
+    throw err;
+  }
 }

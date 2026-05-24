@@ -182,6 +182,7 @@ export async function synthesizeMasterResume(
     ].join("\n");
 
     return chatJSON({
+        name: "profile-synthesize",
         system: SYSTEM_PROMPT,
         user: truncateIfTooLong(body),
         schema: SynthesizedSchema,

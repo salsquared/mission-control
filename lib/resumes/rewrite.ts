@@ -108,6 +108,7 @@ export async function rewriteBullets(
     const userPrompt = buildRewriteUserPrompt(selections, posting, readmeCtx);
 
     const response = await chatJSON({
+        name: "resume-rewrite",
         system: SYSTEM_PROMPT,
         user: userPrompt,
         schema: RewriteResponseSchema,

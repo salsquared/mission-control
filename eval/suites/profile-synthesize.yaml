@@ -1,0 +1,97 @@
+# Suite for `profile-synthesize` (lib/profile/synthesize.ts) — MODEL_FLASH
+# pass that consolidates the existing profile + per-file drafts into one
+# canonical master. Tests cross-category resolution (project vs work role)
+# and cross-draft dedup.
+
+- description: "Cross-draft dedup + project-vs-role resolution"
+  vars:
+    callsite: profile-synthesize
+    input:
+      existing:
+        headline: null
+        summary: null
+        location: "San Francisco, CA"
+        email: "jane@example.com"
+        phone: null
+        links: []
+        workRoles:
+          - company: "Northstar Logistics"
+            title: "Software Engineer"
+            location: "Remote"
+            startDate: "2022-08-01T00:00:00.000Z"
+            endDate: "2024-06-30T00:00:00.000Z"
+            bullets:
+              - text: "Migrated 17 services from Express to Fastify, cutting median latency by 35%"
+        projects: []
+        education: []
+      drafts:
+        - filename: "resume-v1.pdf"
+          tree:
+            header:
+              headline: null
+              summary: null
+              location: "SF Bay Area"
+              email: "jane@example.com"
+              phone: null
+              links: []
+            workRoles:
+              # SAME role as existing — synthesize must merge new bullets, not duplicate the row.
+              - company: "Northstar Logistics"
+                title: "Software Engineer"
+                location: "Remote"
+                startDate: "2022-08-01T00:00:00.000Z"
+                endDate: "2024-06-30T00:00:00.000Z"
+                bullets:
+                  - "Migrated 17 services from Express to Fastify, cutting median request latency by 35%"
+                  - "Built a CI parallelization scheme that reduced deploy time from 12 minutes to 4"
+            projects:
+              # Should classify Pulsar as a PROJECT (named entity, Creator title).
+              - name: "Pulsar"
+                description: "Financial data ingestion engine"
+                repoUrl: "https://github.com/janedoe/pulsar"
+                liveUrl: null
+                bullets:
+                  - "Built end-to-end pipeline with TypeScript + Bun pulling from Coinbase, IEX, and FRED"
+            education: []
+        - filename: "resume-v2.pdf"
+          tree:
+            header:
+              headline: null
+              summary: null
+              location: null
+              email: null
+              phone: null
+              links: []
+            workRoles:
+              # DRAFT MISTAKE — Pulsar appears as a work role here. Synthesize
+              # rule 5 must override: project wins. This is the load-bearing test.
+              - company: "Pulsar"
+                title: "Creator & Lead Developer"
+                location: null
+                startDate: "2024-02-01T00:00:00.000Z"
+                endDate: null
+                bullets:
+                  - "Open-sourced the normalization layer under MIT"
+            projects: []
+            education: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // 1) Northstar appears once with both bullets merged.
+        const ns = r.workRoles.filter(w => /Northstar/i.test(w.company));
+        // 2) Pulsar is in projects, NOT workRoles.
+        const pulsarInProjects = r.projects.find(p => /pulsar/i.test(p.name));
+        const pulsarInWork = r.workRoles.find(w => /pulsar/i.test(w.company));
+        ns.length === 1 && pulsarInProjects && !pulsarInWork
+    - type: llm-rubric
+      value: |
+        Verify the synthesized output respects the curator rules:
+        1. Northstar Logistics appears EXACTLY ONCE in workRoles (not duplicated).
+        2. The Northstar bullets include both "Express to Fastify" wording AND
+           the "CI parallelization" wording (cross-draft merge).
+        3. Pulsar appears as a project (in `projects`), NOT as a work role,
+           even though one draft mistakenly placed it under workRoles.
+        4. The output preserves the candidate's email from existing.
+        PASS iff all four conditions hold.
