@@ -1,5 +1,5 @@
 /**
- * Decision-deadline nudges (story 27 — last remaining piece).
+ * Decision-deadline nudges (story S6.3 — last remaining piece).
  *
  * Daily tick. Finds applications where:
  *   - status isn't terminal (REJECTED / OFFER — the decision is already made)

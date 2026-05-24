@@ -1,7 +1,7 @@
 /**
  * Merge one or many extracted resume trees into an existing profile.
  *
- * Story 30a requires *append-to-repository* semantics — never overwrite.
+ * Story S7.3 requires *append-to-repository* semantics — never overwrite.
  * Deterministic match keys per entity, exact-text bullet dedup within each
  * matched entity. LLM-based fuzzy bullet dedup is a follow-up (would let us
  * collapse "Built a TS API" vs "Built a TypeScript API" — for MVP we keep

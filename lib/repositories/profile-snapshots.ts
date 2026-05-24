@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma';
 import type { ProfileSnapshot } from '@prisma/client';
 import { findOrCreateProfile, type HydratedProfile } from '@/lib/repositories/profile';
 
-// Story 33 — point-in-time captures of a user's profile. Button-triggered
+// Story S7.6 — point-in-time captures of a user's profile. Button-triggered
 // only (no auto-snapshot on every edit). The payload column stores the full
 // HydratedProfile (Profile + workRoles + projects + education with parsed
 // bullets) as JSON so a future rollback can restore exactly what was on

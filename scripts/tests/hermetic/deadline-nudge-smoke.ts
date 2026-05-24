@@ -1,5 +1,5 @@
 /**
- * Hermetic smoke for deadline-nudges (story 27 — decision-deadline piece).
+ * Hermetic smoke for deadline-nudges (story S6.3 — decision-deadline piece).
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/deadline-nudge-smoke.ts
  *

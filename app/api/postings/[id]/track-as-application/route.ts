@@ -10,7 +10,7 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
     return user?.id && user.id.length > 0 ? user.id : null;
 }
 
-// Story 20: convert a tracked posting into a draft Application.
+// Story S5.5: convert a tracked posting into a draft Application.
 //
 //   POST /api/postings/[id]/track-as-application
 //

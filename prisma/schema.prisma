@@ -54,7 +54,7 @@ model GlobalSetting {
   dashOrder             String   @default("[]") // JSON: string[]
   dashTitles            String   @default("{}") // JSON: Record<string, string>
   globalNegativeFilters String   @default("[]") // JSON: string[] — regex patterns merged into every watchlist's filter on read
-  // Story 28 — quiet hours for email delivery. When both Start and End are
+  // Story S6.4 — quiet hours for email delivery. When both Start and End are
   // set, dispatchNotification strips "email" from the channels of any
   // dispatch that lands within the window (in-app surface stays unaffected).
   // Format "HH:MM" 24h; Timezone is an IANA name like "America/Los_Angeles".
@@ -115,6 +115,7 @@ model User {
   generatedResumes GeneratedResume[]
   blacklist        BlacklistedCompany[]
   profileSnapshots ProfileSnapshot[]
+  resumeUploads    ResumeUpload[]
 }
 
 model VerificationToken {
@@ -151,7 +152,7 @@ model Application {
   dateApplied     DateTime?
   lastEmailMsgId  String?   // Gmail message id of the last ingested email; used to dedupe re-runs
   postingId       String?   @unique // links back to the JobPosting this app was tracked from, if any
-  // Story 27 — "decision deadline approaching" nudges. NULL means unknown /
+  // Story S6.3 — "decision deadline approaching" nudges. NULL means unknown /
   // no deadline; the deadline-nudges scheduler job fires when within 3 days.
   decisionDeadline DateTime?
   lastUpdateAt    DateTime  @default(now())
@@ -185,7 +186,7 @@ model Application {
   @@unique([userId, normalizedCompany, track])
 }
 
-// Story 50 — per-application recruiter / hiring-manager contacts. Optional
+// Story S11.2 — per-application recruiter / hiring-manager contacts. Optional
 // per row: not every application has a known contact (cold portal applies,
 // generic careers@ inbox, etc.). Cascades on Application delete so orphan
 // contacts can't accumulate. The stale-application nudge job consults the
@@ -301,7 +302,7 @@ model Project {
   githubRepo         String?   // "owner/repo" — drives the M9 scheduler fetch
   portfolio          Boolean   @default(false) // flag to fetch metrics for this project + surface on resumes
   metricsUpdatedAt   DateTime?
-  // Story 46 — raw README markdown fetched from the GitHub default branch
+  // Story S9.5 — raw README markdown fetched from the GitHub default branch
   // for portfolio repos. Capped at ~16 KB at write time so a runaway README
   // (e.g. embedded changelogs) can't bloat the row. Consumed by the resume
   // rewrite prompt as additional source material so portfolio-project
@@ -336,7 +337,7 @@ model Education {
   @@index([profileId, position])
 }
 
-// Story 33 — versioned snapshots of a user's Profile. Button-press only —
+// Story S7.6 — versioned snapshots of a user's Profile. Button-press only —
 // no auto-snapshotting on every profile edit (would balloon row count and
 // add a hidden write path the user can't see). The payload is the full
 // HydratedProfile (Profile + workRoles + projects + education with parsed
@@ -354,6 +355,44 @@ model ProfileSnapshot {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, takenAt])
+}
+
+// Story S7.9 — append-only archive of raw uploaded resume files. Today's M7.4
+// import path extracts text, runs the LLM to parse it into structured form,
+// merges into the canonical Profile, then discards both the raw text and the
+// intermediate extraction. That discard is lossy — wording variants and
+// details that lose the dedup race vanish forever. This table closes the
+// discard: every file in every /api/profile/import call writes one
+// ResumeUpload row capturing the raw text, the LLM's structured output, and
+// (when feasible) the original bytes on disk. Future LLM-driven features
+// (bullet-assist S7.7/S7.8, tailored generation, anything else) can reach
+// back into prior versions to surface alternative framings or recover
+// details the merge dropped. Append-only: uploading a new resume never
+// deletes prior rows; pre-S7.9 uploads are not backfilled.
+//
+// rawText capped at 200 KB in code (matches the M7.4 import-pipeline ceiling).
+// parsedJson stores the canonical LLM extraction shape so the same structured
+// form is available to future consumers without re-running the LLM.
+// artifactPath mirrors GeneratedResume.artifactPath — relative path under
+// data/resume-uploads/ (gitignored). Null when bytes weren't persisted (e.g.
+// JSON-paste imports with no original binary).
+// importBatchId groups multi-file uploads from a single import call so a
+// UI can later show "the three resumes I uploaded together on date X".
+model ResumeUpload {
+  id            String   @id @default(cuid())
+  userId        String
+  filename      String   // original upload filename, as supplied by the client
+  mimeType      String   // application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/plain, application/json, ...
+  sizeBytes     Int
+  rawText       String   // post-extract plaintext, capped at 200 KB in code
+  parsedJson    String   // JSON: the LLM extraction output that fed the merge
+  artifactPath  String?  // relative path under data/resume-uploads/ (gitignored). Null when the upload was JSON-paste or bytes couldn't be written.
+  importBatchId String?  // groups multi-file uploads from one /api/profile/import call
+  uploadedAt    DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, uploadedAt])
 }
 
 
@@ -412,7 +451,7 @@ model Watchlist {
   // matches any pattern are hidden from the bell / new-postings feed at GET
   // time. Invalid regexes are silently skipped. NULL = no filtering.
   negativeFilters String?
-  // Story 26 — per-watchlist notification preference:
+  // Story S6.2 — per-watchlist notification preference:
   //   "each"   — fire one bell notification per new posting (current default)
   //   "digest" — suppress per-posting; posting-digest scheduler job rolls them
   //              up into one daily summary and updates lastDigestAt
@@ -454,7 +493,7 @@ model JobPosting {
   // or NULL when neither the ATS payload nor the title gave a clear signal.
   // Populated by fetchers via lib/fetchers/employment-type.ts.
   employmentType String?
-  // Story 24 — compensation parsed out of postings. Stored as integer
+  // Story S5.9 — compensation parsed out of postings. Stored as integer
   // minor units (e.g. dollars; not cents — most postings quote whole-dollar
   // ranges) so the UI can sort. NULL when no recognisable range was found.
   // compensationCadence is one of "hour" | "day" | "week" | "month" | "year"
@@ -535,7 +574,7 @@ model GeneratedResume {
   postingInput    String   // JSON: { url?, text?, parsedKeywords[] }
   profileSnapshot String   // JSON: full hydrated profile at gen-time
   selections      String   // JSON: [{ kind, sourceId, sourceLabel, bulletId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[], locked }]
-  // Story 41 — JSON array of posting keywords that have NO coverage in the
+  // Story S8.8 — JSON array of posting keywords that have NO coverage in the
   // profile (no bullet tags match, no bullet text contains them as a substring).
   // NULL on legacy rows generated before the column existed.
   skillsGap       String?

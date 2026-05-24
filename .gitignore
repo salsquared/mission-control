@@ -81,6 +81,11 @@ public/swe-worker-*.js
 /data/resumes/*
 !/data/resumes/.gitkeep
 
+# Uploaded resume archive (S7.9 / M7.6.1). Append-only original-file bytes
+# from /api/profile/import. ResumeUpload.artifactPath points at the file.
+/data/resume-uploads/*
+!/data/resume-uploads/.gitkeep
+
 # perf-monitor JSONL + markdown summaries (scripts/perf-monitor.ts).
 /data/perf/*
 !/data/perf/.gitkeep

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
+import path from "node:path";
+import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { broadcastEvent } from "@/lib/events";
@@ -6,6 +8,7 @@ import { extractText } from "@/lib/profile/extract";
 import { extractProfileFromText } from "@/lib/profile/import-llm";
 import { synthesizeMasterResume } from "@/lib/profile/synthesize";
 import { mergeImports, type ExistingProfileForMerge } from "@/lib/profile/merge";
+import { writeResumeUpload } from "@/lib/profile/storage";
 import {
     findOrCreateProfile,
     updateProfileHeader,
@@ -17,6 +20,8 @@ import {
     updateEducation,
 } from "@/lib/repositories/profile";
 import { AIError } from "@/lib/ai/gemini";
+
+const RAW_TEXT_CAP = 200_000;
 
 export const runtime = "nodejs";
 // LLM + multi-file extraction can be slow with multiple resumes.
@@ -68,14 +73,22 @@ export async function POST(req: NextRequest) {
         }
     }
 
+    // M7.6.2 — every file in this multipart call shares one importBatchId so
+    // a UI can later show "the three resumes I uploaded together on date X".
+    // Using globalThis.crypto.randomUUID for parity with lib/profile/bullets.ts
+    // (no cuid lib is installed; UUID is opaque enough for grouping).
+    const importBatchId = globalThis.crypto.randomUUID();
+
     let stage: "extract" | "analyze" | "synthesize" | "merge" | "write" = "extract";
     try {
-        // 1. Extract text from each file
-        const extracted: { filename: string; text: string }[] = [];
+        // 1. Extract text from each file. Buffer kept around per-file for the
+        // M7.6.2 archive write below — extractText doesn't expose the original
+        // bytes, and re-reading f.arrayBuffer() after consumption is undefined.
+        const extracted: { file: File; filename: string; text: string; buf: Buffer }[] = [];
         for (const f of files) {
             const buf = Buffer.from(await f.arrayBuffer());
             const e = await extractText(buf, f.type, f.name);
-            extracted.push({ filename: e.filename, text: e.text });
+            extracted.push({ file: f, filename: e.filename, text: e.text, buf });
         }
 
         // 2. LLM-extract a structured tree per file
@@ -84,6 +97,56 @@ export async function POST(req: NextRequest) {
         for (const e of extracted) {
             const tree = await extractProfileFromText(e.text, e.filename);
             trees.push({ filename: e.filename, tree });
+        }
+
+        // 2b. M7.6.2 — archive every uploaded file as a ResumeUpload row +
+        // (when binary) bytes on disk. Best-effort: any failure logs a warning
+        // and continues; the user's merge must succeed even if archive fails.
+        // Wedged between LLM analyze and synthesize because both the raw text
+        // AND the structured tree are now available; running it after merge
+        // would lose the per-file tree (synthesize consolidates them).
+        for (let i = 0; i < extracted.length; i++) {
+            const e = extracted[i];
+            const tree = trees[i].tree;
+            const wasTruncated = e.text.length > RAW_TEXT_CAP;
+            if (wasTruncated) {
+                console.warn(`[M7.6.2] rawText for ${e.file.name} truncated from ${e.text.length} to ${RAW_TEXT_CAP} bytes`);
+            }
+            let row: { id: string } | null = null;
+            try {
+                row = await prisma.resumeUpload.create({
+                    data: {
+                        userId,
+                        filename: e.file.name,
+                        mimeType: e.file.type,
+                        sizeBytes: e.file.size,
+                        rawText: e.text.slice(0, RAW_TEXT_CAP),
+                        parsedJson: JSON.stringify(tree),
+                        importBatchId,
+                        artifactPath: null,
+                    },
+                    select: { id: true },
+                });
+            } catch (err) {
+                console.warn(`[M7.6.2] archive write failed for ${e.file.name}: ${err instanceof Error ? err.message : String(err)}`);
+            }
+            if (row) {
+                // Only persist bytes when the original upload had a usable
+                // extension. JSON-paste imports and zero-byte extensions stay
+                // metadata-only (artifactPath remains null per schema comment).
+                const ext = path.extname(e.file.name).slice(1).toLowerCase();
+                if (ext && e.buf.length > 0) {
+                    try {
+                        const returnedPath = await writeResumeUpload(row.id, ext, e.buf);
+                        await prisma.resumeUpload.update({
+                            where: { id: row.id },
+                            data: { artifactPath: returnedPath },
+                        });
+                    } catch (err) {
+                        console.warn(`[M7.6.2] archive write failed for ${e.file.name}: ${err instanceof Error ? err.message : String(err)}`);
+                    }
+                }
+            }
         }
 
         // 3. Load existing profile so the synthesizer + merge step can dedup

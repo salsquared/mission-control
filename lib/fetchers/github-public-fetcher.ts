@@ -134,7 +134,7 @@ export async function fetchGithubRepoMetrics(ownerRepo: string): Promise<GithubF
     }
 }
 
-// Story 46 — README ingestion. Separate from fetchGithubRepoMetrics so the
+// Story S9.5 — README ingestion. Separate from fetchGithubRepoMetrics so the
 // hot path stays at 3 API calls; README is a 4th call only for repos we
 // actually want to surface on resumes. Returns the decoded markdown, or
 // null when the repo has no README (404) / the response was malformed.

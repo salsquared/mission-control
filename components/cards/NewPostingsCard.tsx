@@ -9,7 +9,7 @@ import { useAppStore, type PostingEmploymentType, type PostingFilters } from "@/
 import { Card } from "../ui/Card";
 import { FilterButton } from "../ui/FilterButton";
 
-// Story 24 — format parsed comp as "$120k–$150k / yr" style chip text.
+// Story S5.9 — format parsed comp as "$120k–$150k / yr" style chip text.
 // Returns null when no comp was parsed for this row so the caller can skip
 // rendering the chip entirely.
 function formatComp(p: {

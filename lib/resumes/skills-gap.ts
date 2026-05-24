@@ -1,6 +1,6 @@
 import type { ProfileWire } from "@/lib/schemas/profile";
 
-// Story 41 — skills-gap detector.
+// Story S8.8 — skills-gap detector.
 //
 // Given a parsed posting's keyword list + the user's full profile, return the
 // keywords that have NO coverage anywhere in the profile. "Coverage" means:

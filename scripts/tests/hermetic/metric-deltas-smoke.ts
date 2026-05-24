@@ -1,4 +1,4 @@
-// Story 45 hermetic smoke for computeMetricDeltas — pure function over two
+// Story S9.4 hermetic smoke for computeMetricDeltas — pure function over two
 // RepoMetrics snapshots. No DB, no GitHub.
 //
 // Run with: npx tsx scripts/tests/hermetic/metric-deltas-smoke.ts

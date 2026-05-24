@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/tests/hermetic/profile-merge-smoke.ts
  *
- * The merge function is the load-bearing piece of M7.4 (story 30a). Each
+ * The merge function is the load-bearing piece of M7.4 (story S7.3). Each
  * test exercises one merge-key or dedup behavior in isolation.
  */
 import { mergeImports, type ExistingProfileForMerge } from "@/lib/profile/merge";

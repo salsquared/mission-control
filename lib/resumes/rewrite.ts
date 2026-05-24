@@ -34,7 +34,7 @@ const SYSTEM_PROMPT = [
     "Return strictly JSON of shape {\"bullets\": [{\"id\", \"rewrittenText\", \"matchedKeywords\"}]} — one entry per input bullet, in the same order. `matchedKeywords` lists which of the posting's keywords the rewrite emphasizes.",
 ].join("\n");
 
-// Story 46 — README excerpts per project sourceId. Caller-built; the rewriter
+// Story S9.5 — README excerpts per project sourceId. Caller-built; the rewriter
 // only renders what's handed in. ~2 KB cap per project so the combined prompt
 // stays in budget even with 4-5 portfolio projects in one resume.
 export interface ProjectReadmeContext {

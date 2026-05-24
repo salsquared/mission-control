@@ -492,7 +492,7 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
     );
 };
 
-// ─── Story 50: Per-Application Recruiter/Hiring-Manager Contacts ───────
+// ─── Story S11.2: Per-Application Recruiter/Hiring-Manager Contacts ───────
 
 const ApplicationContactsSection: React.FC<{ applicationId: string }> = ({ applicationId }) => {
     const queryClient = useQueryClient();
@@ -702,7 +702,7 @@ const ApplicationContactsSection: React.FC<{ applicationId: string }> = ({ appli
     );
 };
 
-// ─── Story 48: side-by-side diff between two GeneratedResume rows ──────
+// ─── Story S10.2: side-by-side diff between two GeneratedResume rows ──────
 
 interface DiffSelectionSummary {
     sourceLabel: string;
@@ -870,7 +870,7 @@ const ApplicationResumesSection: React.FC<{ applicationId: string; company: stri
     const [postingUrl, setPostingUrl] = useState("");
     const [postingText, setPostingText] = useState("");
     const [generating, setGenerating] = useState(false);
-    // Story 48 — multi-select for diff. Up to 2 ids; selecting a 3rd kicks
+    // Story S10.2 — multi-select for diff. Up to 2 ids; selecting a 3rd kicks
     // out the oldest pick (FIFO) so the user doesn't have to manually
     // deselect before recomparing.
     const [selectedForDiff, setSelectedForDiff] = useState<string[]>([]);
@@ -1071,7 +1071,7 @@ const ApplicationResumesSection: React.FC<{ applicationId: string; company: stri
     );
 };
 
-// Story 27 — decision-deadline inline editor. Renders as a date input so the
+// Story S6.3 — decision-deadline inline editor. Renders as a date input so the
 // underlying ISO datetime is easy to set/clear. Empty value clears the field
 // (sets the column to NULL). Anchored to noon UTC so it doesn't drift across
 // timezone boundaries when displayed.

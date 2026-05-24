@@ -158,7 +158,7 @@ export async function POST(req: NextRequest) {
 
         // 4. Rewrite via LLM
         stage = "rewrite";
-        // Story 46 — build per-project README context once before the rewrite
+        // Story S9.5 — build per-project README context once before the rewrite
         // call. Only includes READMEs for projects whose bullets are actually
         // in the selection AND that have a stored README (`portfolio=true`
         // + scheduler fetched it). Keeps the prompt-budget bounded to the
@@ -180,7 +180,7 @@ export async function POST(req: NextRequest) {
         }
         const rewrites = await rewriteBullets(flat, posting, { readmesBySourceId });
 
-        // 4b. Skills gap (story 41) — pure, no LLM. Compute against the
+        // 4b. Skills gap (story S8.8) — pure, no LLM. Compute against the
         // FULL profile, not just the selected bullets: even an unselected
         // bullet counts as coverage for the keyword it mentions.
         const skillsGap = computeSkillsGap(profile, posting.keywords);

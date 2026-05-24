@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 // Canonical status values — mirrors the LLM classifier enum in lib/email-parser.ts.
-// INTERESTED is the pre-applied state (story 20): a posting tracked from the
+// INTERESTED is the pre-applied state (story S5.5): a posting tracked from the
 // watchlist feed but not yet sent. Living before APPLIED keeps the kanban order
 // chronological from interest → applied → ... → outcome.
 export const APPLICATION_STATUSES = [
@@ -65,7 +65,7 @@ export const ApplicationDeleteResponseSchema = z.object({
     id: z.string(),
 });
 
-// Story 63 — bulk move N applications between tracks in one round-trip.
+// Story S13.8 — bulk move N applications between tracks in one round-trip.
 // The same-employer-both-tracks constraint (@@unique([userId, normalizedCompany, track]))
 // means a bulk move can hit P2002 if a moved row's normalizedCompany already
 // exists in the target track. The 409 response carries the conflicting ids

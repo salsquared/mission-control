@@ -1,5 +1,5 @@
 /**
- * Hermetic smoke for skills-gap (story 41).
+ * Hermetic smoke for skills-gap (story S8.8).
  *
  *   npx tsx scripts/tests/hermetic/skills-gap-smoke.ts
  *

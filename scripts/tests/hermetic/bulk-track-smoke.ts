@@ -1,4 +1,4 @@
-// Story 63 hermetic smoke for the bulk track-move repository helper.
+// Story S13.8 hermetic smoke for the bulk track-move repository helper.
 // Run with: npx tsx scripts/tests/hermetic/bulk-track-smoke.ts
 //
 // Covers:

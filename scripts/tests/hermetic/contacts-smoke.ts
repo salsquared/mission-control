@@ -1,4 +1,4 @@
-// Story 50 hermetic smoke. Exercises Contact CRUD + ownership scoping +
+// Story S11.2 hermetic smoke. Exercises Contact CRUD + ownership scoping +
 // cascade-on-application-delete + primaryContactForApplication ordering +
 // stale-nudge body shaping.
 // Run with: npx tsx scripts/tests/hermetic/contacts-smoke.ts

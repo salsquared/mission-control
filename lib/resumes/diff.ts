@@ -1,4 +1,4 @@
-// Story 48 — diff between two GeneratedResume rows. Pure function; no I/O.
+// Story S10.2 — diff between two GeneratedResume rows. Pure function; no I/O.
 // The route layer parses the rows out of the DB (postingInput / selections /
 // skillsGap are stored as JSON strings) and hands the parsed shape in here.
 

@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import type { Contact } from '@prisma/client';
 
-// Story 50 — Contact CRUD. Every read/write checks ownership through the
+// Story S11.2 — Contact CRUD. Every read/write checks ownership through the
 // parent Application's userId so cross-user access can't slip through even
 // with a forged applicationId.
 

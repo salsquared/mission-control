@@ -1,4 +1,4 @@
-// Story 45 — pure-function delta detection between two RepoMetrics
+// Story S9.4 — pure-function delta detection between two RepoMetrics
 // snapshots. The scheduler reads prior metrics out of Project.metrics,
 // fetches new ones, calls computeMetricDeltas, and dispatches one
 // notification per event. Tested without hitting GitHub or the DB.

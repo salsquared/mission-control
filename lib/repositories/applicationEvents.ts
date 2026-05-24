@@ -35,7 +35,7 @@ export interface ApplicationEventDraft {
  * typical ingest emitting ~3-5 rows per email, the loop cost is trivial.
  */
 // ApplicationEvent kinds that warrant an in-app Notification when they fire.
-// (Story 27.) Things the user MUST see: interviews getting scheduled, offers,
+// (Story S6.3.) Things the user MUST see: interviews getting scheduled, offers,
 // rejections, assessments coming in. Skip the noisy/self-initiated kinds
 // (APPLIED, STATUS_CHANGED, EMAIL_RECEIVED, NOTE).
 // Exported (PB-5) so ingest.ts can check whether an event needed notifying

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { broadcastEvent } from "@/lib/events";
 
-// Story 20: convert a tracked posting into a draft Application.
+// Story S5.5: convert a tracked posting into a draft Application.
 //
 // Pulled out of the route handler so hermetic smokes can exercise the full
 // behavior without a session cookie. The route is now a thin auth wrapper.

@@ -76,7 +76,7 @@ function defaultChannelsForTier(tier: NotificationTier): string {
 export async function dispatchNotification(input: DispatchInput): Promise<Notification | null> {
     let channels = input.channels ?? defaultChannelsForTier(input.tier);
 
-    // Story 28 — quiet hours. If the user has a quiet-hours window
+    // Story S6.4 — quiet hours. If the user has a quiet-hours window
     // configured AND we're inside it AND this dispatch was going to email,
     // strip "email" from channels so the row still surfaces in the bell
     // but no Gmail send fires. Critical tier (offers, etc.) bypasses quiet

@@ -1,5 +1,5 @@
 /**
- * Stale-application nudges (story 49, MA-f.4 / MB-3.2).
+ * Stale-application nudges (story S11.1, MA-f.4 / MB-3.2).
  *
  * Daily tick. Finds applications where:
  *   - status isn't terminal (REJECTED / OFFER — no point pinging the user
@@ -83,7 +83,7 @@ export async function runStaleApplicationNudges(): Promise<StaleNudgeRunResult> 
         );
         const roleLabel = app.role ? `${app.role} at ${app.company}` : app.company;
 
-        // Story 50 — if we know a recruiter / hiring-manager name on this app,
+        // Story S11.2 — if we know a recruiter / hiring-manager name on this app,
         // address the suggestion to them by first name. Falls back to the
         // generic body when there are no contacts (cold portal applies etc).
         const contact = await primaryContactForApplication(app.id);

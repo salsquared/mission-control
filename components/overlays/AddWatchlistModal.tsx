@@ -726,8 +726,8 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                   * and "Discover" because both feed off COMPANY_DIRECTORY +
                   * Gemini career suggestions (Anthropic, Rocket Lab, …) and
                   * surfacing those inside the side modal would muddle the
-                  * pipelines the user explicitly wants kept separate (story 56).
-                  * Side stays keyword-first per story 57 — "Find roles" is the
+                  * pipelines the user explicitly wants kept separate (story S13.1).
+                  * Side stays keyword-first per story S13.2 — "Find roles" is the
                   * primary path, "Advanced" remains for the rare case the user
                   * wants to point at a specific big-box ATS slug. */}
                 <div className="flex border-b border-white/10 shrink-0">

@@ -1,4 +1,4 @@
-// Story 33 hermetic smoke. Exercises createProfileSnapshot, listProfileSnapshots,
+// Story S7.6 hermetic smoke. Exercises createProfileSnapshot, listProfileSnapshots,
 // getProfileSnapshot, deleteProfileSnapshot end-to-end against dev.db.
 // Run with: npx tsx scripts/tests/hermetic/profile-snapshots-smoke.ts
 

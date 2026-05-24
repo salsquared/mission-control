@@ -58,7 +58,7 @@ interface ApplicationsKanbanCardProps {
     onItemClick: (id: string) => void;
     /** MB Phase 4: defaults to "career" so existing call sites keep working. */
     track?: TrackKey;
-    /** Story 63: called after a successful bulk-move so parent can invalidate. */
+    /** Story S13.8: called after a successful bulk-move so parent can invalidate. */
     onBulkMoved?: (movedIds: string[]) => void;
 }
 
@@ -74,7 +74,7 @@ export const ApplicationsKanbanCard: React.FC<ApplicationsKanbanCardProps> = ({
     const preset = TRACK_PRESETS[track];
     const otherTrack: TrackKey = track === "career" ? "side" : "career";
 
-    // Story 63 — bulk-select mode. While `selectMode` is true:
+    // Story S13.8 — bulk-select mode. While `selectMode` is true:
     //   - Card clicks toggle selection (don't open the detail overlay)
     //   - A footer bar shows "N selected · Move to <other-track> · Cancel"
     //   - Drag-to-status is suppressed by passing no onStatusChange to the widget

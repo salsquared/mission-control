@@ -1,5 +1,5 @@
 /**
- * Posting-digest scheduler job (story 26).
+ * Posting-digest scheduler job (story S6.2).
  *
  * Daily-ish tick. For each active watchlist with notificationMode='digest':
  *   - find postings created since the last digest checkpoint (lastDigestAt,

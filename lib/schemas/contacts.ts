@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-// Story 50 — recruiter / hiring-manager contacts per application. Optional
+// Story S11.2 — recruiter / hiring-manager contacts per application. Optional
 // (cold portal applies have none). Stored bare on Contact rows; the stale-
 // nudge scheduler reads the most-recent contact (by lastTouchedAt, then
 // position) to make the follow-up suggestion personal.

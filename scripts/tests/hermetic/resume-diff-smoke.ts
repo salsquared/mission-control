@@ -1,4 +1,4 @@
-// Story 48 hermetic smoke for computeResumeDiff — pure function, no DB.
+// Story S10.2 hermetic smoke for computeResumeDiff — pure function, no DB.
 // Run with: npx tsx scripts/tests/hermetic/resume-diff-smoke.ts
 
 import { computeResumeDiff, type ResumeForDiff, type StoredSelection } from '@/lib/resumes/diff';
@@ -126,7 +126,7 @@ function mkResume(overrides: Partial<ResumeForDiff>): ResumeForDiff {
     record('per-bullet tagsOnlyB = [devops]', JSON.stringify(shared.tagsOnlyB) === JSON.stringify(['devops']));
 }
 
-// 6. Skills-gap deltas (story 41 column).
+// 6. Skills-gap deltas (story S8.8 column).
 {
     const a = mkResume({ id: 'a6', skillsGap: ['rust', 'k8s'] });
     const b = mkResume({ id: 'b6', skillsGap: ['k8s', 'erlang'] });

@@ -53,7 +53,7 @@ export const ProjectSchema = z.object({
     githubRepo: z.string().nullable(),
     portfolio: z.boolean(),
     metricsUpdatedAt: z.string().datetime().nullable(),
-    // Story 46 — README markdown ingested for portfolio repos. Truncated at
+    // Story S9.5 — README markdown ingested for portfolio repos. Truncated at
     // 16 KB at write time; the resume rewrite prompt slices an additional
     // 2 KB excerpt per project. NULL when no README has been fetched yet
     // (or the repo has no README).
@@ -189,7 +189,7 @@ export type WorkRoleWire = z.infer<typeof WorkRoleSchema>;
 export type ProjectWire = z.infer<typeof ProjectSchema>;
 export type EducationWire = z.infer<typeof EducationSchema>;
 
-// ─── Profile snapshots (story 33) ──────────────────────────────────────────
+// ─── Profile snapshots (story S7.6) ──────────────────────────────────────────
 // List entries are intentionally lightweight — no payload, so the UI list
 // renders fast even with hundreds of snapshots. Full payload is fetched via
 // the [id] route only when the user opens a specific snapshot.
@@ -218,3 +218,47 @@ export const ProfileSnapshotGetResponseSchema = z.object({
 
 export type ProfileSnapshotSummaryWire = z.infer<typeof ProfileSnapshotSummarySchema>;
 export type ProfileSnapshotWire = z.infer<typeof ProfileSnapshotSchema>;
+
+// ─── Bullet-assist (M7.6.7 — story S7.7 fill + S7.8 rewrite) ────────────────
+// Discriminated by `mode`. `bulletId` required only in rewrite mode; using
+// a literal-tagged discriminator means the type narrows automatically on the
+// route side and the UI can't accidentally pass bulletId to fill (or omit it
+// from rewrite). `parentKind` enum mirrors lib/profile/bullet-assist.ts:ParentKind.
+export const BulletAssistFillSchema = z.object({
+    mode: z.literal('fill'),
+    parentKind: z.enum(['work-role', 'project', 'education']),
+    parentId: z.string().min(1),
+});
+
+export const BulletAssistRewriteSchema = z.object({
+    mode: z.literal('rewrite'),
+    parentKind: z.enum(['work-role', 'project', 'education']),
+    parentId: z.string().min(1),
+    bulletId: z.string().min(1),
+});
+
+export const BulletAssistBodySchema = z.discriminatedUnion('mode', [
+    BulletAssistFillSchema,
+    BulletAssistRewriteSchema,
+]);
+
+// Fill returns 1–5 starter bullets; rewrite returns one proposal preserving
+// id / tags / locked / excluded. Both share the canonical BulletSchema shape
+// so the UI can drop suggestions straight into the existing bullets array.
+export const BulletAssistFillResponseSchema = z.object({
+    mode: z.literal('fill'),
+    suggestions: z.array(BulletSchema).min(1).max(5),
+});
+
+export const BulletAssistRewriteResponseSchema = z.object({
+    mode: z.literal('rewrite'),
+    proposal: BulletSchema,
+});
+
+export const BulletAssistResponseSchema = z.discriminatedUnion('mode', [
+    BulletAssistFillResponseSchema,
+    BulletAssistRewriteResponseSchema,
+]);
+
+export type BulletAssistBody = z.infer<typeof BulletAssistBodySchema>;
+export type BulletAssistResponse = z.infer<typeof BulletAssistResponseSchema>;

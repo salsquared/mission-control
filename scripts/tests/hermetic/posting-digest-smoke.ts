@@ -1,5 +1,5 @@
 /**
- * Hermetic smoke for posting-digest (story 26).
+ * Hermetic smoke for posting-digest (story S6.2).
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/posting-digest-smoke.ts
  *

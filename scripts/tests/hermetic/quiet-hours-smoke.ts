@@ -1,4 +1,4 @@
-// Story 28 hermetic smoke for isInQuietHours — pure function. No DB.
+// Story S6.4 hermetic smoke for isInQuietHours — pure function. No DB.
 // Run with: npx tsx scripts/tests/hermetic/quiet-hours-smoke.ts
 
 import { isInQuietHours } from '@/lib/notifications/quiet-hours';

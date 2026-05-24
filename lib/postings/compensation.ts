@@ -1,4 +1,4 @@
-// Story 24 — compensation parser. Pure function over a posting's snippet
+// Story S5.9 — compensation parser. Pure function over a posting's snippet
 // (or whatever free-text the fetcher gave us) → a structured comp range or
 // null when nothing recognisable was found.
 //

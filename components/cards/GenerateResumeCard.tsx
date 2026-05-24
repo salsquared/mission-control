@@ -260,7 +260,7 @@ export function GenerateResumeCard() {
     );
 }
 
-// Story 41 — surface keywords the posting emphasized that the profile has
+// Story S8.8 — surface keywords the posting emphasized that the profile has
 // no evidence for. Posting keywords that are *covered* aren't shown — those
 // are visible per-bullet in the trace via `tag:` / `kw:` chips above.
 const SkillsGapBlock: React.FC<{ gap: string[] }> = ({ gap }) => {

@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink, Github, Star, RefreshCw } from "lucide-react";
+import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink, Github, Star, RefreshCw, Sparkles, X } from "lucide-react";
 import { EditableField } from "./EditableField";
 import { BulletRow } from "./BulletRow";
 import { makeBullet } from "@/lib/profile/bullets";
+import { api } from "@/lib/api-client";
 import type { Bullet } from "@/lib/profile/types";
 import type { ProjectWire } from "@/lib/schemas/profile";
 
@@ -34,6 +35,8 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
     canMoveDown,
 }) => {
     const [newBulletText, setNewBulletText] = useState("");
+    const [drafting, setDrafting] = useState(false);
+    const [draftError, setDraftError] = useState<string | null>(null);
 
     const updateBullet = (idx: number, next: Bullet) => {
         const arr = [...project.bullets];
@@ -48,6 +51,19 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
         if (!text) return;
         onUpdate({ bullets: [...project.bullets, makeBullet(text)] });
         setNewBulletText("");
+    };
+    const handleDraft = async () => {
+        setDrafting(true);
+        setDraftError(null);
+        try {
+            const result = await api.profile.bullets.assistFill('project', project.id);
+            if (result.mode !== 'fill') throw new Error('unexpected response shape');
+            onUpdate({ bullets: result.suggestions });
+        } catch (err) {
+            setDraftError(err instanceof Error ? err.message : 'Failed to draft bullets');
+        } finally {
+            setDrafting(false);
+        }
     };
 
     return (
@@ -146,7 +162,34 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
 
             <div className="mt-3 flex flex-col gap-0.5">
                 {project.bullets.length === 0 ? (
-                    <p className="text-xs text-white/30 italic px-2 py-1">No bullets yet — add one below.</p>
+                    <>
+                        <p className="text-xs text-white/30 italic px-2 py-1">No bullets yet — add one below.</p>
+                        <div className="flex items-center gap-2 px-2 py-0.5">
+                            <button
+                                type="button"
+                                onClick={handleDraft}
+                                disabled={drafting}
+                                className="inline-flex items-center gap-1 text-xs text-white/50 hover:text-white/80 disabled:opacity-50 disabled:cursor-not-allowed px-2 py-1 rounded transition-colors"
+                                title="Draft starter bullets with the LLM, grounded on this project's spine fields"
+                            >
+                                <Sparkles className="w-3.5 h-3.5" />
+                                {drafting ? 'Drafting…' : 'Draft with LLM'}
+                            </button>
+                        </div>
+                        {draftError && (
+                            <div className="mx-2 mb-1 inline-flex items-center gap-1 self-start text-[11px] text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded px-2 py-1">
+                                <span>{draftError}</span>
+                                <button
+                                    type="button"
+                                    onClick={() => setDraftError(null)}
+                                    className="text-rose-300/60 hover:text-rose-200"
+                                    title="Dismiss"
+                                >
+                                    <X className="w-3 h-3" />
+                                </button>
+                            </div>
+                        )}
+                    </>
                 ) : (
                     project.bullets.map((b, idx) => (
                         <BulletRow
@@ -154,6 +197,7 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
                             bullet={b}
                             onChange={(next) => updateBullet(idx, next)}
                             onDelete={() => removeBullet(idx)}
+                            rewriteContext={{ parentKind: 'project', parentId: project.id }}
                         />
                     ))
                 )}

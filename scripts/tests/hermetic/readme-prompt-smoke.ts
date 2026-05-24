@@ -1,4 +1,4 @@
-// Story 46 hermetic smoke for the README-context branch of the rewrite
+// Story S9.5 hermetic smoke for the README-context branch of the rewrite
 // prompt. Tests buildRewriteUserPrompt — a pure function over selections /
 // posting / readmeCtx — so we never hit Gemini.
 //

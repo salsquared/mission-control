@@ -292,7 +292,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         where: { applicationId: appId, emailMsgId: msgId },
     });
 
-    // Fire in-app notifications for attention-worthy kinds (MB-3.1, story 27).
+    // Fire in-app notifications for attention-worthy kinds (MB-3.1, story S6.3).
     // Best-effort — failure leaves notifiedAt null so the next ingest of this
     // msg picks it back up.
     for (const ev of allEventsForMsg) {

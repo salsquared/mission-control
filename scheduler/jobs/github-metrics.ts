@@ -35,7 +35,7 @@ function parsePriorMetrics(raw: string | null): RepoMetrics | null {
     }
 }
 
-// Story 46 — README cadence is independent from metrics. READMEs change
+// Story S9.5 — README cadence is independent from metrics. READMEs change
 // much less often than star counts, and the API call is a 4th hit per
 // project that would tighten the 60-req/h budget. Refresh once a week.
 const README_STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
@@ -48,7 +48,7 @@ export async function runGithubMetrics(): Promise<GithubMetricsRunResult> {
             portfolio: true,
             githubRepo: { not: null },
         },
-        // Story 45: include the project's prior metrics + name + profile.userId
+        // Story S9.4: include the project's prior metrics + name + profile.userId
         // so the metric-delta detector can compare new vs. prior and the
         // notification dispatcher can target the owning user.
         select: {
@@ -132,7 +132,7 @@ export async function runGithubMetrics(): Promise<GithubMetricsRunResult> {
             continue;
         }
 
-        // Story 45 — compare new vs prior metrics and dispatch a
+        // Story S9.4 — compare new vs prior metrics and dispatch a
         // suggested-rewrite Notification per significant delta. Runs AFTER
         // the row update so a notification can never be sent for a state
         // that didn't actually persist. dedupKey ties each milestone to a

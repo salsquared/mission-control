@@ -1,5 +1,5 @@
 /**
- * Hermetic smoke for story 20: track-as-application.
+ * Hermetic smoke for story S5.5: track-as-application.
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/track-as-application-smoke.ts
  *

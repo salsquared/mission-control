@@ -168,7 +168,7 @@ export const NegativeFiltersSchema = z.array(
     z.string().min(1).max(MAX_NEGATIVE_FILTER_LEN),
 ).max(MAX_NEGATIVE_FILTERS);
 
-// Story 26 — per-watchlist notification preference. "each" fires per-posting,
+// Story S6.2 — per-watchlist notification preference. "each" fires per-posting,
 // "digest" rolls into one summary via the posting-digest scheduler job,
 // "silent" skips notifications entirely (postings still appear in the feed).
 export const WATCHLIST_NOTIFICATION_MODES = ["each", "digest", "silent"] as const;
@@ -229,7 +229,7 @@ export const JobPostingSchema = z.object({
     snippet: z.string().nullable(),
     sourceUrl: z.string(),
     employmentType: EmploymentTypeSchema.nullable(),
-    // Story 24 — parsed comp (or null when the snippet didn't match). The UI
+    // Story S5.9 — parsed comp (or null when the snippet didn't match). The UI
     // formats these into "$120k–$150k / yr" chips on the postings card.
     compensationMin: z.number().int().nullable(),
     compensationMax: z.number().int().nullable(),

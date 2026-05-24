@@ -1,4 +1,4 @@
-// Story 28 — quiet hours helper. Checks whether a given moment falls inside
+// Story S6.4 — quiet hours helper. Checks whether a given moment falls inside
 // the user-configured quiet-hours window (in their configured timezone).
 // Pure function so it's trivially testable without freezing the system
 // clock; callers pass `now` explicitly.

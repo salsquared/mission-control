@@ -1,4 +1,4 @@
-// Story 24 — compensation parser hermetic smoke. Pure function, no DB.
+// Story S5.9 — compensation parser hermetic smoke. Pure function, no DB.
 // Run with: npx tsx scripts/tests/hermetic/compensation-smoke.ts
 
 import { parseCompensation } from '@/lib/postings/compensation';

@@ -159,7 +159,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // the feed; just no notification spam.
     const FIRST_RUN_NOTIFY_LIMIT = 20;
     const isFirstRun = watchlist.lastSuccessAt === null;
-    // Story 26 — per-watchlist notification mode gates per-posting dispatch:
+    // Story S6.2 — per-watchlist notification mode gates per-posting dispatch:
     //   "each"   — fire per posting (current behavior, subject to first-run digest)
     //   "digest" — suppress; posting-digest scheduler rolls them up daily
     //   "silent" — never notify (postings still land in the feed)
@@ -245,7 +245,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         // fall back to bumping lastSeenAt instead of erroring out the run.
         let created: { id: string } | null = null;
         try {
-            // Story 24 — parse comp out of (title + snippet + location). Some
+            // Story S5.9 — parse comp out of (title + snippet + location). Some
             // ATSes (Greenhouse Engage, occasional Lever) put pay info in the
             // title; most put it in the snippet body. Failing to parse leaves
             // every comp column NULL, which is fine — the row is still useful.
@@ -310,7 +310,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         newPostings++;
     }
 
-    // Closed-posting detection (story 22). Any prior posting for this watchlist
+    // Closed-posting detection (story S5.7). Any prior posting for this watchlist
     // that we *didn't* see in this run, that's been silent for > 6h, and that
     // isn't already terminal (closed/hidden), gets marked closed.
     //

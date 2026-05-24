@@ -84,6 +84,7 @@ import {
     ProfileSnapshotsListResponseSchema,
     ProfileSnapshotMutationResponseSchema,
     ProfileSnapshotGetResponseSchema,
+    BulletAssistResponseSchema,
 } from './schemas/profile';
 import {
     WatchlistPostSchema,
@@ -233,7 +234,7 @@ export const api = {
                 BackfillResponseSchema,
                 jsonBody('POST', input ?? {})
             ),
-        // Story 63 — bulk move applications between tracks. Returns a
+        // Story S13.8 — bulk move applications between tracks. Returns a
         // discriminated union so the caller can branch on the
         // same-employer-conflicts case (HTTP 409).
         bulkTrack: async (
@@ -425,6 +426,29 @@ export const api = {
                     { method: 'DELETE' },
                 ),
         },
+        // M7.6.7 — LLM bullet assist (S7.7 fill empty entries + S7.8 rewrite).
+        // Both methods are transient: the response is a draft / proposal the
+        // UI surfaces for Accept / Discard. Persistence on Accept goes through
+        // the existing entry PATCH on /api/profile/{work-roles|projects|education}
+        // with the updated bullets array.
+        bullets: {
+            assistFill: (parentKind: 'work-role' | 'project' | 'education', parentId: string) =>
+                jsonFetch(
+                    '/api/profile/bullets/assist',
+                    BulletAssistResponseSchema,
+                    jsonBody('POST', { mode: 'fill', parentKind, parentId }),
+                ),
+            assistRewrite: (
+                parentKind: 'work-role' | 'project' | 'education',
+                parentId: string,
+                bulletId: string,
+            ) =>
+                jsonFetch(
+                    '/api/profile/bullets/assist',
+                    BulletAssistResponseSchema,
+                    jsonBody('POST', { mode: 'rewrite', parentKind, parentId, bulletId }),
+                ),
+        },
     },
 
     savedPapers: {
@@ -565,7 +589,7 @@ export const api = {
             ),
         // Returns a direct download URL — UI uses it as href, no fetch needed.
         downloadUrl: (id: string) => `/api/resumes/${encodeURIComponent(id)}/download`,
-        // Story 48 — side-by-side diff between two GeneratedResume rows
+        // Story S10.2 — side-by-side diff between two GeneratedResume rows
         // (selections deltas, posting-keyword deltas, skills-gap deltas).
         // Returns the diff shape from lib/resumes/diff.ts.
         diff: (a: string, b: string) =>

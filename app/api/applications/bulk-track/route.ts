@@ -11,7 +11,7 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
     return user?.id && user.id.length > 0 ? user.id : null;
 }
 
-// Story 63 — bulk move N applications between tracks in one round-trip.
+// Story S13.8 — bulk move N applications between tracks in one round-trip.
 // Atomic per the underlying $transaction: either every row moves or none do
 // (conflicts return 409 with the offending pairs, no partial state). Cross-
 // user ids in the input list silently drop — they don't error and they don't
