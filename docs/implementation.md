@@ -32,28 +32,123 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ### Per-track status
 
-| Track | Phase | Status | Notes |
+One row per `###` section below — this table is the doc's ToC.
+
+| Track | Section | Status | Notes |
 |---|---|---|---|
-| **A** — Pipeline UX | MA | ✅ | Kanban + drill-in + manual add + delete + inline edit + NOTE composer |
-| A | MA-followup | ✅ | Inline edit 13, delete 15, kind toggle 51, stale-app nudges 49, recruiter contacts 50, resume-version diff 48 all shipped. |
-| **B** — Discovery | MB Phase 1 | ✅ | careers-page + greenhouse, in-app notifications, "Track" / "Hide" |
-| B | MB Phase 2a | ✅ | Track→App (story 20), Lever + Ashby, closed-detection |
-| B | MB Phase 2b | ✅ | Workday + LinkedIn fetchers + Gmail OAuth email send + per-watchlist notificationMode (each/digest/silent) + posting-digest daily job |
-| B | MB Phase 3a | ✅ | Application-side notifications via central dispatcher + decision-deadline nudges (story 27 closed) |
-| B | MB Phase 3b | ◐ | Stale nudges (49) ✅, negative filters (23) ✅. Open: comp parsing (24), quiet hours (28) |
-| **C** — Profile + resume + GitHub | M7 | ✅ | Profile spine + cards + bullet UX with lock/exclude/tags |
-| C | M7.4 | ✅ | Multi-resume import (PDF/DOCX/TXT/JSON) → LLM extract → append-merge |
-| C | M8 Phase 1 | ✅ | Tailored generation: posting → keywords → selection → rewrite → PDF |
-| C | M8 Phase 2 | ✅ | Archival + `applicationId` linkage + "Why these bullets?" trace |
-| C | M8 Phase 3 | ✅ | DOCX ✅. Skills-gap (41) ✅. Multi-template (37) ⛔ user-declined 2026-05-15. Cover letter (40) ⛔ user-declined |
-| C | M9 Phase 1 | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
-| C | M9 Phase 2 | ✅ | Suggested rewrites (45), README ingestion (46) — both shipped 2026-05-22 |
-| **D** — Mobile layout | MD-0 → MD-7 | ⏳ | Designed 2026-05-22, not started. View-as-top-layer + swipe-driven nav; desktop shell unchanged. MD-0 (viewport meta + safe-area) is a standalone first PR. |
-| **Cross-cutting** | Notification dispatcher | ✅ | Tier model (critical/standard/low), global bell, EMAIL_ENABLED kill-switch |
-| Cross-cutting | Backups | ✅ | DB + `data/resumes/` tar to Google Drive via rclone + recovery runbook |
-| Cross-cutting | Pre-push hermetic gate | ✅ | 14 suites, ~5s, simple-git-hooks |
-| Cross-cutting | Route auth hardening | ✅ | 19/19 unguarded routes patched (`requireSession` / `requireLocalOrSession`); RAH-1/5/10/11/17/18/19/20/21/24 ✅ shipped 2026-05-16. RAH-12 (Gemini rate limit) + RAH-13 (backup encryption) ✅ shipped 2026-05-22. All 24 items closed. |
-| Cross-cutting | Polish backlog (PB-N) | ✅ | PB-2/3/4/7/9/10/11/12/13 ✅ shipped 2026-05-16. PB-1/5/6/8/14/15 ✅ shipped 2026-05-17. All open PB-N items addressed. |
+| **A** — Pipeline UX | MA — Pipeline writes + drill-in | ✅ | Kanban + drill-in + manual add + delete + inline edit + NOTE composer |
+| A | MA-followup — Inline edits + document attachment + nudges | ✅ | All sub-items closed: 13, 15, 47 (resume side), 48, 49, 50; cover-letter half of 47 user-declined |
+| **B** — Discovery | MB Phase 1 — Watchlists + crawler + in-app notifications | ✅ | careers-page + greenhouse, in-app notifications, Track/Hide |
+| B | MB Phase 2a — Track→App + Lever/Ashby + closed detection | ✅ | Track→App (20), Lever + Ashby (18), closed-detection (22) |
+| B | MB Phase 2b — Workday + LinkedIn + per-watchlist mode | ✅ | Workday + LinkedIn fetchers + Gmail OAuth email send + per-watchlist mode (each/digest/silent) + posting-digest daily job |
+| B | MB Phase 3a — Application-side notifications | ✅ | Central dispatcher + decision-deadline nudges (27) |
+| B | MB Phase 3b — Polish | ✅ | Stale (49), negative filters (23), comp parsing (24), quiet hours (28) all shipped |
+| B | MB Phase 4 — Side-work pipeline | ✅ | Two-track parameterization (career + side); dedup-by-track; bulk-move (56–63) |
+| **C** — Profile + resume + GitHub | M7 — Profile spine | ✅ | Profile + cards + bullet UX with lock/exclude/tags |
+| C | M7.4 — Multi-resume import (append-merge) | ✅ | PDF/DOCX/TXT/JSON → LLM extract → append-merge |
+| C | M7.5 — Profile snapshots | ◐ | Capture shipped (33); rollback/restore UX deferred until needed |
+| C | M7.4 followups — Fuzzy dedup + extra formats | ◐ | Tag editing UI ✅; LLM fuzzy dedup, LinkedIn ZIP, legacy `.doc` 💤 |
+| C | M8 Phase 1 — Tailored resume generation | ✅ | posting → keywords → selection → rewrite → PDF |
+| C | M8 — DOCX export | ✅ | html-to-docx renderer + PDF/DOCX toggle |
+| C | M8 Phase 2 — Archival + traceability + Application linkage | ✅ | `GeneratedResume` + "Why these bullets?" trace (35, 39) |
+| C | M8 Phase 2-followup | ✅ | Lock/exclude UI prominence (36) |
+| C | M8 Phase 3 — Multi-template + cover letter + skills-gap | ✅ | Skills-gap (41) ✅; multi-template (37) ❌ killed; cover letter (40) ❌ killed |
+| C | M9 Phase 1 — GitHub-driven project metrics | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
+| C | M9 Phase 2 — GitHub UX polish | ✅ | Portfolio toggle UI on `ProjectRow`, suggested rewrites (45), README ingestion (46) |
+| **D** — Mobile layout | MD-0 → MD-7 (incl. design Decisions + File touch estimate) | ⏳ | Designed 2026-05-22, not started. View-as-top-layer + swipe-driven nav; desktop shell unchanged. MD-0 (viewport meta + safe-area) is a standalone first PR. |
+| **Cross-cutting** | Route auth hardening | ✅ | 19/19 unguarded routes patched; all 24 RAH-N items closed (RAH-1/5/10/11/17–21/24 on 2026-05-16; RAH-12/13 on 2026-05-22) |
+| Cross-cutting | Polish backlog (PB-N) | ✅ | PB-2/3/4/7/9/10/11/12/13 on 2026-05-16; PB-1/5/6/8/14/15 on 2026-05-17. All 15 items closed |
+| Cross-cutting | Dev-server perf + stability | ✅ | Worker RSS −43 % median post-Turbopack + 9 fixes; investigation in [`docs/perf-profile.md`](./perf-profile.md) |
+| Cross-cutting | Prompt tuning | ⏳ | Ongoing — blocked on real-user observation of resume rewrites |
+| Cross-cutting | Decision log | — | Reference — Gemini model pin + DOCX converter choice |
+| Cross-cutting | Smoke matrix | — | Reference — hermetic + integration + E2E coverage map |
+
+### Story implementation map
+
+One row per user story from [`user-stories-applications.md`](./user-stories-applications.md). **Phase** points at the section in this doc that ships the story; **Next action** is the concrete step for anything not yet closed. Stories 1–4 and 9–12 predate this plan — they live in the foundational Gmail webhook / classifier / calendar-sync wiring documented in [`../CLAUDE.md`](../CLAUDE.md) (§Gmail webhook + ingest, §Auth) and have no implementation.md section of their own.
+
+| # | Pri | Status | What | Phase | Next action |
+|---|---|---|---|---|---|
+| **§1 Capture from email** | | | | | |
+| 1 | 🔴 | ✅ | Auto-detect recruiter emails | Pre-plan (Gmail webhook + LLM classifier) | — |
+| 2 | 🔴 | ✅ | First-time 6-month inbox scan | Pre-plan (`POST /api/applications/backfill`) | — |
+| 3 | 🔴 | ✅ | Re-run scan idempotent | Pre-plan (`Application.normalizedCompany` + `WebhookDelivery` dedup) | — |
+| 4 | 🟡 | ✅ | Filter non-application mail pre-LLM | Pre-plan (`lib/email-parser.ts` heuristics) | — |
+| **§2 Pipeline view** | | | | | |
+| 5 | 🔴 | ✅ | Kanban view | MA | — |
+| 6 | 🔴 | ✅ | Drag-to-status persists | MA | — |
+| 7 | 🔴 | ✅ | Manual add | MA | — |
+| 8 | 🔴 | ✅ | Drill-in timeline | MA | — |
+| **§3 Calendar integration** | | | | | |
+| 9 | 🟡 | ✅ | Interview → Google Calendar | Pre-plan (`lib/calendar/sync.ts`) | — |
+| 10 | 🟡 | ✅ | Calendar edit flows back to MC | Pre-plan (`/api/calendar/event` webhook) | — |
+| 11 | 🟡 | ✅ | Link existing calendar event to app | Pre-plan (`/api/applications/events/adopt`) | — |
+| 12 | 🟡 | ✅ | Upcoming-events widget filter | Pre-plan (`ApplicationsView` widget) | — |
+| **§4 Manual edits** | | | | | |
+| 13 | 🟡 | ✅ | Inline edit any field | MA-followup (MA-f.1) | — |
+| 14 | 🟡 | ✅ | Free-form note | MA (MA.5 composer) | — |
+| 15 | 🟡 | ✅ | Delete application | MA-followup (MA-f.2) | — |
+| **§5 Job discovery** | | | | | |
+| 16 | 🔴 | ✅ | Declare watchlists | MB Phase 1 | — |
+| 17 | 🔴 | ✅ | Careers-page watchlists | MB Phase 1 | — |
+| 18 | 🟡 | ✅ | Aggregator strategies (Greenhouse/Lever/Ashby/Workday/LinkedIn) | MB Phase 1 (Greenhouse) + 2a (Lever/Ashby) + 2b (Workday/LinkedIn) | — |
+| 19 | 🔴 | ✅ | Deduped new-postings feed | MB Phase 1 | — |
+| 20 | 🟡 | ✅ | Track → draft Application | MB Phase 2a | — |
+| 21 | 🟡 | ✅ | Scheduled crawls + politeness | MB Phase 1 (scheduler) + 2b (LinkedIn hourly) | — |
+| 22 | 🟡 | ✅ | Closed-posting detection | MB Phase 2a | — |
+| 23 | 🔵 | ✅ | Negative filters | MB Phase 3b (MB-3.4) | — |
+| 24 | 🔵 | ✅ | Compensation parsing | MB Phase 3b (MB-3.4) | — |
+| **§6 Notification pipeline** | | | | | |
+| 25 | 🔴 | ✅ | Posting → notification | MB Phase 1 | — |
+| 26 | 🟡 | ✅ | Per-watchlist notification mode | MB Phase 2b | — |
+| 27 | 🟡 | ✅ | Application-side notifications | MB Phase 3a | — |
+| 28 | 🔵 | ✅ | Quiet hours | MB Phase 3b (MB-3.3) | — |
+| **§7 Profile / resume material** | | | | | |
+| 29 | 🔴 | ✅ | Structured profile | M7 | — |
+| 30 | 🔴 | ✅ | Import from PDF/DOCX/LinkedIn | M7.4 | — |
+| 30a | 🔴 | ✅ | Append-merge multi-resume | M7.4 | — |
+| 31 | 🟡 | ✅ | Edit any history entry | M7 | — |
+| 32 | 🟡 | ✅ | Tag bullets | M7.4 followups | — |
+| 33 | 🔵 | ◐ | Profile snapshots + rollback | M7.5 | **Rollback UI**: open snapshot row → destructive-overwrite confirm → single-transaction bulk-replace of `WorkRole` / `Project` / `Education` rows (+ bullet JSON) from the stored payload. Deferred until the read-only safety net proves useful enough to warrant a destructive path. |
+| **§8 Tailored resume** | | | | | |
+| 34 | 🔴 | ✅ | Tailored generation from posting | M8 Phase 1 | — |
+| 35 | 🟡 | ✅ | "Why these bullets?" trace | M8 Phase 2 | — |
+| 36 | 🟡 | ✅ | Lock / exclude bullets | M7 (toggles) + M8 Phase 2-followup (UI prominence) | — |
+| 37 | 🟡 | ⛔ | Multi-template visual styles | M8 Phase 3 | **Killed 2026-05-15** — every target ATS-parses; `ats-plain.tsx` final. |
+| 38 | 🔴 | ✅ | PDF + DOCX export | M8 Phase 1 (PDF) + M8 — DOCX export | — |
+| 39 | 🟡 | ✅ | Archive per Application | M8 Phase 2 | — |
+| 40 | 🔵 | ⛔ | Cover letter generator | M8 Phase 3 | **Killed** — user writes cover letters by hand. |
+| 41 | 🔵 | ✅ | Skills gap report | M8 Phase 3 (M8-3.3) | — |
+| **§9 GitHub project metrics** | | | | | |
+| 42 | 🟡 | ✅ | Connect GitHub (public API per Decision 5) | M9 Phase 1 | — |
+| 43 | 🟡 | ✅ | Portfolio repos → resume bullets | M9 Phase 1 (metrics) + M9 Phase 2 (toggle UI) | — |
+| 44 | 🟡 | ✅ | Scheduled metrics refresh | M9 Phase 1 | — |
+| 45 | 🔵 | ✅ | Suggested rewrites on metric deltas | M9 Phase 2 (M9.4) | — |
+| 46 | 🔵 | ✅ | READMEs as source material | M9 Phase 2 (M9.5) | — |
+| **§10 Application docs** | | | | | |
+| 47 | 🟡 | ◐ | Attach sent resume + cover letter | M8 Phase 2 (resume half) | Cover-letter half OOS — see story 40. |
+| 48 | 🔵 | ✅ | Resume diff view | MA-followup (MA-f.6) | — |
+| **§11 Follow-up & nudges** | | | | | |
+| 49 | 🟡 | ✅ | Stale-application nudges | MA-followup (MA-f.4) + MB Phase 3b (MB-3.2 cross-ref) | — |
+| 50 | 🔵 | ✅ | Recruiter contacts | MA-followup (MA-f.5) | — |
+| **§12 Multi-kind applications** | | | | | |
+| 51 | 🔵 | ✅ | Multi-kind (job / internship / college / other) | MA-followup (kind toggle) | — |
+| **§13 Side-work pipeline** | | | | | |
+| 56 | 🔴 | ✅ | Second pipeline for gig leads | MB Phase 4 | — |
+| 57 | 🔴 | ✅ | Keyword-based side watchlists | MB Phase 4 | — |
+| 58 | 🔴 | ✅ | Separate side-track kanban | MB Phase 4 (MB-4.5 / 4.6) | — |
+| 59 | 🔴 | ✅ | Side new-postings feed | MB Phase 4 (MB-4.3 / 4.5) | — |
+| 60 | 🟡 | ✅ | Cold email defaults to career + 1-click reclassify | MB Phase 4 (MB-4.4 / 4.5) | — |
+| 61 | 🟡 | ✅ | Shared Calendar + Account Status across tracks | MB Phase 4 (MB-4.6) | — |
+| 62 | 🔵 | ✅ | Same employer allowed in both tracks | MB Phase 4 (MB-4.1 unique-by-track) | — |
+| 63 | 🔵 | ✅ | Bulk-move applications between tracks | MB Phase 4 (MB-4.8) | — |
+| **§14 Future / out of scope** | | | | | |
+| 52 | 🔵 | 💤 | Browser extension "save this posting" | — | Future. Not blocking. |
+| 53 | 🔵 | 💤 | Auto-fill application forms | — | Future. Not blocking. |
+| 54 | 🔵 | 💤 | Interview prep tracker | — | Future. Not blocking. |
+| 55 | 🔵 | 💤 | Salary research | — | Future. Not blocking. |
+
+**Actionable items** (rows above with content in the Next action column): **story 33** (rollback UI for profile snapshots) is the only open implementation item — everything else is either ✅ shipped, ⛔ user-declined, or 💤 future. The remaining open canonical phase is **Track D — Mobile layout (MD-0 → MD-7)**, which isn't tied to a user story (platform UX rather than feature work).
 
 ### Open work, by leverage (next-up order)
 
@@ -82,7 +177,7 @@ Already-implemented work surfaced during review: full Kanban writes (drag-to-sta
 
 Files (load-bearing): `app/api/applications/route.ts`, `app/api/applications/events/route.ts`, `components/views/ApplicationsView.tsx`, `components/overlays/AddApplicationModal.tsx`, `components/overlays/ApplicationDetailOverlay.tsx`.
 
-### MA-followup — Inline edits + document attachment + nudges ✅ (mostly)
+### MA-followup — Inline edits + document attachment + nudges ✅
 
 Stories: 13, 14, 15, 47, 48 (🟡) · 49, 50 (🟡).
 
@@ -94,8 +189,6 @@ Stories: 13, 14, 15, 47, 48 (🟡) · 49, 50 (🟡).
 **MA-f.6** ✅ — Resume-version diff (story 48). Shipped 2026-05-22. Pure read-side, no schema changes. `lib/resumes/diff.ts:computeResumeDiff(a, b)` compares two `GeneratedResume` rows along three axes — posting `parsedKeywords`, `selections` (set-diffed by `bulletId` so the same bullet appearing in both surfaces rewrite-text deltas), and `skillsGap`. Order is preserved from the A side so the UI can render keywords in their original posting order. `/api/resumes/diff?a=&b=` parses both rows in one Prisma round-trip, ownership-checks via `userId in where`, hydrates with tolerant per-field validators (legacy rows with missing fields default to empty arrays rather than 500ing the diff). UI lives in `ApplicationDetailOverlay.tsx:ApplicationResumesSection` — when ≥2 resumes are present, each row gets a checkbox; selecting 2 (FIFO past 2) enables a "Compare selected" button that reveals an inline `ResumeDiffPanel` showing summary stats + keyword chips (rose=only A, emerald=only B) + bullets-only-in-A / bullets-only-in-B / shared-but-rewritten-differently buckets. Hermetic: `scripts/tests/hermetic/resume-diff-smoke.ts` (31/31) covers identical-resume zero-deltas, A-order preservation, bullet set-diff, rewrite-changed + scoreDelta, per-bullet matchedKeywords/Tags deltas, skills-gap deltas.
 
 **MA-f.5** ✅ — Recruiter contacts (story 50). Shipped 2026-05-22. New `Contact` Prisma model (id, applicationId, name, email?, role?, notes?, lastTouchedAt?, position) with cascade-on-application-delete; migration `add_application_contacts` applied to both dev.db and prod.db. `lib/repositories/contacts.ts` exposes CRUD with parent-application ownership scoping + `primaryContactForApplication(applicationId)` that orders by `lastTouchedAt desc nulls last → position asc → createdAt asc`. `/api/applications/contacts` route handles GET/POST/PATCH/DELETE under `requireSession`. UI: expandable "Contacts" footer on `ApplicationDetailOverlay` (sits between Timeline and Resumes) with inline add-form + per-row Touch button (bumps lastTouchedAt to now) + Trash. `scheduler/jobs/stale-applications.ts` now consults `primaryContactForApplication` and reshapes the nudge body — "Consider drafting a follow-up to <FirstName>" when a contact exists, falling back to the generic body otherwise. Hermetic: `scripts/tests/hermetic/contacts-smoke.ts` (25/25) covers CRUD + cross-user rejection + primary-contact ordering + cascade-on-application-delete.
-
-**Still open in MA-followup:** story 48 (resume diff).
 
 ---
 
@@ -275,22 +368,6 @@ Stories: 18 (Workday), 21 (LinkedIn), 26 (per-watchlist mode) (🟡) · Decision
 - ✅ **Email delivery** (shipped 2026-05-15 via OQ1): Gmail OAuth send through `lib/email/send.ts`, dispatched via `lib/notifications/dispatch.ts` at `tier='critical'`. See "Track A — Notification dispatcher" / OQ1 below.
 - ✅ **Per-watchlist `each`/`digest`/`silent` mode** (story 26): `Watchlist.notificationMode` column shipped with the MB Phase 2b batch; `each` fires per-posting in real time, `digest` batches into the daily `posting-digest` scheduler job, `silent` skips delivery (postings still land in the DB so they show in the postings feed when the user opens the dash).
 
-#### MB-2.1b — Workday fetcher (deferred — fiddly per-tenant URLs)
-
-Workday has per-tenant JSON endpoints (e.g. `https://<tenant>.wd5.myworkdayjobs.com/wday/cxs/<tenant>/<career-site>/jobs`) with predictable shapes — POST with a small JSON body for pagination/filters. Each tenant has a slightly different URL prefix. Config: `{ tenantHost, careerSite, companyName, locationCountry? }`.
-
-#### MB-2.2 — LinkedIn (story 21)
-
-Separate, slowest cadence (hourly or longer), most rate-sensitive. Its own fetcher with explicit rate-limit handling + user-supplied search URL.
-
-#### MB-2.5 — Per-watchlist notification mode (story 26)
-
-Add `notificationMode: 'each' | 'digest' | 'silent'` to `Watchlist` config. New daily digest scheduler job that batches `'digest'` watchlists and emits one combined `Notification` per user per day.
-
-#### MB-2.6 — Email delivery (Decision 2)
-
-Pick a provider when implementing (Resend most likely — clean SDK, generous free tier). Reads `Notification.channels`; if `'email'` is included, send via the provider. `EMAIL_FROM` + `RESEND_API_KEY` env vars.
-
 ### MB Phase 3a — Application-side notifications ✅
 
 Story 27 (🟡). Shipped 2026-05-15.
@@ -302,7 +379,7 @@ New helper `maybeNotifyForApplicationEvent(event, userId, companyHint?)` in `lib
 
 Best-effort: notification failures log to `console.warn` and don't fail the caller's create.
 
-### MB Phase 3b — Polish ◐ (partial)
+### MB Phase 3b — Polish ✅
 
 Stories: 28 (🔵), 23 (🔵), 24 (🔵).
 
@@ -314,7 +391,7 @@ Story 49. Shipped as `scheduler/jobs/stale-applications.ts` (see MA-f.4).
 
 Shipped 2026-05-22. `GlobalSetting.quietHoursStart`, `quietHoursEnd`, `quietHoursTimezone` — all nullable; quiet hours are off until both Start and End are populated. Migration `add_quiet_hours`. `lib/notifications/quiet-hours.ts:isInQuietHours(now, config)` resolves `now` into the configured IANA zone via `Intl.DateTimeFormat` (DST handled by the host's zoneinfo) and tests against the window. Same-day windows are `[start, end)`; wrap-around windows (`22:00 → 08:00`) are `[start, 24:00) ∪ [00:00, end)`. `dispatchNotification` strips `email` from non-critical dispatches whose timestamp lands inside the window — the row still creates so the bell shows it, but no Gmail send fires. Critical tier (`tier === "critical"` — OFFER / INTERVIEW_SCHEDULED / etc.) bypasses entirely; the user has explicitly opted into 3 a.m. interruptions for those. Hermetic `quiet-hours-smoke.ts` (20/20) covers null-config disablement, invalid HH:MM/timezone degradation, same-day, wrap-around, zero-length window, and a non-UTC tz (`America/Los_Angeles`).
 
-#### MB-3.4 — Negative filters ✅ / compensation parsing (open)
+#### MB-3.4 — Negative filters ✅ / compensation parsing ✅
 
 - ✅ **Negative filters** (story 23, shipped `9da9a2d`): per-watchlist `Watchlist.negativeFilters` JSON regex array. `/api/postings` GET applies case-insensitive matching against `title\nsnippet\nlocation`. `?includeFiltered=true` bypass for debug. UI: expandable editor on `WatchlistsCard` with regex validation + count chip. Hermetic smoke at `scripts/tests/hermetic/negative-filters-smoke.ts` (18/18).
 - **Compensation** (story 24, shipped 2026-05-22): `lib/postings/compensation.ts:parseCompensation` regex over `(title + snippet + location)` → `compensationMin/Max/Currency/Cadence` columns on `JobPosting`. Migration `add_posting_compensation`. Wired into `scheduler/jobs/job-watcher.ts` at row-create time (legacy rows stay null until next crawl re-extracts). Cadence detection covers `/hr`, `per day/week/month/year`, `annually` / `annual` / `yearly` / `p.a.` (slash patterns rewritten to drop the leading `\b` since spaces before `/` aren't word boundaries). Plausibility guards reject "5,000 employees" / "$1 / hour" garbage. UI: emerald chip on `NewPostingsCard` rows formatted as `$120k–$150k/yr` (or `$60/hr` for hourly). Hermetic `compensation-smoke.ts` (18/18) covers the matrix.
@@ -407,7 +484,7 @@ Story 36 (lock/exclude UI surfacing) deferred — toggles already exist; just ne
 
 - ✅ **M8-2.5** — Lock/exclude bullet UI prominence (story 36). Shipped 2026-05-15. Locked bullets get amber border + always-visible lock icon; excluded bullets get rose border + line-through text + always-visible eye-off icon. Tooltips on hover explain "always include" vs "never include". Section description on the Profile dash's Work History section legends the symbols. Locking and excluding are now mutually exclusive (setting one clears the other).
 
-### M8 Phase 3 — Multi-template + cover letter + skills-gap
+### M8 Phase 3 — Multi-template + cover letter + skills-gap ✅
 
 **M8-3.1 (multi-template) — ❌ Killed 2026-05-15.** User decision: every target company runs resumes through an ATS parser first (Boeing, Blue Origin, Greenhouse/Lever/Ashby hosts). Visual-polish gain isn't worth the parsing risk on a non-plain template. ATS-plain is final.
 
@@ -427,9 +504,9 @@ Stories: 42, 43, 44 (🟡). Shipped 2026-05-15.
 - API: `app/api/profile/projects/route.ts` POST/PATCH accept `githubRepo` (zod-validated as `[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+`) and `portfolio`. Repository helpers + Prisma types updated.
 - Resume template: `lib/resumes/templates/ats-plain.tsx`'s `formatMetricsLine()` renders e.g. "★ 142 · 2,300 commits over 14 months · Go / TypeScript / Python" under the project name when metrics are present. Skip threshold: stars only render at ≥ 5.
 
-### M9 Phase 2 — GitHub UX polish ◐
+### M9 Phase 2 — GitHub UX polish ✅
 
-- **Project portfolio toggle UI** — add a checkbox + repo input on `ProjectCard` so the user can flip projects to portfolio mode without going through Prisma.
+- **Project portfolio toggle UI** ✅ — `components/ui/ProjectRow.tsx` has the portfolio checkbox + repo input so projects can be flipped to portfolio mode without going through Prisma.
 - **M9.4 — Suggested-rewrites (story 45) ✅ shipped 2026-05-22.** `lib/profile/metric-deltas.ts:computeMetricDeltas(prev, next)` runs after every metrics refresh. Detects star-threshold crossings against `STAR_MILESTONES = [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000]` (highest-only — 4→26 fires once at 25), primary-language flips, new ≥5%-share languages (filters out one-off shell scripts), and commit-count jumps ≥25% AND ≥10 absolute (so tiny repos don't churn). First-ingest (`prev === null`) is silent — only changes fire. Each delta dispatches a `kind='system' tier='standard'` notification with dedupKey `portfolio-rewrite:${projectId}:${type}:${milestone}` so a milestone never re-fires; the commit-jump uses `nextCommits` as the milestone so subsequent jumps key uniquely. Hermetic `metric-deltas-smoke.ts` (16/16).
 - **M9.5 — README-as-source (story 46) ✅ shipped 2026-05-22.** `Project.readme` + `readmeUpdatedAt` columns (migration `add_project_readme`, both DBs). New `fetchGithubReadme(ownerRepo)` in `lib/fetchers/github-public-fetcher.ts` — separate from `fetchGithubRepoMetrics` so the metrics hot path stays at 3 API calls. `scheduler/jobs/github-metrics.ts` refreshes README weekly (independent cadence from the 20h metrics gate) — README failures don't tank the metrics refresh for the same project. Stored markdown is truncated at 16 KB at write time to bound row size. Resume rewrite prompt: new optional `ProjectReadmeContext` param on `rewriteBullets`; `app/api/resumes/route.ts` builds the context for project-source bullets actually in the selection (avoids paying tokens on READMEs that aren't surfaced) and slices an additional 2 KB excerpt per project before prompt assembly. Pure prompt builder extracted as `buildRewriteUserPrompt` so the README-context branch is unit-testable; hermetic `readme-prompt-smoke.ts` (13/13) covers no-ctx, empty-ctx, project-only inclusion, multi-bullet dedup (one README per project, not per bullet), selective inclusion (only sourceIds in the selection), truncation at the prompt limit, and empty-string-readme as no-readme.
 
@@ -553,7 +630,7 @@ No new hermetic file. The carousel is gesture / animation behavior that DOM-leve
 
 ## Cross-cutting
 
-### Route auth hardening ◐
+### Route auth hardening ✅
 
 Cross-cutting security pass against the public Cloudflare-tunnel surface (`https://ms-prod.salsquared.xyz`). The intended model — "LAN trusts, tunnel requires session" via `lib/auth-guards.ts` — was correctly applied to 21 user-data routes (applications, watchlists, profile, resumes, etc.) but a 2026-05-15 audit found 19 read-side / SSE / external-data routes with no guard at all.
 
@@ -734,6 +811,6 @@ The five canonical decisions live in `user-stories-applications.md`. Implementat
 | `resume-render-smoke.ts` | E2E (no AI) | Template → PDF only |
 | `resume-e2e-smoke.ts` | E2E | Full PDF generation through Gemini + puppeteer |
 | `resume-docx-smoke.ts` | E2E | Full DOCX generation, mammoth round-trip |
-| `watchlist-e2e-smoke.ts` | E2E (planned) | Watchlist → fetcher → scheduler → posting → notification |
+| `watchlist-e2e-smoke.ts` | E2E | Watchlist → fetcher → scheduler → posting → notification |
 
 All smokes assume the dev PM2 process (`mission-control-dev`) is online on `:4101`.
