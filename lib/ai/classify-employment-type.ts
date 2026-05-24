@@ -21,6 +21,7 @@
  */
 import { z } from "zod";
 import { chatJSON, MODEL_LITE_CHEAP } from "@/lib/ai/gemini";
+import { loadPrompt } from "@/lib/ai/prompts";
 import { EMPLOYMENT_TYPES, type EmploymentType } from "@/lib/fetchers/employment-type";
 
 export interface ClassifyInput {
@@ -46,27 +47,14 @@ const ResultSchema = z.object({
 // batch — 50 is the empirical sweet spot from MB Phase 1 testing.
 const BATCH_SIZE = 50;
 
-const SYSTEM_PROMPT = `Classify each posting by employment type. Choose one of:
-- "full-time": permanent salaried role (Engineer, Manager, Director, Staff/Senior X). Also paid post-grad fellowships at labs/companies (Anthropic Fellows, OpenAI Residency, "Research Fellow", "AI Safety Fellow") — these are typically 6-12mo W-2 roles for experienced hires.
-- "internship": interns, co-ops, apprentices, student seasonal programs (Summer 2026 SWE). A summer-term fellowship tied to a student cohort goes here.
-- "contract": 1099, freelance, fixed-term consulting. NOT "Contract Manager"/"Contract Specialist"/"Contract Negotiator" — those administer contracts and are full-time.
-- "part-time": explicitly part-time hourly.
-- "temporary": seasonal or short-term temp.
-- null: genuinely ambiguous AND no signal.
-
-Default to "full-time" for typical engineering/operations titles. Output: {"types":["full-time","internship",null,...]} — one entry per input line, same order, no other fields.`;
-
-function buildUserPrompt(items: ClassifyInput[]): string {
+function buildInputLines(items: ClassifyInput[]): string {
     // Pipe-delimited, one row per line. Index|Company|Title|Location.
     // Snippet/department dropped: title is the load-bearing signal and the
     // disambiguation rules live in the system prompt, not the data. Verified
     // empirically: including snippet did not change classification on any of
     // the live-probe fixtures (including the "Anthropic AI Safety Fellow"
     // edge case) — only added ~9 % prompt tokens.
-    const lines = items.map((it, i) =>
-        `${i}|${it.company}|${it.title}|${it.location ?? ""}`,
-    );
-    return `Classify each line below (one row per line). Return ${items.length} types in input order.\n\n${lines.join("\n")}`;
+    return items.map((it, i) => `${i}|${it.company}|${it.title}|${it.location ?? ""}`).join("\n");
 }
 
 // Injectable for hermetic tests (scripts/tests/hermetic/classify-employment-type-smoke.ts).
@@ -80,10 +68,14 @@ async function classifyOneBatch(
     chatFn: ChatJSONFn = chatJSON,
 ): Promise<Map<string, EmploymentType | null>> {
     const start = Date.now();
+    const prompt = await loadPrompt("employment-type-classifier", {
+        itemCount: items.length,
+        inputLines: buildInputLines(items),
+    });
     const result = await chatFn({
         name: "employment-type-classifier",
-        system: SYSTEM_PROMPT,
-        user: buildUserPrompt(items),
+        system: prompt.system,
+        user: prompt.user,
         schema: ResultSchema,
         temperature: 0.1,
         // Pure enum picker — output space is { full-time | part-time |

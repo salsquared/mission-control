@@ -31,6 +31,7 @@
 
 import { z } from 'zod';
 import { chatJSON, MODEL_LITE } from '@/lib/ai/gemini';
+import { loadPrompt } from '@/lib/ai/prompts';
 import { newBulletId } from '@/lib/profile/bullets';
 import type { Bullet } from '@/lib/profile/types';
 import type { ArchiveSpan } from '@/lib/profile/upload-archive';
@@ -98,16 +99,6 @@ const ARCHIVE_CAP_BYTES = 1_536; // 1.5 KB
 const README_CAP_BYTES = 2_048; // 2 KB
 const SIBLING_COUNT_CAP = 12;
 const USER_PROMPT_LIMIT = 8_192; // 8 KB
-
-const SYSTEM_PROMPT = [
-    "You are drafting or polishing professional resume bullets for the user. Output only the JSON schema requested — no preamble, no commentary.",
-    '',
-    'Hard rules — never violate:',
-    "1. Do not invent specific quantitative claims (percentages, dollar amounts, user counts, performance numbers). If you have no source for a number, phrase the contribution qualitatively.",
-    "2. Preserve the user's existing tense and voice. Do not switch to first-person.",
-    "3. If you cannot produce a defensible bullet from the available context, return fewer bullets — never pad with generic filler.",
-    "4. When the archive shows the same role described with different wording across versions, prefer the most concrete / metric-bearing phrasing. When the current profile has a blank that the archive fills, prefer the archive's specifics over a generic restatement.",
-].join('\n');
 
 /**
  * Render the parent entity's spine fields as a markdown-style list. Skips
@@ -239,89 +230,57 @@ export function renderReadme(ctx: ProjectReadmeContext | null | undefined, cap: 
     return `${header}\n${truncated}\n…(truncated)`;
 }
 
-function renderTaskStatement(mode: AssistMode): string {
-    if (mode === 'fill') {
-        return 'Fill 3 to 5 starter bullets for this entry.';
-    }
-    return 'Rewrite this one bullet. Return both the new text AND updated tags reflecting the new wording — when the rewrite changes which skills / technologies / themes the bullet emphasizes, the tags should change with it.';
-}
-
-function renderCurrentBullet(current: { text: string; tags: string[] } | null | undefined): string {
-    if (!current) return '';
-    return [
-        '## Current bullet to rewrite',
-        current.text,
-        `tags: [${current.tags.map((t) => JSON.stringify(t)).join(', ')}]`,
-    ].join('\n');
-}
-
-function renderOutputSchema(mode: AssistMode): string {
-    if (mode === 'fill') {
-        return [
-            '## Output schema',
-            '{ "bullets": [{ "text": "<bullet text>", "tags": ["<tag1>", "<tag2>"] }, ...] }',
-            'Return 3–5 bullets. Tags should be 1–3 lowercase keywords drawn from the text.',
-        ].join('\n');
-    }
-    return [
-        '## Output schema',
-        '{ "text": "<rewritten bullet text>", "tags": ["<tag1>", "<tag2>"] }',
-        'Return the new text plus 1–3 lowercase keyword tags reflecting the rewritten wording (typically skills, technologies, or themes the rewrite emphasizes). Keep the text length range close to the original (±20%). Tags MAY repeat the originals when the rewrite preserves the same concepts; tags MUST change when the rewrite shifts emphasis. Do not echo the id — that is preserved by the server.',
-    ].join('\n');
-}
-
 /**
- * Pure prompt builder. Returns the system + user pair `chatJSON` consumes.
+ * Async prompt builder — pulls the system + user template from the prompt
+ * registry (Lunary when configured, disk snapshot otherwise) and renders
+ * with the assembled section variables. Same overflow contract as before:
+ * drop archive → siblings → README in that priority order to fit within
+ * USER_PROMPT_LIMIT bytes.
  *
- * Section order in `user`:
- *   1. Task statement
- *   2. Parent spine (never trimmed)
- *   3. Sibling bullets (trimmable)
- *   4. Archive spans (trimmable — dropped first on overflow)
- *   5. README excerpt (trimmable)
- *   6. Current bullet (rewrite mode only, never trimmed)
- *   7. Output schema (never trimmed)
- *
- * If the assembled `user` exceeds USER_PROMPT_LIMIT bytes, trim in this
- * priority (lowest-value first): archive spans → siblings → README.
+ * Made async at LOP-6 cutover so production reads the latest Lunary
+ * version on every call (the SDK caches a few minutes). Smoke + the
+ * /api/profile/bullets/assist route both need `await`.
  */
-export function buildBulletAssistPrompt(
+export async function buildBulletAssistPrompt(
     input: BuildBulletAssistPromptInput,
-): { system: string; user: string } {
-    const taskStatement = renderTaskStatement(input.mode);
+): Promise<{ system: string; user: string }> {
+    const slug = input.mode === 'fill' ? 'bullet-assist-fill' : 'bullet-assist-rewrite';
     const spine = renderSpine(input.parent);
-    const currentBullet = input.mode === 'rewrite' ? renderCurrentBullet(input.currentBullet) : '';
-    const outputSchema = renderOutputSchema(input.mode);
+    const currentBulletText = input.currentBullet?.text ?? '';
+    const currentBulletTags = input.currentBullet
+        ? input.currentBullet.tags.map(t => JSON.stringify(t)).join(', ')
+        : '';
 
     // Start with full caps for the trimmable sections.
-    let siblingsSection = renderSiblingBullets(input.siblingBullets, SIBLING_CAP_BYTES);
-    let archiveSection = renderArchiveSpans(input.archiveSpans, ARCHIVE_CAP_BYTES);
-    let readmeSection = renderReadme(input.readmeContext ?? null, README_CAP_BYTES);
+    let siblings = renderSiblingBullets(input.siblingBullets, SIBLING_CAP_BYTES);
+    let archive = renderArchiveSpans(input.archiveSpans, ARCHIVE_CAP_BYTES);
+    let readme = renderReadme(input.readmeContext ?? null, README_CAP_BYTES);
 
-    const assemble = (): string => {
-        const parts: string[] = [taskStatement, '', spine];
-        if (siblingsSection) parts.push('', siblingsSection);
-        if (archiveSection) parts.push('', archiveSection);
-        if (readmeSection) parts.push('', readmeSection);
-        if (currentBullet) parts.push('', currentBullet);
-        parts.push('', outputSchema);
-        return parts.join('\n');
-    };
+    const render = () => loadPrompt(slug, {
+        spine,
+        siblings,
+        archive,
+        readme,
+        currentBulletText,
+        currentBulletTags,
+    });
 
-    let user = assemble();
+    let prompt = await render();
 
-    // Overflow trim — drop in priority order (lowest value first).
-    if (Buffer.byteLength(user, 'utf8') > USER_PROMPT_LIMIT) {
-        archiveSection = '';
-        user = assemble();
+    // Overflow trim — drop in priority order (lowest value first). Re-render
+    // through the registry so the byte budget is computed against the actual
+    // template that will be sent.
+    if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
+        archive = '';
+        prompt = await render();
     }
-    if (Buffer.byteLength(user, 'utf8') > USER_PROMPT_LIMIT) {
-        siblingsSection = '';
-        user = assemble();
+    if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
+        siblings = '';
+        prompt = await render();
     }
-    if (Buffer.byteLength(user, 'utf8') > USER_PROMPT_LIMIT) {
-        readmeSection = '';
-        user = assemble();
+    if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
+        readme = '';
+        prompt = await render();
     }
 
     // Spine + task + current bullet + schema are never trimmed — at this
@@ -329,7 +288,10 @@ export function buildBulletAssistPrompt(
     // (extremely unlikely; would require a multi-KB spine), accept it; the
     // route will see a MAX_TOKENS error from Gemini and surface it.
 
-    return { system: SYSTEM_PROMPT, user };
+    if (!prompt.system) {
+        throw new Error(`buildBulletAssistPrompt: registry template ${slug} has no system message`);
+    }
+    return { system: prompt.system, user: prompt.user };
 }
 
 // ============================================================================

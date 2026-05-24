@@ -80,7 +80,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
 
     "bullet-assist-fill": async (input) => {
         const builderInput = input as Parameters<typeof buildBulletAssistPrompt>[0];
-        const prompt = buildBulletAssistPrompt({ ...builderInput, mode: "fill" });
+        const prompt = await buildBulletAssistPrompt({ ...builderInput, mode: "fill" });
         return await callBulletAssist({
             mode: "fill",
             prompt,
@@ -91,7 +91,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
 
     "bullet-assist-rewrite": async (input) => {
         const builderInput = input as Parameters<typeof buildBulletAssistPrompt>[0];
-        const prompt = buildBulletAssistPrompt({ ...builderInput, mode: "rewrite" });
+        const prompt = await buildBulletAssistPrompt({ ...builderInput, mode: "rewrite" });
         const currentBullet = builderInput.currentBullet;
         if (!currentBullet) {
             throw new Error("bullet-assist-rewrite fixture must include currentBullet");

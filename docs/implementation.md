@@ -60,7 +60,7 @@ One row per `###` section below — this table is the doc's ToC.
 | **Cross-cutting** | Route auth hardening | ✅ | 19/19 unguarded routes patched; all 24 RAH-N items closed (RAH-1/5/10/11/17–21/24 on 2026-05-16; RAH-12/13 on 2026-05-22) |
 | Cross-cutting | Polish backlog (PB-N) | ✅ | PB-2/3/4/7/9/10/11/12/13 on 2026-05-16; PB-1/5/6/8/14/15 on 2026-05-17. All 15 items closed |
 | Cross-cutting | Dev-server perf + stability | ✅ | Worker RSS −43 % median post-Turbopack + 9 fixes; investigation in [`docs/perf-profile.md`](./perf-profile.md) |
-| Cross-cutting | LLM observability + prompt registry | ⏳ | Lunary managed cloud for tracing all 9 LLM call names + prompt registry, plus Promptfoo eval harness for regression testing. 11 tasks LOP-1–LOP-11 — infra-first (no behavior change), then per-callsite template migration (incremental), then eval scaffold + docs. Subsumes the previously-ad-hoc Prompt tuning row once LOP-9 lands. |
+| Cross-cutting | LLM observability + prompt registry | ✅ | LOP-1 → LOP-11 landed 2026-05-24. Lunary tracing live on all 9 callsites via `wrapModel` + manual `trackEvent` for the SDK-bypassing email-parser. All 9 prompts uploaded to Lunary's registry via `scripts/sync-lunary-templates.ts`; runtime calls go through `lib/ai/prompts.ts:loadPrompt(slug, vars)` (Lunary-preferred, disk-fallback). Promptfoo harness at `eval/` with 9 suites + 13 starter fixtures, run via `npm run test:prompts`. LOP-9 starter fixtures are synthetic-but-realistic; real-fixture capture seam is still a TODO. |
 | Cross-cutting | Prompt tuning | ⏳ | Ongoing — blocked on real-user observation of resume rewrites. Folds into §LLM observability once the Promptfoo eval suite lands (LOP-9); the free-text observations below become canned fixtures + assertions. |
 | Cross-cutting | Decision log | — | Reference — Gemini model pin + DOCX converter choice |
 | Cross-cutting | Smoke matrix | — | Reference — hermetic + integration + E2E coverage map |
@@ -1019,15 +1019,18 @@ Mass mechanical edit — 7 chatJSON callers each gain `name: '<kebab-case-id>'` 
 
 Defensively guarded — failures in `trackEvent` itself must not block ingest. Wrap the trackEvent calls in a try/catch that logs warn-and-continue.
 
-##### LOP-6 — Migrate static prompts to Lunary template registry ⏳
+##### LOP-6 — Migrate static prompts to Lunary template registry ✅
 
-Per-callsite — incremental, can land in batches. For each callsite:
-1. Identify static prompt content: system prompt + task statements + output-schema descriptions + guardrail rules. Dynamic sections (sibling bullet lists, archive spans, posting text, JSON-stringified inputs) stay computed in code.
-2. Create a template in Lunary's UI named after the inventory slug. Paste system + user template text with `{{var}}` markers for the dynamic parts (e.g. `{{spine}}`, `{{siblings}}`, `{{archive}}`, `{{readme}}`, `{{currentBullet}}`).
-3. Code rewrites: replace inline `SYSTEM_PROMPT` constants with `const { messages, model, temperature, max_tokens } = await lunary.renderTemplate('<slug>', vars)`, then pass through to `chatJSON` (which gains an alternate `messages: ChatMessage[]` path alongside the existing `system + user` strings — back-compat for non-migrated callers).
-4. Migration order, highest iteration churn first: `bullet-assist-fill` + `bullet-assist-rewrite` + `resume-rewrite` first, then `posting-parse` + `employment-type-classifier`, then `discovery-suggest` + `profile-import` + `profile-synthesize` + `email-parser`.
+All 9 callsites cut over 2026-05-24 in a single pass (no longer incremental — went big-bang). Mechanism:
+1. **Upload script** `scripts/sync-lunary-templates.ts` parses every `docs/llm-prompts/<slug>.md`, extracts the system + user template + extra (model/temperature/max_tokens), and POSTs to Lunary's REST API. Idempotent: GET /templates, compare latest version (key-sorted JSON-compare to handle Lunary's response-shape reordering), POST a new version only when content diverges. Auth: `LUNARY_SECRET_KEY` (private API key from dashboard → Settings, distinct from the public/tracing key).
+2. **Runtime helper** `lib/ai/prompts.ts:loadPrompt(slug, vars)`. Prefers Lunary's `renderTemplate` when `LUNARY_PUBLIC_KEY` is set, falls back to parsing `docs/llm-prompts/<slug>.md` from disk when unset OR when the Lunary call throws. Returns `{ system?, user, model?, temperature?, maxOutputTokens? }`. Disk fallback is what makes hermetic smokes work without a Lunary account AND protects production through transient Lunary API blips.
+3. **Per-callsite changes** — each previous inline `SYSTEM_PROMPT` constant + `buildUserPrompt` function replaced with `const prompt = await loadPrompt(slug, vars); chatJSON({ system: prompt.system, user: prompt.user, ... })`. Model + temperature + maxOutputTokens stay explicit in code (auditable in source rather than depending on Lunary's stored values for safety).
+4. **`buildBulletAssistPrompt` became async** — it loops the registry renderer (drop archive → siblings → readme on overflow) so the 8 KB budget is enforced against the live template that will be sent. Smoke + `/api/profile/bullets/assist` route + Promptfoo provider all gained `await`.
+5. **Dashboard model dropdown caveat**: Lunary's UI dropdown only knows its built-in OpenAI/Anthropic SKUs; our `gemini-3.x` strings show as a fallback like "gpt-5.5". The actual `extra.model` value is stored correctly and returned by `renderTemplate`. The dashboard's playground / built-in eval features are unusable for our model fleet — `npm run test:prompts` (Promptfoo) is the eval path instead.
 
-Per-callsite acceptance: prompt content visible + editable in Lunary UI; runtime call uses `renderTemplate`; no behavioral diff on the canonical fixture (verified via LOP-9 Promptfoo).
+Iteration workflow post-cutover: edit prompt in Lunary's dashboard → mirror to `docs/llm-prompts/<slug>.md` same-day, OR edit the .md and run `npx tsx scripts/sync-lunary-templates.ts` to push.
+
+45/45 hermetic green after cutover. Promptfoo harness verified via dry-run earlier in the day.
 
 ##### LOP-7 — Extract prompt blobs for Lunary copy-paste ⏳
 
@@ -1065,7 +1068,7 @@ Capture path: gate `console.info('[FIXTURE]', JSON.stringify({ name, system, use
 
 New subsection under "Gemini rate limiting + model fleet" → "LLM observability". Captures the three invariants:
 - Every new `chatJSON` caller MUST pass `name`. TypeScript enforces this; the inventory table in this section is the canonical list.
-- Every prompt iteration goes through the Lunary registry (`renderTemplate`), not inline string edits — once LOP-6 lands for that callsite.
+- Every prompt iteration goes through `loadPrompt` (which routes Lunary's `renderTemplate` → disk fallback), not inline string edits in code.
 - Prompt changes that affect output shape must come with a Promptfoo fixture + assertion update; run `npm run test:prompts` before pushing prompt changes.
 
 ---

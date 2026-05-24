@@ -211,7 +211,7 @@ async function main(): Promise<void> {
 
     // ─── buildBulletAssistPrompt — fill mode ───────────────────────────────
     {
-        const result = buildBulletAssistPrompt({
+        const result = await buildBulletAssistPrompt({
             mode: 'fill',
             parent: makeWorkRoleParent(),
             siblingBullets: [
@@ -259,7 +259,7 @@ async function main(): Promise<void> {
 
     // ─── buildBulletAssistPrompt — rewrite mode ────────────────────────────
     {
-        const result = buildBulletAssistPrompt({
+        const result = await buildBulletAssistPrompt({
             mode: 'rewrite',
             parent: makeWorkRoleParent(),
             siblingBullets: [{ text: 'Migrated a TypeScript monorepo to pnpm', tags: ['typescript'] }],
@@ -300,7 +300,7 @@ async function main(): Promise<void> {
 
     // ─── buildBulletAssistPrompt — README inclusion for project parents ───
     {
-        const result = buildBulletAssistPrompt({
+        const result = await buildBulletAssistPrompt({
             mode: 'fill',
             parent: makeProjectParent(),
             siblingBullets: [],
@@ -333,7 +333,7 @@ async function main(): Promise<void> {
             projectName: 'Pulsar',
             excerpt: 'y'.repeat(10_000),
         };
-        const result = buildBulletAssistPrompt({
+        const result = await buildBulletAssistPrompt({
             mode: 'fill',
             parent: makeWorkRoleParent(),
             siblingBullets: hugeSiblings,
@@ -355,7 +355,7 @@ async function main(): Promise<void> {
 
     // ─── empty siblings / spans / readme — sections omitted cleanly ────────
     {
-        const result = buildBulletAssistPrompt({
+        const result = await buildBulletAssistPrompt({
             mode: 'fill',
             parent: makeWorkRoleParent({ company: 'NewCo', title: 'Engineer' }),
             siblingBullets: [],
@@ -392,7 +392,7 @@ async function main(): Promise<void> {
             },
         ];
         const spans = findArchiveSpansFor({ kind: 'work-role', identifier: 'Acme Corp' }, uploads);
-        const result = buildBulletAssistPrompt({
+        const result = await buildBulletAssistPrompt({
             mode: 'fill',
             parent: makeWorkRoleParent({ company: 'Acme Corp' }),
             siblingBullets: [],

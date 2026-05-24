@@ -1,6 +1,7 @@
 import * as cheerio from "cheerio";
 import { z } from "zod";
 import { chatJSON } from "@/lib/ai/gemini";
+import { loadPrompt } from "@/lib/ai/prompts";
 import { assertExternalHttpUrl, assertSafeResponseUrl } from "@/lib/security/url-guard";
 
 export interface PostingInput {
@@ -87,27 +88,12 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
         throw new Error("Posting input is empty or too short — provide a URL or paste the listing text.");
     }
 
+    const prompt = await loadPrompt("posting-parse", { postingText: rawText });
+
     const extracted = await chatJSON({
         name: "posting-parse",
-        system:
-            "You extract structured signals from job postings to drive resume tailoring. " +
-            "Be conservative — if a field is not clearly stated, return null. " +
-            "Keywords should be the 10–25 most load-bearing terms a hiring manager would scan for: " +
-            "specific technologies, methodologies, seniority markers, and domain words. " +
-            "Prefer short, canonical forms (e.g. 'TypeScript' not 'TypeScript 5'). " +
-            "Return only JSON matching the requested shape.",
-        user: [
-            "Job posting text:",
-            "",
-            rawText,
-            "",
-            "Return JSON with these fields:",
-            "- title: the role title, or null",
-            "- company: the hiring company, or null",
-            "- location: the role's location (city/remote), or null",
-            "- seniority: the seniority indicator (e.g. 'Intern', 'Junior', 'Senior', 'Staff'), or null",
-            "- keywords: array of 10–25 short keyword strings",
-        ].join("\n"),
+        system: prompt.system,
+        user: prompt.user,
         schema: PostingExtractSchema,
         temperature: 0.2,
         // Inherits MODEL_LITE default — keyword extraction is mechanical.

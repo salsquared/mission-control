@@ -3,6 +3,7 @@ import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import lunary from "lunary";
 import { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
+import { loadPrompt } from "@/lib/ai/prompts";
 
 // LOP-5: this callsite bypasses `chatJSON` (uses Vercel AI SDK directly) so
 // LOP-3's wrapModel can't reach it. Track manually instead. Same gate as
@@ -144,21 +145,16 @@ export async function parseApplicationEmail(
   // seconds otherwise.
   await acquireGeminiSlot();
 
-  const prompt = `You are classifying an email related to a job, internship, or college/university application.
-
-First, decide whether this email is actually about the user's own application (they submitted something and this is a status update or related message). Marketing, job-board digests, recruiter cold-outreach to someone who never applied, and "we're hiring" company announcements are NOT application-related — set isApplicationRelated=false.
-
-If it IS application-related, extract company/institution, role/program, current status, next steps, and any dates.
-
-For colleges, treat admission/decision/waitlist/deferral language as the corresponding status. Treat supplemental-material requests as ASSESSMENT.
-
-When resolving relative dates like "Tuesday at 3pm" or "next week", use the email's send-date below as the anchor.
-
-Email send-date (anchor): ${anchor}
-From: ${from ?? "(unknown)"}
-Subject: ${subject}
-Body:
-${trimmedBody}`;
+  // email-parser's disk doc has no separate system field — the entire
+  // instruction set + interleaved inputs is one user-mode prompt that
+  // Vercel AI SDK takes as `prompt: string`.
+  const loaded = await loadPrompt("email-parser", {
+    anchor,
+    from: from ?? "(unknown)",
+    subject,
+    body: trimmedBody,
+  });
+  const prompt = loaded.user;
 
   // LOP-5: trace start. RunId is a fresh cuid-ish — the Gmail msgId isn't in
   // scope here (caller has it), and Lunary just needs uniqueness.

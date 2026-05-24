@@ -25,6 +25,7 @@
  */
 import { z } from "zod";
 import { chatJSON } from "@/lib/ai/gemini";
+import { loadPrompt } from "@/lib/ai/prompts";
 import { resolveCompanyToBoard, type ProbableKind } from "@/lib/discovery/slug-probe";
 
 const GeminiCandidateSchema = z.object({
@@ -86,26 +87,10 @@ export interface SuggestOptions {
     _suggestFn?: (prompt: string) => Promise<{ candidates: GeminiCandidate[] }>;
 }
 
-function buildPrompt(topic: string, exclude: string[], count: number): string {
-    const excludeBlock = exclude.length > 0
+function buildExcludeBlock(exclude: string[]): string {
+    return exclude.length > 0
         ? `EXCLUDED — do NOT suggest any of these (the user already has them):\n${exclude.map(n => `- ${n}`).join("\n")}`
         : `(The user has nothing in this topic yet — suggest from scratch.)`;
-    return [
-        `You're helping a job seeker discover companies in the topic: "${topic}".`,
-        ``,
-        excludeBlock,
-        ``,
-        `Suggest ${count} ADDITIONAL companies in this topic that are NOT in the excluded list. Prefer real companies actively hiring. Include both well-known players AND smaller / less-obvious ones — the user already has the canonical names, they need depth.`,
-        ``,
-        `For each company return:`,
-        `  - name        canonical company name`,
-        `  - blurb       one short sentence about what they do, under 80 chars`,
-        `  - careersUrl  the public careers-page URL you're confident exists (or "" if unsure)`,
-        ``,
-        `Do NOT guess the ATS or fabricate slugs — we verify ATS connectivity ourselves downstream by probing greenhouse / lever / ashby with the company name. Focus on returning real companies; that's the only thing we need from you.`,
-        ``,
-        `Return JSON: { "candidates": [ ... ] }. No prose, no markdown fence.`,
-    ].join("\n");
 }
 
 function normalize(s: string): string {
@@ -140,12 +125,16 @@ export async function suggestCompanies(opts: SuggestOptions): Promise<SuggestRes
     const exclude = Array.from(new Set((opts.exclude ?? []).map(n => n.trim()).filter(Boolean)));
     const excludeSet = new Set(exclude.map(normalize));
 
-    const prompt = buildPrompt(topic, exclude, count);
+    const loaded = await loadPrompt("discovery-suggest", {
+        topic,
+        excludeBlock: buildExcludeBlock(exclude),
+        count,
+    });
     const response = opts._suggestFn
-        ? await opts._suggestFn(prompt)
+        ? await opts._suggestFn(loaded.user)
         : await chatJSON({
             name: "discovery-suggest",
-            user: prompt,
+            user: loaded.user,
             schema: GeminiResponseSchema,
             // Higher temp than the default 0.4 — discovery benefits from
             // exploration; lower temp tends to converge on the same handful

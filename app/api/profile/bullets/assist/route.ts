@@ -389,7 +389,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 8. Build the prompt + call Gemini.
-        const prompt = buildBulletAssistPrompt({
+        const prompt = await buildBulletAssistPrompt({
             mode: parsed.data.mode,
             parent: assistParent,
             siblingBullets,

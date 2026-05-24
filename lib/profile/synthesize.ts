@@ -22,6 +22,7 @@
  */
 import { z } from "zod";
 import { chatJSON, MODEL_FLASH } from "@/lib/ai/gemini";
+import { loadPrompt } from "@/lib/ai/prompts";
 import type { ExtractedProfile } from "@/lib/profile/import-llm";
 import type { ExistingProfileForMerge } from "@/lib/profile/merge";
 
@@ -66,36 +67,6 @@ const SynthesizedSchema = z.object({
     projects: z.array(ProjectSchema),
     education: z.array(EducationSchema),
 });
-
-const SYSTEM_PROMPT = [
-    "You are a resume curator. You combine multiple resume drafts and an existing profile into ONE canonical master resume — the version the candidate will use as the source-of-truth for all future job applications.",
-    "",
-    "Inputs you receive:",
-    "  EXISTING — the user's current profile (entities they already have). Do not duplicate these in your output unless you are merging new bullets into them.",
-    "  DRAFTS  — per-file extractions from one or more uploaded resumes. These were produced by a cheaper model and may misclassify entries.",
-    "",
-    "Hard rules — never violate:",
-    "1. NEVER invent facts. You cannot add bullets, titles, dates, companies, projects, education, or links that are not present in the inputs.",
-    "2. Preserve the candidate's specific accomplishments and metrics verbatim. When two drafts describe the same accomplishment with different wording, pick the wording from ONE draft as-is — do not paraphrase or merge wording.",
-    "3. Dates: ISO 8601. When drafts disagree on a date for the same entity, prefer the widest span (earliest start, latest end / 'Present' = null endDate).",
-    "",
-    "What to curate:",
-    "4. CROSS-DRAFT DEDUP. If the same entity appears across drafts (same employer + similar role, or same project / student org / school), emit it once. Merge its bullets (drop near-duplicates — exact text, trivial whitespace/case variants, or the same accomplishment in clearly different wording).",
-    "5. CROSS-CATEGORY RESOLUTION (this is the most common per-file mistake). If one draft lists an entity as a work role and another lists it as a project, decide using the entity itself:",
-    "   • PROJECT wins when the entity is:",
-    "       - a named student / collegiate engineering team (Space Enterprise at Berkeley / SEB, FSAE, Robotics Team, Solar Car, hackathon team, IEEE/ACM chapter)",
-    "       - a named app / platform / library / open-source repo the candidate built (e.g. 'Iris (Earth Observation Platform)', 'mysubs.live', 'Argot', 'Gitlet')",
-    "       - a self-started venture where the candidate is Creator / Founder / Lead Developer / Maintainer with no parent employer",
-    "       - bullets mention crowdfunding, hackathon wins, 'personal project', 'open-sourced', unpaid extracurricular language",
-    "   • WORK ROLE wins for paid employment, formal internships / co-ops / fellowships, freelance / contract engagements at a named client, and service-industry jobs.",
-    "   • For project entities, use the entity name as `name` (e.g. 'Iris', not 'Creator & Lead Developer | Iris'). The candidate's role within the project can become the first bullet or go in `description`.",
-    "6. EXISTING entities. If a draft entity matches one already on EXISTING, emit the SAME normalized identity (same company+title for roles, same name for projects, same institution+degree+field for education) and include any new bullets the draft contributes that aren't already on the existing entity. Do not re-emit existing bullets verbatim — those will be deduped downstream.",
-    "7. ORDERING. Emit work roles reverse-chronologically (most recent first, ongoing entries at the top). Emit education the same way. Projects: most-recent / ongoing first if you can tell, else any stable order.",
-    "8. HEADER. Use the EXISTING header values when present (never overwrite). For empty header fields, pull from the drafts only if the value is present verbatim there. Merge `links` as a union (dedup by URL).",
-    "9. SKIP NOISE. Course assignments without a project name, generic skills lines that aren't bullets, section headers, page numbers — leave them out.",
-    "",
-    "Output strictly the JSON shape requested — no commentary, no markdown fences.",
-].join("\n");
 
 // Cap on the serialized input we send the synthesizer. Each draft is already
 // structured JSON (compact), so 80k chars covers ~8 maximal resumes plus the
@@ -150,41 +121,33 @@ function summarizeDrafts(drafts: { filename: string; tree: ExtractedProfile }[])
     );
 }
 
-function truncateIfTooLong(s: string): string {
-    if (s.length <= MAX_SYNTHESIS_INPUT_CHARS) return s;
-    return s.slice(0, MAX_SYNTHESIS_INPUT_CHARS) + "\n\n[…truncated — original input was longer]";
-}
-
 export async function synthesizeMasterResume(
     existing: ExistingProfileForMerge,
     drafts: { filename: string; tree: ExtractedProfile }[],
 ): Promise<ExtractedProfile> {
     const existingJson = summarizeExisting(existing);
-    const draftsJson = summarizeDrafts(drafts);
-    const body = [
-        "EXISTING profile (do not duplicate; merge into these where applicable):",
-        "```json",
+    let draftsJson = summarizeDrafts(drafts);
+
+    // Defensive: the only var that can blow MAX_SYNTHESIS_INPUT_CHARS at
+    // scale is draftsJson (existingJson is the user's current profile,
+    // bounded by what they've already curated). Truncate it first if the
+    // combined inputs would exceed the cap. The template's static prose +
+    // existingJson + draftCount overhead is ~ a few KB; reserve 4 KB.
+    const budget = MAX_SYNTHESIS_INPUT_CHARS - existingJson.length - 4_096;
+    if (draftsJson.length > budget && budget > 0) {
+        draftsJson = draftsJson.slice(0, budget) + "\n\n[…truncated — original input was longer]";
+    }
+
+    const prompt = await loadPrompt("profile-synthesize", {
         existingJson,
-        "```",
-        "",
-        `DRAFTS — ${drafts.length} per-file extraction(s):`,
-        "```json",
+        draftCount: String(drafts.length),
         draftsJson,
-        "```",
-        "",
-        "Return JSON with this exact shape:",
-        "{",
-        "  \"header\": { \"headline\": string|null, \"summary\": string|null, \"location\": string|null, \"email\": string|null, \"phone\": string|null, \"links\": Array<{label,url}>|null },",
-        "  \"workRoles\": Array<{ \"company\": string, \"title\": string, \"location\": string|null, \"startDate\": string|null, \"endDate\": string|null, \"bullets\": string[] }>,",
-        "  \"projects\": Array<{ \"name\": string, \"description\": string|null, \"repoUrl\": string|null, \"liveUrl\": string|null, \"bullets\": string[] }>,",
-        "  \"education\": Array<{ \"institution\": string, \"degree\": string|null, \"field\": string|null, \"startDate\": string|null, \"endDate\": string|null, \"bullets\": string[] }>",
-        "}",
-    ].join("\n");
+    });
 
     return chatJSON({
         name: "profile-synthesize",
-        system: SYSTEM_PROMPT,
-        user: truncateIfTooLong(body),
+        system: prompt.system,
+        user: prompt.user,
         schema: SynthesizedSchema,
         model: MODEL_FLASH,
         // Slightly above 0 so the model can pick between competing wordings
