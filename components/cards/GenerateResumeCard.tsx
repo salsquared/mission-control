@@ -1,12 +1,26 @@
 "use client";
-import React, { useState } from "react";
-import { FileText, FileType2, Loader2, Link as LinkIcon, ChevronDown, ChevronRight } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import {
+    FileText,
+    FileType2,
+    Loader2,
+    Link as LinkIcon,
+    ChevronDown,
+    ChevronRight,
+    Briefcase,
+    Pencil,
+    History,
+    Download,
+    Search,
+} from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys } from "@/lib/api-client";
+import { useServerEvents } from "@/hooks/useServerEvents";
 import { Card } from "../ui/Card";
 
 type Format = "pdf" | "docx";
+type InputMode = "pipeline" | "url" | "paste";
 
 interface GenerateResult {
     id: string | null;
@@ -48,12 +62,26 @@ function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
 }
 
+function formatRelative(iso: string): string {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const delta = Math.max(0, now - then);
+    const m = Math.round(delta / 60_000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.round(h / 24);
+    if (d < 30) return `${d}d ago`;
+    return new Date(iso).toLocaleDateString();
+}
+
 export function GenerateResumeCard() {
+    const queryClient = useQueryClient();
+    const [inputMode, setInputMode] = useState<InputMode>("pipeline");
     const [url, setUrl] = useState("");
     const [text, setText] = useState("");
-    // Lazy init from localStorage so we don't need a useEffect + setState
-    // dance (the latter pattern triggers react-compiler's cascading-render
-    // warning). Safe at module load because this component is "use client".
+    const [selectedApplicationId, setSelectedApplicationId] = useState<string | null>(null);
     const [format, setFormat] = useState<Format>(() => {
         try {
             const saved = window.localStorage.getItem(FORMAT_STORAGE_KEY);
@@ -65,36 +93,55 @@ export function GenerateResumeCard() {
     const [stage, setStage] = useState<string | null>(null);
     const [lastResult, setLastResult] = useState<GenerateResult | null>(null);
     const [showTrace, setShowTrace] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
 
-    // Traceability (M8-2.3): fetch the full row when the user expands "Why these bullets?"
+    // Traceability (M8-2.3) — full row for "Why these bullets?".
     const traceQuery = useQuery({
         queryKey: queryKeys.resume(lastResult?.id ?? ""),
         queryFn: () => api.resumes.get(lastResult!.id!),
         enabled: showTrace && !!lastResult?.id,
     });
 
+    // M8.4.6 — global previous-resumes list, drives the dropdown.
+    const resumesQuery = useQuery({
+        queryKey: queryKeys.resumes(),
+        queryFn: () => api.resumes.list({ limit: 100 }),
+    });
+    const recentResumes = resumesQuery.data?.resumes ?? [];
+
+    // M8.4.9 — SSE-driven auto-refresh after a generate. Invalidates the list
+    // query so the dropdown picks up the new row without a remount.
+    const invalidateResumes = useCallback(
+        () => queryClient.invalidateQueries({ queryKey: queryKeys.resumes() }),
+        [queryClient],
+    );
+    useServerEvents("GeneratedResume", invalidateResumes);
+
     function pickFormat(f: Format) {
         setFormat(f);
         try { window.localStorage.setItem(FORMAT_STORAGE_KEY, f); } catch { /* noop */ }
     }
 
-    const canSubmit = !busy && (url.trim().length > 0 || text.trim().length > 0);
+    const hasInput =
+        inputMode === "pipeline" ? !!selectedApplicationId :
+        inputMode === "url" ? url.trim().length > 0 :
+        text.trim().length > 0;
+    const canSubmit = !busy && hasInput;
 
     async function handleGenerate() {
         if (!canSubmit) return;
         setBusy(true);
         setStage("Generating…");
         try {
+            const postingBody =
+                inputMode === "pipeline" ? { applicationId: selectedApplicationId } :
+                inputMode === "url" ? { url: url.trim() } :
+                { text: text.trim() };
+
             const res = await fetch("/api/resumes", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    posting: {
-                        url: url.trim().length > 0 ? url.trim() : undefined,
-                        text: text.trim().length > 0 ? text.trim() : undefined,
-                    },
-                    options: { format },
-                }),
+                body: JSON.stringify({ posting: postingBody, options: { format } }),
             });
             if (!res.ok) {
                 let detail = "";
@@ -102,14 +149,9 @@ export function GenerateResumeCard() {
                 try {
                     const j = await res.json();
                     detail = j.error ? (typeof j.error === "string" ? j.error : JSON.stringify(j.error)) : "";
-                    // Translate the API's internal `stage` field into something the
-                    // user understands — "rewrite" means nothing to them, "AI
-                    // rewrite step" does.
                     stageLabel = STAGE_LABELS[j.stage as keyof typeof STAGE_LABELS] ?? "";
                 } catch { /* non-JSON */ }
-                const composed = stageLabel
-                    ? `${stageLabel}: ${detail}`
-                    : detail || `HTTP ${res.status}`;
+                const composed = stageLabel ? `${stageLabel}: ${detail}` : detail || `HTTP ${res.status}`;
                 throw new Error(composed);
             }
             const blob = await res.blob();
@@ -129,7 +171,6 @@ export function GenerateResumeCard() {
                 format: responseFormat,
             });
             setShowTrace(false);
-            // PDFs preview in-browser; DOCX needs a download. Open PDFs in a new tab; trigger download for DOCX.
             if (responseFormat === "pdf") {
                 window.open(objectUrl, "_blank");
             } else {
@@ -156,34 +197,51 @@ export function GenerateResumeCard() {
             iconColorClass="text-purple-300"
         >
             <p className="text-xs text-white/50 mb-3">
-                Paste a job posting (URL or text). I&apos;ll pick the relevant bullets from your profile,
-                rewrite them to emphasize what the posting cares about, and hand back a PDF or DOCX.
+                Pick an Interested-column application, paste a posting URL, or paste posting text.
+                I&apos;ll pick the relevant bullets from your profile, rewrite them to emphasize what the posting cares about, and hand back a PDF or DOCX.
             </p>
 
-            <label className="block text-[11px] uppercase tracking-wide text-white/40 mb-1">Posting URL</label>
-            <div className="relative mb-3">
-                <LinkIcon className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-2.5" />
-                <input
-                    type="url"
-                    placeholder="https://example.com/jobs/12345"
-                    value={url}
-                    onChange={(e) => setUrl(e.target.value)}
-                    disabled={busy}
-                    className="w-full pl-8 pr-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40"
-                />
-            </div>
+            {/* M8.4.8 — Pipeline / URL / Paste segmented control. */}
+            <InputModeTabs mode={inputMode} onChange={setInputMode} disabled={busy} />
 
-            <label className="block text-[11px] uppercase tracking-wide text-white/40 mb-1">
-                Or paste posting text
-            </label>
-            <textarea
-                placeholder="Paste the listing's full description here…"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                disabled={busy}
-                rows={6}
-                className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40 resize-y"
-            />
+            <div className="mt-3">
+                {inputMode === "pipeline" && (
+                    <InterestedAppPicker
+                        selectedApplicationId={selectedApplicationId}
+                        onSelect={setSelectedApplicationId}
+                        disabled={busy}
+                    />
+                )}
+                {inputMode === "url" && (
+                    <>
+                        <label className="block text-[11px] uppercase tracking-wide text-white/40 mb-1">Posting URL</label>
+                        <div className="relative">
+                            <LinkIcon className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-2.5" />
+                            <input
+                                type="url"
+                                placeholder="https://example.com/jobs/12345"
+                                value={url}
+                                onChange={(e) => setUrl(e.target.value)}
+                                disabled={busy}
+                                className="w-full pl-8 pr-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40"
+                            />
+                        </div>
+                    </>
+                )}
+                {inputMode === "paste" && (
+                    <>
+                        <label className="block text-[11px] uppercase tracking-wide text-white/40 mb-1">Posting text</label>
+                        <textarea
+                            placeholder="Paste the listing's full description here…"
+                            value={text}
+                            onChange={(e) => setText(e.target.value)}
+                            disabled={busy}
+                            rows={6}
+                            className="w-full px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40 resize-y"
+                        />
+                    </>
+                )}
+            </div>
 
             <div className="mt-3 flex items-center gap-3 flex-wrap">
                 <div className="inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40" role="group" aria-label="Output format">
@@ -215,14 +273,15 @@ export function GenerateResumeCard() {
                     {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
                     {busy ? (stage ?? "Working…") : `Generate ${format.toUpperCase()}`}
                 </button>
-                {lastResult && (
-                    <a
-                        href={lastResult.url}
-                        download={lastResult.filename}
-                        className="text-xs text-purple-300 hover:text-purple-200 underline underline-offset-2"
-                    >
-                        Download last: {lastResult.filename}
-                    </a>
+
+                {/* M8.4.6 — Previous resumes dropdown. Hidden when archive empty. */}
+                {recentResumes.length > 0 && (
+                    <PreviousResumesDropdown
+                        open={showHistory}
+                        onToggle={() => setShowHistory(s => !s)}
+                        onClose={() => setShowHistory(false)}
+                        resumes={recentResumes}
+                    />
                 )}
             </div>
 
@@ -259,6 +318,198 @@ export function GenerateResumeCard() {
         </Card>
     );
 }
+
+// ─── M8.4.8 — Segmented input-mode control ──────────────────────────────────
+
+const TAB_DEFS: Array<{ id: InputMode; label: string; icon: React.ComponentType<{ className?: string }> }> = [
+    { id: "pipeline", label: "Pipeline", icon: Briefcase },
+    { id: "url", label: "URL", icon: LinkIcon },
+    { id: "paste", label: "Paste", icon: Pencil },
+];
+
+const InputModeTabs: React.FC<{
+    mode: InputMode;
+    onChange: (m: InputMode) => void;
+    disabled: boolean;
+}> = ({ mode, onChange, disabled }) => (
+    <div className="inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40" role="group" aria-label="Posting source">
+        {TAB_DEFS.map(t => {
+            const active = mode === t.id;
+            const Icon = t.icon;
+            return (
+                <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => onChange(t.id)}
+                    disabled={disabled}
+                    aria-pressed={active}
+                    className={[
+                        "px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wide transition-colors flex items-center gap-1.5",
+                        active ? "bg-purple-500/30 text-purple-100" : "text-white/50 hover:text-white/80",
+                        disabled ? "opacity-40 cursor-not-allowed" : "",
+                    ].join(" ")}
+                >
+                    <Icon className="w-3 h-3" />
+                    {t.label}
+                </button>
+            );
+        })}
+    </div>
+);
+
+// ─── M8.4.7 — Pipeline picker: single-select list of INTERESTED apps ────────
+
+const InterestedAppPicker: React.FC<{
+    selectedApplicationId: string | null;
+    onSelect: (id: string | null) => void;
+    disabled: boolean;
+}> = ({ selectedApplicationId, onSelect, disabled }) => {
+    const { data, isLoading, error } = useQuery({
+        queryKey: queryKeys.pipelinePicker,
+        queryFn: () => api.applications.pipelinePicker(),
+    });
+    const items = data?.items ?? [];
+
+    if (isLoading) {
+        return (
+            <div className="flex items-center gap-2 px-3 py-4 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white/40">
+                <Loader2 className="w-3 h-3 animate-spin" /> Loading interested applications…
+            </div>
+        );
+    }
+    if (error) {
+        return (
+            <div className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-400/30 text-[11px] text-rose-200">
+                Failed to load: {errMessage(error)}
+            </div>
+        );
+    }
+    if (items.length === 0) {
+        return (
+            <div className="flex items-center gap-2 px-3 py-4 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white/40">
+                <Search className="w-3.5 h-3.5" />
+                <span>
+                    No Interested-column applications with a posting URL yet.
+                    Track a posting from the New Postings feed to add one here.
+                </span>
+            </div>
+        );
+    }
+    return (
+        <div className="max-h-[14rem] overflow-y-auto rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
+            {items.map(it => {
+                const active = selectedApplicationId === it.id;
+                let host = "";
+                try { host = new URL(it.postingUrl).host; } catch { host = it.postingUrl; }
+                return (
+                    <button
+                        key={it.id}
+                        type="button"
+                        onClick={() => onSelect(active ? null : it.id)}
+                        disabled={disabled}
+                        aria-pressed={active}
+                        className={[
+                            "w-full text-left px-3 py-2 transition-colors",
+                            active ? "bg-purple-500/15 border-l-2 border-purple-400/60" : "hover:bg-white/[0.03]",
+                            disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                        ].join(" ")}
+                    >
+                        <div className="flex items-center gap-2">
+                            <span className="text-xs font-semibold text-white/90 truncate">{it.company}</span>
+                            <span className="text-white/30">·</span>
+                            <span className="text-xs text-white/70 truncate">{it.postingTitle || it.role || "—"}</span>
+                        </div>
+                        <div className="text-[10px] text-white/30 truncate mt-0.5">{host}</div>
+                    </button>
+                );
+            })}
+        </div>
+    );
+};
+
+// ─── M8.4.6 — Previous-resumes dropdown (popover-style) ─────────────────────
+
+interface PreviousResumeRow {
+    id: string;
+    createdAt: string;
+    format: string;
+    status: string;
+    hasArtifact: boolean;
+    postingTitle: string | null;
+    postingCompany: string | null;
+}
+
+const PreviousResumesDropdown: React.FC<{
+    open: boolean;
+    onToggle: () => void;
+    onClose: () => void;
+    resumes: PreviousResumeRow[];
+}> = ({ open, onToggle, onClose, resumes }) => {
+    const ref = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!open) return;
+        function handle(e: MouseEvent) {
+            if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+        }
+        document.addEventListener("mousedown", handle);
+        return () => document.removeEventListener("mousedown", handle);
+    }, [open, onClose]);
+
+    function handleDownload(id: string) {
+        // /api/resumes/[id]/download is the existing M8-2.4 endpoint —
+        // streams the artifact bytes with the right Content-Disposition.
+        window.open(`/api/resumes/${encodeURIComponent(id)}/download`, "_blank");
+    }
+
+    const visible = resumes.slice(0, 20);
+
+    return (
+        <div className="relative" ref={ref}>
+            <button
+                type="button"
+                onClick={onToggle}
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] border border-white/10 transition-colors"
+            >
+                <History className="w-3 h-3" />
+                <span>Recent resumes ({resumes.length})</span>
+                <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
+            </button>
+            {open && (
+                <div className="absolute z-20 right-0 mt-1 w-[26rem] max-w-[90vw] rounded-lg bg-slate-900/95 backdrop-blur border border-white/10 shadow-xl">
+                    <div className="max-h-[20rem] overflow-y-auto divide-y divide-white/5">
+                        {visible.map(r => (
+                            <button
+                                key={r.id}
+                                type="button"
+                                onClick={() => { handleDownload(r.id); onClose(); }}
+                                disabled={!r.hasArtifact}
+                                className="w-full text-left px-3 py-2 hover:bg-white/[0.04] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-3"
+                            >
+                                <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-1.5 text-xs">
+                                        <span className="font-semibold text-white/90 truncate">{r.postingCompany ?? "(unknown)"}</span>
+                                        <span className="text-white/30">·</span>
+                                        <span className="text-white/70 truncate">{r.postingTitle ?? "(no title)"}</span>
+                                    </div>
+                                    <div className="text-[10px] text-white/40 mt-0.5">{formatRelative(r.createdAt)}</div>
+                                </div>
+                                <span className="text-[10px] uppercase tracking-wide text-purple-300/80 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded">
+                                    {r.format}
+                                </span>
+                                <Download className="w-3 h-3 text-white/40 flex-shrink-0" />
+                            </button>
+                        ))}
+                    </div>
+                    {resumes.length > visible.length && (
+                        <div className="px-3 py-1.5 text-[10px] text-white/40 border-t border-white/5">
+                            Showing 20 most recent of {resumes.length}.
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
+    );
+};
 
 // Story S8.8 — surface keywords the posting emphasized that the profile has
 // no evidence for. Posting keywords that are *covered* aren't shown — those

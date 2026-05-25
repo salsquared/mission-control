@@ -187,6 +187,9 @@ export const queryKeys = {
     resumes: (filter?: { applicationId?: string }) =>
         ['resumes', filter ?? {}] as const,
     resume: (id: string) => ['resume', id] as const,
+    // M8.4.4 — separate from `applications` so listing all apps doesn't
+    // invalidate the picker, and vice-versa.
+    pipelinePicker: ['applications', 'pipeline-picker'] as const,
     blacklist: ['blacklist'] as const,
 };
 
@@ -218,6 +221,22 @@ export const api = {
             const qs = filter?.track ? `?track=${encodeURIComponent(filter.track)}` : '';
             return jsonFetch(`/api/applications${qs}`, ApplicationsListResponseSchema);
         },
+        // M8.4.4 — denormalized projection for the Pipeline tab on
+        // GenerateResumeCard. Already filters to INTERESTED + posting.sourceUrl
+        // server-side (Decision 6.4); client just renders.
+        pipelinePicker: () =>
+            jsonFetch(
+                '/api/applications/pipeline-picker',
+                z.object({
+                    items: z.array(z.object({
+                        id: z.string(),
+                        company: z.string(),
+                        role: z.string().nullable(),
+                        postingUrl: z.string(),
+                        postingTitle: z.string(),
+                    })),
+                }),
+            ),
         create: (input: z.infer<typeof ApplicationPostSchema>) =>
             jsonFetch('/api/applications', ApplicationMutationResponseSchema, jsonBody('POST', input)),
         update: (input: z.infer<typeof ApplicationPatchSchema>) =>
@@ -561,6 +580,9 @@ export const api = {
                         status: z.string(),
                         hasArtifact: z.boolean(),
                         error: z.string().nullable(),
+                        // M8.4.3 — drives the previous-resumes dropdown labels.
+                        postingTitle: z.string().nullable(),
+                        postingCompany: z.string().nullable(),
                     })),
                 }),
             );

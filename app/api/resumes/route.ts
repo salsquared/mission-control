@@ -6,6 +6,8 @@ import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting } from "@/lib/resumes/posting";
 import { selectBullets, flattenSelections } from "@/lib/resumes/select";
+import { autoTagBullets } from "@/lib/profile/auto-tag";
+import { broadcastEvent } from "@/lib/events";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
 import { computeSkillsGap } from "@/lib/resumes/skills-gap";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
@@ -215,6 +217,25 @@ export async function POST(req: NextRequest) {
         stage = "parse";
         const posting = await parsePosting(parsed.data.posting);
 
+        // 2.5. Auto-tag pass (M8.5.4 / story S8.9) — best-effort write-through
+        // to the profile before selection. The LLM proposes posting-keyword
+        // tags on bullets whose existing text already evidences the work.
+        // Errors are logged and swallowed: we still want to generate a resume
+        // even when Gemini errors / rate-limits the auto-tag call.
+        try {
+            const autoTagResult = await autoTagBullets({ userId, postingKeywords: posting.keywords });
+            console.info(`[bullet-auto-tag] +${autoTagResult.tagsAdded} tags / ${autoTagResult.bulletsAffected} bullets / ${autoTagResult.durationMs}ms`);
+            // Re-hydrate the in-memory profile so the selection step below
+            // sees the freshly-added tags.
+            if (autoTagResult.tagsAdded > 0) {
+                const reloaded = await findOrCreateProfile(userId);
+                Object.assign(profile, JSON.parse(JSON.stringify(reloaded)) as ProfileWire);
+            }
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn(`[bullet-auto-tag] skipped: ${msg}`);
+        }
+
         // 3. Select bullets
         stage = "select";
         const selection = selectBullets(profile, posting.keywords);
@@ -368,6 +389,18 @@ export async function POST(req: NextRequest) {
             // Persistence is best-effort: don't fail the user's generation just
             // because we couldn't archive. The bytes go back to them either way.
             console.warn(`[resume POST] persistence failed (id=${resumeId || "<not created>"}):`, e);
+        }
+
+        // M8.4.9 (story S8.11) — emit so the global "Previous resumes" dropdown
+        // on GenerateResumeCard auto-refreshes after a generate. Skip when
+        // persistence failed (no row = nothing to surface).
+        if (resumeId) {
+            broadcastEvent({
+                model: 'GeneratedResume',
+                action: 'upsert',
+                id: resumeId,
+                timestamp: Date.now(),
+            });
         }
 
         // PB-12 (was RAH-22): HTTP header values must be ASCII (undici's Headers throws on

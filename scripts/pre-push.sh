@@ -94,6 +94,9 @@ SUITES=(
     "scripts/tests/hermetic/resume-list-smoke.ts"
     "scripts/tests/hermetic/auto-tag-merge-smoke.ts"
     "scripts/tests/hermetic/bullet-remove-tag-smoke.ts"
+    # M8.5 Wave 2
+    "scripts/tests/hermetic/auto-tag-smoke.ts"
+    "scripts/tests/hermetic/resume-rewrite-fold-in-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do
