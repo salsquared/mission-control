@@ -19,10 +19,10 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        Array.isArray(r.proposals) &&
+        return Array.isArray(r.proposals) &&
         r.proposals.length === 1 &&
         r.proposals[0].bulletId === 'blt_at_001' &&
-        r.proposals[0].addedTags.some(t => t === 'Python')
+        r.proposals[0].addedTags.some(t => t === 'Python');
 
 # Negative — bullet says Go, not Python; model must NOT tag it with Python.
 - description: "Negative — Go bullet must NOT acquire Python tag"
@@ -45,7 +45,7 @@
         // Either no entry, or the entry exists but does NOT include 'Python'.
         // Go and Kubernetes are both fine to omit; the only failure mode is
         // claiming Python coverage where there is none.
-        !entry || !entry.addedTags.some(t => /python/i.test(t))
+        return !entry || !entry.addedTags.some(t => /python/i.test(t));
 
 # Blocklist — keyword in removedTags must be skipped even when the text
 # clearly evidences it. The user explicitly removed it; respect that.
@@ -67,7 +67,7 @@
         const proposals = Array.isArray(r.proposals) ? r.proposals : [];
         const entry = proposals.find(p => p.bulletId === 'blt_at_003');
         // Same shape as negative case — either no entry, or no Python tag.
-        !entry || !entry.addedTags.some(t => /python/i.test(t))
+        return !entry || !entry.addedTags.some(t => /python/i.test(t));
 
 # Already-tagged — keyword already in `tags` must NOT be re-proposed; the
 # post-filter would drop it anyway, but the model is instructed to skip too.
@@ -91,4 +91,4 @@
         // No new Python addition — it's already there. After the caller's
         // post-filter, any Python entry would be dropped anyway; this
         // assertion observes the model's pre-filter behavior.
-        !entry || !entry.addedTags.some(t => /python/i.test(t))
+        return !entry || !entry.addedTags.some(t => /python/i.test(t));

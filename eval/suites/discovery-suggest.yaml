@@ -23,13 +23,13 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        r.topic === 'space' &&
+        return r.topic === 'space' &&
         Array.isArray(r.verified) &&
         Array.isArray(r.unverified) &&
         typeof r.excludedCount === 'number' &&
         typeof r.totalSuggested === 'number' &&
         // Total = verified + unverified + excludedCount
-        r.totalSuggested === r.verified.length + r.unverified.length + r.excludedCount
+        r.totalSuggested === r.verified.length + r.unverified.length + r.excludedCount;
     - type: javascript
       value: |
         const r = JSON.parse(output);
@@ -37,4 +37,4 @@
         // (case-insensitive match).
         const all = [...r.verified, ...r.unverified].map(x => x.name.toLowerCase());
         const excluded = ['spacex', 'blue origin', 'rocket lab', 'anduril'];
-        excluded.every(e => !all.includes(e))
+        return excluded.every(e => !all.includes(e));

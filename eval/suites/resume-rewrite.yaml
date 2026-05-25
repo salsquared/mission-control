@@ -45,16 +45,16 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        Array.isArray(r) &&
+        return Array.isArray(r) &&
         r.length === 2 &&
         r.find(b => b.id === 'blt_eval_001') &&
         r.find(b => b.id === 'blt_eval_002') &&
-        r.every(b => typeof b.rewrittenText === 'string' && Array.isArray(b.matchedKeywords))
+        r.every(b => typeof b.rewrittenText === 'string' && Array.isArray(b.matchedKeywords));
     - type: javascript
       value: |
         const r = JSON.parse(output);
         // Word-count guardrail per system rule "≤25 words per bullet".
-        r.every(b => b.rewrittenText.split(/\s+/).filter(Boolean).length <= 25)
+        return r.every(b => b.rewrittenText.split(/\s+/).filter(Boolean).length <= 25);
     - type: llm-rubric
       value: |
         Both rewrites must lead with a strong action verb (Built, Shipped,
@@ -97,9 +97,9 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        Array.isArray(r) && r.length === 1 &&
+        return Array.isArray(r) && r.length === 1 &&
         r[0].id === 'blt_eval_python_001' &&
-        /python/i.test(r[0].rewrittenText)
+        /python/i.test(r[0].rewrittenText);
 
 # M8.5.5 — Fold-in negative case. A bullet WITHOUT a matching tag must NOT
 # acquire the keyword in the rewrite — that would violate rules 1+2
@@ -134,6 +134,6 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        Array.isArray(r) && r.length === 1 &&
+        return Array.isArray(r) && r.length === 1 &&
         r[0].id === 'blt_eval_go_001' &&
-        !/python/i.test(r[0].rewrittenText)
+        !/python/i.test(r[0].rewrittenText);

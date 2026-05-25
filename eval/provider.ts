@@ -65,8 +65,67 @@ const HANDLERS: Record<string, CallsiteHandler> = {
     },
 
     "profile-synthesize": async (input) => {
-        const args = input as { existing: Parameters<typeof synthesizeMasterResume>[0]; drafts: Parameters<typeof synthesizeMasterResume>[1] };
-        return await synthesizeMasterResume(args.existing, args.drafts);
+        // YAML fixtures send dates as ISO strings (YAML has no native Date type)
+        // and bullets as `{text}` partials — marshal them into the full lib
+        // shapes here so the test surface stays human-friendly. summarizeExisting
+        // touches `startDate.toISOString()` and `bullet.text` only; ids are
+        // required by the TS interface but unused at runtime, so a sentinel is
+        // fine.
+        const args = input as { existing: Record<string, unknown>; drafts: Parameters<typeof synthesizeMasterResume>[1] };
+        const toDate = (v: unknown): Date | null => {
+            if (v === null || v === undefined) return null;
+            if (v instanceof Date) return v;
+            if (typeof v === "string") return new Date(v);
+            return null;
+        };
+        const padBullet = (b: unknown, idx: number) => {
+            const o = (typeof b === "object" && b !== null ? b : { text: String(b) }) as Record<string, unknown>;
+            return {
+                id: typeof o.id === "string" ? o.id : `blt-fixture-${idx}`,
+                text: typeof o.text === "string" ? o.text : "",
+                tags: Array.isArray(o.tags) ? o.tags as string[] : [],
+                autoTags: Array.isArray(o.autoTags) ? o.autoTags as string[] : [],
+                removedTags: Array.isArray(o.removedTags) ? o.removedTags as string[] : [],
+                locked: o.locked === true,
+                excluded: o.excluded === true,
+            };
+        };
+        const ex = args.existing;
+        const existing: Parameters<typeof synthesizeMasterResume>[0] = {
+            headline: (ex.headline ?? null) as string | null,
+            summary: (ex.summary ?? null) as string | null,
+            location: (ex.location ?? null) as string | null,
+            email: (ex.email ?? null) as string | null,
+            phone: (ex.phone ?? null) as string | null,
+            links: (ex.links ?? null) as { label: string; url: string }[] | null,
+            workRoles: ((ex.workRoles ?? []) as Record<string, unknown>[]).map((w, i) => ({
+                id: (w.id as string) ?? `wr-fixture-${i}`,
+                company: w.company as string,
+                title: w.title as string,
+                location: (w.location ?? null) as string | null,
+                startDate: toDate(w.startDate),
+                endDate: toDate(w.endDate),
+                bullets: ((w.bullets ?? []) as unknown[]).map(padBullet),
+            })),
+            projects: ((ex.projects ?? []) as Record<string, unknown>[]).map((p, i) => ({
+                id: (p.id as string) ?? `pr-fixture-${i}`,
+                name: p.name as string,
+                description: (p.description ?? null) as string | null,
+                repoUrl: (p.repoUrl ?? null) as string | null,
+                liveUrl: (p.liveUrl ?? null) as string | null,
+                bullets: ((p.bullets ?? []) as unknown[]).map(padBullet),
+            })),
+            education: ((ex.education ?? []) as Record<string, unknown>[]).map((e, i) => ({
+                id: (e.id as string) ?? `ed-fixture-${i}`,
+                institution: e.institution as string,
+                degree: (e.degree ?? null) as string | null,
+                field: (e.field ?? null) as string | null,
+                startDate: toDate(e.startDate),
+                endDate: toDate(e.endDate),
+                bullets: ((e.bullets ?? []) as unknown[]).map(padBullet),
+            })),
+        };
+        return await synthesizeMasterResume(existing, args.drafts);
     },
 
     "discovery-suggest": async (input) => {

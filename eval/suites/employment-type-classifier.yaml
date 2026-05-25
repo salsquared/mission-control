@@ -44,15 +44,15 @@
         const r = JSON.parse(output);
         // Map → Object.fromEntries by provider — values must be valid enum or null.
         const valid = new Set(['full-time', 'part-time', 'internship', 'contract', 'temporary', null]);
-        Object.keys(r).length === 6 &&
-        Object.values(r).every(v => valid.has(v))
+        return Object.keys(r).length === 6 &&
+        Object.values(r).every(v => valid.has(v));
     - type: javascript
       value: |
         const r = JSON.parse(output);
         // Key load-bearing classifications:
-        r.p1 === 'full-time' &&                    // senior engineer → full-time
+        return r.p1 === 'full-time' &&             // senior engineer → full-time
         r.p2 === 'internship' &&                   // Summer 2026 intern → intern
         r.p3 === 'full-time' &&                    // AI Safety Fellow → full-time per system rule
         r.p4 === 'full-time' &&                    // Contract Negotiator → full-time (NOT contract)
         r.p5 === 'contract' &&                     // freelance → contract
-        r.p6 === 'part-time'                       // explicit "Part-time" → part-time
+        r.p6 === 'part-time';                      // explicit "Part-time" → part-time

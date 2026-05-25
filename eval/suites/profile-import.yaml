@@ -45,19 +45,19 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        r.header && r.header.email === 'jane@example.com' &&
+        return r.header && r.header.email === 'jane@example.com' &&
         r.workRoles.length >= 2 &&
         r.projects.length >= 1 &&
-        r.education.length >= 1
+        r.education.length >= 1;
     - type: javascript
       value: |
         const r = JSON.parse(output);
         // Pulsar must be classified as a PROJECT, not a work role — system
         // prompt rule 4 (named self-started entity with Creator title).
-        r.projects.find(p => /pulsar/i.test(p.name)) &&
-        !r.workRoles.find(w => /pulsar/i.test(w.company))
+        return r.projects.find(p => /pulsar/i.test(p.name)) &&
+        !r.workRoles.find(w => /pulsar/i.test(w.company));
     - type: javascript
       value: |
         const r = JSON.parse(output);
         // Verbatim preservation — original bullets must appear in output text.
-        r.workRoles.some(w => w.bullets.some(b => /Express to Fastify/.test(b)))
+        return r.workRoles.some(w => w.bullets.some(b => /Express to Fastify/.test(b)));

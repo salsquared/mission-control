@@ -1,5 +1,13 @@
 description: "mission-control LLM prompt regression suite (LOP-8 / LOP-9)"
 
+# Promptfoo's Google provider checks GOOGLE_API_KEY / GOOGLE_GENERATIVE_AI_API_KEY
+# / GEMINI_API_KEY. Our .env names the same secret as GOOGLE_GENERATIVE_AI_KEY
+# (no `_API_` infix — matches the rest of the codebase, lib/ai/gemini.ts).
+# Alias it here via promptfoo's two-pass env templating so the rubric grader
+# sees a key it recognizes without us having to duplicate the value on disk.
+env:
+  GEMINI_API_KEY: "{{ env.GOOGLE_GENERATIVE_AI_KEY }}"
+
 # Single custom provider — dispatches per-fixture to the real chatJSON-wrapped
 # functions in lib/. See eval/provider.ts. Tsx loader is auto-registered by
 # promptfoo when it detects a .ts provider path.
@@ -8,10 +16,14 @@ providers:
     label: mc-chatjson
 
 # Promptfoo requires a prompt template even though our provider ignores it
-# (the provider reads vars.callsite + vars.input and dispatches). Keep this as
-# a single dummy entry — every real "prompt" lives in lib/ + docs/llm-prompts/.
+# (the provider reads vars.callsite + vars.input and dispatches). Keep the
+# raw string plain-alphanumeric: any `/`, `\`, `*`, `file://`, or `.xx`
+# extension triggers `maybeFilePath` in promptfoo and the run aborts with
+# "There are no prompts in ..." when no matching file exists. The real
+# prompts live in lib/ + docs/llm-prompts/.
 prompts:
-  - "{{callsite}}: see eval/provider.ts for dispatch"
+  - raw: "mc_dispatch {{callsite}}"
+    label: mc-dispatch
 
 # Each suite YAML is an array of TestCase objects — see eval/suites/<callsite>.yaml.
 # One file per callsite slug (matches the `name:` field in chatJSON + the inventory

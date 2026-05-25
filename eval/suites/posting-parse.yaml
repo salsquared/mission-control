@@ -66,4 +66,4 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        /intern|junior/i.test(r.seniority || '') && r.keywords.length >= 5
+        return /intern|junior/i.test(r.seniority || '') && r.keywords.length >= 5;

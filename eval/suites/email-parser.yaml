@@ -22,15 +22,15 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        r.isApplicationRelated === true &&
+        return r.isApplicationRelated === true &&
         /beta labs/i.test(r.company) &&
-        ['INTERVIEW_REQUESTED', 'INTERVIEW'].includes(r.status)
+        ['INTERVIEW_REQUESTED', 'INTERVIEW'].includes(r.status);
     - type: javascript
       value: |
         const r = JSON.parse(output);
         // nextSteps must mention sending availability / scheduling
-        typeof r.nextSteps === 'string' &&
-        /avail|sched|reply|time/i.test(r.nextSteps)
+        return typeof r.nextSteps === 'string' &&
+        /avail|sched|reply|time/i.test(r.nextSteps);
 
 - description: "Marketing email — must classify as NOT application-related"
   vars:
@@ -66,9 +66,9 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        r.isApplicationRelated === true &&
+        return r.isApplicationRelated === true &&
         r.status === 'OFFER' &&
         r.kind === 'college' &&
         // FULL OFFICIAL name — system prompt requires "Massachusetts Institute of Technology",
         // not "MIT". This catches a known classifier failure that would defeat normalizedCompany dedup.
-        /massachusetts institute of technology/i.test(r.company)
+        /massachusetts institute of technology/i.test(r.company);

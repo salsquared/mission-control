@@ -28,12 +28,12 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        r.mode === 'rewrite' &&
+        return r.mode === 'rewrite' &&
         typeof r.proposal === 'object' &&
         typeof r.proposal.text === 'string' &&
         r.proposal.text.length > 0 &&
         Array.isArray(r.proposal.tags) &&
-        r.proposal.text !== 'Worked on backend stuff and helped the team'
+        r.proposal.text !== 'Worked on backend stuff and helped the team';
     - type: llm-rubric
       value: |
         The rewrite of "Worked on backend stuff and helped the team" must be a

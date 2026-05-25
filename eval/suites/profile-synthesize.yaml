@@ -84,7 +84,7 @@
         // 2) Pulsar is in projects, NOT workRoles.
         const pulsarInProjects = r.projects.find(p => /pulsar/i.test(p.name));
         const pulsarInWork = r.workRoles.find(w => /pulsar/i.test(w.company));
-        ns.length === 1 && pulsarInProjects && !pulsarInWork
+        return ns.length === 1 && pulsarInProjects && !pulsarInWork;
     - type: llm-rubric
       value: |
         Verify the synthesized output respects the curator rules:

@@ -23,10 +23,10 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        r.mode === 'fill' &&
+        return r.mode === 'fill' &&
         Array.isArray(r.bullets) &&
         r.bullets.length >= 3 && r.bullets.length <= 5 &&
-        r.bullets.every(b => typeof b.text === 'string' && b.text.length > 0 && Array.isArray(b.tags))
+        r.bullets.every(b => typeof b.text === 'string' && b.text.length > 0 && Array.isArray(b.tags));
     - type: llm-rubric
       value: |
         The bullets must read as professional resume bullets for a Backend Engineer.
@@ -70,7 +70,7 @@
     - type: javascript
       value: |
         const r = JSON.parse(output);
-        r.bullets.length >= 3 && r.bullets.length <= 5
+        return r.bullets.length >= 3 && r.bullets.length <= 5;
     - type: llm-rubric
       value: |
         The bullets describe Pulsar (a financial data ingestion engine). PASS iff:
