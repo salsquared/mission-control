@@ -8,6 +8,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **At the start of every session**, read `docs/next_steps.md` in full before touching the codebase. Reconcile it against current `git status` / on-disk state — if the file claims work is in progress that's already landed or been discarded, fix the doc first.
 - **At the end of every session** (or when the user signals they're wrapping: "ok done", "let's stop here", "save progress", or before a context handoff), update `docs/next_steps.md`: move finished items into "Recently completed" (keep ~3–5), refresh "In-progress work" / "Open questions", and use absolute ISO dates (e.g. `2026-05-14`) — never relative ones.
+- **Every commit MUST be paired with a `docs/next_steps.md` update in the same logical step** — at minimum reflect "In-progress work" / "Recently completed" / "Last session" so the doc never lies about what's landed. The update can live in the same commit or an immediately-following commit, but it must precede the next user-visible pause. Skipping this is what makes session handoffs lossy.
+- **Every `git push` MUST flush `docs/next_steps.md` to match `origin/main` reality before the push** — the doc on the remote is the canonical handoff for a fresh clone or the next session. Before pushing, recheck: do "In-progress work" and "Last session" still describe what's about to be on `origin`? If not, update + commit the doc, THEN push (so the push includes the doc bump). Never push commits and leave next_steps stale on the remote.
 - The doc is for *state-derivable* facts (uncommitted work, decisions deferred to "next time"). Code-derivable facts (architecture, conventions) belong in this CLAUDE.md, not there.
 
 ## Commands
