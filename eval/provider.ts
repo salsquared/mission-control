@@ -26,6 +26,14 @@ import {
     buildBulletAssistPrompt,
     callBulletAssist,
 } from "@/lib/profile/bullet-assist";
+import {
+    renderBulletsBlock,
+    renderKeywordsBlock,
+    type FlatBullet,
+} from "@/lib/profile/auto-tag";
+import { chatJSON, MODEL_LITE } from "@/lib/ai/gemini";
+import { loadPrompt } from "@/lib/ai/prompts";
+import { z } from "zod";
 
 // Promptfoo provider response shape — see https://www.promptfoo.dev/docs/providers/custom-api/
 interface ProviderResponse {
@@ -111,6 +119,58 @@ const HANDLERS: Record<string, CallsiteHandler> = {
             parentKind: builderInput.parent.kind,
             parentId: builderInput.parent.id,
         });
+    },
+
+    // M8.5.2 — eval-only dispatcher. Mirrors `autoTagBullets` minus the Prisma
+    // load/persist (fixtures hand-feed the bullet list directly so the suite
+    // stays profile-agnostic). Bypasses `mergeAutoTagProposals` too — the
+    // assertion in the YAML grades the RAW model output, which is what
+    // we actually want a Promptfoo run to defend.
+    "bullet-auto-tag": async (input) => {
+        const args = input as {
+            keywords: string[];
+            bullets: Array<{ id: string; text: string; tags?: string[]; removedTags?: string[] }>;
+        };
+        const flat: FlatBullet[] = args.bullets.map(b => ({
+            parentKind: "work-role" as const,
+            parentId: "wr_eval_fixture",
+            bullet: {
+                id: b.id,
+                text: b.text,
+                tags: b.tags ?? [],
+                autoTags: [],
+                removedTags: b.removedTags ?? [],
+                locked: false,
+                excluded: false,
+            },
+        }));
+
+        const prompt = await loadPrompt("bullet-auto-tag", {
+            keywords: renderKeywordsBlock(args.keywords),
+            bullets: renderBulletsBlock(flat),
+        });
+
+        const schema = z.object({
+            proposals: z.array(z.object({
+                bulletId: z.string().min(1),
+                addedTags: z.array(z.string()),
+            })),
+        });
+
+        return await chatJSON({
+            name: "bullet-auto-tag",
+            system: prompt.system,
+            user: prompt.user,
+            schema,
+            model: MODEL_LITE,
+            temperature: 0.1,
+            maxOutputTokens: 2048,
+        });
+        // mergeAutoTagProposals is intentionally NOT applied here — the
+        // fixture assertions grade what the model actually returned. The
+        // merge function is exercised by the hermetic
+        // `auto-tag-merge-smoke.ts` instead, which can hold the model
+        // constant via canned proposals.
     },
 };
 
