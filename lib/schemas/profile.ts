@@ -39,7 +39,17 @@ export const BulletWriteSchema = z.object({
         return !b.removedTags.some((t) => tagSet.has(t));
     },
     { message: 'A tag cannot appear in both `tags` and `removedTags`' }
-);
+).transform((b) => ({
+    // M8.5.6 Decision 6.3 implicit-accept-on-save: every successful PATCH
+    // through this schema zeros out `autoTags`. The LLM-suggested keywords
+    // ride alongside `tags` while the user reviews them in the UI; the next
+    // save folds them in as regular tags. The UI also clears autoTags
+    // optimistically (mirrors this behavior), but the server is the source
+    // of truth — any client that forgets to clear, or hand-rolled curl
+    // calls, still get the right semantic here.
+    ...b,
+    autoTags: [] as string[],
+}));
 
 // Optional link entry (Profile.links is a JSON array of these).
 export const ProfileLinkSchema = z.object({
