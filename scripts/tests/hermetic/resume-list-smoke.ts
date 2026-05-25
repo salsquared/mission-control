@@ -53,6 +53,11 @@ const tag = randomBytes(4).toString("hex");
 const userId = `rl-smoke-user-${tag}`;
 const otherUserId = `rl-smoke-other-${tag}`;
 const resumeIds: string[] = [];
+// Hoisted so the finally block can clean up Test 4's fixtures even if an
+// assertion throws between create and the bottom-of-test deletes.
+let test4WatchlistId: string | null = null;
+let test4PostingId: string | null = null;
+let test4ApplicationId: string | null = null;
 
 async function main() {
     try {
@@ -194,8 +199,8 @@ async function main() {
 
         // ── Test 4: ?applicationId filter ────────────────────────────────────
         {
-            // Wire applicationId on r2 only.
-            await prisma.user.update({ where: { id: userId }, data: {} }); // touch
+            // Fixtures hoisted into module state so the finally block can
+            // clean them up even if an assertion throws mid-test.
             const watchlist = await prisma.watchlist.create({
                 data: {
                     userId, name: `rl-smoke-wl-${tag}`, kind: "careers-page",
@@ -203,6 +208,7 @@ async function main() {
                     scheduleMinutes: 60,
                 },
             });
+            test4WatchlistId = watchlist.id;
             const posting = await prisma.jobPosting.create({
                 data: {
                     watchlistId: watchlist.id, externalId: `ext-${tag}`,
@@ -211,6 +217,7 @@ async function main() {
                     raw: "{}",
                 },
             });
+            test4PostingId = posting.id;
             const app = await prisma.application.create({
                 data: {
                     userId, company: "Acme", normalizedCompany: `acme-${tag}`,
@@ -218,6 +225,7 @@ async function main() {
                     track: "career", kind: "job",
                 },
             });
+            test4ApplicationId = app.id;
             await prisma.generatedResume.update({ where: { id: r2.id }, data: { applicationId: app.id } });
 
             const req = { url: `http://localhost/api/resumes?applicationId=${app.id}` } as unknown as Parameters<typeof routeModule.GET>[0];
@@ -227,14 +235,22 @@ async function main() {
             else pass("applicationId filter: returns only the row linked to that Application");
             if (body.resumes[0]?.id !== r2.id) fail("applicationId filter: wrong row", body.resumes[0]);
             else pass("applicationId filter: returns the correct row");
-
-            await prisma.application.delete({ where: { id: app.id } });
-            await prisma.jobPosting.delete({ where: { id: posting.id } });
-            await prisma.watchlist.delete({ where: { id: watchlist.id } });
         }
     } finally {
+        // Tear down in FK-aware order: GeneratedResume → Application → JobPosting
+        // → Watchlist → User. Each step is .catch'd so a single failure doesn't
+        // block the rest, but ordering minimizes the cleanup churn.
         for (const id of resumeIds) {
             await prisma.generatedResume.delete({ where: { id } }).catch(() => {});
+        }
+        if (test4ApplicationId) {
+            await prisma.application.delete({ where: { id: test4ApplicationId } }).catch(() => {});
+        }
+        if (test4PostingId) {
+            await prisma.jobPosting.delete({ where: { id: test4PostingId } }).catch(() => {});
+        }
+        if (test4WatchlistId) {
+            await prisma.watchlist.delete({ where: { id: test4WatchlistId } }).catch(() => {});
         }
         await prisma.user.delete({ where: { id: userId } }).catch(() => {});
         await prisma.user.delete({ where: { id: otherUserId } }).catch(() => {});
