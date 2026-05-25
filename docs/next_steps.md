@@ -13,6 +13,26 @@
 
 ## Last session
 
+- **Date:** 2026-05-25 (Close-detection probe gate — fixed false-close across all 11 ATS kinds, recovered 921 false-closed postings on dev + 629 on prod).
+- **Branch:** `main`, prior LOP-6 commits still local-only, plus today's probe-gate work uncommitted in the tree.
+- **What landed this turn (uncommitted):**
+  - **`docs/close-detection-probe.md`** (NEW, ~360 lines) — full design doc + per-ATS profile table + rollout plan. Slated for `docs/archive/` after the probe-gate has run for ≥7 days without regression.
+  - **`lib/postings/liveness.ts`** (NEW) — `probePostingLiveness` + `probeBatch` + 11-entry `PROBE_PROFILES` const. Per-kind handlers: LinkedIn (markers + redirect detection), Greenhouse/Lever (real APIs via parsed sourceUrl, fallback to HTML probe), Ashby/Workday (markers + redirect detection), generic (HTTP status only). All probe paths default to `"unknown"` on error — never false-closes. Hermetic test override: `MC_LIVENESS_BYPASS={alive|closed|unknown}`.
+  - **`scheduler/jobs/job-watcher.ts`** — close-detection rewritten as probe-gated. Stale candidates → `probeBatch` → bucket into `confirmedClosed` (flip to status="closed") / `refreshedAlive` (bump `lastSeenAt`) / `unknown` (no-op, next tick retries). Added `RunResult.refreshedAlive`. Closure-summary notification only fires on confirmed closures.
+  - **`lib/schemas/watchlists.ts`** — `WatchlistRunResponseSchema` gained `refreshedAlive: z.number().int().default(0)` (default keeps older clients parsing fine).
+  - **`scripts/tests/hermetic/liveness-probe-smoke.ts`** (NEW) — 66 assertions: per-kind dispatch, all status-code paths, LinkedIn markers, Greenhouse/Lever API routing + fallback, Workday login-redirect, Ashby bare-root-redirect, batch maxPerTick overflow, concurrency cap, per-hit delay, no-false-close-on-error sentinel across all 11 kinds. Wired into `scripts/pre-push.sh`. 50/50 suites green.
+  - **`scripts/tests/hermetic/job-watcher-scale-regression-smoke.ts`** — set `MC_LIVENESS_BYPASS=closed` so the bug-C scale regression still exercises the close UPDATE path at 1,100 rows (which the probe cap would otherwise gate at 50).
+  - **`scripts/tests/debug/recover-false-closed.ts`** (NEW) — one-shot recovery. Dry-run default; `--apply` mutates; `--kind=<x>` / `--watchlist=<id>` / `--limit=N` / `--cap-multiplier=N` filters. Reopens alive postings to `tracked` (if linked to an Application) or `new` (otherwise).
+  - **`CLAUDE.md` + `docs/implementation.md`** — closed-detection paragraphs updated to point at the probe gate; `docs/close-detection-probe.md` cross-referenced.
+- **Rollout completed both tiers:**
+  - **Dev:** `pm2 restart mission-control-scheduler-dev`. Recovery dry-run + apply per kind: linkedin (201 → 15 closed, 186 reopened incl. the user-tracked Mattel listing), workday (677 → 22 closed, 655 alive across multiple sweeps), greenhouse (369 → 304 closed, 65 alive), small kinds (16 → 0 closed, all reopened). Total dev: 1,263 closed → 342 closed; 921 reopened.
+  - **Prod:** `npm run build` + `pm2 restart mission-control mission-control-scheduler-prod --update-env`. Recovery applied: linkedin (162 → 6, 157 reopened including 7 user-tracked-as-application listings preserved), workday (414 → 0, all 414 alive — the most dramatic case), greenhouse (240 → 195, 45 alive), small kinds (15 → 1, 14 alive). Total prod: 831 closed → 202 closed; 629 reopened.
+- **Final gate state:** `npm run test:hermetic` 50/50 green post-probe-gate. `tsc --noEmit` clean. Both schedulers running new code; `[liveness] kind=… alive/closed/unknown` lines visible in `pm2 logs mission-control-scheduler-{dev,prod}`. Mattel posting (the user's original symptom report) confirmed reopened: `status="tracked"`, `removedAt=null`, CLOSED badge gone.
+
+---
+
+### Previous session (kept for one cycle, then prune)
+
 - **Date:** 2026-05-24 (LOP-6 cutover — all 9 callsites moved to the Lunary prompt registry).
 - **Branch:** `main`, 2 commits ahead of `origin/main` (commits `0581845` + `d9ecd07` from earlier in the day still local-only), plus uncommitted LOP-6 work in the tree.
 - **What landed this turn (uncommitted):**
@@ -41,7 +61,8 @@ Track A (Pipeline UX), Track B (Discovery + notifications), Track C (Profile + r
 
 ## Immediate next actions (in order)
 
-1. **Push the 9 local commits ahead of `origin/main`.** Branch carries LOP-6 cutover + 2026-05-24 audit fix-stack (7 real bugs in scheduler/job-watcher/fetchers/events) + the new regression suite (50/50 hermetic green). Nothing else gates the push.
+1. **Commit the close-detection probe gate (today's work).** Suggested commit split per the doc plan: (1) `feat(postings): probePostingLiveness + per-kind profiles` for `lib/postings/liveness.ts` + smoke + pre-push wiring, (2) `fix(job-watcher): probe-gate close detection across all 11 ATS kinds` for the scheduler integration, (3) `chore(recovery): one-shot script + run against dev/prod` for the debug script (data already mutated in-tier), (4) `docs: close-detection probe gate` for the doc + CLAUDE.md + implementation.md updates.
+2. **Push the now ~13 local commits ahead of `origin/main`.** Earlier LOP-6 cutover + 2026-05-24 audit fix-stack + today's probe-gate work. Nothing else gates the push.
 2. **Triage the "Audit-found soft bugs" list below** (next §). These are the 10 issues caught during the audit that weren't fixed in-session — most are bounded in impact but worth deciding on each. Pick the ones to fix next; some are 5-line edits.
 3. **End-to-end Lunary trace check.** Trigger any LLM path through the running dev process (e.g. fill some bullets on the Profile dash, paste a posting URL) and confirm runs appear in Lunary's dashboard tagged by their `name`. PM2 was restarted twice this session; should be live.
 4. **Run `npm run test:prompts` once end-to-end.** Validates the Promptfoo harness against all 9 cut-over callsites with synthetic seed fixtures. Expected ~$0.01–0.05 in Gemini spend. First-run failures are the cue to capture real fixtures (LOP-9) and tighten assertions.
