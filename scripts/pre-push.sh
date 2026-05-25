@@ -88,6 +88,12 @@ SUITES=(
     "scripts/tests/hermetic/classify-employment-type-smoke.ts"
     "scripts/tests/hermetic/discovery-suggest-smoke.ts"
     "scripts/tests/hermetic/location-expansion-smoke.ts"
+    # M8.4 / M8.5 Wave 1
+    "scripts/tests/hermetic/pipeline-picker-smoke.ts"
+    "scripts/tests/hermetic/resume-from-application-smoke.ts"
+    "scripts/tests/hermetic/resume-list-smoke.ts"
+    "scripts/tests/hermetic/auto-tag-merge-smoke.ts"
+    "scripts/tests/hermetic/bullet-remove-tag-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

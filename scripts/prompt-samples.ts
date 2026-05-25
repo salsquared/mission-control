@@ -13,6 +13,7 @@ import type { PromptVars } from "@/lib/ai/prompts";
 export const PROMPT_SLUGS = [
     "bullet-assist-fill",
     "bullet-assist-rewrite",
+    "bullet-auto-tag",
     "discovery-suggest",
     "email-parser",
     "employment-type-classifier",
@@ -36,6 +37,10 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         existingJson: JSON.stringify({ workRoles: [{ company: "Acme", title: "Engineer" }] }, null, 2),
         draftCount: "1",
         draftsJson: JSON.stringify([{ filename: "r.pdf", tree: { workRoles: [{ company: "Acme", title: "Senior Engineer", bullets: ["Built thing"] }] } }], null, 2),
+    },
+    "bullet-auto-tag": {
+        keywords: "- Python\n- Kubernetes\n- distributed systems",
+        bullets: "- id=b001 | tags=[] | removedTags=[]\n  text: \"Built a Python service handling 50k req/day on k8s\"\n- id=b002 | tags=[Go] | removedTags=[]\n  text: \"Cut latency in our Go API by 40%\"",
     },
     "discovery-suggest": {
         topic: "space",

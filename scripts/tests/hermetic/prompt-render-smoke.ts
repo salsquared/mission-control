@@ -63,6 +63,15 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         requiredSystemPhrases: ['Do not invent specific quantitative claims', 'tense and voice'],
         requiredUserPhrases: ['Current bullet to rewrite', 'Output schema'],
     },
+    'bullet-auto-tag': {
+        expectSystem: true,
+        expectModel: true,
+        expectTemperature: true,
+        expectMaxTokens: true,
+        userByteBudget: 16_384,
+        requiredSystemPhrases: ['Never invent coverage', 'removedTags'],
+        requiredUserPhrases: ['Posting keywords', 'Bullets to consider'],
+    },
     'discovery-suggest': {
         expectSystem: false,
         expectModel: true,
