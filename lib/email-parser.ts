@@ -156,6 +156,18 @@ export async function parseApplicationEmail(
   });
   const prompt = loaded.user;
 
+  // LOP-9: same fixture-capture seam as lib/ai/gemini.ts:chatJSON. This
+  // callsite bypasses chatJSON (Vercel AI SDK), so the gate has to live here
+  // too. Toggle via `CAPTURE_FIXTURES=1 pm2 restart mission-control-dev --update-env`.
+  if (process.env.CAPTURE_FIXTURES === "1") {
+    console.info("[FIXTURE]", JSON.stringify({
+      name: "email-parser",
+      model: "gemini-3.1-flash-lite",
+      system: undefined,
+      user: prompt,
+    }));
+  }
+
   // LOP-5: trace start. RunId is a fresh cuid-ish — the Gmail msgId isn't in
   // scope here (caller has it), and Lunary just needs uniqueness.
   const runId = `email-parser:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;

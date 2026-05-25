@@ -8,6 +8,17 @@ import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
 // LUNARY_PUBLIC_KEY is unset, `tracedGenerate` is just `rawGenerate`.
 const LUNARY_ENABLED = Boolean(process.env.LUNARY_PUBLIC_KEY);
 
+// LOP-9: when set, dump every chatJSON call's rendered (system, user) pair to
+// console.info as a single line: `[FIXTURE] {"name":..., "model":..., "system":..., "user":...}`.
+// Read at call time so a `pm2 restart --update-env` flip takes effect without
+// needing the import order to land before the env was set. Used to harvest
+// real prompts to replace the synthetic seed entries in `eval/suites/*.yaml`.
+// Workflow: `CAPTURE_FIXTURES=1 pm2 restart mission-control-dev --update-env`,
+// use the app for ~30 min, then `pm2 logs mission-control-dev --raw --nostream --lines 5000 | grep '\[FIXTURE\]'`.
+function captureFixturesEnabled(): boolean {
+    return process.env.CAPTURE_FIXTURES === "1";
+}
+
 // Three-tier model fleet. See `docs/llm-calls.md` for the per-callsite
 // rationale; the short version:
 //
@@ -186,6 +197,15 @@ const tracedGenerate = LUNARY_ENABLED
  */
 export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
     const model = opts.model ?? DEFAULT_MODEL;
+
+    if (captureFixturesEnabled()) {
+        console.info("[FIXTURE]", JSON.stringify({
+            name: opts.name,
+            model,
+            system: opts.system,
+            user: opts.user,
+        }));
+    }
 
     const response = await withRetry(async () => {
         // PC-6: block on the token bucket BEFORE each attempt — retries
