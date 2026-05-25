@@ -366,11 +366,41 @@ const InputModeTabs: React.FC<{
 
 type TrackFilter = "all" | "career" | "side";
 
-const TRACK_FILTER_DEFS: Array<{ id: TrackFilter; label: string }> = [
-    { id: "all", label: "Both" },
-    { id: "career", label: "Career" },
-    { id: "side", label: "Side" },
+// Track colors mirror `TRACK_PRESETS` in ApplicationsKanbanCard so the same
+// blue=career / amber=side convention reads across the app. "Both" stays
+// neutral since it isn't a track.
+const TRACK_FILTER_DEFS: Array<{
+    id: TrackFilter;
+    label: string;
+    activeClass: string;
+    inactiveClass: string;
+}> = [
+    {
+        id: "all",
+        label: "Both",
+        activeClass: "bg-white/10 text-white",
+        inactiveClass: "text-white/50 hover:text-white/80",
+    },
+    {
+        id: "career",
+        label: "Career",
+        activeClass: "bg-blue-500/20 text-blue-200",
+        inactiveClass: "text-blue-300/60 hover:text-blue-200",
+    },
+    {
+        id: "side",
+        label: "Side",
+        activeClass: "bg-amber-500/20 text-amber-200",
+        inactiveClass: "text-amber-300/60 hover:text-amber-200",
+    },
 ];
+
+// Per-row track pill — uses the same blue=career / amber=side convention.
+const TRACK_PILL_CLASSES: Record<string, string> = {
+    career: "text-blue-300 bg-blue-500/10 border border-blue-500/30",
+    side: "text-amber-300 bg-amber-500/10 border border-amber-500/30",
+};
+const TRACK_PILL_FALLBACK = "text-white/40 bg-white/[0.04] border border-white/10";
 
 const InterestedAppPicker: React.FC<{
     selectedApplicationId: string | null;
@@ -429,7 +459,7 @@ const InterestedAppPicker: React.FC<{
                             aria-pressed={active}
                             className={[
                                 "px-3 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors",
-                                active ? "bg-purple-500/30 text-purple-100" : "text-white/50 hover:text-white/80",
+                                active ? t.activeClass : t.inactiveClass,
                                 disabled ? "opacity-40 cursor-not-allowed" : "",
                             ].join(" ")}
                         >
@@ -468,7 +498,7 @@ const InterestedAppPicker: React.FC<{
                                     <span className="text-xs font-semibold text-white/90 truncate">{it.company}</span>
                                     <span className="text-white/30">·</span>
                                     <span className="text-xs text-white/70 truncate">{it.postingTitle || it.role || "—"}</span>
-                                    <span className="text-[9px] uppercase tracking-wide text-white/40 bg-white/[0.04] border border-white/10 px-1 rounded">
+                                    <span className={`text-[9px] uppercase tracking-wide px-1 rounded ${TRACK_PILL_CLASSES[it.track] ?? TRACK_PILL_FALLBACK}`}>
                                         {it.track}
                                     </span>
                                 </div>
