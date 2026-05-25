@@ -15,6 +15,15 @@
  * Cadence: prefer ≥60min between fetches per watchlist to stay under
  * LinkedIn's anti-bot heuristics. Don't crawl multiple LinkedIn watchlists
  * in parallel — keep the request rate low.
+ *
+ * f_TPR=r86400 (24h window) + PAGE_SIZE 25 × MAX_PAGES 2 = 50/crawl mean
+ * the returned set is a snapshot of what LinkedIn surfaces today, NOT the
+ * full live-posting universe. Postings older than 24h or past slot 50 fall
+ * out — they're still live on LinkedIn, but we don't see them. The probe
+ * gate in scheduler/jobs/job-watcher.ts (docs/close-detection-probe.md)
+ * stops these from being false-closed: stale candidates get GET-probed
+ * against their sourceUrl, and only positive-evidence-of-removal flips
+ * the row.
  */
 import * as cheerio from "cheerio";
 import { z } from "zod";
