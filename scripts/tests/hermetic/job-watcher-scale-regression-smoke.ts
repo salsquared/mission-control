@@ -21,6 +21,13 @@ import { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
 
 process.env.MC_ALLOW_PRIVATE_FETCH = "1";
+// Probe gate (docs/close-detection-probe.md) would otherwise cap the close
+// path at the per-kind maxPerTick (50 for careers-page) — but this test
+// exists specifically to verify the close UPDATE handles >999 ids without
+// Prisma P2029, which requires actually attempting to close all 1100 rows
+// in one tick. Bypass routes every probe straight to "closed" and skips
+// the cap. Production never sets this env.
+process.env.MC_LIVENESS_BYPASS = "closed";
 
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 

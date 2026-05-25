@@ -40,12 +40,15 @@ import {
 } from "@/lib/postings/negative-filters";
 import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 import { parseCompensation } from "@/lib/postings/compensation";
+import { probeBatch, type WatchlistKind } from "@/lib/postings/liveness";
 
 export interface RunResult {
     watchlistId: string;
     newPostings: number;
     seenAgain: number;
     closed: number;
+    /** Stale candidates that probed alive — lastSeenAt was refreshed to runAt. */
+    refreshedAlive: number;
     error: string | null;
 }
 
@@ -85,8 +88,8 @@ async function processOne(watchlistId: string, opts?: { broadcast?: boolean }): 
 async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean }): Promise<RunResult> {
     const broadcast = opts?.broadcast ?? false;
     const watchlist = await prisma.watchlist.findUnique({ where: { id: watchlistId } });
-    if (!watchlist) return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: "watchlist not found" };
-    if (!watchlist.active) return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: "watchlist is paused" };
+    if (!watchlist) return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, refreshedAlive: 0, error: "watchlist not found" };
+    if (!watchlist.active) return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, refreshedAlive: 0, error: "watchlist is paused" };
 
     let config: ReturnType<typeof WatchlistConfigSchema.parse>;
     try {
@@ -100,7 +103,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             where: { id: watchlistId },
             data: { lastRunAt: new Date(), lastError: `invalid config: ${msg}` },
         });
-        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: `invalid config: ${msg}` };
+        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, refreshedAlive: 0, error: `invalid config: ${msg}` };
     }
 
     if (config.kind !== watchlist.kind) {
@@ -120,7 +123,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 where: { id: watchlistId },
                 data: { lastRunAt: new Date(), lastError: msg },
             });
-            return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: msg };
+            return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, refreshedAlive: 0, error: msg };
         }
     }
 
@@ -146,7 +149,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             where: { id: watchlistId },
             data: { lastRunAt: runAt, lastError: fetchResult.error },
         });
-        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, error: fetchResult.error };
+        return { watchlistId, newPostings: 0, seenAgain: 0, closed: 0, refreshedAlive: 0, error: fetchResult.error };
     }
 
     let newPostings = 0;
@@ -387,31 +390,37 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         newPostings++;
     }
 
-    // Closed-posting detection (story S5.7). Any prior posting for this watchlist
-    // that we *didn't* see in this run, that's been silent for > 6h, and that
-    // isn't already terminal (closed/hidden), gets marked closed.
+    // Closed-posting detection (story S5.7, probe-gated as of 2026-05-25 —
+    // see docs/close-detection-probe.md).
     //
-    // SAFETY 1: skip when the fetch returned zero postings. An empty fetch can
-    // happen for benign reasons (source temporarily blank, SPA misrender,
-    // CDN hiccup) and would otherwise nuke the entire feed via `notIn: []`
-    // matching every row. Better to wait for the next tick than to mass-close.
+    // Stale candidates = postings on this watchlist that were NOT in this
+    // run's fetch AND haven't been seen in 6h+. Pre-probe-gate (bug-C era),
+    // every stale candidate was unconditionally flipped to status="closed".
+    // That was wrong for every fetcher whose view of the source is
+    // incomplete (LinkedIn's 24h filter, Workday's per-crawl page cap on
+    // 1k+-job tenants — 92–97% false-close rate measured 2026-05-25).
     //
-    // SAFETY 2: skip when fetchResult.partial — pagination broke mid-crawl
-    // and we got an unknown subset. Mass-closing what's not in the partial
-    // subset would silently nuke legitimate postings. Postings still get
-    // created/updated normally (better to have a posting we missed an edit
-    // on than no posting at all); just don't mark stale ones closed.
+    // Now: each stale candidate's sourceUrl is GET-probed via
+    // lib/postings/liveness.ts:probeBatch. Only positive evidence of
+    // removal (404/410, source-specific redirects, closure markers) flips
+    // the row. "alive" results bump lastSeenAt — chronically absent-from-
+    // fetch-but-live postings (LinkedIn's 24h window) never false-close.
+    // "unknown" results leave the row alone; the next tick re-probes.
     //
-    // SQLite-param-limit caveat: Prisma's effective parameter cap for a
-    // SQLite `notIn (…)` is 999, and `notIn` is a negation filter that
-    // Prisma refuses to auto-split into multiple sub-queries (P2029 — would
-    // change semantics). The naive `externalId: { notIn: seenExternalIds }`
-    // shape silently P2029'd in prod for SpaceX (1688 active rows), Boeing
-    // (1114), and Blue Origin (981) on every crawl — postings removed from
-    // those sources stayed visible as "active" forever. Rewrite as a two-
-    // step: select stale candidates (no notIn), diff against the in-memory
-    // seenExternalIds set in JS, then update by id (in {…} IS splittable).
+    // SAFETY 1 — skip on empty fetch: a benign source hiccup (SPA mis-
+    // render, CDN flap) would otherwise mark every existing row stale.
+    // SAFETY 2 — skip on partial fetch: pagination broke mid-crawl; the
+    // un-fetched portion is unknown territory, don't mass-close it.
+    // SAFETY 3 — skip on first run: nothing prior to compare against.
+    //
+    // P2029 caveat (kept for posterity): the previous notIn-based shape
+    // exceeded SQLite's 999-param cap and silently aborted for SpaceX
+    // (1688), Boeing (1114), Blue Origin (981). The current code uses
+    // SELECT-then-diff-then-UPDATE-by-id, where the close UPDATE uses
+    // `id: in: [...]` (splittable by Prisma) on the smaller "confirmed
+    // closed" subset.
     let closed = 0;
+    let refreshedAlive = 0;
     if (!isFirstRun && fetchResult.postings.length > 0 && !fetchResult.partial) {
         const sixHoursAgo = new Date(runAt.getTime() - 6 * 60 * 60 * 1000);
         const staleCandidates = await prisma.jobPosting.findMany({
@@ -420,17 +429,54 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 status: { notIn: ["closed", "hidden"] },
                 lastSeenAt: { lt: sixHoursAgo },
             },
-            select: { id: true, externalId: true },
+            select: { id: true, externalId: true, sourceUrl: true },
         });
-        const toCloseIds = staleCandidates
-            .filter(c => !seenExternalIds.has(c.externalId))
-            .map(c => c.id);
-        if (toCloseIds.length > 0) {
-            const closeResult = await prisma.jobPosting.updateMany({
-                where: { id: { in: toCloseIds } },
-                data: { status: "closed", removedAt: runAt },
-            });
-            closed = closeResult.count;
+        const toProbe = staleCandidates.filter(c => !seenExternalIds.has(c.externalId));
+        if (toProbe.length > 0) {
+            const probeResults = await probeBatch(
+                toProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl })),
+                watchlist.kind as WatchlistKind,
+            );
+            const confirmedClosedIds: string[] = [];
+            const aliveIds: string[] = [];
+            for (const c of toProbe) {
+                const verdict = probeResults.get(c.externalId) ?? "unknown";
+                if (verdict === "closed") confirmedClosedIds.push(c.id);
+                else if (verdict === "alive") aliveIds.push(c.id);
+                // "unknown" → leave the row alone; the next tick re-evaluates.
+            }
+            // Race-guard: a probe round can take minutes on LinkedIn
+            // (30 probes × 1.5 s = 45 s) or seconds on Workday. If during
+            // the probe window the user clicks "Hide" on a row, their
+            // manual action must beat the gate. Re-assert "still non-
+            // terminal" in the WHERE so a concurrent user UPDATE wins.
+            if (confirmedClosedIds.length > 0) {
+                const closeResult = await prisma.jobPosting.updateMany({
+                    where: {
+                        id: { in: confirmedClosedIds },
+                        status: { notIn: ["closed", "hidden"] },
+                    },
+                    data: { status: "closed", removedAt: runAt },
+                });
+                closed = closeResult.count;
+            }
+            if (aliveIds.length > 0) {
+                const aliveResult = await prisma.jobPosting.updateMany({
+                    where: {
+                        id: { in: aliveIds },
+                        status: { notIn: ["closed", "hidden"] },
+                    },
+                    data: { lastSeenAt: runAt },
+                });
+                refreshedAlive = aliveResult.count;
+            }
+            const skipped = toProbe.length - confirmedClosedIds.length - aliveIds.length;
+            if (skipped > 0 || refreshedAlive > 0 || closed > 0) {
+                console.info(
+                    `[job-watcher] probe-gate watchlist=${watchlistId} kind=${watchlist.kind}: ` +
+                    `candidates=${toProbe.length} closed=${closed} alive=${refreshedAlive} unknown=${skipped}`,
+                );
+            }
         }
         if (closed > 0) {
             // Standard tier — important enough to flag in the bell, but no
@@ -441,7 +487,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 tier: "standard",
                 kind: "system",
                 title: `${watchlist.name} — ${closed} ${closed === 1 ? "posting" : "postings"} closed`,
-                body: "Removed from the source feed for more than 6 hours.",
+                body: "Removed from the source feed and confirmed unreachable.",
                 payload: { watchlistId, closed },
                 dedupKey: `watchlist-closures:${watchlistId}:${runAt.toISOString().slice(0, 10)}`,
             }).catch(e => console.warn(`[job-watcher] closure-summary dispatch failed:`, e));
@@ -479,7 +525,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         }
     }
 
-    return { watchlistId, newPostings, seenAgain, closed, error: null };
+    return { watchlistId, newPostings, seenAgain, closed, refreshedAlive, error: null };
 }
 
 /**
@@ -512,7 +558,7 @@ export async function runDueWatchlists(): Promise<{ processed: number; results: 
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[job-watcher] processOne(${c.id}) threw:`, e);
-            results.push({ watchlistId: c.id, newPostings: 0, seenAgain: 0, closed: 0, error: msg });
+            results.push({ watchlistId: c.id, newPostings: 0, seenAgain: 0, closed: 0, refreshedAlive: 0, error: msg });
         }
     }
     return { processed: due.length, results };
