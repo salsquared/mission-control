@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma';
-import type { Application } from '@prisma/client';
+import type { Application, JobPosting } from '@prisma/client';
 import { normalizeCompanyName } from '@/lib/applications/normalize-company';
 
 export interface ApplicationCreate {
@@ -51,6 +51,36 @@ export function findApplicationsByUser(userId: string, track?: string): Promise<
 
 export function findApplicationByIdForUser(id: string, userId: string): Promise<Application | null> {
     return prisma.application.findFirst({ where: { id, userId } });
+}
+
+// M8.4.4 (story S8.12) — Pipeline picker source. Returns the user's
+// INTERESTED-status applications that have a linked JobPosting with a non-null
+// `sourceUrl`. The picker UI lists these as the auto-fill source for the resume
+// generate flow. Manual-add Apps (S2.3) and cold-email Apps (S1.1) lack a
+// linked JobPosting → naturally excluded by the `NOT: { postingId: null }`
+// filter. We post-filter on `posting?.sourceUrl != null` defensively — the
+// schema doesn't strictly require sourceUrl, so a malformed posting row
+// (legacy / hand-edited) wouldn't be picker-eligible even though it has a
+// postingId. Per Decision 6.4, URL-less Interested apps are hidden from the
+// picker; the URL or Paste segmented-control tabs are the fallback.
+export type InterestedWithPostingRow = Application & {
+    posting: Pick<JobPosting, "sourceUrl" | "title"> | null;
+};
+
+export function findInterestedWithPostingForUser(
+    userId: string,
+): Promise<InterestedWithPostingRow[]> {
+    return prisma.application.findMany({
+        where: {
+            userId,
+            status: 'INTERESTED',
+            NOT: { postingId: null },
+        },
+        include: {
+            posting: { select: { sourceUrl: true, title: true } },
+        },
+        orderBy: { lastUpdateAt: 'desc' },
+    });
 }
 
 /**

@@ -19,12 +19,20 @@ export const runtime = "nodejs";
 // PDF render is far heavier than the typical 10s API timeout.
 export const maxDuration = 60;
 
+// M8.4.5 (story S8.12) — `applicationId` extends the posting input. When set
+// the route loads the linked Application + its JobPosting and uses the
+// posting.sourceUrl as the canonical url for the parse step, then auto-attaches
+// the resulting GeneratedResume to that application (per [[S8.6]]). The
+// existing top-level body `applicationId` (M8-2.4) still works for URL / Paste
+// flows that want to attach without going through the Pipeline picker.
 const PostingInputSchema = z.object({
     url: z.string().url().optional(),
     text: z.string().optional(),
-}).refine(p => (p.url && p.url.trim().length > 0) || (p.text && p.text.trim().length > 0), {
-    message: "Provide either a url or pasted text",
-});
+    applicationId: z.string().cuid().optional(),
+}).refine(
+    p => (p.url && p.url.trim().length > 0) || (p.text && p.text.trim().length > 0) || (p.applicationId && p.applicationId.trim().length > 0),
+    { message: "Provide one of: url, text, or applicationId" },
+);
 
 const ResumePostBodySchema = z.object({
     posting: PostingInputSchema,
@@ -34,6 +42,10 @@ const ResumePostBodySchema = z.object({
         format: z.enum(["pdf", "docx"]).optional(),
     }).optional(),
 });
+
+// GET projection cap. Default 100 per M8.4.3; max 500 above which the dropdown
+// becomes paginate-or-search territory (OOS for M8.4 v1).
+const ResumeListLimitSchema = z.coerce.number().int().positive().max(500).default(100);
 
 const FORMAT_CONTENT_TYPES = {
     pdf: "application/pdf",
@@ -59,6 +71,11 @@ interface GeneratedResumeRow {
     status: string;
     artifactPath: string | null;
     error: string | null;
+    // M8.4.3 — surfaced to the previous-resumes dropdown so the UI shows
+    // company + title at a glance. NULL on rows generated before M8.4.2 added
+    // these columns; the dropdown renders "(unknown)" / "(no title)" for those.
+    postingTitle: string | null;
+    postingCompany: string | null;
 }
 
 function summarizeResumeRow(r: GeneratedResumeRow) {
@@ -72,6 +89,8 @@ function summarizeResumeRow(r: GeneratedResumeRow) {
         status: r.status,
         hasArtifact: r.artifactPath !== null,
         error: r.error,
+        postingTitle: r.postingTitle,
+        postingCompany: r.postingCompany,
     };
 }
 
@@ -83,8 +102,12 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const applicationId = url.searchParams.get("applicationId");
-    const limitRaw = Number(url.searchParams.get("limit") ?? 50);
-    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(1, Math.floor(limitRaw)), 200) : 50;
+    const limitParam = url.searchParams.get("limit");
+    // M8.4.3 — coerce + clamp via zod. Bad input falls back to the default
+    // (100) rather than 400'ing the request — the dropdown still needs to
+    // render something even if a stale link carries a malformed limit.
+    const limitParsed = ResumeListLimitSchema.safeParse(limitParam ?? undefined);
+    const limit = limitParsed.success ? limitParsed.data : 100;
 
     const where: Record<string, unknown> = { userId };
     if (applicationId) where.applicationId = applicationId;
@@ -128,6 +151,54 @@ export async function POST(req: NextRequest) {
 
     let stage: "load" | "parse" | "select" | "rewrite" | "render" = "load";
     try {
+        // M8.4.5 (story S8.12) — Pipeline-picker source. When the body carries
+        // `posting.applicationId`, resolve that into the canonical posting
+        // sourceUrl + auto-link the resulting GeneratedResume to the
+        // application. Four guards, all 4xx, all fire before the heavy parse /
+        // LLM / render path:
+        //   1. Application exists and belongs to the session user → 404 on
+        //      cross-user mismatch (don't leak existence).
+        //   2. Application.status === 'INTERESTED' → 400 application-not-interested
+        //      (defense-in-depth; the picker UI only surfaces INTERESTED).
+        //   3. Application.posting?.sourceUrl is non-null → 400
+        //      application-missing-url (Decision 6.4: URL-less apps shouldn't
+        //      reach this code path via the picker, but a hand-built request
+        //      might bypass the picker).
+        // Resolution sets posting.url to the application's posting sourceUrl;
+        // the parse step downstream treats it as a normal URL input.
+        const pickerApplicationId = parsed.data.posting.applicationId?.trim();
+        let autoLinkApplicationId: string | null = null;
+        if (pickerApplicationId) {
+            const application = await prisma.application.findUnique({
+                where: { id: pickerApplicationId },
+                include: { posting: true },
+            });
+            if (!application || application.userId !== userId) {
+                // Cross-user (or nonexistent) — 404 rather than 403 to avoid
+                // leaking the existence of a cuid you don't own.
+                return NextResponse.json({ error: "Application not found", stage: "input" }, { status: 404 });
+            }
+            if (application.status !== 'INTERESTED') {
+                return NextResponse.json(
+                    { error: "application-not-interested", stage: "input" },
+                    { status: 400 },
+                );
+            }
+            const sourceUrl = application.posting?.sourceUrl;
+            if (!sourceUrl || sourceUrl.trim().length === 0) {
+                return NextResponse.json(
+                    { error: "application-missing-url", stage: "input" },
+                    { status: 400 },
+                );
+            }
+            // Rewrite the parsed body to feed the parse step a URL it already
+            // knows is safe (cuid was validated by zod, sourceUrl is whatever
+            // the watchlist fetcher persisted — assertExternalHttpUrl in
+            // parsePosting still gates SSRF).
+            parsed.data.posting.url = sourceUrl;
+            autoLinkApplicationId = application.id;
+        }
+
         // 1. Load profile
         const hydrated = await findOrCreateProfile(userId);
         // Date → ISO string normalization for downstream ProfileWire-typed code.
@@ -201,9 +272,17 @@ export async function POST(req: NextRequest) {
         // create the row (no orphan rows pointing at missing files). If the row
         // insert fails afterward, we'd have an orphan FILE — manual cleanup,
         // but the user still got their resume in the response.
-        const applicationId = parsed.data.applicationId?.trim() || null;
-        // Defensive: if applicationId is supplied, verify ownership before linking.
-        if (applicationId) {
+        //
+        // M8.4.5 step 6 — when the body carried `posting.applicationId`, we
+        // resolved it to `autoLinkApplicationId` above; that takes precedence
+        // over the legacy top-level `applicationId` (M8-2.4) so the Pipeline
+        // flow always wins. Both paths still cross-check ownership.
+        const topLevelApplicationId = parsed.data.applicationId?.trim() || null;
+        const applicationId = autoLinkApplicationId ?? topLevelApplicationId;
+        // Defensive: ownership check for the LEGACY top-level applicationId.
+        // (The picker path's `autoLinkApplicationId` was already ownership-
+        // gated above with cross-user 404 semantics.)
+        if (applicationId && applicationId === topLevelApplicationId && autoLinkApplicationId === null) {
             const ownedApp = await prisma.application.findFirst({
                 where: { id: applicationId, userId },
                 select: { id: true },
@@ -221,6 +300,11 @@ export async function POST(req: NextRequest) {
                 data: {
                     userId,
                     applicationId,
+                    // M8.4.2 — persist the parsed title + company alongside the
+                    // existing X-Resume-Title / X-Resume-Company response
+                    // headers. Drives the previous-resumes dropdown UI (M8.4.6).
+                    postingTitle: posting.title,
+                    postingCompany: posting.company,
                     postingInput: JSON.stringify({
                         url: parsed.data.posting.url ?? null,
                         text: parsed.data.posting.text ? parsed.data.posting.text.slice(0, 4_000) : null,
