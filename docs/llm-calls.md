@@ -36,10 +36,11 @@ All three constants live in `lib/ai/gemini.ts` and are passed through `chatJSON(
 | `lib/profile/bullet-assist.ts` rewrite mode | `bullet-assist-rewrite` | `MODEL_LITE` (`gemini-3.1-flash-lite`) | 2048 | ~8 KB user prompt (capped inside builder) | ✅ | M7.6 — per-bullet rewrite via wand icon. Same prompt builder + archive grounding as fill mode; smaller token cap (single bullet output). |
 | `lib/profile/import-llm.ts` (extractProfileFromText) | `profile-import` | `MODEL_LITE` *(default)* | **32768** | 60 KB resume | ✅ | Per-file mechanical extraction — verbatim preservation, no judgment. Large output budget because nested bullets across many roles + projects + education legitimately need it. |
 | `lib/profile/synthesize.ts` (synthesizeMasterResume) | `profile-synthesize` | **`MODEL_FLASH`** | **32768** | 80 KB serialized inputs | ✅ | **One call per import.** Consolidates all per-file extractions + existing profile into the canonical "master resume" stored on the Profile dash. Resolves role-vs-project misclassifications across files, dedupes entities, orders reverse-chrono. The output IS what every downstream tailored-resume rewrite pulls from — quality matters. |
+| `lib/profile/auto-tag.ts` (autoTagBullets) | `bullet-auto-tag` | `MODEL_LITE` (`gemini-3.1-flash-lite`) | 2048 | small (one line per non-excluded bullet + posting kws) | ✅ | M8.5 — auto-tag bullets with posting keywords during resume gen (S8.9). One call per generate. Conservative temp 0.1 — judgment is binary per (bullet, keyword). Post-filter enforces the `removedTags` blocklist (Decision 6.1) + dedup against existing `tags` independently of model behavior. Output also written to `bullet.autoTags` so the UI badges them as pending user review (Decision 6.3). |
 
 **Lunary slug** = the value passed to `chatJSON({ name: ... })` (or to `lunary.trackEvent` for email-parser). Required since LOP-2 — TypeScript enforces it on `ChatJSONOptions`. Same kebab-case slug names the corresponding file in [`./llm-prompts/`](./llm-prompts/) (the registry source-of-truth snapshot) and the corresponding suite in [`../eval/suites/`](../eval/suites/) (Promptfoo fixtures).
 
-**Migrated to registry?** column tracks per-callsite LOP-6 rollout. ⏳ = prompt still lives inline in code; ✅ = code calls `loadPrompt(slug, vars)` (which routes through Lunary's `renderTemplate` when configured, else the disk snapshot in `docs/llm-prompts/<slug>.md`). All 9 callsites cut over 2026-05-24 — flip back to ⏳ only if a callsite reverts to inline strings.
+**Migrated to registry?** column tracks per-callsite LOP-6 rollout. ⏳ = prompt still lives inline in code; ✅ = code calls `loadPrompt(slug, vars)` (which routes through Lunary's `renderTemplate` when configured, else the disk snapshot in `docs/llm-prompts/<slug>.md`). All 10 callsites cut over by 2026-05-25 (the initial 9 on 2026-05-24, then `bullet-auto-tag` added 2026-05-25) — flip back to ⏳ only if a callsite reverts to inline strings.
 
 ---
 
@@ -57,12 +58,12 @@ Init lives in `instrumentation.ts:7-13` next to `initLogger()`. To activate: sig
 
 ### Prompt registry — Lunary templates (cutover landed 2026-05-24)
 
-All 9 callsites route through `lib/ai/prompts.ts:loadPrompt(slug, vars)`. The helper prefers Lunary's `renderTemplate` (versioned, dashboard-editable, ~few-minute SDK cache) when `LUNARY_PUBLIC_KEY` is configured, else falls back to parsing `docs/llm-prompts/<slug>.md` from disk. The disk path is what makes hermetic smokes + dev runs without a Lunary account work, and what protects production through transient Lunary API blips.
+All 10 callsites route through `lib/ai/prompts.ts:loadPrompt(slug, vars)`. The helper prefers Lunary's `renderTemplate` (versioned, dashboard-editable, ~few-minute SDK cache) when `LUNARY_PUBLIC_KEY` is configured, else falls back to parsing `docs/llm-prompts/<slug>.md` from disk. The disk path is what makes hermetic smokes + dev runs without a Lunary account work, and what protects production through transient Lunary API blips.
 
 Editing a prompt:
 - **Dashboard edits** in Lunary publish a new template version instantly. The SDK picks it up within its cache window. **Mirror back to `docs/llm-prompts/<slug>.md` same-day** so the disk snapshot (and `git log -p`) stays canonical.
 - **Code edits** to the .md disk file: run `npx tsx scripts/sync-lunary-templates.ts` to push a new version to Lunary. Idempotent — content-equal versions are skipped.
-- **Bulk-resync everything** (after a disk-only edit spree): same command, all 9 in one shot.
+- **Bulk-resync everything** (after a disk-only edit spree): same command, all 10 in one shot.
 
 `LUNARY_SECRET_KEY` (private API key from Lunary dashboard → Settings) is required for the sync script — distinct from the `LUNARY_PUBLIC_KEY` that gates tracing.
 
@@ -72,7 +73,7 @@ Dashboard dropdown caveat: Lunary's UI model picker only knows about its built-i
 
 `eval/` directory with a TS custom provider (`eval/provider.ts`) that dispatches each fixture's `callsite` slug to the real `chatJSON`-wrapped lib function. One YAML per callsite slug under `eval/suites/`, each holding an array of fixture test cases with `is-json` + schema-shape `javascript` + `llm-rubric` assertions. Judge model pinned to `MODEL_LITE_CHEAP` to keep rubric cost ~$0.001/call.
 
-Run: `npm run test:prompts`. **NOT** wired into `pre-push.sh` — burns real Gemini tokens (~$0.01–0.05/full-run at 9 callsites × 2–3 fixtures). See [`../eval/README.md`](../eval/README.md) for full operation + the "Capturing real fixtures" recipe.
+Run: `npm run test:prompts`. **NOT** wired into `pre-push.sh` — burns real Gemini tokens (~$0.01–0.05/full-run at 10 callsites × 2–4 fixtures). See [`../eval/README.md`](../eval/README.md) for full operation + the "Capturing real fixtures" recipe.
 
 ## Defaults baked into `chatJSON`
 
@@ -110,6 +111,7 @@ Practical ceiling: ingest is sequential, so RPM above ~120 stops mattering — G
 
 ## Change log
 
+- **2026-05-25** — New callsite `bullet-auto-tag` (M8.5 scaffold). `lib/profile/auto-tag.ts:autoTagBullets` walks the user's profile + posting keywords during resume gen and asks Gemini which keywords each bullet already evidences. Conservative temp 0.1, MODEL_LITE, 2048 output tokens (sized for ~30 bullets × short proposals). Post-filter enforces the `removedTags` blocklist (Decision 6.1) + dedup against existing `tags` even if the model violates rule 2/3. Approved keywords written to BOTH `bullet.tags` (so the selector + rewrite see them) AND `bullet.autoTags` (so the UI badges them pending user review per Decision 6.3). Eval suite + hermetic merge smoke land with the callsite; rewrite-time fold-in directive (rule 6a) lands as a prompt-only edit to `resume-rewrite`.
 - **2026-05-24** — LOP-6 cutover landed. All 9 callsites moved off inline `SYSTEM_PROMPT` constants and onto `lib/ai/prompts.ts:loadPrompt(slug, vars)`. Templates uploaded to Lunary via `scripts/sync-lunary-templates.ts`; helper prefers Lunary's `renderTemplate` and falls back to disk-parsing `docs/llm-prompts/<slug>.md` when `LUNARY_PUBLIC_KEY` is unset (hermetic smokes / fresh clones). `buildBulletAssistPrompt` became async (loops the registry renderer to enforce the 8 KB overflow cap against the live template); smoke + `/api/profile/bullets/assist` route + Promptfoo provider gained `await`. 45/45 hermetic green post-cutover.
 - **2026-05-24** — Observability infra landed (LOP-1 → LOP-9 from `implementation.md` §LLM observability + prompt registry). Lunary `wrapModel` integration at module-init in `chatJSON` (gated on `LUNARY_PUBLIC_KEY`). Required `name: string` field on `ChatJSONOptions` — TypeScript flags any unnamed call. All 7 chatJSON callsites + email-parser tagged with stable kebab-case slugs (see inventory above). `instrumentation.ts` calls `lunary.init()` when the key is present. `docs/llm-prompts/` directory seeded with 9 prompt blob `.md` files. `eval/` Promptfoo harness scaffolded with 9 suites, 13 starter fixtures, `npm run test:prompts` script.
 - **2026-05-20** — Employment-type classifier call shape rewrite. Switched to positional output (no external-id echoing — those Workday/Lever UUIDs were ~70 % of the output budget), pipe-delimited single-line-per-item input (was pretty-printed JSON), dropped `snippet/department` field (title is the load-bearing signal), tightened system prompt. `maxOutputTokens` 4096 → 1024. Measured drop from ~10 k tokens / batch to ~1.2 k tokens / batch (≈ 8× reduction). Same model.

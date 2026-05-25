@@ -64,3 +64,76 @@
         rewrites satisfy this. The bullet about CI parallelization MAY keep
         its existing 12→4 minute metric (already in the source) but MUST NOT
         invent a new percentage or count.
+
+# M8.5.5 — Posting-keyword fold-in directive (rule 6a). When a bullet's
+# matchedTags is non-empty, the rewrite SHOULD use the keyword verbatim.
+- description: "Fold-in: tagged Python bullet keeps Python in the rewrite"
+  vars:
+    callsite: resume-rewrite
+    input:
+      selections:
+        - bulletId: "blt_eval_python_001"
+          originalText: "Built a service in Python"
+          matchedTags: ["Python"]
+          matchedKeywords: ["Python"]
+          sourceLabel: "Acme — Backend Engineer"
+          kind: "work-role"
+          sourceId: "wr_eval_3"
+          score: 5
+          locked: false
+      posting:
+        title: "Senior Python Engineer"
+        company: "Beta Labs"
+        location: "Remote"
+        seniority: "Senior"
+        rawText: ""
+        sourceUrl: null
+        keywords:
+          - "Python"
+          - "REST APIs"
+          - "Microservices"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        Array.isArray(r) && r.length === 1 &&
+        r[0].id === 'blt_eval_python_001' &&
+        /python/i.test(r[0].rewrittenText)
+
+# M8.5.5 — Fold-in negative case. A bullet WITHOUT a matching tag must NOT
+# acquire the keyword in the rewrite — that would violate rules 1+2
+# (inventing technology coverage).
+- description: "Fold-in: untagged Go bullet must NOT acquire Python"
+  vars:
+    callsite: resume-rewrite
+    input:
+      selections:
+        - bulletId: "blt_eval_go_001"
+          originalText: "Built a service in Go"
+          matchedTags: []
+          matchedKeywords: []
+          sourceLabel: "Acme — Backend Engineer"
+          kind: "work-role"
+          sourceId: "wr_eval_4"
+          score: 0
+          locked: false
+      posting:
+        title: "Senior Python Engineer"
+        company: "Beta Labs"
+        location: "Remote"
+        seniority: "Senior"
+        rawText: ""
+        sourceUrl: null
+        keywords:
+          - "Python"
+          - "REST APIs"
+          - "Microservices"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        Array.isArray(r) && r.length === 1 &&
+        r[0].id === 'blt_eval_go_001' &&
+        !/python/i.test(r[0].rewrittenText)

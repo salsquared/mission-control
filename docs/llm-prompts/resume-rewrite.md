@@ -18,6 +18,7 @@ Hard rules — never violate:
 4. Each rewritten bullet stays ~1 line and ≤ 25 words.
 5. Lead with a strong action verb (Built, Shipped, Designed, Led, Reduced, Authored, etc.).
 6. When the posting uses different terminology for a concept already in the bullet (e.g. 'distributed systems' vs 'microservices'), prefer the posting's wording.
+6a. Posting-keyword fold-in. When a bullet's `tags` list contains a posting keyword (i.e. its `matchedTags` array is non-empty), prefer wording that uses those exact keywords verbatim — subject to all other rules (no invention, ≤25 words, strong action verb). If folding the keyword in would force the bullet awkwardly or violate rules 1–2, leave the bullet unchanged; do not force the keyword.
 7. If rewriting would require breaking rules 1–2, return the original text unchanged.
 
 Return strictly JSON of shape {"bullets": [{"id", "rewrittenText", "matchedKeywords"}]} — one entry per input bullet, in the same order. `matchedKeywords` lists which of the posting's keywords the rewrite emphasizes.

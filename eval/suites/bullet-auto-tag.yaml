@@ -1,0 +1,94 @@
+# Suite for `bullet-auto-tag` — auto-tagging bullets with posting keywords
+# during a tailored-resume generate. The provider takes a
+# AutoTagFixtureInput shape (mirrors a flattened {bullets, keywords} pair)
+# and dispatches through the auto-tag caller library's pure prompt path.
+
+# Positive — bullet's text already evidences "Python"; model should tag it.
+- description: "Positive — Python bullet earns Python tag"
+  vars:
+    callsite: bullet-auto-tag
+    input:
+      keywords: ["Python", "Go", "Kubernetes"]
+      bullets:
+        - id: "blt_at_001"
+          text: "Built a Python API for ingesting financial data"
+          tags: []
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        Array.isArray(r.proposals) &&
+        r.proposals.length === 1 &&
+        r.proposals[0].bulletId === 'blt_at_001' &&
+        r.proposals[0].addedTags.some(t => t === 'Python')
+
+# Negative — bullet says Go, not Python; model must NOT tag it with Python.
+- description: "Negative — Go bullet must NOT acquire Python tag"
+  vars:
+    callsite: bullet-auto-tag
+    input:
+      keywords: ["Python", "Go", "Kubernetes"]
+      bullets:
+        - id: "blt_at_002"
+          text: "Built a Go API for ingesting financial data"
+          tags: []
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const entry = proposals.find(p => p.bulletId === 'blt_at_002');
+        // Either no entry, or the entry exists but does NOT include 'Python'.
+        // Go and Kubernetes are both fine to omit; the only failure mode is
+        // claiming Python coverage where there is none.
+        !entry || !entry.addedTags.some(t => /python/i.test(t))
+
+# Blocklist — keyword in removedTags must be skipped even when the text
+# clearly evidences it. The user explicitly removed it; respect that.
+- description: "Blocklist — Python in removedTags blocks the proposal"
+  vars:
+    callsite: bullet-auto-tag
+    input:
+      keywords: ["Python", "Kubernetes"]
+      bullets:
+        - id: "blt_at_003"
+          text: "Built a Python API for ingesting financial data"
+          tags: []
+          removedTags: ["Python"]
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const entry = proposals.find(p => p.bulletId === 'blt_at_003');
+        // Same shape as negative case — either no entry, or no Python tag.
+        !entry || !entry.addedTags.some(t => /python/i.test(t))
+
+# Already-tagged — keyword already in `tags` must NOT be re-proposed; the
+# post-filter would drop it anyway, but the model is instructed to skip too.
+- description: "Already-tagged — Python in tags blocks the proposal"
+  vars:
+    callsite: bullet-auto-tag
+    input:
+      keywords: ["Python", "Kubernetes"]
+      bullets:
+        - id: "blt_at_004"
+          text: "Built a Python API for ingesting financial data"
+          tags: ["Python"]
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const entry = proposals.find(p => p.bulletId === 'blt_at_004');
+        // No new Python addition — it's already there. After the caller's
+        // post-filter, any Python entry would be dropped anyway; this
+        // assertion observes the model's pre-filter behavior.
+        !entry || !entry.addedTags.some(t => /python/i.test(t))
