@@ -75,9 +75,34 @@ interface GeneratedResumeRow {
     error: string | null;
     // M8.4.3 — surfaced to the previous-resumes dropdown so the UI shows
     // company + title at a glance. NULL on rows generated before M8.4.2 added
-    // these columns; the dropdown renders "(unknown)" / "(no title)" for those.
+    // these columns; the dropdown falls back to postingInputSummary (below).
     postingTitle: string | null;
     postingCompany: string | null;
+    // Raw JSON of the original posting input (url / text / applicationId
+    // discriminated union). Used here only to derive `postingInputSummary`
+    // for legacy rows — not returned to the client raw.
+    postingInput: string;
+}
+
+// Derive a short user-facing label from the original postingInput JSON.
+// Lets the previous-resumes dropdown render *something* for legacy rows
+// generated before postingTitle/postingCompany were populated (today's
+// M8.4.1 migration). For URL inputs we surface the hostname (more readable
+// than the full URL); for pasted text we truncate the first 80 chars.
+function summarizePostingInput(rawJson: string): string | null {
+    try {
+        const p = JSON.parse(rawJson) as { url?: unknown; text?: unknown };
+        if (typeof p.url === "string" && p.url.trim()) {
+            try { return new URL(p.url).host; }
+            catch { return p.url.slice(0, 80); }
+        }
+        if (typeof p.text === "string" && p.text.trim()) {
+            return p.text.trim().slice(0, 80);
+        }
+        return null;
+    } catch {
+        return null;
+    }
 }
 
 function summarizeResumeRow(r: GeneratedResumeRow) {
@@ -93,6 +118,7 @@ function summarizeResumeRow(r: GeneratedResumeRow) {
         error: r.error,
         postingTitle: r.postingTitle,
         postingCompany: r.postingCompany,
+        postingInputSummary: summarizePostingInput(r.postingInput),
     };
 }
 

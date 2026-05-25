@@ -175,6 +175,18 @@ async function main() {
             if ("postingInput" in r2Row || "profileSnapshot" in r2Row || "selections" in r2Row) {
                 fail("shape: raw JSON columns leaked into projection", r2Row);
             } else pass("shape: raw JSON columns NOT leaked (projection is enrichment-only)");
+
+            // postingInputSummary — the dropdown's fallback label for legacy rows.
+            // All three fixtures use a URL-shaped postingInput, so each should
+            // surface "example.invalid" (the hostname). The legacy-row case (r1)
+            // is the load-bearing one: title + company are null, but the
+            // dropdown can still render *something* useful via this field.
+            if (r1Row?.postingInputSummary !== "example.invalid") {
+                fail(`postingInputSummary: legacy row should derive hostname 'example.invalid', got ${r1Row?.postingInputSummary}`, r1Row);
+            } else pass("postingInputSummary: legacy row (null title/company) derives hostname from URL");
+            if (r2Row?.postingInputSummary !== "example.invalid") {
+                fail(`postingInputSummary: modern row also derives hostname, got ${r2Row?.postingInputSummary}`, r2Row);
+            } else pass("postingInputSummary: modern row also surfaces hostname (client picks title/company first)");
         }
 
         // ── Test 2: ?limit=2 clamps to most recent 2 of our 3 rows ───────────

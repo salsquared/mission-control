@@ -584,6 +584,10 @@ export const api = {
                         // M8.4.3 — drives the previous-resumes dropdown labels.
                         postingTitle: z.string().nullable(),
                         postingCompany: z.string().nullable(),
+                        // Fallback label for legacy rows (pre-M8.4.2 migration)
+                        // where postingTitle/Company are null. Hostname for
+                        // URL inputs, first 80 chars for pasted text.
+                        postingInputSummary: z.string().nullable(),
                     })),
                 }),
             );

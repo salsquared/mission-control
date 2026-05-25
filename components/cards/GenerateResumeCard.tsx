@@ -492,6 +492,20 @@ interface PreviousResumeRow {
     hasArtifact: boolean;
     postingTitle: string | null;
     postingCompany: string | null;
+    postingInputSummary: string | null;
+}
+
+// Derives the dropdown row label. Prefers the structured posting metadata
+// (postingCompany + postingTitle) when both are present — that's the
+// post-M8.4.2 happy path. Falls back to whichever single field exists, then
+// to the input summary (hostname or pasted-text prefix) for legacy rows,
+// then to a generic placeholder if absolutely nothing is known.
+function buildResumeLabel(r: PreviousResumeRow): string {
+    if (r.postingCompany && r.postingTitle) return `${r.postingCompany} · ${r.postingTitle}`;
+    if (r.postingCompany) return r.postingCompany;
+    if (r.postingTitle) return r.postingTitle;
+    if (r.postingInputSummary) return r.postingInputSummary;
+    return "Generated resume";
 }
 
 const PreviousResumesDropdown: React.FC<{
@@ -581,10 +595,8 @@ const PreviousResumesDropdown: React.FC<{
                                 className="w-full text-left px-3 py-2 hover:bg-white/[0.04] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-3"
                             >
                                 <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-1.5 text-xs">
-                                        <span className="font-semibold text-white/90 truncate">{r.postingCompany ?? "(unknown)"}</span>
-                                        <span className="text-white/30">·</span>
-                                        <span className="text-white/70 truncate">{r.postingTitle ?? "(no title)"}</span>
+                                    <div className="text-xs text-white/90 truncate font-semibold">
+                                        {buildResumeLabel(r)}
                                     </div>
                                     <div className="text-[10px] text-white/40 mt-0.5">{formatRelative(r.createdAt)}</div>
                                 </div>
