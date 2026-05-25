@@ -45,17 +45,32 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
         setEditing(true);
     };
 
+    // M8.5.6 Decision 6.1 — removal is a blocklist gesture. Whether the tag
+    // was user-set or LLM-auto-added, removing it adds the tag to
+    // `removedTags`, so the next auto-tag pass never proposes it again. The
+    // user can override the blocklist by re-adding the tag (see commitTag).
     const removeTag = (t: string) => {
-        onChange({ ...bullet, tags: bullet.tags.filter(x => x !== t) });
+        onChange({
+            ...bullet,
+            tags: bullet.tags.filter(x => x !== t),
+            autoTags: bullet.autoTags.filter(x => x !== t),
+            removedTags: Array.from(new Set([...bullet.removedTags, t])),
+        });
     };
 
+    // Re-adding a tag (user-typed or otherwise) takes it OUT of removedTags
+    // so the user's explicit positive action overrides any earlier removal.
     const commitTag = () => {
         const t = tagDraft.trim().toLowerCase().slice(0, TAG_MAX_LENGTH);
         setAddingTag(false);
         setTagDraft("");
         if (!t) return;
         if (bullet.tags.includes(t)) return;
-        onChange({ ...bullet, tags: [...bullet.tags, t] });
+        onChange({
+            ...bullet,
+            tags: Array.from(new Set([...bullet.tags, t])),
+            removedTags: bullet.removedTags.filter(x => x !== t),
+        });
     };
 
     // Lock/exclude buttons stay persistently visible when active so the
@@ -144,17 +159,29 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
                     )}
 
                     <div className="mt-1 flex flex-wrap gap-1 items-center">
-                        {bullet.tags.map((tag) => (
-                            <button
-                                key={tag}
-                                onClick={() => removeTag(tag)}
-                                className="group/tag flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-white/50 bg-white/5 border border-white/10 hover:border-rose-400/40 hover:text-white/80 rounded px-1.5 py-0.5 transition-colors"
-                                title={`Remove tag: ${tag}`}
-                            >
-                                <span>{tag}</span>
-                                <X className="w-2 h-2 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
-                            </button>
-                        ))}
+                        {bullet.tags.map((tag) => {
+                            // M8.5.6 Decision 6.3 — tags the LLM auto-added during a
+                            // resume generation get a Sparkles icon + cyan border
+                            // until the next save folds them in as regular tags.
+                            const isAuto = bullet.autoTags.includes(tag);
+                            return (
+                                <button
+                                    key={tag}
+                                    onClick={() => removeTag(tag)}
+                                    className={cn(
+                                        "group/tag flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-white/50 bg-white/5 border rounded px-1.5 py-0.5 transition-colors hover:border-rose-400/40 hover:text-white/80",
+                                        isAuto ? "border-cyan-500/30" : "border-white/10",
+                                    )}
+                                    title={isAuto
+                                        ? "Auto-added — saves as a regular tag when you next save this bullet."
+                                        : `Remove tag: ${tag}`}
+                                >
+                                    {isAuto && <Sparkles className="w-2 h-2 text-cyan-400/80" />}
+                                    <span>{tag}</span>
+                                    <X className="w-2 h-2 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
+                                </button>
+                            );
+                        })}
                         {addingTag ? (
                             <input
                                 autoFocus
