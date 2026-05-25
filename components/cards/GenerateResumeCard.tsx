@@ -1,5 +1,6 @@
 "use client";
-import React, { useEffect, useRef, useState, useCallback } from "react";
+import React, { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import {
     FileText,
     FileType2,
@@ -499,11 +500,46 @@ const PreviousResumesDropdown: React.FC<{
     onClose: () => void;
     resumes: PreviousResumeRow[];
 }> = ({ open, onToggle, onClose, resumes }) => {
-    const ref = useRef<HTMLDivElement>(null);
+    // The popover is portalled to <body> because the enclosing CardGrid
+    // wrapper has `overflow-hidden` (load-bearing for `rounded-lg` corner
+    // clipping). An `absolute`-positioned popover gets clipped to the card.
+    // Fixed positioning + portal lets it escape; we anchor to the trigger
+    // button's bounding rect on each open / window resize / window scroll.
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    const popoverRef = useRef<HTMLDivElement>(null);
+    const [pos, setPos] = useState<{ top: number; right: number } | null>(null);
+
+    const recompute = useCallback(() => {
+        if (!triggerRef.current) return;
+        const rect = triggerRef.current.getBoundingClientRect();
+        setPos({
+            top: rect.bottom + 4,
+            right: Math.max(8, window.innerWidth - rect.right),
+        });
+    }, []);
+
+    // Position on open + reposition on viewport changes so the popover
+    // tracks the trigger if the user scrolls the dash or resizes.
+    useLayoutEffect(() => {
+        if (!open) { setPos(null); return; }
+        recompute();
+        window.addEventListener("resize", recompute);
+        window.addEventListener("scroll", recompute, true);
+        return () => {
+            window.removeEventListener("resize", recompute);
+            window.removeEventListener("scroll", recompute, true);
+        };
+    }, [open, recompute]);
+
+    // Click-outside has to check BOTH the trigger and the portalled popover
+    // since they're no longer in the same DOM subtree.
     useEffect(() => {
         if (!open) return;
         function handle(e: MouseEvent) {
-            if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+            const target = e.target as Node;
+            if (triggerRef.current?.contains(target)) return;
+            if (popoverRef.current?.contains(target)) return;
+            onClose();
         }
         document.addEventListener("mousedown", handle);
         return () => document.removeEventListener("mousedown", handle);
@@ -518,8 +554,9 @@ const PreviousResumesDropdown: React.FC<{
     const visible = resumes.slice(0, 20);
 
     return (
-        <div className="relative" ref={ref}>
+        <>
             <button
+                ref={triggerRef}
                 type="button"
                 onClick={onToggle}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] border border-white/10 transition-colors"
@@ -528,8 +565,12 @@ const PreviousResumesDropdown: React.FC<{
                 <span>Recent resumes ({resumes.length})</span>
                 <ChevronDown className={`w-3 h-3 transition-transform ${open ? "rotate-180" : ""}`} />
             </button>
-            {open && (
-                <div className="absolute z-20 right-0 mt-1 w-[26rem] max-w-[90vw] rounded-lg bg-slate-900/95 backdrop-blur border border-white/10 shadow-xl">
+            {open && pos && typeof document !== "undefined" && createPortal(
+                <div
+                    ref={popoverRef}
+                    className="fixed z-50 w-[26rem] max-w-[90vw] rounded-lg bg-slate-900/95 backdrop-blur border border-white/10 shadow-xl"
+                    style={{ top: pos.top, right: pos.right }}
+                >
                     <div className="max-h-[20rem] overflow-y-auto divide-y divide-white/5">
                         {visible.map(r => (
                             <button
@@ -559,9 +600,10 @@ const PreviousResumesDropdown: React.FC<{
                             Showing 20 most recent of {resumes.length}.
                         </div>
                     )}
-                </div>
+                </div>,
+                document.body,
             )}
-        </div>
+        </>
     );
 };
 
