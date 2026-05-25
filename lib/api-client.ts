@@ -234,6 +234,7 @@ export const api = {
                         role: z.string().nullable(),
                         postingUrl: z.string(),
                         postingTitle: z.string(),
+                        track: z.string(),
                     })),
                 }),
             ),

@@ -44,6 +44,7 @@ export async function GET() {
                     role: r.role,
                     postingUrl: r.posting!.sourceUrl,
                     postingTitle,
+                    track: r.track,
                 };
             });
         return NextResponse.json({ items }, { status: 200 });

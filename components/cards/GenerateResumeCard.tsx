@@ -332,7 +332,11 @@ const InputModeTabs: React.FC<{
     onChange: (m: InputMode) => void;
     disabled: boolean;
 }> = ({ mode, onChange, disabled }) => (
-    <div className="inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40" role="group" aria-label="Posting source">
+    // `self-start` keeps the segmented control hugging its content inside the
+    // Card's `flex flex-col` parent. Without it the default `align-items:
+    // stretch` blows the `inline-flex` out to full card width and the buttons
+    // clump on the left with empty space trailing right.
+    <div className="self-start inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40" role="group" aria-label="Posting source">
         {TAB_DEFS.map(t => {
             const active = mode === t.id;
             const Icon = t.icon;
@@ -359,16 +363,28 @@ const InputModeTabs: React.FC<{
 
 // ─── M8.4.7 — Pipeline picker: single-select list of INTERESTED apps ────────
 
+type TrackFilter = "all" | "career" | "side";
+
+const TRACK_FILTER_DEFS: Array<{ id: TrackFilter; label: string }> = [
+    { id: "all", label: "Both" },
+    { id: "career", label: "Career" },
+    { id: "side", label: "Side" },
+];
+
 const InterestedAppPicker: React.FC<{
     selectedApplicationId: string | null;
     onSelect: (id: string | null) => void;
     disabled: boolean;
 }> = ({ selectedApplicationId, onSelect, disabled }) => {
+    const [trackFilter, setTrackFilter] = useState<TrackFilter>("all");
     const { data, isLoading, error } = useQuery({
         queryKey: queryKeys.pipelinePicker,
         queryFn: () => api.applications.pipelinePicker(),
     });
-    const items = data?.items ?? [];
+    const allItems = data?.items ?? [];
+    const items = trackFilter === "all"
+        ? allItems
+        : allItems.filter(it => it.track === trackFilter);
 
     if (isLoading) {
         return (
@@ -384,7 +400,7 @@ const InterestedAppPicker: React.FC<{
             </div>
         );
     }
-    if (items.length === 0) {
+    if (allItems.length === 0) {
         return (
             <div className="flex items-center gap-2 px-3 py-4 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white/40">
                 <Search className="w-3.5 h-3.5" />
@@ -396,33 +412,71 @@ const InterestedAppPicker: React.FC<{
         );
     }
     return (
-        <div className="max-h-[14rem] overflow-y-auto rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
-            {items.map(it => {
-                const active = selectedApplicationId === it.id;
-                let host = "";
-                try { host = new URL(it.postingUrl).host; } catch { host = it.postingUrl; }
-                return (
-                    <button
-                        key={it.id}
-                        type="button"
-                        onClick={() => onSelect(active ? null : it.id)}
-                        disabled={disabled}
-                        aria-pressed={active}
-                        className={[
-                            "w-full text-left px-3 py-2 transition-colors",
-                            active ? "bg-purple-500/15 border-l-2 border-purple-400/60" : "hover:bg-white/[0.03]",
-                            disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
-                        ].join(" ")}
-                    >
-                        <div className="flex items-center gap-2">
-                            <span className="text-xs font-semibold text-white/90 truncate">{it.company}</span>
-                            <span className="text-white/30">·</span>
-                            <span className="text-xs text-white/70 truncate">{it.postingTitle || it.role || "—"}</span>
-                        </div>
-                        <div className="text-[10px] text-white/30 truncate mt-0.5">{host}</div>
-                    </button>
-                );
-            })}
+        <div className="flex flex-col gap-2">
+            {/* Track filter — same chrome as the Pipeline/URL/Paste tabs and the
+                PDF/DOCX format selector so the card has one consistent
+                segmented-control vocabulary. */}
+            <div className="self-start inline-flex rounded-lg overflow-hidden border border-white/10 bg-black/40" role="group" aria-label="Track filter">
+                {TRACK_FILTER_DEFS.map(t => {
+                    const active = trackFilter === t.id;
+                    return (
+                        <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => setTrackFilter(t.id)}
+                            disabled={disabled}
+                            aria-pressed={active}
+                            className={[
+                                "px-3 py-1 text-[10px] font-semibold uppercase tracking-wide transition-colors",
+                                active ? "bg-purple-500/30 text-purple-100" : "text-white/50 hover:text-white/80",
+                                disabled ? "opacity-40 cursor-not-allowed" : "",
+                            ].join(" ")}
+                        >
+                            {t.label}
+                        </button>
+                    );
+                })}
+            </div>
+            {items.length === 0 ? (
+                <div className="flex items-center gap-2 px-3 py-4 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white/40">
+                    <Search className="w-3.5 h-3.5" />
+                    <span>
+                        No {trackFilter === "career" ? "career-track" : "side-track"} Interested apps with a posting URL. Switch the filter, or track one from the New Postings feed.
+                    </span>
+                </div>
+            ) : (
+                <div className="max-h-[14rem] overflow-y-auto rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
+                    {items.map(it => {
+                        const active = selectedApplicationId === it.id;
+                        let host = "";
+                        try { host = new URL(it.postingUrl).host; } catch { host = it.postingUrl; }
+                        return (
+                            <button
+                                key={it.id}
+                                type="button"
+                                onClick={() => onSelect(active ? null : it.id)}
+                                disabled={disabled}
+                                aria-pressed={active}
+                                className={[
+                                    "w-full text-left px-3 py-2 transition-colors",
+                                    active ? "bg-purple-500/15 border-l-2 border-purple-400/60" : "hover:bg-white/[0.03]",
+                                    disabled ? "opacity-50 cursor-not-allowed" : "cursor-pointer",
+                                ].join(" ")}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-white/90 truncate">{it.company}</span>
+                                    <span className="text-white/30">·</span>
+                                    <span className="text-xs text-white/70 truncate">{it.postingTitle || it.role || "—"}</span>
+                                    <span className="text-[9px] uppercase tracking-wide text-white/40 bg-white/[0.04] border border-white/10 px-1 rounded">
+                                        {it.track}
+                                    </span>
+                                </div>
+                                <div className="text-[10px] text-white/30 truncate mt-0.5">{host}</div>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };

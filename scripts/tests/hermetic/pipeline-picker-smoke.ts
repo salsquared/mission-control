@@ -232,6 +232,7 @@ async function main() {
                     role: r.role,
                     postingUrl: r.posting!.sourceUrl,
                     postingTitle,
+                    track: r.track,
                 };
             });
 
@@ -258,6 +259,15 @@ async function main() {
             fail(`projection: company=${only?.company} expected ${appValid.company}`);
         } else {
             pass("projection: company carried from application");
+        }
+
+        // Track is surfaced so the client-side track filter (Career/Side/Both)
+        // can pivot without a second roundtrip. Application.track defaults to
+        // "career" — the row was created without specifying track.
+        if (only?.track !== "career") {
+            fail(`projection: track=${only?.track} expected "career" (schema default)`);
+        } else {
+            pass("projection: track carried from application (schema default 'career')");
         }
 
         // ─── Title-fallback case: posting.title is empty → fall back to app.role ─
@@ -307,6 +317,10 @@ async function main() {
                 role: "Newer Title",
                 status: "INTERESTED",
                 postingId: postingNewer.id,
+                // Track override so the projection surfaces both "career" and
+                // "side" — gives the client-side track filter (Career/Side/Both)
+                // a real two-track dataset to exercise.
+                track: "side",
                 lastUpdateAt: new Date("2026-05-25T12:00:00Z"),
             },
         });
@@ -321,6 +335,15 @@ async function main() {
             fail(`ordering: expected [${appNewer.id}, ${appValid.id}], got [${orderedItems[0].id}, ${orderedItems[1].id}]`);
         } else {
             pass("ordering: rows sorted by lastUpdateAt desc (newest first)");
+        }
+
+        // Both tracks surface through the projection — what the Career/Side/Both
+        // client-side filter operates on.
+        const trackSet = new Set(orderedItems.map(r => r.track));
+        if (trackSet.size !== 2 || !trackSet.has("career") || !trackSet.has("side")) {
+            fail(`track coexistence: expected both career + side in projection, got ${[...trackSet].join(",")}`);
+        } else {
+            pass("track coexistence: career + side both present in projection (client-side filter has real data to slice)");
         }
 
         // ─── Cross-user isolation (defense-in-depth) ───────────────────────
