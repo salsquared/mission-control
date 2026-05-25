@@ -40,6 +40,7 @@ SUITES=(
     "scripts/tests/hermetic/url-guard-smoke.ts"
     "scripts/tests/hermetic/route-auth-smoke.ts"
     "scripts/tests/hermetic/fetcher-unit-smoke.ts"
+    "scripts/tests/hermetic/liveness-probe-smoke.ts"
     "scripts/tests/hermetic/resume-select-smoke.ts"
     "scripts/tests/hermetic/resume-diff-smoke.ts"
     "scripts/tests/hermetic/skills-gap-smoke.ts"
