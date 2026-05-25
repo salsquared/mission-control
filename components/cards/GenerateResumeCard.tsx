@@ -628,18 +628,26 @@ const PreviousResumesDropdown: React.FC<{
                                 type="button"
                                 onClick={() => { handleDownload(r.id); onClose(); }}
                                 disabled={!r.hasArtifact}
-                                className="w-full text-left px-3 py-2 hover:bg-white/[0.04] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-3"
+                                // items-start so the chip + download icon stay
+                                // pinned to the top line when the title wraps —
+                                // keeps the chip column visually stable as rows
+                                // grow from 1 line to 2+.
+                                className="w-full text-left px-3 py-2 hover:bg-white/[0.04] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-start gap-3"
                             >
                                 <div className="flex-1 min-w-0">
-                                    <div className="text-xs text-white/90 truncate font-semibold">
+                                    {/* break-words lets the canonical
+                                        "<name>, <role>, <company> Resume" wrap
+                                        across multiple lines rather than
+                                        ellipsis-truncate. */}
+                                    <div className="text-xs text-white/90 font-semibold break-words leading-snug">
                                         {buildResumeLabel(r)}
                                     </div>
                                     <div className="text-[10px] text-white/40 mt-0.5">{formatRelative(r.createdAt)}</div>
                                 </div>
-                                <span className="text-[10px] uppercase tracking-wide text-purple-300/80 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded">
+                                <span className="mt-0.5 text-[10px] uppercase tracking-wide text-purple-300/80 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded flex-shrink-0">
                                     {r.format}
                                 </span>
-                                <Download className="w-3 h-3 text-white/40 flex-shrink-0" />
+                                <Download className="mt-1 w-3 h-3 text-white/40 flex-shrink-0" />
                             </button>
                         ))}
                     </div>
