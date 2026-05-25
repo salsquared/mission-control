@@ -1,4 +1,5 @@
 import React from "react";
+import { isValidUrl } from "@/lib/profile/links";
 import type {
     ProfileWire,
     WorkRoleWire,
@@ -127,7 +128,9 @@ ul.bullets li { margin-bottom: 1px; }
 `;
 
 function ResumeDoc({ profile, sections }: ResumeProps) {
-    const links = profile.links ?? [];
+    // Defense in depth — even if legacy corrupt entries (e.g. {url:"Github"})
+    // exist in the DB, they shouldn't render as broken links in the resume.
+    const links = (profile.links ?? []).filter(l => isValidUrl(l.url));
     return (
         <html lang="en">
             <head>

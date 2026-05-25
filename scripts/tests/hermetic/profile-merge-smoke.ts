@@ -451,6 +451,54 @@ function emptyIncoming(): ExtractedProfile {
     } else pass("reverse-chrono: educationToCreate ordered newest-first");
 }
 
+// ─── Header links: drop non-URL incoming entries ────────────────────────
+// Regression — the LLM extraction path uses z.string() (not .url()), so
+// occasionally a section-header word like "Github" arrives as the URL value.
+// merge.ts must filter those out before they pollute the saved profile.
+{
+    const existing = emptyExisting();
+    const incoming = emptyIncoming();
+    incoming.header = {
+        headline: null, summary: null, location: null, email: null, phone: null,
+        links: [
+            { label: "LinkedIn", url: "LinkedIn" },                         // bogus
+            { label: "Github", url: "Github" },                             // bogus
+            { label: "GitHub", url: "https://github.com/u" },               // real
+            { label: "Site", url: "example.com/portfolio" },                // scheme-less but valid
+        ],
+    };
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    const links = r.headerPatch?.links ?? [];
+    if (links.length !== 2) fail(`expected 2 valid links, got ${links.length}`, links);
+    else pass("header links: bogus section-header values filtered out");
+    const urls = new Set(links.map(l => l.url));
+    if (!urls.has("https://github.com/u") || !urls.has("example.com/portfolio")) {
+        fail("header links: valid URLs not preserved", links);
+    } else pass("header links: real URLs preserved (with and without scheme)");
+}
+
+// ─── Header links: existing corrupt entries dropped on next import ──────
+// Self-healing — if a profile already has bogus links from before this filter
+// existed, a subsequent import should remove them when writing back.
+{
+    const existing = emptyExisting();
+    existing.links = [
+        { label: "Github", url: "Github" },                        // legacy corruption
+        { label: "GitHub", url: "https://github.com/old" },        // real, keep
+    ];
+    const incoming = emptyIncoming();
+    incoming.header = {
+        headline: null, summary: null, location: null, email: null, phone: null,
+        links: [{ label: "Site", url: "https://example.com" }],
+    };
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    const links = r.headerPatch?.links ?? [];
+    if (links.length !== 2) fail(`expected 2 surviving links, got ${links.length}`, links);
+    else pass("header links: legacy bogus entry stripped, real one kept");
+    if (links.some(l => l.url === "Github")) fail("header links: legacy 'Github' string still present");
+    else pass("header links: legacy 'Github' string removed");
+}
+
 console.log(`\n${passes}/${passes + fails} steps passed`);
 if (fails > 0) process.exit(1);
 console.log("All checks passed.");

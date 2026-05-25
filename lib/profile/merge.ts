@@ -8,6 +8,7 @@
  * both and rely on the user to lock/exclude later).
  */
 import { makeBullet } from "@/lib/profile/bullets";
+import { isValidUrl } from "@/lib/profile/links";
 import type { Bullet } from "@/lib/profile/types";
 import type {
     ExtractedProfile,
@@ -366,12 +367,23 @@ function mergeHeader(acc: Accumulator, existing: ExistingProfileForMerge, incomi
             counts.headerFieldsFilled++;
         }
     }
-    if (incoming.links && incoming.links.length > 0) {
+    // Drop incoming links whose `url` isn't actually a URL — the LLM extraction
+    // schema in import-llm.ts uses `z.string()` (not `z.string().url()`), so
+    // section-header text like {label:"Github", url:"Github"} occasionally
+    // sneaks through and renders as a broken link in the resume header.
+    const validIncoming = (incoming.links ?? []).filter(l => isValidUrl(l.url));
+    if (validIncoming.length > 0) {
         const have = new Map<string, { label: string; url: string }>();
-        for (const l of existing.links ?? []) have.set(norm(l.url), l);
-        for (const l of acc.headerPatch.links ?? []) have.set(norm(l.url), l);
+        // Also filter existing/acc entries so the next import implicitly cleans
+        // up legacy corruption from before this filter existed.
+        for (const l of existing.links ?? []) {
+            if (isValidUrl(l.url)) have.set(norm(l.url), l);
+        }
+        for (const l of acc.headerPatch.links ?? []) {
+            if (isValidUrl(l.url)) have.set(norm(l.url), l);
+        }
         let added = 0;
-        for (const l of incoming.links) {
+        for (const l of validIncoming) {
             const key = norm(l.url);
             if (!key || have.has(key)) continue;
             have.set(key, l);
