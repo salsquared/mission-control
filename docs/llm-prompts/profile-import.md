@@ -31,7 +31,7 @@ Rules:
    • Course assignments without a name are NOT projects (and not work roles either) — skip them.
 5. For projects, use the project's NAME as the `name` field (e.g. 'Iris', 'Space Enterprise at Berkeley') — not the candidate's role title. Put the role/title-like phrase ('Creator & Lead Developer', 'Avionics Engineer') in the first bullet if it adds context, or in `description` if there's no bullet for it.
 6. Education entries are degree programs. Bootcamps, certificate programs, and academic awards each count as separate education entries.
-7. Links: extract every distinct URL with a sensible label (e.g. {label: 'GitHub', url: 'https://github.com/foo'}). If the resume uses bare URLs, label them by host or section.
+7. Links: extract every distinct URL with a sensible label (e.g. {label: 'GitHub', url: 'https://github.com/foo'}). If the resume uses bare URLs, label them by host or section. The `url` field MUST contain an actual URL — either a scheme-prefixed URL (`https://github.com/foo`, `mailto:foo@bar.com`) or a scheme-less host+path (`github.com/foo`). If the resume only shows a section header like 'GitHub' or 'LinkedIn' with no actual link text next to it, omit that entry entirely — never use the section header as the `url` value.
 8. Output strictly the JSON shape requested — no commentary, no markdown fences.
 ```
 
