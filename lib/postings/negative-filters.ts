@@ -2,14 +2,34 @@
 // route so the hermetic smoke can exercise it without an HTTP server.
 //
 // Filter source is the `Watchlist.negativeFilters` column — a JSON array of
-// regex pattern strings. Patterns are matched case-insensitively against
+// pattern strings. Patterns are matched case-insensitively against
 // `${title}\n${snippet}\n${location}`. Invalid regexes are silently skipped
 // so a bad pattern can't break the bell feed.
+//
+// Plain-keyword patterns (text containing no regex metacharacters) are
+// auto-wrapped in `\b…\b` word boundaries so "armed" matches the word
+// "armed" but NOT the inside of "unarmed". Patterns that contain any of
+// `. * + ? ( ) [ ] { } ^ $ | \ /` are treated as user-authored regex and
+// compiled verbatim — so escape hatches like `\bjr\b` or `senior.*` still
+// work.
 
 // Compile-once cache keyed by the raw JSON string. Bounded in practice by the
 // number of distinct filter strings observed, which equals the number of
 // distinct watchlist configurations.
 const regexCache = new Map<string, RegExp[]>();
+
+const HAS_REGEX_METACHAR = /[.*+?()[\]{}^$|\\/]/;
+const HAS_WORD_CHAR = /\w/;
+
+function compilePattern(p: string): RegExp | null {
+    try {
+        const isPlainKeyword = HAS_WORD_CHAR.test(p) && !HAS_REGEX_METACHAR.test(p);
+        const source = isPlainKeyword ? `\\b${p}\\b` : p;
+        return new RegExp(source, "i");
+    } catch {
+        return null;
+    }
+}
 
 export function compileNegativeFilters(json: string | null): RegExp[] {
     if (!json) return [];
@@ -21,7 +41,8 @@ export function compileNegativeFilters(json: string | null): RegExp[] {
     const out: RegExp[] = [];
     for (const p of parsed) {
         if (typeof p !== "string" || p.length === 0) continue;
-        try { out.push(new RegExp(p, "i")); } catch { /* invalid pattern — skip */ }
+        const re = compilePattern(p);
+        if (re) out.push(re);
     }
     regexCache.set(json, out);
     return out;

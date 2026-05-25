@@ -108,7 +108,10 @@ async function main() {
                 userId,
                 createdAt: t2,
                 postingInput: JSON.stringify({ url: "https://example.invalid/jobs/2" }),
-                profileSnapshot: "{}",
+                // Headline lives in the snapshotted profile JSON and is the
+                // source of `userDisplayName` in the projection — the
+                // dropdown / download-filename pair both read from it.
+                profileSnapshot: JSON.stringify({ headline: "Salvador Salcedo" }),
                 selections: "[]",
                 templateKey: "ats-plain",
                 format: "docx",
@@ -187,6 +190,16 @@ async function main() {
             if (r2Row?.postingInputSummary !== "example.invalid") {
                 fail(`postingInputSummary: modern row also derives hostname, got ${r2Row?.postingInputSummary}`, r2Row);
             } else pass("postingInputSummary: modern row also surfaces hostname (client picks title/company first)");
+
+            // userDisplayName — extracted from profileSnapshot.headline. r2 has
+            // a populated headline (modern + canonical), r1 has profileSnapshot
+            // "{}" (the legacy fallback path → null).
+            if (r2Row?.userDisplayName !== "Salvador Salcedo") {
+                fail(`userDisplayName: r2 expected 'Salvador Salcedo', got ${r2Row?.userDisplayName}`, r2Row);
+            } else pass("userDisplayName: extracted from profileSnapshot.headline");
+            if (r1Row?.userDisplayName !== null) {
+                fail(`userDisplayName: r1 (snapshot with no headline) should be null, got ${r1Row?.userDisplayName}`, r1Row);
+            } else pass("userDisplayName: profileSnapshot without headline → null (no crash)");
         }
 
         // ── Test 2: ?limit=2 clamps to most recent 2 of our 3 rows ───────────

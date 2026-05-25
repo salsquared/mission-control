@@ -14,6 +14,7 @@ import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
 import { renderResumePDF } from "@/lib/resumes/render-pdf";
 import { renderResumeDOCX } from "@/lib/resumes/render-docx";
 import { writeResumeArtifact, deleteResumeArtifact } from "@/lib/resumes/storage";
+import { buildResumeDownloadFilename } from "@/lib/resumes/labels";
 import { AIError } from "@/lib/ai/gemini";
 import type { ProfileWire } from "@/lib/schemas/profile";
 
@@ -59,10 +60,6 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
     return user?.id && user.id.length > 0 ? user.id : null;
 }
 
-function sanitizeFilenamePart(s: string): string {
-    return s.replace(/[^a-z0-9-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase().slice(0, 40);
-}
-
 interface GeneratedResumeRow {
     id: string;
     userId: string;
@@ -82,6 +79,11 @@ interface GeneratedResumeRow {
     // discriminated union). Used here only to derive `postingInputSummary`
     // for legacy rows — not returned to the client raw.
     postingInput: string;
+    // Frozen snapshot of the full profile at gen time. Mined here for the
+    // user's headline (their on-resume name) so the dropdown label is the
+    // same name printed on the artifact itself, even if the user later
+    // edits their profile.
+    profileSnapshot: string;
 }
 
 // Derive a short user-facing label from the original postingInput JSON.
@@ -105,6 +107,20 @@ function summarizePostingInput(rawJson: string): string | null {
     }
 }
 
+// Pull the user's display name out of the snapshotted profile JSON. The
+// resume template uses `profile.headline` as the H1, so that's the
+// canonical "name as printed on this resume" — frozen at gen time, won't
+// drift if the user later edits their profile.
+function extractDisplayName(snapshotJson: string): string | null {
+    try {
+        const p = JSON.parse(snapshotJson) as { headline?: unknown };
+        if (typeof p.headline === "string" && p.headline.trim()) return p.headline.trim();
+        return null;
+    } catch {
+        return null;
+    }
+}
+
 function summarizeResumeRow(r: GeneratedResumeRow) {
     return {
         id: r.id,
@@ -119,6 +135,7 @@ function summarizeResumeRow(r: GeneratedResumeRow) {
         postingTitle: r.postingTitle,
         postingCompany: r.postingCompany,
         postingInputSummary: summarizePostingInput(r.postingInput),
+        userDisplayName: extractDisplayName(r.profileSnapshot),
     };
 }
 
@@ -311,9 +328,18 @@ export async function POST(req: NextRequest) {
             ? await renderResumeDOCX(props)
             : await renderResumePDF(props);
 
-        const companySlug = sanitizeFilenamePart(posting.company ?? "resume");
+        // Canonical filename — "<headline> - <role> - <company> Resume.<ext>".
+        // The user's name comes from profile.headline (what the resume's H1
+        // prints). Falls back to the old "resume-<dateSlug>" pattern when no
+        // identifying parts are present (defensive — shouldn't happen on the
+        // POST path since posting.company always exists, but cheap).
         const dateSlug = new Date().toISOString().slice(0, 10);
-        const filename = `resume-${companySlug || "untitled"}-${dateSlug}.${format}`;
+        const filename = buildResumeDownloadFilename({
+            userDisplayName: profile.headline?.trim() || null,
+            postingTitle: posting.title?.trim() || null,
+            postingCompany: posting.company?.trim() || null,
+            format,
+        }, dateSlug);
 
         // 6. Persist (M8-2.2). Write artifact first; if that fails we never
         // create the row (no orphan rows pointing at missing files). If the row

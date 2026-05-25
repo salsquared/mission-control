@@ -19,6 +19,7 @@ import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { Card } from "../ui/Card";
+import { buildResumeDisplayLabel } from "@/lib/resumes/labels";
 
 type Format = "pdf" | "docx";
 type InputMode = "pipeline" | "url" | "paste";
@@ -523,18 +524,23 @@ interface PreviousResumeRow {
     postingTitle: string | null;
     postingCompany: string | null;
     postingInputSummary: string | null;
+    userDisplayName: string | null;
 }
 
-// Derives the dropdown row label. Prefers the structured posting metadata
-// (postingCompany + postingTitle) when both are present — that's the
-// post-M8.4.2 happy path. Falls back to whichever single field exists, then
-// to the input summary (hostname or pasted-text prefix) for legacy rows,
-// then to a generic placeholder if absolutely nothing is known.
+// Derives the dropdown row label. Preferred shape is the canonical
+// "<name>, <role>, <company> Resume" via the shared `buildResumeDisplayLabel`
+// helper — matches the download filename so the user sees the same name
+// in the dropdown and the saved-file dialog. Falls back to the legacy
+// postingInputSummary (hostname / pasted-text prefix) when none of the
+// structured fields are present, then to a generic placeholder.
 function buildResumeLabel(r: PreviousResumeRow): string {
-    if (r.postingCompany && r.postingTitle) return `${r.postingCompany} · ${r.postingTitle}`;
-    if (r.postingCompany) return r.postingCompany;
-    if (r.postingTitle) return r.postingTitle;
-    if (r.postingInputSummary) return r.postingInputSummary;
+    const canonical = buildResumeDisplayLabel({
+        userDisplayName: r.userDisplayName,
+        postingTitle: r.postingTitle,
+        postingCompany: r.postingCompany,
+    });
+    if (canonical) return canonical;
+    if (r.postingInputSummary) return `${r.postingInputSummary} Resume`;
     return "Generated resume";
 }
 

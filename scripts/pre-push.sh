@@ -97,6 +97,8 @@ SUITES=(
     # M8.5 Wave 2
     "scripts/tests/hermetic/auto-tag-smoke.ts"
     "scripts/tests/hermetic/resume-rewrite-fold-in-smoke.ts"
+    # M8.4 polish (canonical resume naming)
+    "scripts/tests/hermetic/resume-labels-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

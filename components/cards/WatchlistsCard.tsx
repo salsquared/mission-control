@@ -539,8 +539,10 @@ function FiltersEditor({
     return (
         <div className="mt-2 pt-2 border-t border-white/5 space-y-1.5">
             <p className="text-[10px] text-white/40 leading-tight">
-                One regex per line (case-insensitive). Postings whose title, snippet, or location
-                matches any pattern are hidden. Max 20 patterns, 200 chars each.
+                One pattern per line (case-insensitive). Plain keywords match whole words only —
+                &ldquo;armed&rdquo; won&rsquo;t hit &ldquo;unarmed&rdquo;. Use regex metacharacters
+                (e.g. <code className="text-white/60">.*</code>) for substring or pattern matches.
+                Max 20 patterns, 200 chars each.
             </p>
             <textarea
                 value={text}
@@ -691,9 +693,10 @@ function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSav
                 )}
             </div>
             <p className="text-[10px] text-white/40 leading-tight">
-                Applies to every {track === "career" ? "career" : "side"} watchlist below. Each entry is a
-                case-insensitive regex matched against the title, snippet, and location. Comma or Enter to add.
-                Hover a tag and click × to remove.
+                Applies to every {track === "career" ? "career" : "side"} watchlist below. Plain keywords match
+                whole words only (case-insensitive) — &ldquo;armed&rdquo; won&rsquo;t hit &ldquo;unarmed&rdquo;.
+                Include regex metacharacters (e.g. <code className="text-white/60">.*</code>) for substring or
+                pattern matches. Comma or Enter to add; hover a tag and click × to remove.
             </p>
             <div className="flex flex-wrap items-center gap-1.5">
                 {filters.map(kw => (

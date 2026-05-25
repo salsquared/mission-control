@@ -96,6 +96,41 @@ function main() {
         fail("\\bjr\\b should NOT match inside 'injure'");
     } else pass("word-boundary regex avoids substring match");
 
+    // ─── plain keywords auto-wrap in \b…\b so they only match whole words ───
+    const armedFilter = compileNegativeFilters(JSON.stringify(["armed"]));
+    if (!matchesNegativeFilters(row("Armed Security Officer", null, null), armedFilter)) {
+        fail("'armed' should match 'Armed Security Officer'");
+    } else pass("plain keyword matches whole-word occurrence");
+    if (matchesNegativeFilters(row("Unarmed Security Officer", null, null), armedFilter)) {
+        fail("'armed' should NOT match inside 'Unarmed' (the user-reported bug)");
+    } else pass("plain keyword no longer matches inside a larger word ('armed' ≠ 'unarmed')");
+    if (matchesNegativeFilters(row("Rearmed Patrol", null, null), armedFilter)) {
+        fail("'armed' should NOT match inside 'Rearmed'");
+    } else pass("plain keyword skips suffix-position substring");
+
+    // Trailing-boundary precision: 'qa' should not match 'qatar'.
+    const qaFilter = compileNegativeFilters(JSON.stringify(["qa"]));
+    if (matchesNegativeFilters(row("Software Engineer, Qatar", null, null), qaFilter)) {
+        fail("'qa' should NOT match inside 'Qatar'");
+    } else pass("plain keyword skips prefix-position substring");
+    if (!matchesNegativeFilters(row("QA Engineer", null, null), qaFilter)) {
+        fail("'qa' should still match the whole word 'QA'");
+    } else pass("plain keyword still matches when standalone");
+
+    // Hyphen and punctuation count as word boundaries so multi-word phrases
+    // still match around real-world title punctuation.
+    const multiWord = compileNegativeFilters(JSON.stringify(["armed forces"]));
+    if (!matchesNegativeFilters(row("U.S. Armed Forces Liaison", null, null), multiWord)) {
+        fail("'armed forces' should match across the words");
+    } else pass("multi-word plain keyword matches");
+
+    // Explicit-regex escape hatch still bypasses the auto-wrap, so existing
+    // saved patterns with metacharacters retain substring behavior.
+    const regexEscape = compileNegativeFilters(JSON.stringify(["armed.*"]));
+    if (!matchesNegativeFilters(row("Unarmed Security Officer", null, null), regexEscape)) {
+        fail("regex pattern 'armed.*' should still substring-match");
+    } else pass("regex metachars bypass the whole-word wrap");
+
     // ─── cache returns same array reference for same JSON ───
     const a = compileNegativeFilters(JSON.stringify(["cached"]));
     const b = compileNegativeFilters(JSON.stringify(["cached"]));

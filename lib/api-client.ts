@@ -588,6 +588,11 @@ export const api = {
                         // where postingTitle/Company are null. Hostname for
                         // URL inputs, first 80 chars for pasted text.
                         postingInputSummary: z.string().nullable(),
+                        // User's display name extracted from profileSnapshot
+                        // (profile.headline at gen time — frozen so it matches
+                        // what's printed on the artifact even if the user
+                        // later edits their profile).
+                        userDisplayName: z.string().nullable(),
                     })),
                 }),
             );
