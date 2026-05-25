@@ -383,6 +383,8 @@ export async function callBulletAssist(
             id: newBulletId(),
             text: b.text,
             tags: b.tags,
+            autoTags: [],
+            removedTags: [],
             locked: false,
             excluded: false,
         }));
@@ -416,6 +418,12 @@ export async function callBulletAssist(
         // original bullet's tags verbatim — the rewrite often shifts emphasis,
         // and the tags should follow.
         tags: response.tags,
+        // autoTags / removedTags pass through unchanged — they're provenance
+        // metadata about the bullet's tagging history (Decision 6.1 + 6.3),
+        // not content the rewrite reshapes. The accept-on-save logic in
+        // M8.5.6 still clears autoTags on the next PATCH.
+        autoTags: input.currentBullet.autoTags,
+        removedTags: input.currentBullet.removedTags,
         locked: input.currentBullet.locked,
         excluded: input.currentBullet.excluded,
     };

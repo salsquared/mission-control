@@ -16,7 +16,7 @@ import { renderResumePDF, shutdownPDFBrowser } from "@/lib/resumes/render-pdf";
 const now = new Date().toISOString();
 
 function mkBullet(id: string, text: string, tags: string[] = []) {
-    return { id, text, tags, locked: false, excluded: false };
+    return { id, text, tags, autoTags: [], removedTags: [], locked: false, excluded: false };
 }
 
 const profile: ProfileWire = {

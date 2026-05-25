@@ -572,6 +572,12 @@ model GeneratedResume {
   applicationId   String?
   createdAt       DateTime @default(now())
   postingInput    String   // JSON: { url?, text?, parsedKeywords[] }
+  // M8.4.1 (story S8.11) — hydrated at gen time from parsedPosting. Drives the
+  // global "Previous resumes" dropdown on GenerateResumeCard so users can see
+  // company/title at a glance. NULL on legacy rows generated before the columns
+  // existed; dropdown shows "(unknown)" for those.
+  postingTitle    String?
+  postingCompany  String?
   profileSnapshot String   // JSON: full hydrated profile at gen-time
   selections      String   // JSON: [{ kind, sourceId, sourceLabel, bulletId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[], locked }]
   // Story S8.8 — JSON array of posting keywords that have NO coverage in the

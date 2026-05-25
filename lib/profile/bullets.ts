@@ -10,7 +10,7 @@ export function parseBullets(raw: string | null | undefined): Bullet[] {
     try {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return [];
-        return parsed.filter(isBulletShape);
+        return parsed.filter(isBulletShape).map(hydrateBulletDefaults);
     } catch {
         return [];
     }
@@ -29,9 +29,12 @@ export function newBulletId(): string {
 
 // Build a fresh bullet from text + optional tags. Defaults locked/excluded to false.
 export function makeBullet(text: string, tags: string[] = []): Bullet {
-    return { id: newBulletId(), text, tags, locked: false, excluded: false };
+    return { id: newBulletId(), text, tags, autoTags: [], removedTags: [], locked: false, excluded: false };
 }
 
+// Structural check — accepts bullets written before M8.5.1 (no autoTags /
+// removedTags fields). The hydrateBulletDefaults step downstream fills in
+// the new fields with `[]`, so callers always see the full Bullet shape.
 function isBulletShape(x: unknown): x is Bullet {
     if (!x || typeof x !== 'object') return false;
     const o = x as Record<string, unknown>;
@@ -44,6 +47,17 @@ function isBulletShape(x: unknown): x is Bullet {
     );
 }
 
+// Default-fallback the M8.5.1 fields on legacy bullets parsed from JSON
+// written before those fields existed. Idempotent — bullets that already
+// have valid arrays pass through unchanged.
+function hydrateBulletDefaults(bullet: Bullet): Bullet {
+    return {
+        ...bullet,
+        autoTags: Array.isArray(bullet.autoTags) ? bullet.autoTags : [],
+        removedTags: Array.isArray(bullet.removedTags) ? bullet.removedTags : [],
+    };
+}
+
 // Normalize an incoming bullet payload from an API write: stamp an id if
 // missing, coerce missing fields to safe defaults. Lets the UI send `{text}`
 // for a brand-new bullet without filling in tags/locked/excluded.
@@ -52,6 +66,8 @@ export function normalizeBullet(input: Partial<Bullet> & { text: string }): Bull
         id: input.id || newBulletId(),
         text: input.text,
         tags: input.tags ?? [],
+        autoTags: input.autoTags ?? [],
+        removedTags: input.removedTags ?? [],
         locked: input.locked ?? false,
         excluded: input.excluded ?? false,
     };

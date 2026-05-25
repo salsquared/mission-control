@@ -4,10 +4,19 @@ import { z } from 'zod';
 // Mirrors lib/profile/types.ts:Bullet. When *writing*, id is optional so a
 // brand-new bullet can be created without the client minting an id first;
 // normalizeBullet() in lib/profile/bullets.ts stamps one server-side.
+//
+// M8.5.1 added `autoTags` (subset of `tags` pending user review — Decision 6.3)
+// and `removedTags` (per-bullet blocklist for the auto-tag pass — Decision 6.1).
+// Both .default([]) on the canonical schema so bullets parsed from JSON written
+// before this migration still validate. On BulletWriteSchema they're .optional()
+// because most writes only touch a subset of fields; M8.5.6 will add the
+// autoTags-clearing .transform() once the BulletRow UI lands.
 export const BulletSchema = z.object({
     id: z.string(),
     text: z.string(),
     tags: z.array(z.string()),
+    autoTags: z.array(z.string()).default([]),
+    removedTags: z.array(z.string()).default([]),
     locked: z.boolean(),
     excluded: z.boolean(),
 });
@@ -16,9 +25,21 @@ export const BulletWriteSchema = z.object({
     id: z.string().optional(),
     text: z.string().min(1),
     tags: z.array(z.string()).optional(),
+    autoTags: z.array(z.string()).optional(),
+    removedTags: z.array(z.string()).optional(),
     locked: z.boolean().optional(),
     excluded: z.boolean().optional(),
-});
+}).refine(
+    (b) => {
+        // Invariant: a tag cannot appear in both `tags` and `removedTags` in
+        // the same write. Vacuously true when either side is omitted; the
+        // route's merge layer enforces it across the merged state.
+        if (!b.tags || !b.removedTags) return true;
+        const tagSet = new Set(b.tags);
+        return !b.removedTags.some((t) => tagSet.has(t));
+    },
+    { message: 'A tag cannot appear in both `tags` and `removedTags`' }
+);
 
 // Optional link entry (Profile.links is a JSON array of these).
 export const ProfileLinkSchema = z.object({

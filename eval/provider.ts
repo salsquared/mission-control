@@ -103,6 +103,8 @@ const HANDLERS: Record<string, CallsiteHandler> = {
                 id: "blt_eval_fixture",
                 text: currentBullet.text,
                 tags: currentBullet.tags,
+                autoTags: [],
+                removedTags: [],
                 locked: false,
                 excluded: false,
             },

@@ -74,6 +74,11 @@ Sections §1–§14 cover the applications/job-search feature set (umbrella goal
 - **S8.6** 🟡 ✅ As a user, I want every generated resume archived against the Application it was sent for so I can later say "what version did I send Acme on March 5?"
 - **S8.7** 🔵 ⛔ As a user, I want a generated cover letter alongside the resume, with the same posting/profile context. *(User decision: writing cover letters by hand. OOS.)*
 - **S8.8** 🔵 ✅ As a user, I want a "skills gap" report — keywords the posting emphasizes that my profile lacks evidence for — so I know what to address in the cover letter or upskill on.
+- **S8.9** 🟡 As a user generating a tailored resume, I want the LLM to *automatically* tag my profile bullets with the posting's keywords whenever the bullet's existing wording already evidences the work that keyword describes — writing into the existing [[S7.5]] tag column so new tags show up in the regular tag-edit UI for review or removal. **No fabrication:** the LLM only tags what the bullet text already supports. Tags persist (not posting-scoped), so coverage accumulates and the same bullet is recognized on later postings without re-tagging. Closes [[S8.8]] "gap" cases that were really tagging misses; gaps the LLM can't justify stay in the report.
+- **S8.10** 🟡 As a user, once auto-tags from [[S8.9]] are in place (and I've optionally pruned ones I disagree with — i.e. "locked in" what I stand behind), I want the resume rewrite pass to fold those keywords into the selected bullets' wording on the next generate — verbatim where natural, skipped where forced. Tags already drive bullet *selection*; fold-in puts the keyword on the page so an ATS picks it up. The trace ([[S8.2]]) shows which keywords were folded.
+- **S8.11** 🟡 As a user on the `GenerateResumeCard`, I want a global dropdown (next to or replacing "Download last") listing *every* previously generated resume regardless of which application it was attached to — filename, company / title, date, PDF/DOCX chip — so I can re-download a prior resume without drilling into its Application's overlay. The archive is the existing `GeneratedResume` table + `data/resumes/` directory; no new storage path — this is purely a global read-surface over what's already persisted.
+- **S8.12** 🟡 As a user with applications already sitting in the "Interested" column of my kanban (often landed there via [[S5.5]] "track posting"), I want to generate a tailored resume against one of them directly from the `GenerateResumeCard` — single-pick, no bulk — without re-pasting the URL I already curated. The application's stored posting URL feeds the existing generate flow, and the resulting `GeneratedResume` row auto-links back to that Application via [[S8.6]]'s `applicationId` so the artifact attaches to the kanban card's timeline with no extra step.
+- **S8.13** 🟡 As a user, the `GenerateResumeCard` should expose its three input modes — **Pipeline ([[S8.12]]) / URL / Paste** — as a segmented control at the top of the input area, only one input visible at a time (the three modes are mutually exclusive per generate). **Pipeline is the default tab** because most postings I generate resumes for come from the Interested column.
 
 ## 9. GitHub-driven project metrics
 
@@ -242,12 +247,12 @@ flowchart TD
 ## Status snapshot (2026-05-23)
 
 - **Sections §1–§14 (applications): all 🔴 must-haves shipped** (20/20 including §13 side-track 🔴 stories S13.1–S13.4). The end-to-end "apply ASAP" loop — capture, kanban, drill-in, watchlists, notifications, profile + import, tailored resume with PDF + DOCX, plus the parallel side-work pipeline — is in production.
-- **🟡: 29 total, 25 ✅ + 1 ◐ + 1 ⛔ + 2 ⏳.** Story **S10.1** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story S8.7). Story **S8.4** is ⛔ user-declined (2026-05-15). Open 🟡: **S7.7** (⏳ LLM bullet fill) and **S7.9** (⏳ resume-upload archive) — both added 2026-05-23, both ship together as M7.6.
+- **🟡: 34 total, 25 ✅ + 1 ◐ + 1 ⛔ + 7 ⏳.** Story **S10.1** is ◐ partial — resume side shipped, cover-letter side OOS by user decision (story S8.7). Story **S8.4** is ⛔ user-declined (2026-05-15). Open 🟡: **S7.7** (⏳ LLM bullet fill) and **S7.9** (⏳ resume-upload archive) — both added 2026-05-23, both ship together as M7.6. **S8.9** (⏳ LLM auto-tag pass) + **S8.10** (⏳ rewrite-time keyword fold-in) + **S8.11** (⏳ global previous-resumes dropdown) + **S8.12** (⏳ generate against an Interested-column application, auto-attach via [[S8.6]]) + **S8.13** (⏳ Pipeline / URL / Paste segmented input control, Pipeline default) added 2026-05-24.
 - **🔵: 14 total, 12 ✅ + 1 ◐ + 1 ⛔ + 1 ⏳** (shipped: **S5.8** negative filters, **S5.9** comp parsing, **S6.4** quiet hours, **S8.8** skills-gap, **S9.4** suggested rewrites, **S9.5** README ingestion, **S10.2** resume diff, **S11.2** recruiter contacts, **S12.1** multi-kind, **S13.7** same-employer-both-tracks, **S13.8** bulk-move tracks, **S7.6** ◐ capture-only). User-declined: **S8.7** (cover letter). Open: **S7.8** (⏳ LLM bullet rewrite, added 2026-05-23) and **S7.6**'s deferred rollback half.
 - **🔵 future / OOS:** S14.1–S14.4.
 - **Section §15 (local auth): greenfield as of 2026-05-23.** 22 🔴, 15 🟡, 2 🔵 — all unbuilt. Sees no code change until the seven Open Questions inside §15 are answered.
 
-**Next-up candidates** (small surface, real leverage): **M7.6** — ships S7.9 (resume-upload archive) → S7.7 (LLM bullet fill, uses the archive) → S7.8 (LLM bullet rewrite, uses the archive) in that order. **S7.6** rollback UX remains deferred-by-design. **M14 (local auth)** queues behind §15 question-resolution.
+**Next-up candidates** (small surface, real leverage): **M7.6** — ships S7.9 (resume-upload archive) → S7.7 (LLM bullet fill, uses the archive) → S7.8 (LLM bullet rewrite, uses the archive) in that order. **M8.4 — Resume card v2 UX** (S8.11 + S8.12 + S8.13) and **M8.5 — Resume card v2 LLM coverage** (S8.9 + S8.10) queued behind Decision 6 (2026-05-24); M8.4 ships first. **S7.6** rollback UX remains deferred-by-design. **M14 (local auth)** queues behind §15 question-resolution.
 
 ---
 
@@ -295,6 +300,18 @@ Disfavored alternatives:
 ### ✅ 5. GitHub access — public API only
 
 No OAuth scope to maintain. We pull public repo metadata (commits, languages, stars, READMEs). Private repos are out of scope; if you want one represented on a resume you can add it manually as a `Project` row.
+
+### ✅ 6. S8.9–S8.13 resume-card v2 — five product calls
+
+Locked 2026-05-24 to unblock implementation.md milestones **M8.4** (UX) and **M8.5** (LLM coverage). Numbering = ship order, so M8.4 ships first.
+
+1. **Re-tag tombstone (S8.9).** Per-bullet blocklist. Schema adds `removedTags: string[]` to each bullet's JSON shape. Auto-tag pass excludes any keyword already in the bullet's blocklist. One prune sticks; the user is the durable truth source. Rationale: matches "automatic, but I'm the truth source" without per-tag provenance complexity. Cheap migration.
+2. **Auto-tag model tier (S8.9).** `MODEL_LITE` (`gemini-3.1-flash-lite`) — same tier as bullet-assist. Per-(bullet, keyword) yes/no is a tight judgment; LITE should hold quality. Cheapest spend per generate. Promote to `MODEL_FLASH` only if Promptfoo evals show it's subjectively poor.
+3. **Auto-tag UI provenance (S8.9).** Subtle "auto" badge on auto-added tags until the user touches them (confirm-or-remove via the existing tag-edit UI). Once saved, the badge falls off and the tag becomes indistinguishable from a user-set tag. Cleanest provenance signal at review time; doesn't create permanent visual noise once accepted.
+4. **No-URL Interested apps (S8.12).** Hidden from the Pipeline picker. The Pipeline tab lists only Interested apps with a URL — the URL is what the generate flow consumes. Manual-add-without-URL falls back to the URL or Paste tabs of the same segmented control ([[S8.13]]). Cleanest UX.
+5. **Ship granularity.** Two milestones, sequenced UX-first:
+   - **M8.4 — Resume card v2 UX** = [[S8.11]] + [[S8.12]] + [[S8.13]] (global previous-resumes dropdown, Pipeline input source, segmented control). Ships first — smaller surface, faster, immediate user-facing improvement. Mostly frontend + one endpoint extension.
+   - **M8.5 — Resume card v2 LLM coverage** = [[S8.9]] + [[S8.10]] (auto-tag pass + rewrite-time fold-in). Ships second once the M8.4 ergonomics are in real-world use and the new auto-tag prompt has Promptfoo fixtures.
 
 ---
 
@@ -386,6 +403,14 @@ Sections §7, §8, §9. Unblocked by Decision 4 (Option C). Largest new surface 
 - Multiple templates (story S8.4) — only `ats-plain.tsx` exists.
 
 **🔵 round:** skills-gap (story S8.8) open. Cover letter (story S8.7) declined.
+
+#### M8.4 — Resume card v2: UX refactor ⏳ queued
+
+Stories: [[S8.11]] + [[S8.12]] + [[S8.13]]. Ships **first** of the two M8 v2 milestones per Decision 6. Surface: `components/cards/GenerateResumeCard.tsx`. Touch points: global previous-resumes dropdown (extends `app/api/resumes/route.ts` GET); Pipeline input source pulling Interested-column applications (URL-less apps hidden per Decision 6.4); **Pipeline / URL / Paste** segmented control with Pipeline as default tab. No new LLM callsite; auto-link to Application via existing [[S8.6]] `applicationId` linkage. Implementation tasks land in `docs/implementation.md` Track C.
+
+#### M8.5 — Resume card v2: LLM keyword coverage ⏳ queued
+
+Stories: [[S8.9]] + [[S8.10]]. Ships **after** M8.4 per Decision 6. New LLM callsite (slug TBD, e.g. `bullet-auto-tag`) on `MODEL_LITE`; new prompt under `docs/llm-prompts/`; new Promptfoo fixture suite under `eval/suites/`. Schema migration adds `removedTags: string[]` to the bullet JSON shape (per-bullet blocklist, Decision 6.1). Subtle "auto" badge on auto-added tags in the existing tag-edit UI (Decision 6.3). Fold-in mechanic ([[S8.10]]) modifies the existing `lib/resumes/rewrite.ts` prompt to inject matched keywords verbatim where natural. Implementation tasks land in `docs/implementation.md` Track C.
 
 #### M9 — GitHub-driven project metrics ✅ shipped
 

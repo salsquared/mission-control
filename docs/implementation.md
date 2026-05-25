@@ -20,14 +20,14 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ## Status snapshot (2026-05-25)
 
-**TL;DR — feature roadmap closed; one cross-cutting fix landed today.** Every 🔴 must-have, every 🟡 important (sans declined), every 🔵 nice-to-have (sans declined / future), Track D mobile layout (2026-05-23), and M7.6 LLM bullet assist + resume-upload archive (2026-05-23) all shipped. **Today (2026-05-25):** [Close-detection probe gate](./close-detection-probe.md) shipped across all 11 ATS kinds — fixes a class of false-closures (LinkedIn 24h filter, Workday 200-per-crawl page cap) and recovered 921 dev + 629 prod erroneously-closed postings. Commits `9fcd6df` `0deef8e` `2626760` `9e29040`. **Deferred-by-design**: **Story S7.6** restore-from-snapshot UX, parked until the read-only safety net proves useful enough to justify a destructive path. Day-to-day forward motion is now "apply, observe failure modes, tune prompts" — captured in §Prompt tuning.
+**TL;DR — roadmap re-opened 2026-05-24 with five new §8 stories; two milestone phases (M8.4 + M8.5) now queued.** Every 🔴 must-have remains shipped; 🟡/🔵 priorities have a fresh batch of ⏳ open stories on the resume-card surface. **2026-05-24:** Five new stories added to §8 (S8.9–S8.13) covering LLM auto-tag pass + rewrite-time keyword fold-in + global previous-resumes dropdown + Pipeline picker for Interested-column applications + Pipeline/URL/Paste segmented input. Five product calls resolved as user-stories.md Decision 6. Two milestones designed: **M8.4 (UX refactor)** ships first — global dropdown + Pipeline picker + segmented control on `GenerateResumeCard`; **M8.5 (LLM keyword coverage)** ships second — auto-tag pass writing to `tags` + new `autoTags` / `removedTags` bullet-JSON fields, fold-in directive in `resume-rewrite` prompt. **2026-05-25:** [Close-detection probe gate](./close-detection-probe.md) shipped across all 11 ATS kinds — fixes a class of false-closures (LinkedIn 24h filter, Workday 200-per-crawl page cap) and recovered 921 dev + 629 prod erroneously-closed postings. Commits `9fcd6df` `0deef8e` `2626760` `9e29040`. **Deferred-by-design**: **Story S7.6** restore-from-snapshot UX, parked until the read-only safety net proves useful enough to justify a destructive path.
 
 ### Coverage by priority
 
 | Priority | Shipped | Open | Declined | Total |
 |---|---|---|---|---|
 | 🔴 must-have | **20** | 0 | 0 | 20 (incl. §13 S13.1–S13.4 and story S7.3) |
-| 🟡 important | **25** | 2 | 1 | 29 (stories S7.7 ⏳ LLM bullet fill + S7.9 ⏳ resume-upload archive both open, ship together as M7.6; story S10.1 ◐ partial — resume side shipped, cover-letter side OOS; story S8.4 ⛔ multi-template user-declined 2026-05-15) |
+| 🟡 important | **25** | 7 | 1 | 34 (S7.7 ⏳ LLM bullet fill + S7.9 ⏳ resume-upload archive ship as M7.6; **S8.9 + S8.10 + S8.11 + S8.12 + S8.13 ⏳ added 2026-05-24, ship as M8.4 + M8.5**; S10.1 ◐ partial — resume side shipped, cover-letter side OOS; S8.4 ⛔ multi-template user-declined 2026-05-15) |
 | 🔵 nice-to-have | **12** | 1 | 1 | 14 (excluding 4 future/OOS items S14.1–S14.4; story S7.8 ⏳ LLM bullet rewrite open; story S8.7 ⛔ cover letter). Story S7.6 ◐ — capture side shipped, rollback deferred. |
 
 ### Per-track status
@@ -54,6 +54,8 @@ One row per `###` section below — this table is the doc's ToC.
 | C | M8 Phase 2 — Archival + traceability + Application linkage | ✅ | `GeneratedResume` + "Why these bullets?" trace (S8.2, S8.6) |
 | C | M8 Phase 2-followup | ✅ | Lock/exclude UI prominence (36) |
 | C | M8 Phase 3 — Multi-template + cover letter + skills-gap | ✅ | Skills-gap (41) ✅; multi-template (37) ❌ killed; cover letter (40) ❌ killed |
+| C | M8.4 — Resume card v2: UX refactor | ⏳ | Stories S8.11 (🟡 global previous-resumes dropdown) + S8.12 (🟡 Pipeline picker for Interested-column apps) + S8.13 (🟡 Pipeline/URL/Paste segmented control). 10 tasks M8.4.1–M8.4.10. Ships **first** of the two M8 v2 milestones per Decision 6.5. No new LLM callsite; `GeneratedResume` gains `postingTitle` + `postingCompany` columns; new `app/api/applications/pipeline-picker/route.ts`. |
+| C | M8.5 — Resume card v2: LLM keyword coverage | ⏳ | Stories S8.9 (🟡 LLM auto-tag pass) + S8.10 (🟡 rewrite-time keyword fold-in). 9 tasks M8.5.1–M8.5.9. Ships **second**. New `bullet-auto-tag` LLM callsite on `MODEL_LITE`; new prompt under `docs/llm-prompts/`; new Promptfoo fixture suite; bullet JSON gains `autoTags` + `removedTags` fields (no Prisma migration — JSON shape). Fold-in is a prompt-template change to `resume-rewrite.md`. |
 | C | M9 Phase 1 — GitHub-driven project metrics | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
 | C | M9 Phase 2 — GitHub UX polish | ✅ | Portfolio toggle UI on `ProjectRow`, suggested rewrites (45), README ingestion (46) |
 | **D** — Mobile layout | MD-0 → MD-7 (incl. design Decisions + File touch estimate) | ✅ | Shipped 2026-05-23 in `893628a`. Viewport meta + `useEffectiveMobileLayout` + Dashboard fork into `DesktopShell` / `MobileShell` + swipe carousel + Launchpad sheet variant + inner-scroller `touch-pan-x` audit + Auto/Mobile/Desktop preference UI. ~450 lines, 11 files. |
@@ -125,6 +127,11 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S8.6** | 🟡 | ✅ | Archive per Application | M8 Phase 2 | — |
 | **S8.7** | 🔵 | ⛔ | Cover letter generator | M8 Phase 3 | **Killed** — user writes cover letters by hand. |
 | **S8.8** | 🔵 | ✅ | Skills gap report | M8 Phase 3 (M8-3.3) | — |
+| **S8.9** | 🟡 | ⏳ | LLM auto-tag pass (writes posting keywords as bullet tags where evidence exists) | M8.5 (tasks .1–.4, .6–.8) | **Build M8.5 auto-tag pass.** New `bullet-auto-tag` LLM slug, `MODEL_LITE`, prompt at `docs/llm-prompts/bullet-auto-tag.md`. New `lib/profile/auto-tag.ts:autoTagBullets()`. Bullet JSON gains `autoTags` + `removedTags` per Decisions 6.1 + 6.3. Best-effort: errors don't block the resume generate. |
+| **S8.10** | 🟡 | ⏳ | Rewrite-time keyword fold-in (verbatim where natural) | M8.5 (task .5 + .9) | **Build M8.5 fold-in directive.** Prompt-template change to `docs/llm-prompts/resume-rewrite.md` rule 6a + new Promptfoo fixtures in `eval/suites/resume-rewrite.yaml`. No code change to `lib/resumes/rewrite.ts`. |
+| **S8.11** | 🟡 | ⏳ | Global previous-resumes dropdown on `GenerateResumeCard` | M8.4 (tasks .1–.3, .6, .9, .10) | **Build M8.4 dropdown.** Schema migration adds `GeneratedResume.postingTitle` + `postingCompany`. POST writes them at gen time; GET projects them. UI replaces "Download last:" link with a popover listing every resume regardless of application. |
+| **S8.12** | 🟡 | ⏳ | Generate against an Interested-column application (auto-attach via S8.6) | M8.4 (tasks .4, .5, .7, .10) | **Build M8.4 Pipeline source.** New `app/api/applications/pipeline-picker/route.ts` returns Interested apps with `posting.sourceUrl != null` (URL-less Apps hidden per Decision 6.4). POST `/api/resumes` accepts `applicationId`; auto-links GeneratedResume via S8.6. |
+| **S8.13** | 🟡 | ⏳ | Pipeline / URL / Paste segmented input control (Pipeline default) | M8.4 (task .8) | **Build M8.4 segmented control.** Replaces the stacked URL+Paste inputs in `GenerateResumeCard`. Per-tab state preserved across switches. Pipeline default tab per Decision 6.5. No localStorage persistence of last-used tab. |
 | **§9 GitHub project metrics** | | | | | |
 | **S9.1** | 🟡 | ✅ | Connect GitHub (public API per Decision 5) | M9 Phase 1 | — |
 | **S9.2** | 🟡 | ✅ | Portfolio repos → resume bullets | M9 Phase 1 (metrics) + M9 Phase 2 (toggle UI) | — |
@@ -154,14 +161,16 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S14.3** | 🔵 | 💤 | Interview prep tracker | — | Future. Not blocking. |
 | **S14.4** | 🔵 | 💤 | Salary research | — | Future. Not blocking. |
 
-**Actionable items** (rows above with content in the Next action column): **M7.6** (stories S7.7 fill + S7.8 rewrite + S7.9 archive, bundled) is the open implementation phase. **Story S7.6** (rollback UI for profile snapshots) remains deferred-by-design. Everything else is ✅ shipped, ⛔ user-declined, or 💤 future. Track D (mobile layout, not user-story-tied) shipped 2026-05-23.
+**Actionable items** (rows above with content in the Next action column): three open implementation phases — **M7.6** (S7.7 fill + S7.8 rewrite + S7.9 archive, bundled), **M8.4** (S8.11 + S8.12 + S8.13 — resume-card UX refactor), **M8.5** (S8.9 + S8.10 — LLM auto-tag + fold-in). **Story S7.6** (rollback UI for profile snapshots) remains deferred-by-design. Everything else is ✅ shipped, ⛔ user-declined, or 💤 future. Track D (mobile layout, not user-story-tied) shipped 2026-05-23.
 
 ### Open work, by leverage (next-up order)
 
 Story S8.4 (multi-template) and Story S8.7 (cover letter) are ⛔ user-declined; not in this list. Track D (MD-0 → MD-7) shipped 2026-05-23 in `893628a`. Story S7.6 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful.
 
 1. **M7.6 — LLM bullet assist + resume-upload archive** (stories S7.7 🟡 + S7.8 🔵 + S7.9 🟡, bundled into one phase, 11 tasks). The archive primitive (M7.6.1–M7.6.4) ships first and unlocks S7.7's cold-start quality + S7.8's polish quality + future grounding for other LLM features. See §M7.6 for the full design — `ResumeUpload` table + `MODEL_LITE` (`gemini-3.1-flash-lite`) + 20 / 10 min rate-limit + three hermetic smokes wired into pre-push. Ship order: **archive → prompt + route → UI → smoke**.
-2. **Story S7.6 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Deferred-by-design — wait until you've actually made an edit you want to undo.
+2. **M8.4 — Resume card v2: UX refactor** (stories S8.11 🟡 + S8.12 🟡 + S8.13 🟡, 10 tasks). Ships ahead of M8.5 per Decision 6.5 — smaller surface, mostly frontend, no new LLM callsite. Schema migration `add_generated_resume_posting_metadata`; new `app/api/applications/pipeline-picker/route.ts`; `GenerateResumeCard.tsx` grows a Pipeline/URL/Paste segmented control with Pipeline as default + previous-resumes popover replacing "Download last:". Three new hermetic smokes. See §M8.4 for the full design.
+3. **M8.5 — Resume card v2: LLM keyword coverage** (stories S8.9 🟡 + S8.10 🟡, 9 tasks). Ships after M8.4. New `bullet-auto-tag` LLM callsite on `MODEL_LITE`; new prompt at `docs/llm-prompts/bullet-auto-tag.md`; new Promptfoo suite `eval/suites/bullet-auto-tag.yaml`; bullet JSON gains `autoTags` + `removedTags` (no Prisma migration). Fold-in is a prompt-template change to `resume-rewrite.md` rule 6a. Four new hermetic smokes. See §M8.5 for the full design.
+4. **Story S7.6 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Deferred-by-design — wait until you've actually made an edit you want to undo.
 
 ### User-declined
 
@@ -657,6 +666,348 @@ Story S8.3 (lock/exclude UI surfacing) deferred — toggles already exist; just 
 **M8-3.3 (skills-gap report) — ✅ shipped.** `lib/resumes/skills-gap.ts:computeSkillsGap(profile, posting.keywords)` returns the set of posting keywords with no profile bullet (tag or word-boundary substring) evidence. Persisted as `GeneratedResume.skillsGap` (JSON), surfaced under the "Why these bullets?" expander as `SkillsGapBlock` in `GenerateResumeCard.tsx`. Hermetic smoke at `scripts/tests/hermetic/skills-gap-smoke.ts`. PB-4 (2026-05-16) ported the same word-boundary helper into `lib/resumes/select.ts` so the bullet scorer and the gap report agree on what counts as a match.
 
 Stories: S8.4 (🟡 templates), S8.7 (🔵 cover letter), S8.8 (🔵 skills-gap).
+
+### M8.4 — Resume card v2: UX refactor ⏳
+
+Stories: **S8.11** (🟡 global previous-resumes dropdown) + **S8.12** (🟡 generate against an Interested-column application) + **S8.13** (🟡 Pipeline / URL / Paste segmented control). Added 2026-05-24; queued behind [user-stories.md Decision 6](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls). **Ships first** of the two M8 v2 milestones per Decision 6.5 — smaller surface, mostly frontend, no new LLM callsite.
+
+**Surfaces touched.**
+- `components/cards/GenerateResumeCard.tsx` — segmented control + Pipeline tab UI + previous-resumes dropdown.
+- `app/api/resumes/route.ts` — GET enriched with `postingTitle` / `postingCompany`; POST accepts `applicationId`.
+- `app/api/applications/pipeline-picker/route.ts` (new) — read-only projection for Pipeline picker.
+- `prisma/schema.prisma` — `GeneratedResume.postingTitle: String?` + `postingCompany: String?` columns.
+
+**Pipeline picker filter.** Per Decision 6.4, hides Interested apps without a linked posting URL. Concretely: `application.status === 'INTERESTED' && application.posting?.sourceUrl != null`. Manual-add Apps (S2.3) and cold-email Apps (S1.1) lack a linked `JobPosting` → excluded. The posting URL lives at `JobPosting.sourceUrl` (the Application model itself has no `url` field — the relation is via `Application.postingId`).
+
+**Auto-link to Application.** POST sets `GeneratedResume.applicationId = body.posting.applicationId` when present, so the artifact attaches to the kanban card's Resumes section via [[S8.6]] with no extra step.
+
+---
+
+#### Task list
+
+##### M8.4.1 — Schema: `GeneratedResume` posting-metadata columns ⏳ (S8.11)
+
+Migration `add_generated_resume_posting_metadata` (dev + prod). Adds two optional columns to `GeneratedResume`:
+
+```prisma
+model GeneratedResume {
+  // ... existing fields ...
+  postingTitle    String?  // hydrated at gen time from posting.title
+  postingCompany  String?  // hydrated at gen time from posting.company
+}
+```
+
+Pure additive; existing rows leave columns null and the dropdown shows "(no metadata)" for them. No backfill — historical resumes pre-M8.4.1 stay null-labeled.
+
+##### M8.4.2 — POST `/api/resumes` writes posting metadata ⏳ (S8.11)
+
+In `app/api/resumes/route.ts` POST handler, after `parsePostingFromInput()` runs, capture `parsedPosting.title` + `parsedPosting.company` into the `GeneratedResume.create()` payload. The two fields are already in scope — the route currently emits them as the `X-Resume-Title` / `X-Resume-Company` response headers — just persist them too.
+
+##### M8.4.3 — GET `/api/resumes` returns posting metadata ⏳ (S8.11)
+
+Extend the response projection in `app/api/resumes/route.ts:GET` (currently lines 78–103) to include `postingTitle` and `postingCompany`. Two optional fields; existing callers (`ApplicationDetailOverlay`'s resume diff) ignore extras.
+
+Already ordered `createdAt desc` — verify and confirm the projection caps via a `limit` query param (default 100). Past 100 is paginate-or-search territory and is OOS for v1.
+
+##### M8.4.4 — Pipeline picker endpoint ⏳ (S8.12)
+
+New `app/api/applications/pipeline-picker/route.ts`. `GET`:
+
+- `requireSession`-gated through the existing `getServerSession` → `findUserByEmail` flow (mirror `app/api/applications/route.ts:GET`).
+- Repository helper at `lib/repositories/applications.ts`: `findInterestedWithPostingForUser(userId)`. Single Prisma call: `prisma.application.findMany({ where: { userId, status: 'INTERESTED', NOT: { postingId: null } }, include: { posting: { select: { sourceUrl: true, title: true } } }, orderBy: { lastUpdateAt: 'desc' } })`. Post-filter rows where `posting?.sourceUrl == null` (defensive — schema doesn't strictly require sourceUrl).
+- Projects to `{ items: Array<{ id, company, role, postingUrl, postingTitle }> }`. `postingTitle` falls back to `application.role` if `posting.title` is empty.
+- No `?status` param — endpoint is purpose-built for the picker; the filter is hardcoded to `INTERESTED`.
+
+##### M8.4.5 — POST `/api/resumes` accepts `applicationId` ⏳ (S8.12)
+
+Extend the existing zod body schema in `app/api/resumes/route.ts`:
+
+```typescript
+const PostingInputSchema = z.object({
+    url: z.string().url().optional(),
+    text: z.string().min(1).optional(),
+    applicationId: z.string().cuid().optional(),  // NEW
+}).refine(p => !!(p.url || p.text || p.applicationId), {
+    message: "Provide one of: url, text, or applicationId",
+});
+```
+
+Handler logic when `posting.applicationId` is set:
+1. Load `application = prisma.application.findUnique({ where: { id }, include: { posting: true }})`.
+2. Verify `application.userId === session.user.id` → 404 on mismatch (cross-user isolation; do not leak existence).
+3. Verify `application.status === 'INTERESTED'` → 400 with `{stage: 'input', error: 'application-not-interested'}`. Guard against generating off applications in other columns; the picker only surfaces Interested but defense-in-depth.
+4. Verify `application.posting?.sourceUrl != null` → 400 with `{stage: 'input', error: 'application-missing-url'}`.
+5. Set the canonical url for the parse step: `posting.url = application.posting.sourceUrl`.
+6. Set `generatedResume.applicationId = application.id` at create time → auto-attach per [[S8.6]].
+
+All four error codes reuse the existing `STAGE_LABELS['input']` ("Bad input") in `GenerateResumeCard.tsx`.
+
+##### M8.4.6 — Previous-resumes dropdown UI ⏳ (S8.11)
+
+In `components/cards/GenerateResumeCard.tsx`, replace the lone `Download last: <filename>` anchor (currently lines 218–226) with a popover-style dropdown:
+
+- New `useQuery({ queryKey: queryKeys.resumes(), queryFn: api.resumes.list })` — add `list` to `lib/api-client.ts`.
+- Use the same hand-rolled popover pattern as `components/overlays/NotificationBell.tsx` (no shadcn `Popover` available per `components.json`).
+- Row format: `{postingCompany ?? '(unknown)'} · {postingTitle ?? '(no title)'}` left; `{format.toUpperCase()}` chip; `{formatRelative(createdAt)}` right. Click row → download via `/api/resumes/[id]/download`.
+- Visible cap 20 rows; scroll if more. Empty state: hide the dropdown affordance entirely. Loading + error follow the trace-block pattern (lines 242–248).
+
+API client addition at `lib/api-client.ts`:
+```typescript
+resumes: {
+    list: async (): Promise<{ resumes: ResumeListItem[] }> => fetcher('/api/resumes'),
+    get: async (id: string) => fetcher(`/api/resumes/${id}`),
+}
+```
+Plus `queryKeys.resumes()` returning `['resumes']` and a `ResumeListItem` type co-located with the API.
+
+##### M8.4.7 — Pipeline picker UI ⏳ (S8.12)
+
+New child component in `GenerateResumeCard.tsx` (inline; extract to `components/cards/InterestedAppPicker.tsx` only if it grows past ~80 LOC):
+
+- Fetches via TanStack `useQuery({ queryKey: ['applications', 'pipeline-picker'], queryFn: api.applications.pipelinePicker })`.
+- Single-select list. Row format: `{company} — {role}` on line one; subdued `{new URL(postingUrl).host}` on line two.
+- Click row → `setSelectedApplicationId(item.id)`; selected row gets a purple-tinted border (`border-purple-400/40`), matching the card's existing accent.
+- Empty state: "No Interested-column applications with a posting URL yet." with a small link to the Applications dash.
+- **No multi-select** — single-pick per [user-stories.md Decision 6.5](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls)'s S8.12 framing.
+
+##### M8.4.8 — Segmented control ⏳ (S8.13)
+
+Refactor the input area at the top of `GenerateResumeCard.tsx` (currently lines 163–187: URL `<input>` + textarea):
+
+- New `inputMode: 'pipeline' | 'url' | 'paste'` state. **Default `'pipeline'`** per Decision 6.5.
+- Segmented control above the input area — three buttons, same visual treatment as the existing PDF / DOCX format toggle (lines 189–209). Reuse the format-toggle's classes (`bg-purple-500/30 text-purple-100` when selected; `text-white/50 hover:text-white/80` otherwise) for visual consistency.
+- One input visible at a time:
+  - `pipeline` → `<InterestedAppPicker>` from M8.4.7.
+  - `url` → existing URL `<input>`.
+  - `paste` → existing textarea.
+- State for each input persists across tab switches (don't blow away typed URL when user toggles to Paste and back).
+- `canSubmit` derivation: `!busy && (selectedApplicationId || url.trim() || text.trim())`.
+- POST payload selector: `inputMode === 'pipeline' ? { applicationId: selectedApplicationId } : inputMode === 'url' ? { url } : { text }`.
+- Localstorage persistence of last-used tab is **explicitly out of scope** — Pipeline is always the default per Decision 6.5.
+
+##### M8.4.9 — TanStack invalidation + SSE ⏳
+
+- POST `/api/resumes` already broadcasts `Application.upsert` for `applicationId`-linked rows (verify in `lib/events/broadcaster.ts`). **Add** a `GeneratedResume.create` broadcast topic so the previous-resumes dropdown auto-refreshes after a generate, not just on next mount.
+- Subscriber side: `GenerateResumeCard.tsx` subscribes to the broadcast on mount; invalidates `queryKeys.resumes()`.
+
+##### M8.4.10 — Hermetic smokes ⏳
+
+- `scripts/tests/hermetic/pipeline-picker-smoke.ts` (covers M8.4.4):
+  - Setup: one user with four Apps — `APPLIED` (excluded by status), `INTERESTED` + posting+URL (included), `INTERESTED` no postingId (excluded per Decision 6.4), `INTERESTED` + posting but `sourceUrl=null` (excluded). Plus second user with valid Interested+URL App (must be excluded — cross-user isolation).
+  - Asserts: response shape; only the one valid row; correct `postingUrl` + `postingTitle` values; cross-user invisibility; ordering by `lastUpdateAt desc`.
+- `scripts/tests/hermetic/resume-from-application-smoke.ts` (covers M8.4.5):
+  - Setup: User + Application(`INTERESTED`) + JobPosting(sourceUrl). Mock `lib/resumes/posting.ts:parsePostingFromInput` so it doesn't hit the network.
+  - Asserts: POST with `{ posting: { applicationId } }` succeeds; `GeneratedResume.applicationId` linked; `postingTitle` / `postingCompany` persisted from the parsed posting; wrong-user `applicationId` → 404; non-Interested status → 400 (`application-not-interested`); URL-less application → 400 (`application-missing-url`).
+- `scripts/tests/hermetic/resume-list-smoke.ts` (covers M8.4.3):
+  - Asserts: GET returns rows ordered `createdAt desc`; includes `postingTitle` / `postingCompany` columns; cross-user isolation; null columns for pre-M8.4.2 rows.
+
+All three wired into `scripts/pre-push.sh`'s `SUITES` array.
+
+---
+
+#### Acceptance (whole phase)
+
+- Generate flow from a freshly-Tracked Interested-column application: pick the row from the Pipeline tab (the default tab), click Generate. No URL typing. The generated resume appears under the application's Resumes section automatically (auto-link via M8.4.5 step 6).
+- Previous-resumes dropdown lists every resume across all applications; click a row → downloads the artifact. Empty state when none exist.
+- Segmented control: Pipeline default; URL + Paste preserve their typed input across tab switches.
+- Cross-user isolation verified for both the pipeline-picker endpoint and the applicationId-gated POST.
+- `npm run test:hermetic` green; three new smokes wired into pre-push.
+
+#### Out of scope
+
+- Search / filter on the previous-resumes dropdown — out until the archive grows past ~20 rows for the user.
+- Generating from non-Interested-status applications — defensive 400; future story if a workflow emerges.
+- Auto-fill resume metadata when generating without an `applicationId` — title/company come from the posting parse, fine as-is for direct URL/paste flows.
+- Last-used-tab persistence — Pipeline is always default per Decision 6.5.
+
+---
+
+### M8.5 — Resume card v2: LLM keyword coverage ⏳
+
+Stories: **S8.9** (🟡 LLM auto-tag pass) + **S8.10** (🟡 rewrite-time keyword fold-in). Added 2026-05-24; queued behind [user-stories.md Decision 6](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls). **Ships second** — after M8.4 lands and after the new auto-tag prompt has Promptfoo fixtures.
+
+**Mechanism.** On every resume generate, after the posting is parsed but before bullet selection, a single batched LLM call ("auto-tag pass") iterates the user's profile bullets: for each `(bullet, posting_keyword)` pair, decide if the bullet's existing text already evidences the work the keyword describes. If yes, **add** the keyword as a tag on that bullet — unless the keyword is in the bullet's `removedTags` blocklist (Decision 6.1). Newly added tags also land in a per-bullet `autoTags` array that the UI uses to render an "auto" badge until the user touches the tag (Decision 6.3). Selection runs as today — `lib/resumes/select.ts:scoreBullet` reads `tags` directly, so auto-tagged tags become indistinguishable from user-set tags at selection time. The rewrite prompt gets a new fold-in directive (S8.10): where a bullet's tags ∩ posting keywords is non-empty, weave the keyword verbatim into the rewritten text — subject to existing no-invention + ≤25-word rules.
+
+**No-fabrication invariant.** The auto-tag prompt enumerates the rule explicitly: *"Only add a tag where the bullet's current text already evidences the work that keyword describes. Never invent coverage. When in doubt, omit."* Promptfoo fixtures (M8.5.9) cover the positive case (bullet text mentions Python → tag added) and the negative (bullet text doesn't mention Python → no tag).
+
+**Model:** `MODEL_LITE` (`gemini-3.1-flash-lite`) per Decision 6.2 — same tier as bullet-assist (M7.6). Per-(bullet, keyword) yes/no is a bounded judgment, not free-form generation. Promote to `MODEL_FLASH` only if Promptfoo evals show LITE is subjectively poor.
+
+**Best-effort posture.** If the auto-tag pass throws (timeout, malformed response, rate-limit), the generate falls through to selection with the un-modified profile. The user still gets their resume; auto-tag is never load-bearing.
+
+---
+
+#### Task list
+
+##### M8.5.1 — Schema: `Bullet.autoTags` + `Bullet.removedTags` ⏳ (S8.9)
+
+Bullets are stored as JSON inside their parent entity's `bulletsJson` column (per Decision 4). **No Prisma migration is needed** — the JSON shape evolves and all readers default-fallback unknown fields.
+
+Update `lib/profile/types.ts`:
+
+```typescript
+export interface Bullet {
+    id: string;
+    text: string;
+    tags: string[];
+    autoTags: string[];     // NEW — subset of tags pending user review (Decision 6.3)
+    removedTags: string[];  // NEW — blocklist excluding keywords from auto-tag (Decision 6.1)
+    locked: boolean;
+    excluded: boolean;
+}
+```
+
+Read-time defaults: in the loader that hydrates `bulletsJson` (verify at impl-time; likely a helper in `lib/profile/storage.ts` or `lib/repositories/profile.ts`), normalize loaded bullets so missing `autoTags` / `removedTags` default to `[]`. Write-time zod schema: `autoTags: z.array(z.string()).default([])`, same for `removedTags`.
+
+**Invariant**: a tag cannot be in both `tags` AND `removedTags` simultaneously. Enforce via `.refine()` in the bullet PATCH schema.
+
+##### M8.5.2 — Auto-tag prompt + callsite registration ⏳ (S8.9)
+
+New LLM callsite, slug `bullet-auto-tag`. Steps per the LLM-observability invariants in CLAUDE.md:
+
+- **Prompt file**: `docs/llm-prompts/bullet-auto-tag.md`. System + user template. System enumerates the no-fabrication rule. User template interpolates posting keywords + flattened bullet list (`{id, text, tags, removedTags}` per bullet — `tags` shown so the LLM doesn't re-propose existing ones; `removedTags` shown so it doesn't propose blocked ones; `text` is the evidence the LLM judges against).
+- **Lunary registry upload**: extend `scripts/sync-lunary-templates.ts`'s slug list; re-run to push to Lunary. Disk fallback automatic via `lib/ai/prompts.ts:loadPrompt('bullet-auto-tag', vars)`.
+- **Inventory entry**: append to `docs/llm-calls.md` — caller `lib/profile/auto-tag.ts`, model `MODEL_LITE`, `maxOutputTokens` 2048, scope "Auto-tag bullets with posting keywords during resume gen (S8.9)".
+- **Promptfoo suite**: new `eval/suites/bullet-auto-tag.yaml`. Four starter fixtures:
+  - **Positive**: bullet `"Built a Python API"`, keyword `"Python"` → expect `addedTags: ["Python"]`.
+  - **Negative (no evidence)**: bullet `"Built a Go API"`, keyword `"Python"` → expect `addedTags: []`.
+  - **Blocklist**: bullet `"Built a Python API"` with `removedTags: ["Python"]`, keyword `"Python"` → expect `addedTags: []`.
+  - **Already tagged**: bullet `"Built a Python API"` with `tags: ["Python"]`, keyword `"Python"` → expect `addedTags: []` (don't re-propose).
+- **Provider handler**: add `bullet-auto-tag` case to `eval/provider.ts:HANDLERS`.
+
+Output schema (single batched call):
+```typescript
+{
+  proposals: Array<{
+    bulletId: string;       // echo of input id
+    addedTags: string[];    // posting keywords to add; pre-filtered against tags + removedTags
+  }>
+}
+```
+
+##### M8.5.3 — Caller library + write-merge logic ⏳ (S8.9)
+
+New `lib/profile/auto-tag.ts`. Exports:
+
+```typescript
+export async function autoTagBullets(opts: {
+    userId: string;
+    postingKeywords: string[];
+}): Promise<{ tagsAdded: number; bulletsAffected: number; durationMs: number }>;
+```
+
+Internals:
+1. Load full profile via `lib/repositories/profile.ts:loadProfile(userId)` — WorkRoles + Projects + Educations with bullets.
+2. Flatten bullets into `{ parentKind, parentId, bullet }` triples. Skip `excluded === true` bullets (no point tagging hidden ones).
+3. Build prompt via `loadPrompt('bullet-auto-tag', { keywords: postingKeywords, bullets: flattened })`.
+4. Call `chatJSON({ name: 'bullet-auto-tag', model: MODEL_LITE, maxOutputTokens: 2048, ...})`. Zod-validate the response shape.
+5. Post-filter each proposal defensively: `proposal.addedTags = proposal.addedTags.filter(t => !bullet.removedTags.includes(t) && !bullet.tags.includes(t))` — defense-in-depth even though the prompt is also instructed to filter.
+6. Drop proposals with empty `addedTags` after filter.
+7. Apply merge per affected bullet:
+   - `bullet.tags = [...bullet.tags, ...proposal.addedTags]` (dedup).
+   - `bullet.autoTags = [...bullet.autoTags, ...proposal.addedTags]` (dedup; only new additions get the "auto" mark per Decision 6.3).
+8. Persist via `prisma.$transaction` — one `WorkRole.update` / `Project.update` / `Education.update` per affected parent with its updated `bulletsJson`.
+9. Return summary stats for trace logging.
+
+Hallucination guardrails in the system prompt (additional to the no-fab rule in M8.5.2):
+- "Output only the keywords you genuinely believe are evidenced by the bullet's text. Conservative is better than aggressive."
+- "Do not propose tags already in the bullet's `tags` array."
+- "Do not propose tags in the bullet's `removedTags` array."
+- "Return an empty `addedTags` array for any bullet you're unsure about."
+
+##### M8.5.4 — Wire auto-tag pass into POST `/api/resumes` ⏳ (S8.9)
+
+In `app/api/resumes/route.ts` POST handler, between `parsePostingFromInput()` and `selectBullets()`:
+
+```typescript
+// Auto-tag pass (S8.9) — write-through to profile before selection.
+// Best-effort: errors logged but never block the generate.
+try {
+    const autoTagResult = await autoTagBullets({
+        userId: session.user.id,
+        postingKeywords: parsedPosting.keywords,
+    });
+    console.info(`[bullet-auto-tag] +${autoTagResult.tagsAdded} tags / ${autoTagResult.bulletsAffected} bullets / ${autoTagResult.durationMs}ms`);
+} catch (e) {
+    console.warn(`[bullet-auto-tag] skipped: ${errMessage(e)}`);
+}
+// Re-load profile so selection sees updated tags. (Or pass updated profile through directly.)
+```
+
+The reload-then-select sequence is intentional: profile mutation + read are not racy on the same request because the request is single-threaded; concurrent requests are gated by the existing `resumes:gen` per-user rate limit (5 / 10 min) so cross-request races are minimal.
+
+##### M8.5.5 — Fold-in directive in `resume-rewrite` prompt ⏳ (S8.10)
+
+Modify `docs/llm-prompts/resume-rewrite.md`. Insert a new rule **6a** between rules 6 and 7:
+
+> **6a. Posting-keyword fold-in.** When a bullet's `tags` list contains a posting keyword (i.e. `tags ∩ posting_keywords ≠ ∅`), prefer wording that uses that exact keyword verbatim — subject to all other rules (no invention, ≤25 words, strong action verb). If folding the keyword in would force the bullet awkwardly or violate rules 1–2, **leave the bullet unchanged**; do not force the keyword.
+
+Push to Lunary registry via `npx tsx scripts/sync-lunary-templates.ts`.
+
+Update `eval/suites/resume-rewrite.yaml`:
+- New fixture: bullet `text: "Built a service in Python"`, `tags: ["Python"]`; posting keyword `"Python"` → assert rewritten text contains `"Python"` (case-insensitive substring).
+- New negative fixture: bullet `text: "Built a service in Go"`, `tags: []`; posting keyword `"Python"` → assert rewritten text does NOT contain `"Python"` (no-invention).
+
+No code change to `lib/resumes/rewrite.ts` — the prompt-template + fixtures cover this.
+
+##### M8.5.6 — Tag-edit UI: "auto" badge + remove → blocklist ⏳ (S8.9)
+
+`components/ui/BulletRow.tsx` — tag rendering at lines 146–183:
+
+- Tags in `bullet.autoTags` render with a small `Sparkles` icon (lucide) prepended **inside the chip** + cyan-tinted border (`border-cyan-500/30` replacing the default `border-white/10`). Title attribute: `"Auto-added — saves as a regular tag when you next save this bullet."`
+- Tags **not** in `autoTags` render with current styling.
+- `removeTag(tag)` updates the bullet payload as: `tags = tags.filter(t => t !== tag)`; `autoTags = autoTags.filter(t => t !== tag)`; `removedTags = [...new Set([...removedTags, tag])]`. **Any tag removal — auto or user-set — adds to the blocklist.** Symmetric and predictable. Manually re-adding a tag (via the existing "+ tag" input) removes it from `removedTags` as a side effect; document in the schema's PATCH validator.
+- On bullet save (existing PATCH path): server-side validator clears `autoTags` to `[]` whenever the bullet body is touched (M8.5.1's schema `transform`). Implicit "next save" accept per Decision 6.3.
+
+##### M8.5.7 — Selection trace shows auto-source tags ⏳ (S8.9 — minor)
+
+`GeneratedResume.selections` already records `matchedTags` per selected bullet (see schema). Auto-added tags appear here indistinguishably from user-set tags — which is the correct semantic; selection doesn't care about provenance. No code change required; just verify the trace surfaces correctly in M8.5.8's smoke.
+
+(If you later want provenance in the trace — "this match was auto-tagged this run" — extend `selections` shape and `GenerateResumeCard.tsx`'s trace list. Not in scope for M8.5.)
+
+##### M8.5.8 — Hermetic smokes ⏳
+
+- `scripts/tests/hermetic/auto-tag-smoke.ts` (covers M8.5.2 + M8.5.3 end-to-end):
+  - Mocks `chatJSON` with fixture responses.
+  - Asserts: positive case writes `tags` + `autoTags`; negative case writes nothing; blocklist filters out a proposal; already-tagged keyword doesn't get re-marked into `autoTags`; LLM call throwing → `autoTagBullets` propagates as error (M8.5.4 wraps it).
+- `scripts/tests/hermetic/auto-tag-merge-smoke.ts` (covers M8.5.3 merge logic — pure function):
+  - Test dedup, `removedTags` filter, `autoTags` only-new-additions semantic, the post-filter `addedTags.filter(t => !existing && !blocked)`.
+- `scripts/tests/hermetic/bullet-remove-tag-smoke.ts` (covers M8.5.6 server-side):
+  - PATCH a bullet with one tag removed → assert `removedTags` gains the removed tag (regardless of source); `autoTags` cleared after PATCH.
+- `scripts/tests/hermetic/resume-rewrite-fold-in-smoke.ts` (covers M8.5.5 — Promptfoo handles the real eval):
+  - Mocks `chatJSON` for the rewrite call; asserts the prompt body includes the fold-in directive when bullet has matching tags. Does NOT assert LLM output (that's M8.5.9's job).
+
+All four wired into `scripts/pre-push.sh`'s `SUITES` array.
+
+##### M8.5.9 — Promptfoo eval pass ⏳
+
+Run `npm run test:prompts` end-to-end after prompts + fixtures land. Expected:
+- Two new `bullet-auto-tag` fixtures pass against `MODEL_LITE`.
+- Two new `resume-rewrite` fold-in fixtures pass against `MODEL_FLASH`.
+- Added Gemini spend ~$0.01 per full eval run.
+
+If LITE fails the auto-tag fixtures (false positives proposing tags without evidence), bump to `MODEL_FLASH` in `lib/profile/auto-tag.ts:callBulletAutoTag` and re-run. Document the actual model picked in `docs/llm-calls.md`.
+
+---
+
+#### Acceptance (whole phase)
+
+- Generating a resume against a Python-heavy posting auto-tags any bullet whose text already mentions Python (verified by inspecting the Profile dash after the run); no bullets without Python in their text gain the tag.
+- Re-removing an auto-added tag from the Profile UI → next generate against the same posting does **not** re-add it.
+- "auto" badge (Sparkles icon + cyan-tinted chip border) appears next to auto-added tags; falls off after the bullet is next saved.
+- Rewritten bullet text contains the posting keyword verbatim where the bullet had the matching tag (manual sanity check on one real generate).
+- `npm run test:hermetic` green; four new smokes wired into pre-push.
+- `npm run test:prompts` green for the two new fixture suites.
+- No regression in M8.4 surfaces: previous-resumes dropdown + Pipeline picker + segmented control all unchanged.
+
+#### Out of scope
+
+- **Per-tag accept button** for auto-tags — implicit-accept-on-save (Decision 6.3) is simpler and covers the review flow. Add explicit per-tag accept only if implicit proves confusing in real use.
+- **Run-provenance log** (which generate run added which tag) — not stored. Trace UI from M8 Phase 2 already shows which keywords matched which bullets per generate; sufficient.
+- **Confidence score per tag proposal** — the LLM returns binary add/don't-add. If false-positive rate is high in practice, revisit + store + display confidence.
+- **Cross-profile bullet similarity grounding** — auto-tag prompt grounds only on the bullet's own text + posting keywords. Could improve with sibling-bullet context if quality is poor.
+- **Cover-letter fold-in** — story S8.7 user-declined; no fold-in target.
+
+---
 
 ### M9 Phase 1 — GitHub-driven project metrics ✅
 
