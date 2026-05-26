@@ -8,8 +8,8 @@
  *
  * Top half is pure: no I/O, no Date.now, no crypto. The route generates new
  * bullet ids itself after `callBulletAssist` returns. The pure helpers
- * (`renderSpine`, `renderSiblingBullets`, `renderArchiveSpans`,
- * `renderReadme`) are exported so smokes can drive them with canned inputs.
+ * (`renderSpine`, `renderSiblingBullets`, `renderArchiveSpans`) are exported
+ * so smokes can drive them with canned inputs.
  *
  * Bottom half is impure: hits Gemini via `chatJSON`, generates fresh bullet
  * ids (fill mode) via `newBulletId` from `lib/profile/bullets.ts`, and logs
@@ -20,13 +20,13 @@
  *   1. Spine fields of the parent entity.
  *   2. Sibling bullets in the same profile (the user's own voice).
  *   3. Archive spans from prior resume uploads (S7.9 grounding).
- *   4. README excerpt (Project parents only).
+ *   4. Parent scratchpad (the user's own notes about this entity).
  *   5. (Rewrite mode) Current bullet text + tags.
  *   6. Output schema.
  *
  * Sections 1, 5, 6 + guardrails are never trimmed. When the prompt overflows
  * the 8 KB cap, archive spans (3) are dropped first (lowest-priority outside
- * structural pieces), then siblings (2), then README (4).
+ * structural pieces), then siblings (2); scratchpad drops last.
  */
 
 import { z } from 'zod';
@@ -42,20 +42,6 @@ import type { ArchiveSpan } from '@/lib/profile/upload-archive';
 
 export type AssistMode = 'fill' | 'rewrite';
 export type ParentKind = 'work-role' | 'project' | 'education';
-
-/**
- * Single-project README context for the bullet-assist prompt. Distinct from
- * the `ProjectReadmeContext` in `lib/resumes/rewrite.ts` — that one is
- * multi-source (resume rewrite operates on a selection across many projects);
- * bullet-assist is per-entry, so a single excerpt is the right shape.
- *
- * The caller pre-truncates the excerpt to 2 KB before passing it in.
- */
-export interface ProjectReadmeContext {
-    projectId: string;
-    projectName: string;
-    excerpt: string;
-}
 
 export interface AssistParent {
     kind: ParentKind;
@@ -96,7 +82,6 @@ export interface BuildBulletAssistPromptInput {
      *  Cross-entity isolation is enforced at the caller layer — this field
      *  ONLY ever receives the current parent's own scratchpad. */
     parentScratchpad?: string | null;
-    readmeContext?: ProjectReadmeContext | null;
     currentBullet?: { text: string; tags: string[] } | null; // required when mode === 'rewrite'
 }
 
@@ -106,9 +91,8 @@ const ARCHIVE_CAP_BYTES = 1_536; // 1.5 KB
 // M7.8.5 — scratchpad caps at 2 KB for the prompt (full column is up to 8 KB).
 // The 2 KB excerpt is the user's own raw notes; truncating from the end is
 // the right call because users typically lead with the most important
-// context (similar to README handling).
+// context.
 const SCRATCHPAD_CAP_BYTES = 2_048; // 2 KB
-const README_CAP_BYTES = 2_048; // 2 KB
 const SIBLING_COUNT_CAP = 12;
 const USER_PROMPT_LIMIT = 8_192; // 8 KB
 
@@ -244,38 +228,11 @@ export function renderScratchpad(scratchpad: string | null | undefined, cap: num
 }
 
 /**
- * Render the project-README excerpt section. Returns "" if `ctx` is null /
- * absent or the excerpt is empty. The caller pre-truncates to 2 KB, but we
- * defensively re-cap here so a misuse can't blow the prompt budget.
- */
-export function renderReadme(ctx: ProjectReadmeContext | null | undefined, cap: number): string {
-    if (!ctx) return '';
-    const excerpt = (ctx.excerpt ?? '').trim();
-    if (excerpt.length === 0) return '';
-
-    const header = `## Project README — ${ctx.projectName}`;
-    const full = `${header}\n${excerpt}`;
-    if (Buffer.byteLength(full, 'utf8') <= cap) return full;
-
-    // Truncate the excerpt itself byte-wise. Buffer.byteLength counts bytes,
-    // not chars; for the 2 KB ceiling this is safe — we just cut on a byte
-    // boundary and append a marker.
-    const headerBytes = Buffer.byteLength(`${header}\n`, 'utf8');
-    const remaining = Math.max(0, cap - headerBytes - 16); // 16 for the truncation marker
-    // Slice characters until we're at or below the byte budget.
-    let truncated = excerpt;
-    while (Buffer.byteLength(truncated, 'utf8') > remaining && truncated.length > 0) {
-        truncated = truncated.slice(0, -64);
-    }
-    return `${header}\n${truncated}\n…(truncated)`;
-}
-
-/**
  * Async prompt builder — pulls the system + user template from the prompt
  * registry (Lunary when configured, disk snapshot otherwise) and renders
  * with the assembled section variables. Same overflow contract as before:
- * drop archive → siblings → README in that priority order to fit within
- * USER_PROMPT_LIMIT bytes.
+ * drop archive → siblings in that priority order to fit within
+ * USER_PROMPT_LIMIT bytes; scratchpad drops last.
  *
  * Made async at LOP-6 cutover so production reads the latest Lunary
  * version on every call (the SDK caches a few minutes). Smoke + the
@@ -295,14 +252,12 @@ export async function buildBulletAssistPrompt(
     let siblings = renderSiblingBullets(input.siblingBullets, SIBLING_CAP_BYTES);
     let archive = renderArchiveSpans(input.archiveSpans, ARCHIVE_CAP_BYTES);
     let scratchpad = renderScratchpad(input.parentScratchpad ?? null, SCRATCHPAD_CAP_BYTES);
-    let readme = renderReadme(input.readmeContext ?? null, README_CAP_BYTES);
 
     const render = () => loadPrompt(slug, {
         spine,
         siblings,
         archive,
         scratchpad,
-        readme,
         currentBulletText,
         currentBulletTags,
     });
@@ -312,7 +267,7 @@ export async function buildBulletAssistPrompt(
     // Overflow trim — drop in priority order (lowest value first). Re-render
     // through the registry so the byte budget is computed against the actual
     // template that will be sent. Order: archive (oldest source) → siblings
-    // → README → scratchpad. Scratchpad ranks high because the user wrote it
+    // → scratchpad. Scratchpad ranks high because the user wrote it
     // specifically about THIS entity, so it's the most relevant grounding.
     if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
         archive = '';
@@ -320,10 +275,6 @@ export async function buildBulletAssistPrompt(
     }
     if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
         siblings = '';
-        prompt = await render();
-    }
-    if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
-        readme = '';
         prompt = await render();
     }
     // Scratchpad is dropped last — it's the user's most-targeted grounding

@@ -513,24 +513,7 @@ export async function POST(req: NextRequest) {
 
         // 4. Rewrite via LLM
         stage = "rewrite";
-        // Build per-project README context once before the rewrite call.
-        // Only includes READMEs for projects whose bullets are in the
-        // selection AND that have a stored README (scheduler-populated for
-        // any github.com `repoUrl`). Keeps prompt budget bounded to the
-        // projects that actually matter for this specific resume.
-        const projectIdsInSelection = new Set(
-            flat.filter(s => s.kind === "project").map(s => s.sourceId),
-        );
-        const readmesBySourceId: Record<string, string> = {};
-        for (const project of profile.projects) {
-            if (projectIdsInSelection.has(project.id)) {
-                const r = (project as unknown as { readme?: string | null }).readme;
-                if (typeof r === "string" && r.trim().length > 0) {
-                    readmesBySourceId[project.id] = r;
-                }
-            }
-        }
-        const rewrites = await rewriteBullets(flat, posting, { readmesBySourceId });
+        const rewrites = await rewriteBullets(flat, posting);
 
         // 4b. Skills gap (story S8.8) — pure, no LLM. Compute against the
         // FULL profile, not just the selected bullets: even an unselected

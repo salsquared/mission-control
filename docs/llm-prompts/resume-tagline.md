@@ -27,7 +27,7 @@ A. `sectionOrder` lists section keys in the order they should render on the resu
    - Senior / lead / staff postings: keep "experience" first unless evidence is overwhelming otherwise.
    You MUST include every section key that has content on this profile and may omit empty ones. Include all six is also acceptable — the renderer drops empty sections regardless.
 B. `entityOrder` is an object keyed by section ("experience" | "projects" | "education") whose value is an array of entity IDs in strongest-to-weakest-relevance order for THIS posting. Use the IDs given in the "Entity IDs" block exactly. Omit a section's key if its default chronological/manual order is already best. Skills/languages/interests are NOT entity-ordered (they're flat lists, not entity-keyed).
-C. Rank by EVIDENCE, not by name. Each entity in the Entity IDs block carries a `[matched: ...; aggregate-score=N]` annotation plus 1–3 bullet excerpts. The `matched` list is the posting keywords this entity's bullets already evidence; `aggregate-score` is the deterministic scorer's total. Use these as primary signals — a project named "Iris" with `aggregate-score=8` and `[matched: Software Engineering, Space Systems]` is a stronger lead for a software-engineering-at-a-space-company posting than a project named "Avionics Engineer, Space Enterprise at Berkeley" with `aggregate-score=4`. Name similarity to the posting is a tiebreaker, NOT the primary signal. Tie-break order after that: recency (more recent first), then bullet count.
+C. Rank by EVIDENCE, not by name. Each entity in the Entity IDs block carries a `[matched: ...; aggregate-score=N]` annotation. The `matched` list is the posting keywords this entity's bullets already evidence; `aggregate-score` is the deterministic scorer's total. Use these as primary signals — a project named "Iris" with `aggregate-score=8` and `[matched: Software Engineering, Space Systems]` is a stronger lead for a software-engineering-at-a-space-company posting than a project named "Avionics Engineer, Space Enterprise at Berkeley" with `aggregate-score=4`. The full bullet text for each entity is in the Profile evidence block above — cross-reference there if you need to judge what an entity actually did. Name similarity to the posting is a tiebreaker, NOT the primary signal. Tie-break order after that: recency (more recent first), then bullet count.
 D. Never invent entity IDs or sections. Drop unknowns rather than guess.
 
 Return strictly JSON of shape {"tagline": "<one sentence ending in period>", "sectionOrder": ["..."], "entityOrder": {"experience": ["..."], "projects": ["..."], "education": ["..."]}} — no preamble, no commentary. `sectionOrder` and `entityOrder` are optional; omit either if the default order applies.
@@ -74,17 +74,12 @@ Tailor a resume tagline + section/entity ordering for this posting.
   ```
   ### Experience
   - <wr_id>: <Title> @ <Company> [matched: <tag1>, <kw1>, …; aggregate-score=N]
-      • <truncated sample bullet 1>
-      • <truncated sample bullet 2>
-      • (+M more bullets)
   ### Projects
   - <pr_id>: <Project name> [matched: …; aggregate-score=N]
-      • <truncated sample bullet>
   ### Education
   - <ed_id>: <Degree> @ <Institution> [matched: …; aggregate-score=N]
-      • <truncated sample bullet>
   ```
-  Up to 3 sample bullets per entity (chosen highest-score first), each truncated to ~100 chars. Sections with zero selected entities are omitted entirely. Entity name alone (e.g. "Iris") doesn't signal posting-relevance to the LLM — the matched-tag + bullet excerpt does. This is the load-bearing block for the one-page pruner: `getUnremovableEntityIds` spares `selection.{section}[0]`, which equals the LLM's #1 pick after the reorder step. Without evidence in this block, the LLM ranks by name (e.g. "Avionics" sounding more aerospace than "Iris") and the pruner drops higher-evidence entities.
+  One line per selected entity — no bullet samples (the full bullet text is in `profileSummary` and duplicating it inflated the prompt by ~1.8 KB per call). Sections with zero selected entities are omitted entirely. Entity name alone (e.g. "Iris") doesn't signal posting-relevance to the LLM — the `[matched: …; aggregate-score=N]` annotation carries the deterministic scorer's verdict, and the LLM cross-references back to `profileSummary` for what an entity actually did. This is the load-bearing block for the one-page pruner: `getUnremovableEntityIds` spares `selection.{section}[0]`, which equals the LLM's #1 pick after the reorder step. Without the matched-tag annotation here, the LLM ranks by name (e.g. "Avionics" sounding more aerospace than "Iris") and the pruner drops higher-evidence entities.
 
   Fallback (when no selection is supplied, e.g. hermetic smokes): the block degrades to name-only listings of every profile entity. The route always supplies selection, so production runs use the evidence-rich form.
 

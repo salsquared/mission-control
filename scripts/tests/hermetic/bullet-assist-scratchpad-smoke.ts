@@ -15,7 +15,7 @@
  *   - 2 KB cap respected — oversized scratchpads truncate at the byte
  *     budget with the trailing `…(truncated)` marker.
  *   - Drop-on-overflow: when the total user prompt exceeds 8 KB, the
- *     builder drops scratchpad last (after archive/siblings/readme),
+ *     builder drops scratchpad last (after archive/siblings),
  *     keeping the most-targeted grounding longest.
  */
 
@@ -78,7 +78,6 @@ async function main(): Promise<void> {
             siblingBullets: [],
             archiveSpans: [],
             parentScratchpad: notes,
-            readmeContext: null,
             currentBullet: null,
         });
 
@@ -94,7 +93,6 @@ async function main(): Promise<void> {
             siblingBullets: [],
             archiveSpans: [],
             parentScratchpad: null,
-            readmeContext: null,
             currentBullet: null,
         });
 
@@ -107,7 +105,6 @@ async function main(): Promise<void> {
             siblingBullets: [],
             archiveSpans: [],
             // parentScratchpad omitted entirely
-            readmeContext: null,
             currentBullet: null,
         });
 
@@ -120,7 +117,6 @@ async function main(): Promise<void> {
             siblingBullets: [],
             archiveSpans: [],
             parentScratchpad: '   \n  ',
-            readmeContext: null,
             currentBullet: null,
         });
 
@@ -152,7 +148,6 @@ async function main(): Promise<void> {
             siblingBullets: siblings,
             archiveSpans: [],
             parentScratchpad: ownNotes,
-            readmeContext: null,
             currentBullet: null,
         });
 
@@ -163,10 +158,9 @@ async function main(): Promise<void> {
     }
 
     // ─── 8 KB ceiling: scratchpad survives when other sections drop ──────
-    // Construct an input where archive + siblings + readme are oversized
-    // enough that the overflow trim has to drop them; scratchpad should
-    // survive because the drop order is archive → siblings → readme →
-    // scratchpad.
+    // Construct an input where archive + siblings are oversized enough
+    // that the overflow trim has to drop them; scratchpad should survive
+    // because the drop order is archive → siblings → scratchpad.
     {
         const longBullets: SiblingInput[] = Array.from({ length: 30 }, (_, i) => ({
             text: `Long bullet ${i}: ` + 'x'.repeat(200),
@@ -184,7 +178,6 @@ async function main(): Promise<void> {
             siblingBullets: longBullets,
             archiveSpans: longArchive,
             parentScratchpad: ownNotes,
-            readmeContext: null,
             currentBullet: null,
         });
 
@@ -202,7 +195,6 @@ async function main(): Promise<void> {
             siblingBullets: [],
             archiveSpans: [],
             parentScratchpad: notes,
-            readmeContext: null,
             currentBullet: { text: 'Did stuff', tags: ['general'] },
         });
 

@@ -12,7 +12,6 @@ import type { ResumeUpload } from '@prisma/client';
 import {
     buildBulletAssistPrompt,
     renderArchiveSpans,
-    renderReadme,
     renderSiblingBullets,
     renderSpine,
     type AssistParent,
@@ -186,29 +185,6 @@ async function main(): Promise<void> {
         );
     }
 
-    // ─── renderReadme ──────────────────────────────────────────────────────
-    {
-        record('renderReadme: null context → empty string', renderReadme(null, 2_048) === '');
-        record('renderReadme: undefined context → empty string', renderReadme(undefined, 2_048) === '');
-    }
-    {
-        const ctx = { projectId: 'p_1', projectName: 'Pulsar', excerpt: 'Pulsar ingests live crypto data.' };
-        const out = renderReadme(ctx, 2_048);
-        record(
-            'renderReadme: includes Project README header + project name + excerpt',
-            out.includes('## Project README') && out.includes('Pulsar') && out.includes('crypto data') && utf8Bytes(out) <= 2_048,
-        );
-    }
-    {
-        const ctx = { projectId: 'p_1', projectName: 'Pulsar', excerpt: 'x'.repeat(5_000) };
-        const out = renderReadme(ctx, 2_048);
-        record(
-            'renderReadme: excerpt longer than cap → trimmed to cap',
-            utf8Bytes(out) <= 2_048,
-            `bytes=${utf8Bytes(out)}`,
-        );
-    }
-
     // ─── buildBulletAssistPrompt — fill mode ───────────────────────────────
     {
         const result = await buildBulletAssistPrompt({
@@ -219,7 +195,6 @@ async function main(): Promise<void> {
                 { text: 'Cut p99 latency by 40 percent', tags: ['performance'] },
             ],
             archiveSpans: [makeSpan()],
-            readmeContext: null,
             currentBullet: null,
         });
         const { system, user } = result;
@@ -264,7 +239,6 @@ async function main(): Promise<void> {
             parent: makeWorkRoleParent(),
             siblingBullets: [{ text: 'Migrated a TypeScript monorepo to pnpm', tags: ['typescript'] }],
             archiveSpans: [makeSpan()],
-            readmeContext: null,
             currentBullet: { text: 'Worked on stuff', tags: ['general'] },
         });
         const { user } = result;
@@ -305,25 +279,9 @@ async function main(): Promise<void> {
         );
     }
 
-    // ─── buildBulletAssistPrompt — README inclusion for project parents ───
-    {
-        const result = await buildBulletAssistPrompt({
-            mode: 'fill',
-            parent: makeProjectParent(),
-            siblingBullets: [],
-            archiveSpans: [],
-            readmeContext: { projectId: 'p_1', projectName: 'Pulsar', excerpt: 'Pulsar ingests live crypto data.' },
-            currentBullet: null,
-        });
-        record(
-            'fill+project: README section included when context present',
-            result.user.includes('## Project README') && result.user.includes('crypto data'),
-        );
-    }
-
     // ─── 8 KB total user-prompt ceiling ────────────────────────────────────
     {
-        // Force an overflow with massive sibling list + huge archive spans + huge README.
+        // Force an overflow with massive sibling list + huge archive spans.
         const hugeSiblings: SiblingInput[] = Array.from({ length: 50 }, (_, i) => ({
             text: `Sibling bullet ${i}: ${'pad '.repeat(40)}`,
             tags: ['typescript'],
@@ -335,17 +293,11 @@ async function main(): Promise<void> {
                 span: 'x'.repeat(4_000),
             }),
         );
-        const hugeReadme = {
-            projectId: 'p_1',
-            projectName: 'Pulsar',
-            excerpt: 'y'.repeat(10_000),
-        };
         const result = await buildBulletAssistPrompt({
             mode: 'fill',
             parent: makeWorkRoleParent(),
             siblingBullets: hugeSiblings,
             archiveSpans: hugeSpans,
-            readmeContext: hugeReadme,
             currentBullet: null,
         });
         record(
@@ -360,21 +312,19 @@ async function main(): Promise<void> {
         );
     }
 
-    // ─── empty siblings / spans / readme — sections omitted cleanly ────────
+    // ─── empty siblings / spans — sections omitted cleanly ────────────────
     {
         const result = await buildBulletAssistPrompt({
             mode: 'fill',
             parent: makeWorkRoleParent({ company: 'NewCo', title: 'Engineer' }),
             siblingBullets: [],
             archiveSpans: [],
-            readmeContext: null,
             currentBullet: null,
         });
         record(
             'cold-start: empty siblings + empty archive → those headers absent',
             !result.user.includes('## Other bullets in this profile') &&
-                !result.user.includes('## Spans from prior uploaded resume versions') &&
-                !result.user.includes('## Project README'),
+                !result.user.includes('## Spans from prior uploaded resume versions'),
         );
         record(
             'cold-start: spine + output schema still rendered',
@@ -404,7 +354,6 @@ async function main(): Promise<void> {
             parent: makeWorkRoleParent({ company: 'Acme Corp' }),
             siblingBullets: [],
             archiveSpans: spans,
-            readmeContext: null,
             currentBullet: null,
         });
         record(

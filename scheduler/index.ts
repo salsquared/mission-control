@@ -14,7 +14,6 @@
 
 import { runCachePrune } from './jobs/cache-prune';
 import { runDueWatchlists } from './jobs/job-watcher';
-import { runGithubReadmes } from './jobs/github-readmes';
 import { runStaleApplicationNudges } from './jobs/stale-applications';
 import { runDeadlineNudges } from './jobs/deadline-nudges';
 import { runPostingDigest } from './jobs/posting-digest';
@@ -44,16 +43,6 @@ const JOBS: IntervalJob[] = [
                     { new: 0, seen: 0, closed: 0, errs: 0 },
                 );
                 console.info(`[job-watcher] processed ${result.processed} watchlists — ${totals.new} new, ${totals.seen} seen-again, ${totals.closed} closed, ${totals.errs} errored`);
-            }
-        },
-    },
-    {
-        name: 'github-readmes',
-        intervalMs: 6 * 60 * 60 * 1000, // 6h — combined with the 7d freshness gate inside the job, each repo refreshes at most weekly
-        run: async () => {
-            const r = await runGithubReadmes();
-            if (r.processed > 0) {
-                console.info(`[github-readmes] processed ${r.processed} GitHub-hosted projects — ${r.succeeded} succeeded, ${r.failed} failed, ${r.skippedRecent} skipped (recent)`);
             }
         },
     },

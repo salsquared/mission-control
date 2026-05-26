@@ -65,8 +65,8 @@ const HANDLERS: Record<string, CallsiteHandler> = {
     },
 
     "resume-rewrite": async (input) => {
-        const args = input as { selections: Parameters<typeof rewriteBullets>[0]; posting: Parameters<typeof rewriteBullets>[1]; readmeCtx?: Parameters<typeof rewriteBullets>[2] };
-        return await rewriteBullets(args.selections, args.posting, args.readmeCtx);
+        const args = input as { selections: Parameters<typeof rewriteBullets>[0]; posting: Parameters<typeof rewriteBullets>[1] };
+        return await rewriteBullets(args.selections, args.posting);
     },
 
     "profile-import": async (input) => {

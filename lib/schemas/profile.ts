@@ -129,11 +129,6 @@ export const ProjectSchema = z.object({
     repoUrl: z.string().nullable(),
     liveUrl: z.string().nullable(),
     bullets: z.array(BulletSchema),
-    // README markdown for a github.com repo derived from `repoUrl`. Optional
-    // on the wire so pre-migration snapshots + fixtures validate without
-    // spelling out a null; server reads always emit explicitly.
-    readme: z.string().nullable().optional(),
-    readmeUpdatedAt: z.string().datetime().nullable().optional(),
     scratchpad: z.string().nullable().optional(),
     pinKeywords: PinKeywordsSchema,
     position: z.number().int(),

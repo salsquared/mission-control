@@ -16,7 +16,6 @@
         endDate: null
       siblingBullets: []
       archiveSpans: []
-      readmeContext: null
       currentBullet: null
   assert:
     - type: is-json
@@ -56,14 +55,6 @@
         - text: "Shipped a streaming-replay tool that lets the backend replay any historical day's tape"
           tags: ["typescript"]
       archiveSpans: []
-      readmeContext:
-        projectId: "p_eval_1"
-        projectName: "Pulsar"
-        excerpt: |
-          Pulsar is a financial data ingestion engine that pulls real-time crypto, equity, and macro indicator data from
-          Coinbase, IEX, and FRED. Built on Bun and TypeScript with a Postgres-backed normalization layer that maps
-          heterogeneous source schemas into a single tick model. Ships with a websocket relay for live feeds and a
-          replay system for backtesting.
       currentBullet: null
   assert:
     - type: is-json
@@ -74,8 +65,8 @@
     - type: llm-rubric
       value: |
         The bullets describe Pulsar (a financial data ingestion engine). PASS iff:
-        1. The bullets mention technologies from the README/siblings (TypeScript, Bun,
-           Postgres, Coinbase/IEX/FRED, or similar). The model should pick up the
-           project's actual tech stack rather than inventing one.
+        1. The bullets mention technologies from the siblings (TypeScript, Bun,
+           Postgres, or similar). The model should pick up the project's actual
+           tech stack rather than inventing one.
         2. No bullet uses first-person.
         3. No invented specific numbers.

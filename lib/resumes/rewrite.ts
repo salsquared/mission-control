@@ -20,20 +20,9 @@ const RewriteResponseSchema = z.object({
     bullets: z.array(RewrittenBulletSchema),
 });
 
-// README excerpts per project sourceId. Caller-built (from Project.readme
-// rows the scheduler populated); the rewriter only renders what's handed in.
-// 2 KB cap per project so the combined prompt stays in budget even with
-// 4–5 GitHub-hosted projects in one resume.
-export interface ProjectReadmeContext {
-    readmesBySourceId: Record<string, string>;
-}
-
-export const PROJECT_README_PROMPT_LIMIT = 2_048;
-
 export function buildRewriteVars(
     selections: BulletSelection[],
     posting: ParsedPosting,
-    readmeCtx?: ProjectReadmeContext,
 ): PromptVars {
     const inputBullets = selections.map(s => ({
         id: s.bulletId,
@@ -44,56 +33,25 @@ export function buildRewriteVars(
         locked: s.locked,
     }));
 
-    // Group READMEs by sourceId so the prompt doesn't repeat them per bullet
-    // when one project has multiple bullets selected.
-    const readmeSection: string[] = [];
-    if (readmeCtx?.readmesBySourceId) {
-        const projectSourceIds = new Set(
-            selections.filter(s => s.kind === "project").map(s => s.sourceId),
-        );
-        for (const sourceId of projectSourceIds) {
-            const readme = readmeCtx.readmesBySourceId[sourceId];
-            if (!readme) continue;
-            const label = selections.find(s => s.sourceId === sourceId)?.sourceLabel ?? sourceId;
-            const trimmed = readme.length > PROJECT_README_PROMPT_LIMIT
-                ? readme.slice(0, PROJECT_README_PROMPT_LIMIT) + "\n…(truncated)"
-                : readme;
-            readmeSection.push(`### Project README — ${label}\n${trimmed}`);
-        }
-    }
-
-    const readmesBlock = readmeSection.length > 0
-        ? [
-            "Project READMEs (use as factual reference for project-source bullets — do NOT invent new claims, only emphasize what the README confirms is true):",
-            readmeSection.join("\n\n"),
-        ].join("\n")
-        : "";
-
     return {
         postingTitle: posting.title ?? "(unknown)",
         postingCompany: posting.company ?? "(unknown)",
         postingSeniority: posting.seniority ?? "(unknown)",
         postingKeywordsBlock: posting.keywords.map(k => `  - ${k}`).join("\n"),
-        readmesBlock,
         bulletsJson: JSON.stringify(inputBullets, null, 2),
     };
 }
 
-// Back-compat for `scripts/tests/hermetic/readme-prompt-smoke.ts` — returns
-// the rendered user prompt by routing the vars through the disk snapshot
-// (NOT Lunary — keeps the smoke deterministic + offline).
 export function buildRewriteUserPrompt(
     selections: BulletSelection[],
     posting: ParsedPosting,
-    readmeCtx?: ProjectReadmeContext,
 ): string {
-    return loadPromptFromDisk("resume-rewrite", buildRewriteVars(selections, posting, readmeCtx)).user;
+    return loadPromptFromDisk("resume-rewrite", buildRewriteVars(selections, posting)).user;
 }
 
 export async function rewriteBullets(
     selections: BulletSelection[],
     posting: ParsedPosting,
-    readmeCtx?: ProjectReadmeContext,
 ): Promise<RewrittenBullet[]> {
     if (selections.length === 0) return [];
 
@@ -113,7 +71,7 @@ export async function rewriteBullets(
         }));
     }
 
-    const prompt = await loadPrompt("resume-rewrite", buildRewriteVars(forLLM, posting, readmeCtx));
+    const prompt = await loadPrompt("resume-rewrite", buildRewriteVars(forLLM, posting));
 
     const response = await chatJSON({
         name: "resume-rewrite",

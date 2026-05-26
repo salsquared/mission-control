@@ -492,7 +492,7 @@ S7.9 is the load-bearing primitive: today's M7.4 import path extracts → merges
 1. Entry spine — `company` / `title` / `location` / `startDate`–`endDate` (or `name` / `description` for Project, `institution` / `degree` for Education).
 2. Sibling bullets in the same profile with tag overlap — picks up the user's voice and vocabulary.
 3. **Archive spans (S7.9)** — up to 3 spans from `ResumeUpload.rawText` rows where the parent's `company` / `name` / `institution` appears case-insensitively. Ranked by upload recency. ±500 chars around the first match per upload.
-4. Project README excerpt — reuses the existing `ProjectReadmeContext` builder from M9 Phase 2 / S9.5; 2 KB cap per project.
+4. **Parent scratchpad (S7.13)** — the entity's own user-voice notes when populated; the user's most-targeted grounding for THIS entry.
 
 **Two modes behind one API**:
 - **Fill** (`mode: 'fill'`) — entry has zero bullets. Returns 3–5 starter bullets in the standard `{id, text, tags[], locked: false, excluded: false}` shape. New cuids generated server-side.
@@ -561,13 +561,13 @@ Pure function — unit-testable without a DB. Hermetic smoke `archive-spans-smok
 
 ##### M7.6.5 — Prompt builder ✅ (S7.7 / S7.8)
 
-`lib/profile/bullet-assist.ts:buildBulletAssistPrompt(profile, parent, mode, currentBullet?, archiveSpans?, readmeContext?)`. Pure function — no I/O. Sections in order:
+`lib/profile/bullet-assist.ts:buildBulletAssistPrompt(profile, parent, mode, currentBullet?, archiveSpans?, parentScratchpad?)`. Pure function — no I/O. Sections in order:
 
 1. Mode-specific preamble + guardrails.
 2. Spine fields of the parent.
 3. Sibling tag-overlap bullets (top N by overlap score, capped to 1.5 KB).
 4. Archive spans (M7.6.4 output, capped to 3 × 500 chars = 1.5 KB).
-5. README excerpt (Project parents only, 2 KB cap).
+5. Parent scratchpad excerpt (S7.13, 2 KB cap, optional).
 6. (Rewrite mode only) Current bullet text + tags.
 7. Output schema: fill → `{bullets: [{text, tags}]}`; rewrite → `{text}`.
 
@@ -1577,7 +1577,7 @@ Coverage: `lib/resumes/skills-gap.ts:computeSkillsGap` now folds profile.skills 
 
 Folded into the existing `resume-tagline` callsite (per user constraint: no new callsite). The system prompt now instructs the LLM to additionally return `sectionOrder: SectionKey[]` (where SectionKey ∈ `experience | projects | education | skills | languages | interests`) and `entityOrder: { experience, projects, education }` mapping each section to an ordered array of entity IDs. Both fields are optional — when omitted, `normalizeSectionOrder` / `normalizeEntityOrder` fall back to defaults.
 
-`lib/resumes/tagline-tailor.ts`: `TailorTaglineInput` now optionally accepts `selection: ResumeSelection`. When present, the user prompt's `entityIdsBlock` is built by `buildEntityIdsBlockEvidence(selection)` — listing each entity with its matched-tag/keyword set + aggregate-score + 1–3 sample bullet excerpts (~100 chars each). Without selection (hermetic smoke path) falls back to `buildEntityIdsBlockNameOnly` (legacy behavior).
+`lib/resumes/tagline-tailor.ts`: `TailorTaglineInput` now optionally accepts `selection: ResumeSelection`. When present, the user prompt's `entityIdsBlock` is built by `buildEntityIdsBlockEvidence(selection)` — one line per selected entity with its matched-tag/keyword set + aggregate-score. Bullet text itself is NOT duplicated here (the full bullets are already in `profileSummary`); the matched-tag annotation is the load-bearing ordering signal, and the LLM cross-references back to `profileSummary` for what an entity actually did. Without selection (hermetic smoke path) falls back to `buildEntityIdsBlockNameOnly` (legacy behavior).
 
 This evidence-richness is load-bearing: pre-evidence, the LLM ranked "Avionics Engineer, Space Enterprise at Berkeley" above "Iris" purely because the SEB name contains "Space." With aggregate-score visible (Iris=8 vs SEB=4 at that point), the LLM ranked Iris first — and the one-page pruner's `getUnremovableEntityIds` spare-the-#1-pick rule kept Iris.
 
@@ -1660,7 +1660,7 @@ Stories: S9.1, S9.2, S9.3 (🟡). Shipped 2026-05-15.
 
 - **Project portfolio toggle UI** ✅ — `components/ui/ProjectRow.tsx` has the portfolio checkbox + repo input so projects can be flipped to portfolio mode without going through Prisma.
 - **M9.4 — Suggested-rewrites (story S9.4) ✅ shipped 2026-05-22.** `lib/profile/metric-deltas.ts:computeMetricDeltas(prev, next)` runs after every metrics refresh. Detects star-threshold crossings against `STAR_MILESTONES = [5, 10, 25, 50, 100, 250, 500, 1_000, 2_500, 5_000]` (highest-only — 4→26 fires once at 25), primary-language flips, new ≥5%-share languages (filters out one-off shell scripts), and commit-count jumps ≥25% AND ≥10 absolute (so tiny repos don't churn). First-ingest (`prev === null`) is silent — only changes fire. Each delta dispatches a `kind='system' tier='standard'` notification with dedupKey `portfolio-rewrite:${projectId}:${type}:${milestone}` so a milestone never re-fires; the commit-jump uses `nextCommits` as the milestone so subsequent jumps key uniquely. Hermetic `metric-deltas-smoke.ts` (16/16).
-- **M9.5 — README-as-source (story S9.5) ✅ shipped 2026-05-22.** `Project.readme` + `readmeUpdatedAt` columns (migration `add_project_readme`, both DBs). New `fetchGithubReadme(ownerRepo)` in `lib/fetchers/github-public-fetcher.ts` — separate from `fetchGithubRepoMetrics` so the metrics hot path stays at 3 API calls. `scheduler/jobs/github-metrics.ts` refreshes README weekly (independent cadence from the 20h metrics gate) — README failures don't tank the metrics refresh for the same project. Stored markdown is truncated at 16 KB at write time to bound row size. Resume rewrite prompt: new optional `ProjectReadmeContext` param on `rewriteBullets`; `app/api/resumes/route.ts` builds the context for project-source bullets actually in the selection (avoids paying tokens on READMEs that aren't surfaced) and slices an additional 2 KB excerpt per project before prompt assembly. Pure prompt builder extracted as `buildRewriteUserPrompt` so the README-context branch is unit-testable; hermetic `readme-prompt-smoke.ts` (13/13) covers no-ctx, empty-ctx, project-only inclusion, multi-bullet dedup (one README per project, not per bullet), selective inclusion (only sourceIds in the selection), truncation at the prompt limit, and empty-string-readme as no-readme.
+- **M9.5 — README-as-source (story S9.5) ✅ shipped 2026-05-22 → ❌ retired 2026-05-26.** Originally added `Project.readme` + `readmeUpdatedAt` columns plus a scheduled GitHub README fetcher (`lib/fetchers/github-public-fetcher.ts:fetchGithubReadme`) wired through a 6h `scheduler/jobs/github-readmes.ts` job, with `ProjectReadmeContext` injection paths into the resume-rewrite + bullet-assist-fill + bullet-assist-rewrite prompts. **Retired 2026-05-26**: the signal-to-token ratio was poor (2 KB excerpt per project × multiple projects per resume, plus a scheduler API hit every 6h per github.com `repoUrl` writing data nothing read after the prompt removal). Migration `20260526233301_drop_project_readme` drops both columns (both DBs). `buildRewriteUserPrompt` stays but lost the `readmeCtx` param; `renderReadme` + `ProjectReadmeContext` + `README_CAP_BYTES` + `PROJECT_README_PROMPT_LIMIT` deleted alongside the scheduler job + fetcher. Hallucination guard for rewrite is now rule 2 alone ("never claim experience the bullet doesn't already state"). Hermetic `readme-prompt-smoke.ts` removed from the suite; the README assertions inside `bullet-assist-smoke.ts` + `bullet-assist-scratchpad-smoke.ts` were stripped in the same pass.
 
 ---
 

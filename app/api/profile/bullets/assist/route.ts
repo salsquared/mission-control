@@ -41,7 +41,6 @@
 //        • Archive spans — findUploadsMatchingParent() pulls up to 5 prior
 //          uploads where rawText mentions the parent identifier, then
 //          findArchiveSpansFor() picks the top 3 by recency.
-//        • README excerpt — projects only, 2 KB cap.
 //        • currentBullet — rewrite mode only, passed by the impure caller for
 //          id/tags/locked/excluded preservation.
 //   8. callBulletAssist hits Gemini through chatJSON (rate-limited downstream
@@ -68,7 +67,6 @@ import {
     type AssistParent,
     type ParentKind,
     type SiblingInput,
-    type ProjectReadmeContext,
     buildBulletAssistPrompt,
     callBulletAssist,
 } from "@/lib/profile/bullet-assist";
@@ -116,7 +114,6 @@ type ParentRow = {
     description?: string | null;
     repoUrl?: string | null;
     liveUrl?: string | null;
-    readme?: string | null;
     institution?: string | null;
     degree?: string | null;
     field?: string | null;
@@ -253,9 +250,6 @@ function rankSiblingsByOverlap(
     }));
 }
 
-// 2 KB cap on the README excerpt (matches docs/implementation.md §M7.6).
-const README_EXCERPT_CAP = 2 * 1024;
-
 export async function POST(req: NextRequest) {
     const guard = await requireSession();
     if ("error" in guard) return guard.error;
@@ -344,10 +338,10 @@ export async function POST(req: NextRequest) {
         }
 
         // M7.7.5 — tags mode is a fully separate pipeline from fill/rewrite.
-        // It doesn't need the assist prompt builder, sibling collection,
-        // archive spans, or README context — `suggestTagsForBullet` loads its
-        // own profile and computes its own vocabulary. Dispatch early so we
-        // don't pay for the unrelated work.
+        // It doesn't need the assist prompt builder, sibling collection, or
+        // archive spans — `suggestTagsForBullet` loads its own profile and
+        // computes its own vocabulary. Dispatch early so we don't pay for
+        // the unrelated work.
         if (parsed.data.mode === "tags") {
             stage = "call";
             const result = await suggestTagsForBullet({
@@ -434,22 +428,7 @@ export async function POST(req: NextRequest) {
             uploads,
         );
 
-        // 7. README excerpt — projects only, 2 KB cap. The prompt builder
-        //    re-caps defensively, but trimming here also keeps the body of
-        //    the function bounded.
-        let readmeContext: ProjectReadmeContext | null = null;
-        if (parsed.data.parentKind === "project") {
-            const rawReadme = parentRow.readme;
-            if (typeof rawReadme === "string" && rawReadme.trim().length > 0) {
-                readmeContext = {
-                    projectId: parsed.data.parentId,
-                    projectName: parentRow.name ?? "Project",
-                    excerpt: rawReadme.slice(0, README_EXCERPT_CAP),
-                };
-            }
-        }
-
-        // 8. Build the prompt + call Gemini. M7.8.5 — pass parent.scratchpad
+        // 7. Build the prompt + call Gemini. M7.8.5 — pass parent.scratchpad
         // (if any) for voice + experience grounding. Cross-entity isolation
         // is enforced here: only THIS parent row's scratchpad goes in; the
         // sibling-bullet collection above already excludes the current parent.
@@ -459,7 +438,6 @@ export async function POST(req: NextRequest) {
             siblingBullets,
             archiveSpans,
             parentScratchpad: parentRow.scratchpad ?? null,
-            readmeContext,
             currentBullet: parsed.data.mode === "rewrite" && currentBullet
                 ? { text: currentBullet.text, tags: currentBullet.tags }
                 : null,
@@ -474,7 +452,7 @@ export async function POST(req: NextRequest) {
             parentId: parsed.data.parentId,
         });
 
-        // 9. Shape into the wire-format discriminated union.
+        // 8. Shape into the wire-format discriminated union.
         if (result.mode === "fill") {
             return NextResponse.json(
                 { mode: "fill", suggestions: result.bullets },

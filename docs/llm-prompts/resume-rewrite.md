@@ -34,8 +34,6 @@ Seniority: {{postingSeniority}}
 Posting keywords (what the posting emphasizes):
 {{postingKeywordsBlock}}
 
-{{readmesBlock}}                ← optional, omitted if no project READMEs
-
 Bullets to rewrite (preserve every `id` exactly):
 {{bulletsJson}}
 ```
@@ -46,17 +44,6 @@ Bullets to rewrite (preserve every `id` exactly):
 - `postingCompany` — `posting.company` (string) or `(unknown)`.
 - `postingSeniority` — `posting.seniority` (string) or `(unknown)`.
 - `postingKeywordsBlock` — newline-separated list, each line `  - <keyword>`. Comes from `posting.keywords.map(k => '  - ' + k).join('\n')`.
-- `readmesBlock` — optional. When project-source bullets are in the selection AND `readmeCtx.readmesBySourceId` has entries for them, this expands to:
-  ```
-  
-  Project READMEs (use as factual reference for project-source bullets — do NOT invent new claims, only emphasize what the README confirms is true):
-  ### Project README — <projectLabel>
-  <readme, sliced to 2KB with "\n…(truncated)" suffix if longer>
-
-  ### Project README — <projectLabel2>
-  <...>
-  ```
-  Each README capped at `PROJECT_README_PROMPT_LIMIT = 2048` bytes; one entry per unique project sourceId (deduped — multiple bullets from the same project don't repeat the README).
 - `bulletsJson` — pretty-printed JSON array (2-space indent), one entry per selected bullet:
   ```json
   {
@@ -76,5 +63,5 @@ Bullets to rewrite (preserve every `id` exactly):
 - Strict validation: the response's `bullets[].id` must match an id from the input; unknown or duplicate ids throw `AIError`. Missing ids fall back to the original text (logged warn, never silently dropped).
 - `matchedKeywords` in the response is metadata for the "Why these bullets?" trace UI — it tells the user which posting keywords each rewrite leaned on. Distinct from the input's `matchedKeywords` (deterministic scorer output).
 - The rewriter does NOT regenerate bullet tags — tags stay frozen from the input. (Contrast `bullet-assist-rewrite`, which IS allowed to change tags because the user manually reviews each one.)
-- README context is a 2-tier defense against hallucination: rule 2 prohibits invention, README provides additional grounding ("only emphasize what README confirms").
-- See `buildRewriteUserPrompt()` in `lib/resumes/rewrite.ts` for the canonical assembly. Hermetic smoke `readme-prompt-smoke.ts` covers the dedup + truncation cases.
+- Hallucination defense is rule 2 alone: the LLM may only emphasize claims already in the original bullet's text. Project READMEs used to be injected as additional grounding but the signal-to-token ratio was poor (2 KB per project + per-resume scheduler fetch) so the injection path was removed.
+- See `buildRewriteUserPrompt()` in `lib/resumes/rewrite.ts` for the canonical assembly.

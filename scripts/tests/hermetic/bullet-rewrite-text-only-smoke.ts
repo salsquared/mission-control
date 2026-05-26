@@ -102,7 +102,6 @@ async function main(): Promise<void> {
         },
         siblingBullets: [],
         archiveSpans: [],
-        readmeContext: null,
         currentBullet: { text: input.text, tags: input.tags },
     });
 

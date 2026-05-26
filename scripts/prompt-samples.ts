@@ -71,7 +71,7 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         postingSeniority: "entry-level",
         postingKeywordsBlock: "  - security\n  - patrol\n  - incident-reporting\n  - customer-service",
         profileSummary: "## Identity\nName: Salvador Salcedo\n\n## Education\nB.S. in Applied Mathematics at California State University Long Beach\n  • Coursework in linear algebra, probability, numerical methods\n  notes: Currently enrolled.\n\n## Work history\nBartender at Freckle.tv\n  • Optimized bar operations and customer-facing service",
-        entityIdsBlock: "### Experience\n- wr_freckle: Bartender @ Freckle.tv [matched: ; aggregate-score=0]\n    • Optimized bar operations and customer-facing service\n\n### Education\n- ed_csulb: B.S. @ California State University Long Beach [matched: ; aggregate-score=0]\n    • Coursework in linear algebra, probability, numerical methods",
+        entityIdsBlock: "### Experience\n- wr_freckle: Bartender @ Freckle.tv [no posting-keyword matches; aggregate-score=0]\n\n### Education\n- ed_csulb: B.S. @ California State University Long Beach [no posting-keyword matches; aggregate-score=0]",
     },
     "discovery-suggest": {
         topic: "space",
@@ -93,7 +93,6 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         postingCompany: "Acme Corp",
         postingSeniority: "senior",
         postingKeywordsBlock: "  - go\n  - distributed-systems\n  - postgresql\n  - grpc",
-        readmesBlock: "",
         bulletsJson: JSON.stringify([
             { id: "blt_1", originalText: "Built distributed payments service handling 50k tx/day", matchedTags: ["go"], matchedKeywords: ["distributed-systems"], sourceLabel: "Acme — Engineer", locked: false },
         ], null, 2),
@@ -103,7 +102,6 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         siblings: "## Other bullets in this profile (voice + vocabulary reference)\n- Migrated a TypeScript monorepo to pnpm\n- Cut p99 latency by 40 percent",
         archive: "",
         scratchpad: "## User's notes about this role/project/education (their own voice)\nWorked on backend payments — most of the impact was migrating the legacy TypeScript service off Express to Fastify. Cut latency a lot. Also unblocked the platform team on a framework-swap playbook.",
-        readme: "",
         currentBulletText: "",
         currentBulletTags: "",
     },
@@ -112,7 +110,6 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         siblings: "## Other bullets in this profile (voice + vocabulary reference)\n- Migrated a TypeScript monorepo to pnpm",
         archive: "",
         scratchpad: "",
-        readme: "",
         currentBulletText: "Worked on stuff",
         currentBulletTags: '"general"',
     },

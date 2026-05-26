@@ -33,8 +33,6 @@ Fill 3 to 5 starter bullets for this entry.
 
 {{scratchpad}}                     ← optional, omitted if empty (M7.8.5)
 
-{{readme}}                         ← optional, project parents only
-
 ## Output schema
 { "bullets": [{ "text": "<bullet text>", "tags": ["<tag1>", "<tag2>"] }, ...] }
 Return 3–5 bullets. Tags should be 1–3 lowercase keywords drawn from the text. When the scratchpad section is present, match the user's voice + cadence + specifics — those notes are the most direct evidence of what this entry actually involved.
@@ -49,11 +47,10 @@ Return 3–5 bullets. Tags should be 1–3 lowercase keywords drawn from the tex
 - `siblings` — pre-rendered markdown list of up to 12 sibling bullets from the same profile, header included (`## Other bullets in this profile (voice + vocabulary reference)`). Capped to 1.5 KB; trims trailing entries from the (pre-ranked) list. Produced by `renderSiblingBullets(siblings, 1536)`. Empty string when the profile has no other bullets or all overflow.
 - `archive` — pre-rendered markdown of up to 3 spans from prior uploaded resume versions, header included (`## Spans from prior uploaded resume versions`). Each block is `### filename (uploaded YYYY-MM-DD)\n<single-paragraph span>`. Capped to 1.5 KB. Produced by `renderArchiveSpans(spans, 1536)`. Empty string when no archive matches the parent or all overflow.
 - `scratchpad` — **M7.8.5 (story S7.13)** — pre-rendered markdown of the parent entity's OWN scratchpad text, header included (`## User's notes about this role/project/education (their own voice)`). Capped to 2 KB. Produced by `renderScratchpad(parent.scratchpad, 2048)`. Cross-entity isolation enforced at the caller — only the current parent's scratchpad ever appears. Empty string when null / empty.
-- `readme` — pre-rendered markdown of a single project's README excerpt, header included (`## Project README — <projectName>`). Capped to 2 KB. Produced by `renderReadme(ctx, 2048)`. Empty string when not a project parent or no README available.
 
 ## Notes
 
-- Total user-prompt budget is 8 KB (`USER_PROMPT_LIMIT`). When sections overflow, the builder drops in priority order: `archive` → `siblings` → `readme` → `scratchpad`. Scratchpad drops LAST because it's the user's most-targeted grounding for this specific entity. `spine` + task statement + output schema are never trimmed.
+- Total user-prompt budget is 8 KB (`USER_PROMPT_LIMIT`). When sections overflow, the builder drops in priority order: `archive` → `siblings` → `scratchpad`. Scratchpad drops LAST because it's the user's most-targeted grounding for this specific entity. `spine` + task statement + output schema are never trimmed.
 - Server post-processing: response bullets get fresh cuid `id`, `locked: false`, `excluded: false`, `pinnedTags: []`, `autoTags: []`, `removedTags: []` injected; slice to first 5 entries (`FILL_BULLET_CAP`).
 - Output validated against `FillResponseSchema` (1–8 bullets allowed in LLM response, sliced to 5 after).
 - Anti-repetition + voice grounding live in the sibling block — they're the user's own bullets, so the model picks up wording naturally. The scratchpad block adds direct experience grounding when the user has populated it.

@@ -327,14 +327,6 @@ model Project {
   repoUrl            String?
   liveUrl            String?
   bullets            String    @default("[]")
-  // Raw README markdown fetched from the github.com default branch when
-  // `repoUrl` points at a GitHub repo. The scheduler parses owner/repo out
-  // of the URL — no separate field. Capped at ~16 KB at write time to
-  // bound row size, sliced to 2 KB inside the prompt builders. Consumed
-  // by the resume rewrite prompt and the bullet-assist prompt as factual
-  // grounding so generated bullets reflect what the repo actually does.
-  readme             String?
-  readmeUpdatedAt    DateTime?
   // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-project user-voice
   // notes; consumed by bullet-assist + resume-gen synthesis.
   scratchpad         String?

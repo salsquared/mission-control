@@ -11,11 +11,6 @@ const hugeSpans: ArchiveSpan[] = Array.from({ length: 3 }, (_, i) => ({
     uploadedAt: new Date(Date.UTC(2024, i, 1)),
     span: 'x'.repeat(4_000),
 }));
-const hugeReadme = {
-    projectId: 'p_1',
-    projectName: 'Pulsar',
-    excerpt: 'y'.repeat(10_000),
-};
 
 async function main() {
     const result = await buildBulletAssistPrompt({
@@ -23,7 +18,6 @@ async function main() {
         parent: { kind: 'work-role', id: 'wr_1', company: 'Acme', title: 'Engineer' },
         siblingBullets: hugeSiblings,
         archiveSpans: hugeSpans,
-        readmeContext: hugeReadme,
         currentBullet: null,
     });
     console.log("user bytes:", Buffer.byteLength(result.user, 'utf8'));

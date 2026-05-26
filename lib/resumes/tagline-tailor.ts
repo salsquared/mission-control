@@ -151,43 +151,24 @@ function buildEntityIdsBlockNameOnly(profile: MinimalProfile): string {
     return parts.length > 0 ? parts.join("\n\n") : "(no entities)";
 }
 
-const ENTITY_BLOCK_BULLET_CAP = 3;
-const ENTITY_BLOCK_BULLET_TEXT_CAP = 100;
-
-function clipText(s: string, max: number): string {
-    const t = s.trim().replace(/\s+/g, " ");
-    return t.length > max ? t.slice(0, max - 1) + "…" : t;
-}
-
 // Render one entity's evidence block. Lists matched tags collected across
-// all its selected bullets + the top-N bullets (by score) as samples. The
-// aggregate score is included so the LLM can compare entity strength
-// numerically when names are ambiguous.
+// all its selected bullets + the aggregate score so the LLM can compare
+// entity strength numerically when names are ambiguous. Bullet text itself
+// is NOT included here — the full bullets are already in `profileSummary`
+// and duplicating them inflated the prompt by ~1.8 KB per call.
 function renderEntityEvidence(
     id: string,
     label: string,
     bullets: ReadonlyArray<BulletSelection>,
 ): string {
-    const sorted = [...bullets].sort((a, b) => {
-        const av = Number.isFinite(a.score) ? a.score : 0;
-        const bv = Number.isFinite(b.score) ? b.score : 0;
-        return bv - av;
-    });
-    const aggregate = sorted.reduce((acc, b) => acc + (Number.isFinite(b.score) ? Math.max(0, b.score) : 0), 0);
+    const aggregate = bullets.reduce((acc, b) => acc + (Number.isFinite(b.score) ? Math.max(0, b.score) : 0), 0);
     const tagSet = new Set<string>();
-    for (const b of sorted) {
+    for (const b of bullets) {
         for (const t of b.matchedTags) tagSet.add(t);
         for (const k of b.matchedKeywords) tagSet.add(k);
     }
     const tagLine = tagSet.size > 0 ? `[matched: ${Array.from(tagSet).join(", ")}; aggregate-score=${aggregate}]` : `[no posting-keyword matches; aggregate-score=0]`;
-    const lines = [`- ${id}: ${label} ${tagLine}`];
-    for (const b of sorted.slice(0, ENTITY_BLOCK_BULLET_CAP)) {
-        lines.push(`    • ${clipText(b.originalText, ENTITY_BLOCK_BULLET_TEXT_CAP)}`);
-    }
-    if (sorted.length > ENTITY_BLOCK_BULLET_CAP) {
-        lines.push(`    • (+${sorted.length - ENTITY_BLOCK_BULLET_CAP} more bullet${sorted.length - ENTITY_BLOCK_BULLET_CAP === 1 ? "" : "s"})`);
-    }
-    return lines.join("\n");
+    return `- ${id}: ${label} ${tagLine}`;
 }
 
 // Evidence-rich entity listing built from the resume-gen SELECTION (post-
