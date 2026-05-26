@@ -146,11 +146,14 @@ async function rawGenerate(args: GenerateArgs) {
         config: {
             responseMimeType: "application/json",
             temperature: args.temperature,
-            // Gemini 2.5 Flash defaults to thinking mode, which (a) adds
-            // 30s–2min of latency to what should be sub-10s structured
-            // extraction and (b) eats the output budget so JSON responses
-            // get truncated mid-string. All current callers are mechanical
-            // extraction/transformation — no chain-of-thought needed.
+            // Disable thinking across the fleet. Full Flash (3.5, 2.5) defaults
+            // thinking ON, which (a) adds 30s–2min of latency to what should be
+            // sub-10s structured extraction and (b) eats the output budget so
+            // JSON responses get truncated mid-string. Flash-lite variants
+            // (3.1-flash-lite, 2.5-flash-lite) default thinking OFF, so the
+            // budget=0 is a no-op for them — kept explicit so the guarantee
+            // holds if a caller flips to full Flash. All current callers are
+            // mechanical extraction/transformation — no chain-of-thought needed.
             thinkingConfig: { thinkingBudget: 0 },
             // Per-call cap. Defaults to 4096 — enough for typical structured
             // extraction. Profile import passes 32768 explicitly because nested
