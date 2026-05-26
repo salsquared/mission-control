@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useAppStore } from "@/components/providers/state";
 
 const MOBILE_BREAKPOINT_QUERY = "(max-width: 768px)";
+const FINE_POINTER_QUERY = "(pointer: fine)";
 
 /**
  * Width-based mobile detection. Returns false on the server and on the first
@@ -40,4 +41,27 @@ export function useEffectiveMobileLayout(): boolean {
     if (preference === "force-on") return true;
     if (preference === "force-off") return false;
     return widthIsMobile;
+}
+
+/**
+ * True when the user-agent reports a fine pointer (mouse / trackpad). Lets the
+ * mobile shell distinguish "small desktop window" from "real touch device" and
+ * surface pagination chevrons in the former case — swipe is the natural
+ * gesture with a finger but awkward to perform with a mouse. SSR-safe: returns
+ * false on the server and on first client render, then settles to the real
+ * matchMedia result.
+ */
+export function useFinePointer(): boolean {
+    const [fine, setFine] = useState(false);
+
+    useEffect(() => {
+        if (typeof window === "undefined" || !window.matchMedia) return;
+        const mql = window.matchMedia(FINE_POINTER_QUERY);
+        setFine(mql.matches);
+        const onChange = (e: MediaQueryListEvent) => setFine(e.matches);
+        mql.addEventListener("change", onChange);
+        return () => mql.removeEventListener("change", onChange);
+    }, []);
+
+    return fine;
 }

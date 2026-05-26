@@ -3,9 +3,11 @@
 import React, { useCallback, useRef, useState } from "react";
 import { motion, useMotionValue, animate, AnimatePresence } from "framer-motion";
 import type { PanInfo } from "framer-motion";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
+import { useFinePointer } from "@/hooks/useMobileLayout";
 import { LaunchpadOverlay } from "../overlays/LaunchpadOverlay";
 import { NotificationBell } from "../overlays/NotificationBell";
 import { SavedPapersOverlay } from "../overlays/SavedPapersOverlay";
@@ -56,6 +58,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ carousel, baseDashes }
 
     const { aiCompanionEnabled } = useSettingsStore();
     const { viewHues } = useThemeStore();
+    const hasFinePointer = useFinePointer();
 
     const viewportRef = useRef<HTMLDivElement>(null);
     const x = useMotionValue(0);
@@ -189,6 +192,30 @@ export const MobileShell: React.FC<MobileShellProps> = ({ carousel, baseDashes }
                     ))}
                 </motion.div>
             </div>
+
+            {/* Pagination chevrons — only shown when the device reports a
+                fine pointer (mouse / trackpad). Swipe is the natural gesture
+                with a finger but awkward with a mouse, so a small desktop
+                window in mobile layout gets explicit prev / next buttons.
+                Hidden on real touch devices to keep the mobile look clean. */}
+            {hasFinePointer && len > 1 && !isLaunchpadOpen && (
+                <>
+                    <button
+                        onClick={prevSlide}
+                        aria-label="Previous dash"
+                        className="absolute left-2 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-black/60 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 transition-all"
+                    >
+                        <ChevronLeft className="w-5 h-5" />
+                    </button>
+                    <button
+                        onClick={nextSlide}
+                        aria-label="Next dash"
+                        className="absolute right-2 top-1/2 -translate-y-1/2 z-30 p-2 rounded-full bg-black/60 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 transition-all"
+                    >
+                        <ChevronRight className="w-5 h-5" />
+                    </button>
+                </>
+            )}
 
             {/* Page dots — one per dash, hue-tinted, active one enlarged.
                 Tap to jump directly. */}
