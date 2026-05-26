@@ -105,6 +105,18 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         requiredSystemPhrases: ['NO FABRICATION', 'ONE SENTENCE', 'NO FIRST-PERSON', 'MODE-SPECIFIC'],
         requiredUserPhrases: ['Current tagline', 'Profile (the ONLY evidence', 'Output schema'],
     },
+    'resume-tagline': {
+        expectSystem: true,
+        expectModel: true,
+        expectTemperature: true,
+        expectMaxTokens: true,
+        userByteBudget: 8_192,
+        // System enforces the same no-fab / one-sentence / no-first-person
+        // invariants as tagline-draft, plus the load-bearing posting-aware
+        // framing rule that makes this callsite distinct from tagline-draft.
+        requiredSystemPhrases: ['NO FABRICATION', 'ONE SENTENCE', 'NO FIRST-PERSON', 'POSTING-AWARE FRAMING'],
+        requiredUserPhrases: ['## Posting', '## Profile evidence', '## Output'],
+    },
     'discovery-suggest': {
         expectSystem: false,
         expectModel: true,

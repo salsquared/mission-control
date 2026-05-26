@@ -11,6 +11,11 @@ import type { RewrittenBullet } from "@/lib/resumes/rewrite";
 
 interface ResumeProps {
     profile: ProfileWire;
+    // Posting-tailored override for the subtitle under the H1. When null
+    // (legacy rows, AIError fallback, or `replay` of an old artifact), the
+    // template renders `profile.tagline` instead so historical resumes
+    // still get a subtitle.
+    tagline: string | null;
     sections: {
         workRoles: { entity: WorkRoleWire; bullets: { id: string; text: string }[] }[];
         projects: { entity: ProjectWire; bullets: { id: string; text: string }[] }[];
@@ -22,6 +27,7 @@ export function composeResumeProps(
     profile: ProfileWire,
     selection: ResumeSelection,
     rewrites: RewrittenBullet[],
+    tagline: string | null = null,
 ): ResumeProps {
     const rewriteById = new Map(rewrites.map(r => [r.id, r.rewrittenText]));
     const render = <E,>(group: { entity: E; bullets: { bulletId: string; originalText: string }[] }[]) =>
@@ -34,6 +40,7 @@ export function composeResumeProps(
         }));
     return {
         profile,
+        tagline,
         sections: {
             workRoles: render(selection.workRoles),
             projects: render(selection.projects),
@@ -93,10 +100,13 @@ ul.bullets { margin: 2px 0 0 0.22in; padding: 0; }
 ul.bullets li { margin-bottom: 1px; }
 `;
 
-function ResumeDoc({ profile, sections }: ResumeProps) {
+function ResumeDoc({ profile, tagline, sections }: ResumeProps) {
     // Defense in depth — even if legacy corrupt entries (e.g. {url:"Github"})
     // exist in the DB, they shouldn't render as broken links in the resume.
     const links = (profile.links ?? []).filter(l => isValidUrl(l.url));
+    // Posting-tailored tagline wins when present. Legacy rows (no row-level
+    // tagline) fall back to the user's profile-level pitch.
+    const renderedTagline = tagline ?? profile.tagline ?? null;
     return (
         <html lang="en">
             <head>
@@ -108,11 +118,13 @@ function ResumeDoc({ profile, sections }: ResumeProps) {
                 <div className="page">
                     <header className="header">
                         <h1>{profile.headline ?? "Resume"}</h1>
-                        {/* M7.9.7 (story S7.14) — one-sentence professional
-                            tagline rendered as a subtitle directly under the
-                            H1 when set. Italic + slightly smaller than the
-                            name + above the meta contact line. */}
-                        {profile.tagline ? <p className="tagline">{profile.tagline}</p> : null}
+                        {/* One-sentence professional tagline rendered as a
+                            subtitle directly under the H1 when set. Italic +
+                            slightly smaller than the name + above the meta
+                            contact line. Posting-tailored (resume-tagline
+                            callsite) if available; falls back to the user's
+                            profile.tagline for legacy rows. */}
+                        {renderedTagline ? <p className="tagline">{renderedTagline}</p> : null}
                         <div className="meta">
                             {[profile.location, profile.email, profile.phone].filter(Boolean).join("  ·  ")}
                             {links.length > 0 && profile.location ? "  ·  " : ""}

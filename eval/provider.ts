@@ -396,6 +396,48 @@ const HANDLERS: Record<string, CallsiteHandler> = {
         const { postFilterTagline } = await import("@/lib/profile/tagline-draft");
         return { tagline: postFilterTagline(response.tagline) };
     },
+
+    // Posting-tailored resume tagline. Same handler shape as tagline-draft
+    // (profile-agnostic — fixture supplies the rendered profileSummary
+    // directly) but grounded on both profile + posting so a single user
+    // can pitch differently per job. Post-filter applied so fixture
+    // assertions see the same cleaned output the route would persist.
+    "resume-tagline": async (input) => {
+        const args = input as {
+            postingTitle: string | null;
+            postingCompany: string | null;
+            postingSeniority?: string | null;
+            postingKeywords: string[];
+            profileSummary: string;
+        };
+
+        const prompt = await loadPrompt("resume-tagline", {
+            postingTitle: args.postingTitle ?? "(unknown)",
+            postingCompany: args.postingCompany ?? "(unknown)",
+            postingSeniority: args.postingSeniority ?? "(unknown)",
+            postingKeywordsBlock: args.postingKeywords.length > 0
+                ? args.postingKeywords.map(k => `  - ${k}`).join("\n")
+                : "  (none extracted)",
+            profileSummary: args.profileSummary,
+        });
+
+        const schema = z.object({
+            tagline: z.string().min(1).max(500),
+        });
+
+        const response = await chatJSON({
+            name: "resume-tagline",
+            system: prompt.system,
+            user: prompt.user,
+            schema,
+            model: MODEL_LITE,
+            temperature: 0.4,
+            maxOutputTokens: 256,
+        });
+
+        const { postFilterTagline } = await import("@/lib/profile/tagline-draft");
+        return { tagline: postFilterTagline(response.tagline) };
+    },
 };
 
 class MissionControlProvider {

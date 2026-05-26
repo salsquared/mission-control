@@ -112,6 +112,7 @@ SUITES=(
     # M7.9 — profile tagline + LLM draft
     "scripts/tests/hermetic/tagline-patch-smoke.ts"
     "scripts/tests/hermetic/tagline-draft-smoke.ts"
+    "scripts/tests/hermetic/resume-tagline-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

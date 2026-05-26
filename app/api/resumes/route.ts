@@ -10,6 +10,7 @@ import { autoTagBullets } from "@/lib/profile/auto-tag";
 import { synthesizeBulletsForEntity, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
 import { broadcastEvent } from "@/lib/events";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
+import { tailorResumeTagline } from "@/lib/resumes/tagline-tailor";
 import { computeSkillsGap } from "@/lib/resumes/skills-gap";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
 import { renderResumePDF } from "@/lib/resumes/render-pdf";
@@ -532,15 +533,32 @@ export async function POST(req: NextRequest) {
                   ],
               };
 
+        // 4c. Posting-tailored tagline. Best-effort — if Gemini errors,
+        // fall back to the user's default profile.tagline (or no tagline).
+        // The whole point of this callsite is that profile.tagline is
+        // posting-agnostic; the posting-aware version reads the user's
+        // candidacy through the lens of THIS job (e.g. an applied-math
+        // student framing for a security-guard posting even when the
+        // profile.tagline is SWE-coded).
+        stage = "rewrite";
+        let tailoredTagline: string | null = null;
+        try {
+            const r = await tailorResumeTagline({ profile, posting });
+            tailoredTagline = r.tagline;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn(`[resume-tagline] skipped: ${msg}`);
+        }
+
         // 5. Render
         stage = "render";
         const format = parsed.data.options?.format ?? "pdf";
-        const props = composeResumeProps(profile, selection, rewrites);
+        const props = composeResumeProps(profile, selection, rewrites, tailoredTagline);
         const bytes = format === "docx"
             ? await renderResumeDOCX(props)
             : await renderResumePDF(props);
 
-        // Canonical filename — "<headline> - <role> - <company> Resume.<ext>".
+        // Canonical filename — "<headline>, <role>, <company> Resume.<ext>".
         // The user's name comes from profile.headline (what the resume's H1
         // prints). Falls back to the old "resume-<dateSlug>" pattern when no
         // identifying parts are present (defensive — shouldn't happen on the
@@ -590,6 +608,7 @@ export async function POST(req: NextRequest) {
                     // headers. Drives the previous-resumes dropdown UI (M8.4.6).
                     postingTitle: posting.title,
                     postingCompany: posting.company,
+                    tagline: tailoredTagline,
                     postingInput: JSON.stringify({
                         url: parsed.data.posting.url ?? null,
                         text: parsed.data.posting.text ? parsed.data.posting.text.slice(0, 4_000) : null,

@@ -6,13 +6,12 @@
  *     historical replays)
  *   - the previous-resumes dropdown label in GenerateResumeCard
  *
- * Display format (commas, fine in UI):
+ * Display + filename format both use commas so the saved file reads the
+ * same way the user would write it out by hand:
  *   "Salvador Salcedo, Software Engineer Intern, Rocket Lab Resume"
+ *   "Salvador Salcedo, Software Engineer Intern, Rocket Lab Resume.pdf"
  *
- * Filename format (dashes for cross-OS / shell safety):
- *   "Salvador Salcedo - Software Engineer Intern - Rocket Lab Resume.pdf"
- *
- * Both gracefully degrade when one or more fields are missing.
+ * Gracefully degrades when one or more fields are missing.
  */
 
 export interface ResumeLabelParts {
@@ -21,9 +20,8 @@ export interface ResumeLabelParts {
     postingCompany: string | null;
 }
 
-// Strip characters that are problematic in cross-OS filenames. Spaces are
-// fine on modern macOS/Linux/Windows; commas are fine but awkward in
-// shells, so the filename builder uses " - " instead.
+// Strip characters that are problematic in cross-OS filenames. Commas + spaces
+// are fine on modern macOS/Linux/Windows.
 //   Disallowed:  \ / : * ? " < > |  + control chars  + leading/trailing dots
 // Also collapses runs of whitespace to a single space and trims.
 export function sanitizeFilenameSegment(s: string): string {
@@ -46,7 +44,7 @@ export function buildResumeDisplayLabel(parts: ResumeLabelParts): string | null 
     return `${segments.join(", ")} Resume`;
 }
 
-// "Salvador Salcedo - Software Engineer Intern - Rocket Lab Resume.pdf"
+// "Salvador Salcedo, Software Engineer Intern, Rocket Lab Resume.pdf"
 // Falls back to "resume-<dateSlug>.<ext>" when no parts are present —
 // historical rows pre-dating any of these fields still get a sensible
 // download name.
@@ -59,7 +57,7 @@ export function buildResumeDownloadFilename(
     if (parts.postingTitle?.trim()) segments.push(sanitizeFilenameSegment(parts.postingTitle));
     if (parts.postingCompany?.trim()) segments.push(sanitizeFilenameSegment(parts.postingCompany));
     const base = segments.filter(Boolean).length > 0
-        ? `${segments.filter(Boolean).join(" - ")} Resume`
+        ? `${segments.filter(Boolean).join(", ")} Resume`
         : `resume-${fallbackDateSlug ?? new Date().toISOString().slice(0, 10)}`;
     return `${base}.${parts.format}`;
 }

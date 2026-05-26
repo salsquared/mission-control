@@ -73,8 +73,9 @@ function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, de
 }
 
 // ─── Download filename ──────────────────────────────────────────────────────
-// Dashes (not commas) for cross-OS / shell friendliness. "Resume" suffix
-// stays so the saved file is self-describing.
+// Commas match the display label so the saved file reads the way the user
+// would write it by hand. "Resume" suffix stays so the saved file is
+// self-describing.
 {
     const full = buildResumeDownloadFilename({
         userDisplayName: "Salvador Salcedo",
@@ -82,9 +83,9 @@ function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, de
         postingCompany: "Rocket Lab",
         format: "pdf",
     });
-    const expected = "Salvador Salcedo - Software Engineer Intern - Rocket Lab Resume.pdf";
+    const expected = "Salvador Salcedo, Software Engineer Intern, Rocket Lab Resume.pdf";
     if (full !== expected) fail(`filename: full format wrong\n  got:      ${full}\n  expected: ${expected}`);
-    else pass("filename: full '<name> - <title> - <company> Resume.<ext>'");
+    else pass("filename: full '<name>, <title>, <company> Resume.<ext>'");
 }
 {
     const docx = buildResumeDownloadFilename({
@@ -93,7 +94,7 @@ function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, de
         postingCompany: "Rocket Lab",
         format: "docx",
     });
-    if (docx !== "Salvador Salcedo - Rocket Lab Resume.docx") fail("filename: docx + missing title", docx);
+    if (docx !== "Salvador Salcedo, Rocket Lab Resume.docx") fail("filename: docx + missing title", docx);
     else pass("filename: missing title drops separator cleanly, ext flips to docx");
 }
 // All-null falls back to the legacy "resume-<dateSlug>.<ext>" so a

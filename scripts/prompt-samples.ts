@@ -17,6 +17,7 @@ export const PROMPT_SLUGS = [
     "bullet-tags-from-profile",
     "scratchpad-synth",
     "tagline-draft",
+    "resume-tagline",
     "discovery-suggest",
     "email-parser",
     "employment-type-classifier",
@@ -63,6 +64,13 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         mode: "Draft",
         currentTagline: "(none — draft from scratch)",
         profileSummary: "## Identity\nName: Salvador Salcedo\nSummary: Engineer focused on developer-facing systems.\n\n## Work history\nSoftware Engineer at Acme Corp\n  • Built a Python service handling 50k req/day\n  • Cut p99 latency 40% via async batch dispatch\n  notes: Mostly backend payments work.",
+    },
+    "resume-tagline": {
+        postingTitle: "Campus Security Officer",
+        postingCompany: "Cedars-Sinai",
+        postingSeniority: "entry-level",
+        postingKeywordsBlock: "  - security\n  - patrol\n  - incident-reporting\n  - customer-service",
+        profileSummary: "## Identity\nName: Salvador Salcedo\n\n## Education\nB.S. in Applied Mathematics at California State University Long Beach\n  • Coursework in linear algebra, probability, numerical methods\n  notes: Currently enrolled.\n\n## Work history\nBartender at Freckle.tv\n  • Optimized bar operations and customer-facing service",
     },
     "discovery-suggest": {
         topic: "space",

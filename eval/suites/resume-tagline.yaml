@@ -1,0 +1,151 @@
+# Suite for `resume-tagline` — posting-tailored one-sentence subtitle that
+# overrides the user's default profile.tagline on the generated resume.
+#
+# Provider handler in eval/provider.ts calls the real chatJSON with a fixture-
+# supplied profileSummary + parsed posting fields. The load-bearing assertion
+# is the cross-domain test: the user gave a concrete example where their
+# profile.tagline is tech-coded but the posting is a security-guard role, and
+# the model should re-frame using the EVIDENCED part of the profile
+# (applied-math student + work history) rather than echoing the tech identity.
+#
+# Same invariants as tagline-draft: one sentence, ≤200 chars, trailing
+# period, no first-person, no fabrication.
+
+- description: "Cross-domain — tech profile applying to a security-guard role"
+  vars:
+    callsite: resume-tagline
+    input:
+      postingTitle: "Campus Security Officer"
+      postingCompany: "Cedars-Sinai"
+      postingSeniority: "entry-level"
+      postingKeywords:
+        - "security"
+        - "patrol"
+        - "incident-reporting"
+        - "customer-service"
+      profileSummary: |
+        ## Identity
+        Name: Salvador Salcedo
+
+        ## Work history
+        Bartender at Freckle.tv (Los Angeles, CA)
+          • Optimized bar operations by managing prep and supply workflows
+          • Handled high-volume customer interactions in fast-paced shifts
+          notes: Two years front-of-house at a startup bar/restaurant. Customer-facing.
+
+        Software Engineer Intern at AEG Worldwide
+          • Built React components for an internal ticketing dashboard
+          • Migrated legacy jQuery widgets to TypeScript
+
+        ## Education
+        B.S. in Applied Mathematics at California State University Long Beach
+          • Coursework in linear algebra, probability, numerical methods
+          notes: Currently enrolled. Expecting graduation in 2027.
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const t = r.tagline;
+        return typeof t === 'string' &&
+          t.length > 0 &&
+          t.length <= 200 &&
+          /[.!?]$/.test(t) &&
+          !/\b(I|I'm|I've|my|me|mine)\b/i.test(t) &&
+          !/\n/.test(t);
+    - type: llm-rubric
+      value: |
+        PASS iff ALL of these hold:
+        1. The tagline does NOT lead with "Software Engineer", "Backend
+           Engineer", "Developer", or any other tech career title as the
+           primary identity. The profile.tagline being tech-coded is exactly
+           what this callsite is meant to override.
+        2. The tagline leans on the profile's posting-relevant evidence
+           (applied-math student / CSULB / customer-facing bartending /
+           or a clear synonym) OR frames the candidacy as a student
+           "looking for work" / "seeking" / "applying" — i.e. the framing
+           the user themselves described as more apt.
+        3. The tagline does NOT claim any security experience, certifications,
+           or training the profile doesn't evidence.
+        4. The tagline reads as a professional one-liner.
+
+- description: "Aligned domain — software profile applying to a software role still grounds factually"
+  vars:
+    callsite: resume-tagline
+    input:
+      postingTitle: "Senior Backend Engineer"
+      postingCompany: "Acme"
+      postingSeniority: "senior"
+      postingKeywords:
+        - "go"
+        - "distributed-systems"
+        - "kubernetes"
+        - "postgres"
+      profileSummary: |
+        ## Identity
+        Name: Salvador Salcedo
+
+        ## Work history
+        Backend Engineer at Beta Labs
+          • Built our payments backend in Go
+          • Designed idempotency-key flows for exactly-once semantics
+          • Operated Postgres + pgbouncer in production
+          notes: Three years on the payments path. All Go and Postgres.
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const t = r.tagline;
+        return typeof t === 'string' &&
+          t.length <= 200 &&
+          /[.!?]$/.test(t) &&
+          !/\b(I|I'm|I've|my|me|mine)\b/i.test(t) &&
+          !/\bRust\b/i.test(t) &&
+          !/\bPython\b/i.test(t) &&
+          !/\bJava\b/i.test(t);
+    - type: llm-rubric
+      value: |
+        PASS iff:
+        1. The tagline grounds on an evidenced attribute (Go, backend,
+           payments, distributed systems, idempotency, Postgres).
+        2. The tagline does NOT claim Kubernetes experience (the posting
+           mentions it but the profile does not).
+        3. The tagline reads as a professional one-liner aligned with a
+           senior backend engineer applying for the role.
+
+- description: "Empty keywords — model can still tailor from posting title/company alone"
+  vars:
+    callsite: resume-tagline
+    input:
+      postingTitle: "Math Tutor"
+      postingCompany: "Local Learning Center"
+      postingSeniority: "(unknown)"
+      postingKeywords: []
+      profileSummary: |
+        ## Identity
+        Name: Salvador Salcedo
+
+        ## Education
+        B.S. in Applied Mathematics at California State University Long Beach
+          • Coursework in linear algebra, probability, numerical methods
+          notes: Currently enrolled.
+
+        ## Work history
+        Software Engineer Intern at AEG Worldwide
+          • Built React components for an internal ticketing dashboard
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const t = r.tagline;
+        return typeof t === 'string' &&
+          t.length <= 200 &&
+          /[.!?]$/.test(t) &&
+          !/\b(I|I'm|I've|my|me|mine)\b/i.test(t);
+    - type: llm-rubric
+      value: |
+        PASS iff the tagline leans on the applied-math education (the only
+        posting-relevant evidence in the profile) and does NOT primarily
+        sell the user as a software engineer.

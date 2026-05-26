@@ -600,6 +600,13 @@ model GeneratedResume {
   // existed; dropdown shows "(unknown)" for those.
   postingTitle    String?
   postingCompany  String?
+  // One-sentence posting-tailored tagline rendered as the subtitle under
+  // the resume's H1. LLM-generated at gen time (callsite `resume-tagline`),
+  // grounded on profile + parsed posting, so the security-guard resume gets
+  // a posting-relevant pitch even though the user's profile.tagline is
+  // tech-coded. NULL on legacy rows pre-dating this column; the template
+  // falls back to profile.tagline in that case.
+  tagline         String?
   profileSnapshot String   // JSON: full hydrated profile at gen-time
   selections      String   // JSON: [{ kind, sourceId, sourceLabel, bulletId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[], locked }]
   // Story S8.8 — JSON array of posting keywords that have NO coverage in the
