@@ -189,11 +189,40 @@ const profile: ProfileWire = {
     else pass("education kept even with no matches");
 }
 
-// 8) Projects with zero score get dropped when dropZeroScoreEntities=true (default).
+// 8) Projects below MIN_KEEP_SCORE get dropped when dropZeroScoreEntities=true (default).
 {
     const sel = selectBullets(profile, ["python"]);
     if (sel.projects.find(p => p.entity.id === "pr2")) fail("zero-score project pr2 should be dropped");
     else pass("zero-score project dropped");
+}
+
+// 8b) An entity whose top bullet matches via substring ONLY (score 1) is
+// dropped — even though the keyword "hit", the entity isn't relevant enough
+// to occupy resume real estate. Regression guard against the Freckle-on-
+// security-resume leak (May 2026): the keyword "Security" substring-matched
+// the literal word "security" inside an off-topic Postgres-migration bullet.
+{
+    const substringOnlyProfile: ProfileWire = {
+        ...profile,
+        workRoles: [
+            profile.workRoles[0], // wr1 stays as the most-recent (kept-always spine)
+            {
+                ...profile.workRoles[1],
+                id: "wr-off-topic",
+                bullets: [
+                    // Bullet text contains "security" but the tags are all
+                    // unrelated to a security posting. Substring hit → score 1.
+                    mkBullet("b-offtopic", "Improved data integrity and security on a Postgres migration", ["postgresql", "supabase"]),
+                ],
+            },
+        ],
+    };
+    const sel = selectBullets(substringOnlyProfile, ["Security", "Patrol", "Incident Reporting"]);
+    if (sel.workRoles.find(w => w.entity.id === "wr-off-topic")) {
+        fail("off-topic substring-only entity (score 1) should be dropped under MIN_KEEP_SCORE=2");
+    } else {
+        pass("substring-only (score 1) off-topic work role dropped");
+    }
 }
 
 // 9) Stable bullet ids preserved through selection.

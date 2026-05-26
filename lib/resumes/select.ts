@@ -35,9 +35,16 @@ export interface SelectOptions {
     maxBulletsPerProject?: number;
     maxBulletsPerEducation?: number;
     /**
-     * If true, an entity whose top-scoring bullet is zero is dropped entirely.
-     * Exception: the most-recent work role and all education entries are always
-     * kept even with zero matches, so the resume always has at least the spine.
+     * If true, an entity whose top-scoring bullet falls below `MIN_KEEP_SCORE`
+     * (currently `TAG_WEIGHT`, i.e. 2) is dropped entirely. This means a
+     * single coincidental substring match — e.g. the literal word "security"
+     * appearing inside a Postgres-migration bullet on a security-officer
+     * posting — is NOT enough to keep an off-topic entity; the entity needs
+     * either a real tag match (worth 2) or multiple keyword matches.
+     *
+     * Exception: the most-recent work role and all education entries are
+     * always kept regardless of score, so the resume always has at least the
+     * spine.
      */
     dropZeroScoreEntities?: boolean;
 }
@@ -51,6 +58,11 @@ const DEFAULTS: Required<SelectOptions> = {
 
 const TAG_WEIGHT = 2;
 const SUBSTRING_WEIGHT = 1;
+// Drop threshold for `dropZeroScoreEntities`. An entity whose top bullet
+// scores below this is dropped (unless `keepAlways` says otherwise). Set to
+// TAG_WEIGHT so a single tag hit keeps the entity, but a single coincidental
+// substring match does not — see the doc on `dropZeroScoreEntities`.
+const MIN_KEEP_SCORE = TAG_WEIGHT;
 
 function normalize(s: string): string {
     return s.toLowerCase();
@@ -137,7 +149,7 @@ function selectFor<E extends { id: string; bullets: { id: string; text: string; 
             if (keepAlways(entity, index)) out.push({ entity, bullets: [] });
             return;
         }
-        if (dropZeroScoreEntities && topScore === 0 && !keepAlways(entity, index)) return;
+        if (dropZeroScoreEntities && topScore < MIN_KEEP_SCORE && !keepAlways(entity, index)) return;
         out.push({ entity, bullets: top });
     });
     return out;

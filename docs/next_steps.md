@@ -13,7 +13,7 @@
 
 ## Last session
 
-- **Date:** 2026-05-25 (doc reconciliation: `docs/implementation.md` flipped M7.6 + M8.4 + M8.5 + LOP-1..11 from ⏳ to ✅ — the doc had been lying about three shipped milestone phases. Single doc-only commit; no code changes.) Earlier same day: M8.4 + M8.5 GenerateResumeCard upgrade — Pipeline/URL/Paste segmented control, LLM auto-tag pass, previous-resumes dropdown. Followed by close-detection probe gate landing earlier in the same day. All pushed to `origin/main`.
+- **Date:** 2026-05-25 (design wave: four new §7 stories S7.10–S7.13 added to `docs/user-stories.md` covering bullet-AI UX refactor + per-entity scratchpad. Three new milestone phases designed in `docs/implementation.md` — **M7.7** (S7.10 split text/tag affordances + S7.11 pin tags + S7.12 tag click no-op), **M7.8** (S7.13 schema + overlay UI + bullet-assist grounding), **M8.6** (S7.13 resume-gen synthesis pass). Pure doc work — no code shipped yet.) Earlier same day: doc reconciliation flipped M7.6 + M8.4 + M8.5 + LOP-1..11 from ⏳ to ✅. Earlier same day: M8.4 + M8.5 GenerateResumeCard upgrade. Earlier same day: close-detection probe gate. All prior pushed to `origin/main`; today's doc wave still uncommitted.
 - **Branch:** `main`, **up to date with `origin/main`** (final HEAD: `c69fcc6`). Working tree clean.
 - **What landed this session (M8.4 / M8.5, in chronological order):**
   - **`ea0fe7b` `feat(resume): M8.4/M8.5 design + Wave 0 schema foundation (S8.9–S8.13)`** — `docs/user-stories.md` gains S8.9–S8.13 + Decision 6.1–6.5 + M8.4/M8.5 milestone placeholders. `docs/implementation.md` gets full §M8.4 (10 tasks) + §M8.5 (9 tasks). Prisma migration `20260525091102_add_generated_resume_posting_metadata` adds `postingTitle` + `postingCompany` to `GeneratedResume` (applied to both dev.db + prod.db; PM2 stopped/started for each). `Bullet` interface in `lib/profile/types.ts` gains `autoTags: string[]` + `removedTags: string[]`; `lib/profile/bullets.ts:hydrateBulletDefaults` back-compats legacy JSON. `BulletWriteSchema` `.refine().transform()` enforces no-overlap invariant + Decision 6.3 implicit-accept on save.
@@ -38,13 +38,14 @@
 
 ## Umbrella goal
 
-**Apply to jobs.** The `docs/user-stories.md` roadmap is functionally closed — every 🔴 + 🟡 + 🔵 story is shipped, declined, or deferred-by-design. Forward motion now runs through real-world use:
+**Apply to jobs.** Track A (Pipeline UX), Track B (Discovery + notifications), Track C (Profile + resume + GitHub) are all in production. Forward motion runs through real-world use AND a fresh wave of bullet/scratchpad UX work designed 2026-05-25 (S7.10–S7.13 → M7.7/M7.8/M8.6) to make the bullet-edit experience cleaner and let the resume-gen step synthesize bullets from user-voice scratchpad text when the structured profile under-covers a posting.
 
-1. Send applications.
-2. When the LLM rewrites are off, capture the failure mode in `docs/implementation.md` §Prompt tuning and revise prompts.
-3. When something in the pipeline misfires (wrong status classification, missed posting, calendar sync glitch), file it as a follow-up and patch.
+1. Build M7.7 → M7.8 → M8.6 in order (see "Immediate next actions").
+2. Send applications.
+3. When the LLM rewrites are off, capture the failure mode as a Promptfoo fixture under `eval/suites/<callsite>.yaml` and tighten the prompt.
+4. When something in the pipeline misfires (wrong status classification, missed posting, calendar sync glitch), file it as a follow-up and patch.
 
-Track A (Pipeline UX), Track B (Discovery + notifications), Track C (Profile + resume + GitHub) are all in production. Backups encrypted (RAH-13). Rate limits in place (RAH-12). The MA/MB/M7/M8/M9 milestone scaffolding referenced by older sessions is all behind us; consult `docs/implementation.md` for the per-milestone shipped detail.
+Backups encrypted (RAH-13). Rate limits in place (RAH-12). Older MA/MB/M7/M8/M9 milestone scaffolding is shipped; consult `docs/implementation.md` for per-milestone detail.
 
 ## Critical path — current
 
@@ -52,7 +53,10 @@ Track A (Pipeline UX), Track B (Discovery + notifications), Track C (Profile + r
 
 ## Immediate next actions (in order)
 
-1. **Continue the GenerateResumeCard visual smoke** with the segmented-control + track-filter fixes in place — confirm the Pipeline/URL/Paste tabs now hug content (not full-card-width) and the new Career/Side/Both filter strip slices the picker correctly.
+1. **Build M7.7 — Bullet tag/AI UX refactor** (S7.10 + S7.11 + S7.12, 8 tasks). Pure UI/UX surface plus one new `bullet-tag-suggest` LLM callsite; no Prisma migration. Ship order inside the milestone: M7.7.1 schema → M7.7.2 narrow rewrite → M7.7.3 + M7.7.4 + M7.7.5 new callsite + prompt + route + cap guard → M7.7.6 BulletRow refactor (split buttons + pin toggle + bigger X + chip-body no-op) → M7.7.7 accept/discard UI → M7.7.8 three smokes. See `docs/implementation.md` §M7.7 for full design.
+2. **Build M7.8 — Per-entity scratchpad: profile half** (S7.13, 6 tasks). Migration `add_entity_scratchpads` adds `scratchpad: String?` to `WorkRole` + `Project` + `Education` (stop PM2 + scheduler tiers before migrate; same protocol as M8.4.1). New `ScratchpadOverlay` modal + `StickyNote` trigger button per row. Bullet-assist gets scratchpad as 5th grounding source. See `docs/implementation.md` §M7.8.
+3. **Build M8.6 — Resume-gen scratchpad synthesis** (S7.13, 6 tasks). Depends on M7.8's schema. New `scratchpad-synth` LLM callsite + synthesis pass in `app/api/resumes/route.ts` POST after select + auto-tag. TraceList renders new `kind: "scratchpad-synth"` distinctly. See `docs/implementation.md` §M8.6.
+4. **Continue the GenerateResumeCard visual smoke** with the segmented-control + track-filter fixes in place — confirm the Pipeline/URL/Paste tabs now hug content (not full-card-width) and the new Career/Side/Both filter strip slices the picker correctly.
 2. **Original visual smoke checklist still open:** Run through: (a) Pipeline tab default + INTERESTED-with-posting-url picker shows the right apps + generating from one populates `postingTitle/postingCompany` + the new resume row appears in the dropdown without a manual refresh (SSE path); (b) URL tab + Paste tab still work; (c) auto-tag pass actually adds tags (visible as Sparkles-cyan-border on tags); (d) `removedTags` blocklist holds — remove a tag, generate again, confirm the LLM doesn't re-add it.
 3. ~~**Run `npm run test:prompts` end-to-end**~~ — **Done 2026-05-25.** 19/19 fixtures green in 38s (~$0.01 in Gemini spend, ~3.2k tokens, all grading). First-run found three latent harness bugs that had been masking signal since LOP-9 landed; all fixed: (a) `eval/promptfooconfig.yaml` dummy prompt string contained `/` and `.ts`, tripping promptfoo's `maybeFilePath()` glob detection → aborted the whole run with "There are no prompts in ..." — replaced with plain `mc_dispatch {{callsite}}`; (b) every multi-line `value: |` JS assertion across 9 suite files was missing the explicit `return` keyword (promptfoo wraps `value` in a function body, so the block-style `const r = ...; r.foo && r.bar` returned undefined and tripped "Custom function must return a boolean") — 18 blocks edited; (c) `profile-synthesize` provider handler passed ISO date strings straight to `synthesizeMasterResume`, which calls `d.toISOString()` — added a marshalling layer in `eval/provider.ts` that converts strings → Date and pads partial bullet objects to the full `Bullet` shape (id + tags + autoTags + removedTags + locked + excluded); (d) promptfoo's Google rubric grader checks `GOOGLE_API_KEY` / `GOOGLE_GENERATIVE_AI_API_KEY` / `GEMINI_API_KEY`, while our `.env` names it `GOOGLE_GENERATIVE_AI_KEY` — added a config-level `env: { GEMINI_API_KEY: "{{ env.GOOGLE_GENERATIVE_AI_KEY }}" }` block to `eval/promptfooconfig.yaml` (promptfoo's two-pass env-template renderer), so the secret stays single-sourced in `.env`. **Going forward:** when you edit a prompt under `docs/llm-prompts/<slug>.md`, run `npm run test:prompts` to confirm the assertions still pass — the harness is now the actual prompt-regression gate. **Open follow-ups noted in §Audit-found soft bugs**: real-fixture capture (#11 implicit via item 6 below) still pending; the synthetic-but-realistic seed inputs in `eval/suites/*.yaml` work for assertion correctness but aren't grounded in user's real Gemini traffic.
 4. **Monitor the live close-detection probe gate for 7+ days** (carries over from earlier today). Tail `pm2 logs mission-control-scheduler-{dev,prod}` for `[liveness] kind=… alive/closed/unknown` + `[job-watcher] probe-gate` summary lines. Recurring `unknown` against a URL you *know* is closed → add a marker to the closure-marker list in `lib/postings/liveness.ts` (Ashby/LinkedIn/Workday only — API-based probes don't need markers). Once 7 days clean, move `docs/close-detection-probe.md` → `docs/archive/`.
@@ -99,7 +103,16 @@ Recommended fix order if working through the list:
 
 ## In-progress work
 
-**Nothing uncommitted.** Working tree clean after the doc-reconciliation commit (which itself followed the Indeed second-aggregator commit). Pre-push 60/60, tsc clean.
+**Uncommitted (2026-05-25):** selector threshold bump + Freckle bullet text edit, addressing the "Freckle.tv leaking onto security-officer resumes" leak. Three pieces:
+- **`lib/resumes/select.ts`** — new named constant `MIN_KEEP_SCORE = TAG_WEIGHT` (= 2); the `dropZeroScoreEntities` guard at the entity-keep check now drops entities whose top bullet scores below `MIN_KEEP_SCORE` instead of strictly `=== 0`. Meaning: a single coincidental substring match (score 1) is no longer enough to keep an off-topic entity; the entity needs either a tag match (worth 2) or multiple keyword matches. Docstring + inline comment updated to explain the threshold + reference the Freckle regression.
+- **`scripts/tests/hermetic/resume-select-smoke.ts`** — new Test 8b pins the new threshold: a synthesized off-topic work role with a substring-only "security" hit is asserted dropped. Existing Test 8 comment updated from "zero score" to "below MIN_KEEP_SCORE".
+- **`prisma/dev.db`** (data edit, not a migration) — Freckle.tv Magiclink bullet text changed from "…to improve data integrity and security" → "…to improve data integrity and reliability" so the literal substring "security" no longer hits posting keywords. Prod.db left untouched.
+
+Pre-push 60/60 green. End-to-end sim against the actual Cedars-Sinai posting keywords confirms Freckle now drops from the selection along with every other off-topic role; only AEG (most-recent, kept-always spine) + ECT (topScore=6, real tag matches) survive.
+
+**Two follow-ups not done in this micro-session:**
+- The auto-tag prompt (`docs/llm-prompts/bullet-auto-tag.md`) clearly stretched "data integrity and security" → "Risk Mitigation" against rule 1 ("only add a tag where the bullet's current text already evidences the work that keyword describes"). Worth a Promptfoo fixture in `eval/suites/bullet-auto-tag.yaml` to catch the regression — synthesized input: Magiclink-on-startup-MVP bullet × security-officer keywords; expected output: empty `addedTags`.
+- Same `and security` substring is still present in `prisma/prod.db`. The selector threshold change applies in prod too (it's code, not data), so the leak is mitigated even without the prod data edit — but the bullet text should still be cleaned eventually for hygiene.
 
 **Unattended verifications waiting on user:**
 - **Manual visual smoke of GenerateResumeCard** — see §Immediate next actions item 2 above. Hermetic suite covers the data path; the UI is the gap.
