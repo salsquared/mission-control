@@ -263,6 +263,9 @@ model Profile {
   email     String?
   phone     String?
   links     String?  // JSON: [{label, url}]
+  skills    String?  // JSON: [{category, items: string[]}]
+  hobbies   String?  // JSON: string[]
+  languages String?  // JSON: [{name, proficiency}]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -281,6 +284,12 @@ model WorkRole {
   startDate DateTime
   endDate   DateTime?
   bullets   String    @default("[]")
+  // M7.8.1 (story S7.13) — free-form per-entity notes the user writes in
+  // their own voice. Voice + experience grounding for the LLM bullet-assist
+  // paths (M7.6) and resume-gen synthesis (M8.6). Never rendered verbatim
+  // into a resume. Capped at 8 KB at the schema layer (lib/schemas/profile.ts)
+  // to bound prompt budgets.
+  scratchpad String?
   position  Int       @default(0)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -309,6 +318,9 @@ model Project {
   // bullets can reflect what the repo actually does, not just star counts.
   readme             String?
   readmeUpdatedAt    DateTime?
+  // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-project user-voice
+  // notes; consumed by bullet-assist + resume-gen synthesis.
+  scratchpad         String?
   position           Int       @default(0)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -328,6 +340,9 @@ model Education {
   startDate   DateTime?
   endDate     DateTime?
   bullets     String    @default("[]")
+  // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-education user-voice
+  // notes; consumed by bullet-assist + resume-gen synthesis.
+  scratchpad  String?
   position    Int       @default(0)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

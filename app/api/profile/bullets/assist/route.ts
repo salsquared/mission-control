@@ -120,6 +120,10 @@ type ParentRow = {
     institution?: string | null;
     degree?: string | null;
     field?: string | null;
+    // M7.8.1 — per-entity user-voice notes. Present on every entity model
+    // (WorkRole, Project, Education) after the add_entity_scratchpads
+    // migration. Null when the user hasn't written notes for this entity.
+    scratchpad?: string | null;
 };
 
 async function loadParent(kind: ParentKind, parentId: string): Promise<ParentRow | null> {
@@ -445,12 +449,16 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        // 8. Build the prompt + call Gemini.
+        // 8. Build the prompt + call Gemini. M7.8.5 — pass parent.scratchpad
+        // (if any) for voice + experience grounding. Cross-entity isolation
+        // is enforced here: only THIS parent row's scratchpad goes in; the
+        // sibling-bullet collection above already excludes the current parent.
         const prompt = await buildBulletAssistPrompt({
             mode: parsed.data.mode,
             parent: assistParent,
             siblingBullets,
             archiveSpans,
+            parentScratchpad: parentRow.scratchpad ?? null,
             readmeContext,
             currentBullet: parsed.data.mode === "rewrite" && currentBullet
                 ? { text: currentBullet.text, tags: currentBullet.tags }

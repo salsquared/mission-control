@@ -97,6 +97,9 @@ export const LanguageEntrySchema = z.object({
 });
 
 // ─── Entity shapes (responses include parsed bullets, not the JSON string) ──
+// `scratchpad` is .nullable().optional() so pre-M7.8.1 snapshots and fixtures
+// validate without spelling out a null. Server reads always emit the column
+// explicitly (null when unset).
 export const WorkRoleSchema = z.object({
     id: z.string(),
     profileId: z.string(),
@@ -106,6 +109,7 @@ export const WorkRoleSchema = z.object({
     startDate: z.string().datetime(),
     endDate: z.string().datetime().nullable(),
     bullets: z.array(BulletSchema),
+    scratchpad: z.string().nullable().optional(),
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -129,6 +133,7 @@ export const ProjectSchema = z.object({
     // (or the repo has no README).
     readme: z.string().nullable().optional(),
     readmeUpdatedAt: z.string().datetime().nullable().optional(),
+    scratchpad: z.string().nullable().optional(),
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -143,6 +148,7 @@ export const EducationSchema = z.object({
     startDate: z.string().datetime().nullable(),
     endDate: z.string().datetime().nullable(),
     bullets: z.array(BulletSchema),
+    scratchpad: z.string().nullable().optional(),
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -193,6 +199,11 @@ export const ProfilePatchSchema = z.object({
     { message: 'At least one mutable field must be provided' }
 );
 
+// M7.8.2 (story S7.13) — scratchpad cap. 8 KB upper bound to keep prompt
+// budgets bounded when the LLM grounds on it. Matches the schema-level
+// column type (`String?`).
+const SCRATCHPAD_MAX_BYTES = 8192;
+
 export const WorkRolePostSchema = z.object({
     company: z.string().min(1),
     title: z.string().min(1),
@@ -200,6 +211,7 @@ export const WorkRolePostSchema = z.object({
     startDate: z.string().datetime(),
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
+    scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });
 
@@ -211,6 +223,7 @@ export const WorkRolePatchSchema = z.object({
     startDate: z.string().datetime().optional(),
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
+    scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });
 
@@ -222,6 +235,7 @@ export const ProjectPostSchema = z.object({
     bullets: z.array(BulletWriteSchema).optional(),
     githubRepo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).nullable().optional(),
     portfolio: z.boolean().optional(),
+    scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });
 
@@ -234,6 +248,7 @@ export const ProjectPatchSchema = z.object({
     bullets: z.array(BulletWriteSchema).optional(),
     githubRepo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).nullable().optional(),
     portfolio: z.boolean().optional(),
+    scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });
 
@@ -244,6 +259,7 @@ export const EducationPostSchema = z.object({
     startDate: z.string().datetime().nullable().optional(),
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
+    scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });
 
@@ -255,6 +271,7 @@ export const EducationPatchSchema = z.object({
     startDate: z.string().datetime().nullable().optional(),
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
+    scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });
 

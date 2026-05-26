@@ -1,16 +1,28 @@
 import { prisma } from '@/lib/prisma';
 import type { Profile, WorkRole, Project, Education } from '@prisma/client';
 import { parseBullets, serializeBullets, normalizeBullet } from '@/lib/profile/bullets';
-import type { Bullet } from '@/lib/profile/types';
+import {
+    LANGUAGE_PROFICIENCIES,
+    type Bullet,
+    type ProfileLink,
+    type SkillGroup,
+    type LanguageEntry,
+    type LanguageProficiency,
+} from '@/lib/profile/types';
+// Re-export so existing callers (e.g. legacy imports of ProfileLink) keep working.
+export type { ProfileLink, SkillGroup, LanguageEntry, LanguageProficiency };
+export { LANGUAGE_PROFICIENCIES };
 
 // Hydrated shapes: bullets parsed from JSON string into Bullet[].
 export type HydratedWorkRole = Omit<WorkRole, 'bullets'> & { bullets: Bullet[] };
 export type HydratedProject = Omit<Project, 'bullets' | 'metrics'> & { bullets: Bullet[]; metrics: unknown | null };
 export type HydratedEducation = Omit<Education, 'bullets'> & { bullets: Bullet[] };
 
-export type ProfileLink = { label: string; url: string };
-export type HydratedProfile = Omit<Profile, 'links'> & {
+export type HydratedProfile = Omit<Profile, 'links' | 'skills' | 'hobbies' | 'languages'> & {
     links: ProfileLink[] | null;
+    skills: SkillGroup[] | null;
+    hobbies: string[] | null;
+    languages: LanguageEntry[] | null;
     workRoles: HydratedWorkRole[];
     projects: HydratedProject[];
     education: HydratedEducation[];
@@ -22,6 +34,47 @@ function parseLinks(raw: string | null): ProfileLink[] | null {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return null;
         return parsed.filter((x) => x && typeof x.label === 'string' && typeof x.url === 'string');
+    } catch {
+        return null;
+    }
+}
+
+function parseSkills(raw: string | null): SkillGroup[] | null {
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        return parsed
+            .filter((g) => g && typeof g.category === 'string' && Array.isArray(g.items))
+            .map((g) => ({
+                category: g.category,
+                items: g.items.filter((it: unknown): it is string => typeof it === 'string'),
+            }));
+    } catch {
+        return null;
+    }
+}
+
+function parseHobbies(raw: string | null): string[] | null {
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        return parsed.filter((x): x is string => typeof x === 'string');
+    } catch {
+        return null;
+    }
+}
+
+function parseLanguages(raw: string | null): LanguageEntry[] | null {
+    if (!raw) return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return null;
+        return parsed
+            .filter((l) => l && typeof l.name === 'string' && typeof l.proficiency === 'string'
+                && (LANGUAGE_PROFICIENCIES as readonly string[]).includes(l.proficiency))
+            .map((l) => ({ name: l.name, proficiency: l.proficiency as LanguageProficiency }));
     } catch {
         return null;
     }
@@ -63,6 +116,9 @@ export async function findOrCreateProfile(userId: string): Promise<HydratedProfi
     return {
         ...row,
         links: parseLinks(row.links),
+        skills: parseSkills(row.skills),
+        hobbies: parseHobbies(row.hobbies),
+        languages: parseLanguages(row.languages),
         workRoles: row.workRoles.map(hydrateWorkRole),
         projects: row.projects.map(hydrateProject),
         education: row.education.map(hydrateEducation),
@@ -76,6 +132,9 @@ export interface ProfileHeaderUpdate {
     email?: string | null;
     phone?: string | null;
     links?: ProfileLink[] | null;
+    skills?: SkillGroup[] | null;
+    hobbies?: string[] | null;
+    languages?: LanguageEntry[] | null;
 }
 
 export async function updateProfileHeader(userId: string, data: ProfileHeaderUpdate): Promise<HydratedProfile> {
@@ -86,6 +145,9 @@ export async function updateProfileHeader(userId: string, data: ProfileHeaderUpd
     if (data.email !== undefined) payload.email = data.email;
     if (data.phone !== undefined) payload.phone = data.phone;
     if (data.links !== undefined) payload.links = data.links === null ? null : JSON.stringify(data.links);
+    if (data.skills !== undefined) payload.skills = data.skills === null ? null : JSON.stringify(data.skills);
+    if (data.hobbies !== undefined) payload.hobbies = data.hobbies === null ? null : JSON.stringify(data.hobbies);
+    if (data.languages !== undefined) payload.languages = data.languages === null ? null : JSON.stringify(data.languages);
 
     await prisma.profile.upsert({
         where: { userId },
@@ -126,6 +188,7 @@ export interface WorkRoleCreateInput {
     startDate: Date;
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
+    scratchpad?: string | null;
     position?: number;
 }
 
@@ -142,6 +205,7 @@ export async function createWorkRole(userId: string, input: WorkRoleCreateInput)
             startDate: input.startDate,
             endDate: input.endDate ?? null,
             bullets: serializeBullets(bullets),
+            scratchpad: input.scratchpad ?? null,
             position,
         },
     });
@@ -155,6 +219,7 @@ export interface WorkRoleUpdateInput {
     startDate?: Date;
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
+    scratchpad?: string | null;
     position?: number;
 }
 
@@ -173,6 +238,7 @@ export async function updateWorkRole(userId: string, id: string, input: WorkRole
     if (input.endDate !== undefined) payload.endDate = input.endDate;
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
+    if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;
     const row = await prisma.workRole.update({ where: { id }, data: payload });
     return hydrateWorkRole(row);
 }
@@ -196,6 +262,7 @@ export interface ProjectCreateInput {
     bullets?: Array<Partial<Bullet> & { text: string }>;
     githubRepo?: string | null;
     portfolio?: boolean;
+    scratchpad?: string | null;
     position?: number;
 }
 
@@ -213,6 +280,7 @@ export async function createProject(userId: string, input: ProjectCreateInput): 
             bullets: serializeBullets(bullets),
             githubRepo: input.githubRepo ?? null,
             portfolio: input.portfolio ?? false,
+            scratchpad: input.scratchpad ?? null,
             position,
         },
     });
@@ -227,6 +295,7 @@ export interface ProjectUpdateInput {
     bullets?: Array<Partial<Bullet> & { text: string }>;
     githubRepo?: string | null;
     portfolio?: boolean;
+    scratchpad?: string | null;
     position?: number;
 }
 
@@ -245,6 +314,7 @@ export async function updateProject(userId: string, id: string, input: ProjectUp
     if (input.portfolio !== undefined) payload.portfolio = input.portfolio;
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
+    if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;
     const row = await prisma.project.update({ where: { id }, data: payload });
     return hydrateProject(row);
 }
@@ -267,6 +337,7 @@ export interface EducationCreateInput {
     startDate?: Date | null;
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
+    scratchpad?: string | null;
     position?: number;
 }
 
@@ -283,6 +354,7 @@ export async function createEducation(userId: string, input: EducationCreateInpu
             startDate: input.startDate ?? null,
             endDate: input.endDate ?? null,
             bullets: serializeBullets(bullets),
+            scratchpad: input.scratchpad ?? null,
             position,
         },
     });
@@ -296,6 +368,7 @@ export interface EducationUpdateInput {
     startDate?: Date | null;
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
+    scratchpad?: string | null;
     position?: number;
 }
 
@@ -313,6 +386,7 @@ export async function updateEducation(userId: string, id: string, input: Educati
     if (input.endDate !== undefined) payload.endDate = input.endDate;
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
+    if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;
     const row = await prisma.education.update({ where: { id }, data: payload });
     return hydrateEducation(row);
 }

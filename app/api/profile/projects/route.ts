@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
             bullets: parsed.data.bullets,
             githubRepo: parsed.data.githubRepo ?? null,
             portfolio: parsed.data.portfolio,
+            scratchpad: parsed.data.scratchpad ?? null,
             position: parsed.data.position,
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: project.id, timestamp: Date.now() });
@@ -65,6 +66,7 @@ export async function PATCH(req: NextRequest) {
             bullets: parsed.data.bullets,
             githubRepo: parsed.data.githubRepo,
             portfolio: parsed.data.portfolio,
+            scratchpad: parsed.data.scratchpad,
             position: parsed.data.position,
         });
         if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });

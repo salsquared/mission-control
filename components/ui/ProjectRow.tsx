@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink, Github, Star, RefreshCw, Sparkles, X } from "lucide-react";
+import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink, Github, Star, RefreshCw, Sparkles, X, StickyNote } from "lucide-react";
 import { EditableField } from "./EditableField";
 import { BulletRow } from "./BulletRow";
+import { ScratchpadOverlay } from "@/components/overlays/ScratchpadOverlay";
 import { makeBullet } from "@/lib/profile/bullets";
 import { api } from "@/lib/api-client";
 import type { Bullet } from "@/lib/profile/types";
@@ -17,6 +18,7 @@ interface ProjectRowProps {
         githubRepo: string | null;
         portfolio: boolean;
         bullets: Bullet[];
+        scratchpad: string | null;
     }>) => void;
     onDelete: () => void;
     onMoveUp?: () => void;
@@ -37,6 +39,10 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
     const [newBulletText, setNewBulletText] = useState("");
     const [drafting, setDrafting] = useState(false);
     const [draftError, setDraftError] = useState<string | null>(null);
+    // M7.8.4 — per-entity scratchpad overlay.
+    const [showScratchpad, setShowScratchpad] = useState(false);
+    const scratchpadLen = project.scratchpad?.length ?? 0;
+    const hasScratchpad = scratchpadLen > 0;
 
     const updateBullet = (idx: number, next: Bullet) => {
         const arr = [...project.bullets];
@@ -84,6 +90,20 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
                     />
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                        onClick={() => setShowScratchpad(true)}
+                        className={`p-1.5 rounded transition-colors ${
+                            hasScratchpad
+                                ? "text-cyan-300 bg-cyan-500/10 hover:bg-cyan-500/20"
+                                : "text-white/25 hover:text-white/60 hover:bg-white/10"
+                        }`}
+                        title={hasScratchpad
+                            ? `${scratchpadLen.toLocaleString()} chars of notes — click to edit`
+                            : "No notes yet — click to add voice/experience grounding for the LLM"}
+                        aria-pressed={hasScratchpad}
+                    >
+                        <StickyNote className={`w-3.5 h-3.5 ${hasScratchpad ? "fill-current" : ""}`} />
+                    </button>
                     {onMoveUp && (
                         <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded text-white/30 hover:text-white/70 hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed" title="Move up"><ArrowUp className="w-3.5 h-3.5" /></button>
                     )}
@@ -220,6 +240,18 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
                     </button>
                 </div>
             </div>
+
+            <ScratchpadOverlay
+                open={showScratchpad}
+                entityKind="project"
+                entityLabel={project.name || "Project"}
+                initialValue={project.scratchpad ?? null}
+                onSave={(next) => {
+                    onUpdate({ scratchpad: next });
+                    setShowScratchpad(false);
+                }}
+                onClose={() => setShowScratchpad(false)}
+            />
         </div>
     );
 };

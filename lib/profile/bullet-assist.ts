@@ -89,6 +89,13 @@ export interface BuildBulletAssistPromptInput {
     parent: AssistParent;
     siblingBullets: SiblingInput[]; // pre-filtered + ranked by caller; capped to first ~12 inside
     archiveSpans: ArchiveSpan[]; // already top-3 ranked by recency (from findArchiveSpansFor)
+    /** M7.8.5 (story S7.13) — the parent entity's own scratchpad text. Voice
+     *  + experience grounding the user wrote in their own words. The caller
+     *  reads `WorkRole.scratchpad` / `Project.scratchpad` / `Education.scratchpad`
+     *  and passes it through. Empty string or null = no section rendered.
+     *  Cross-entity isolation is enforced at the caller layer — this field
+     *  ONLY ever receives the current parent's own scratchpad. */
+    parentScratchpad?: string | null;
     readmeContext?: ProjectReadmeContext | null;
     currentBullet?: { text: string; tags: string[] } | null; // required when mode === 'rewrite'
 }
@@ -96,6 +103,11 @@ export interface BuildBulletAssistPromptInput {
 // Section size caps. Total user-prompt ceiling is 8 KB (USER_PROMPT_LIMIT).
 const SIBLING_CAP_BYTES = 1_536; // 1.5 KB
 const ARCHIVE_CAP_BYTES = 1_536; // 1.5 KB
+// M7.8.5 — scratchpad caps at 2 KB for the prompt (full column is up to 8 KB).
+// The 2 KB excerpt is the user's own raw notes; truncating from the end is
+// the right call because users typically lead with the most important
+// context (similar to README handling).
+const SCRATCHPAD_CAP_BYTES = 2_048; // 2 KB
 const README_CAP_BYTES = 2_048; // 2 KB
 const SIBLING_COUNT_CAP = 12;
 const USER_PROMPT_LIMIT = 8_192; // 8 KB
@@ -204,6 +216,34 @@ export function renderArchiveSpans(spans: ArchiveSpan[], cap: number): string {
 }
 
 /**
+ * M7.8.5 (story S7.13) — render the parent entity's own scratchpad as a
+ * prompt section. Returns "" when scratchpad is null / empty / whitespace
+ * so the prompt template omits the section header entirely (the registry
+ * template uses `{{scratchpad}}` substitution; empty string yields a clean
+ * gap, not a dangling header).
+ *
+ * Truncates from the END at the byte cap — users typically lead with the
+ * most important context, so trailing trim is safer than middle-out.
+ */
+export function renderScratchpad(scratchpad: string | null | undefined, cap: number): string {
+    if (!scratchpad) return '';
+    const trimmed = scratchpad.trim();
+    if (trimmed.length === 0) return '';
+
+    const header = "## User's notes about this role/project/education (their own voice)";
+    const full = `${header}\n${trimmed}`;
+    if (Buffer.byteLength(full, 'utf8') <= cap) return full;
+
+    const headerBytes = Buffer.byteLength(`${header}\n`, 'utf8');
+    const remaining = Math.max(0, cap - headerBytes - 16); // 16 for marker
+    let truncated = trimmed;
+    while (Buffer.byteLength(truncated, 'utf8') > remaining && truncated.length > 0) {
+        truncated = truncated.slice(0, -64);
+    }
+    return `${header}\n${truncated}\n…(truncated)`;
+}
+
+/**
  * Render the project-README excerpt section. Returns "" if `ctx` is null /
  * absent or the excerpt is empty. The caller pre-truncates to 2 KB, but we
  * defensively re-cap here so a misuse can't blow the prompt budget.
@@ -254,12 +294,14 @@ export async function buildBulletAssistPrompt(
     // Start with full caps for the trimmable sections.
     let siblings = renderSiblingBullets(input.siblingBullets, SIBLING_CAP_BYTES);
     let archive = renderArchiveSpans(input.archiveSpans, ARCHIVE_CAP_BYTES);
+    let scratchpad = renderScratchpad(input.parentScratchpad ?? null, SCRATCHPAD_CAP_BYTES);
     let readme = renderReadme(input.readmeContext ?? null, README_CAP_BYTES);
 
     const render = () => loadPrompt(slug, {
         spine,
         siblings,
         archive,
+        scratchpad,
         readme,
         currentBulletText,
         currentBulletTags,
@@ -269,7 +311,9 @@ export async function buildBulletAssistPrompt(
 
     // Overflow trim — drop in priority order (lowest value first). Re-render
     // through the registry so the byte budget is computed against the actual
-    // template that will be sent.
+    // template that will be sent. Order: archive (oldest source) → siblings
+    // → README → scratchpad. Scratchpad ranks high because the user wrote it
+    // specifically about THIS entity, so it's the most relevant grounding.
     if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
         archive = '';
         prompt = await render();
@@ -280,6 +324,13 @@ export async function buildBulletAssistPrompt(
     }
     if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
         readme = '';
+        prompt = await render();
+    }
+    // Scratchpad is dropped last — it's the user's most-targeted grounding
+    // for THIS entity, so we hold onto it the longest. Unlikely to ever
+    // fire in practice (scratchpad cap is 2 KB; spine + schema are < 1 KB).
+    if (Buffer.byteLength(prompt.user, 'utf8') > USER_PROMPT_LIMIT) {
+        scratchpad = '';
         prompt = await render();
     }
 

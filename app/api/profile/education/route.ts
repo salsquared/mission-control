@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
             startDate: parsed.data.startDate ? new Date(parsed.data.startDate) : null,
             endDate: parsed.data.endDate ? new Date(parsed.data.endDate) : null,
             bullets: parsed.data.bullets,
+            scratchpad: parsed.data.scratchpad ?? null,
             position: parsed.data.position,
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: education.id, timestamp: Date.now() });
@@ -63,6 +64,7 @@ export async function PATCH(req: NextRequest) {
             startDate: parsed.data.startDate === undefined ? undefined : (parsed.data.startDate ? new Date(parsed.data.startDate) : null),
             endDate: parsed.data.endDate === undefined ? undefined : (parsed.data.endDate ? new Date(parsed.data.endDate) : null),
             bullets: parsed.data.bullets,
+            scratchpad: parsed.data.scratchpad,
             position: parsed.data.position,
         });
         if (!education) return NextResponse.json({ error: "Education not found" }, { status: 404 });

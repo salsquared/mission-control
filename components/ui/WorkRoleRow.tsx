@@ -1,7 +1,8 @@
 import React, { useState } from "react";
-import { Plus, Trash2, ArrowUp, ArrowDown, Sparkles, X } from "lucide-react";
+import { Plus, Trash2, ArrowUp, ArrowDown, Sparkles, X, StickyNote } from "lucide-react";
 import { EditableField } from "./EditableField";
 import { BulletRow } from "./BulletRow";
+import { ScratchpadOverlay } from "@/components/overlays/ScratchpadOverlay";
 import { makeBullet } from "@/lib/profile/bullets";
 import { api } from "@/lib/api-client";
 import type { Bullet } from "@/lib/profile/types";
@@ -16,6 +17,7 @@ interface WorkRoleRowProps {
         startDate: string;
         endDate: string | null;
         bullets: Bullet[];
+        scratchpad: string | null;
     }>) => void;
     onDelete: () => void;
     onMoveUp?: () => void;
@@ -42,6 +44,12 @@ export const WorkRoleRow: React.FC<WorkRoleRowProps> = ({
     const [newBulletText, setNewBulletText] = useState("");
     const [drafting, setDrafting] = useState(false);
     const [draftError, setDraftError] = useState<string | null>(null);
+    // M7.8.4 — per-entity scratchpad overlay. Hidden by default; button on
+    // the row toolbar opens it. Button visual state reflects emptiness so the
+    // user can see at a glance which entities have notes.
+    const [showScratchpad, setShowScratchpad] = useState(false);
+    const scratchpadLen = role.scratchpad?.length ?? 0;
+    const hasScratchpad = scratchpadLen > 0;
 
     const updateBullet = (idx: number, next: Bullet) => {
         const arr = [...role.bullets];
@@ -89,6 +97,20 @@ export const WorkRoleRow: React.FC<WorkRoleRowProps> = ({
                     />
                 </div>
                 <div className="flex items-center gap-0.5 shrink-0">
+                    <button
+                        onClick={() => setShowScratchpad(true)}
+                        className={`p-1.5 rounded transition-colors ${
+                            hasScratchpad
+                                ? "text-purple-300 bg-purple-500/10 hover:bg-purple-500/20"
+                                : "text-white/25 hover:text-white/60 hover:bg-white/10"
+                        }`}
+                        title={hasScratchpad
+                            ? `${scratchpadLen.toLocaleString()} chars of notes — click to edit`
+                            : "No notes yet — click to add voice/experience grounding for the LLM"}
+                        aria-pressed={hasScratchpad}
+                    >
+                        <StickyNote className={`w-3.5 h-3.5 ${hasScratchpad ? "fill-current" : ""}`} />
+                    </button>
                     {onMoveUp && (
                         <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded text-white/30 hover:text-white/70 hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed" title="Move up"><ArrowUp className="w-3.5 h-3.5" /></button>
                     )}
@@ -192,6 +214,18 @@ export const WorkRoleRow: React.FC<WorkRoleRowProps> = ({
                     </button>
                 </div>
             </div>
+
+            <ScratchpadOverlay
+                open={showScratchpad}
+                entityKind="work-role"
+                entityLabel={`${role.title || "Role"} — ${role.company || "Company"}`}
+                initialValue={role.scratchpad ?? null}
+                onSave={(next) => {
+                    onUpdate({ scratchpad: next });
+                    setShowScratchpad(false);
+                }}
+                onClose={() => setShowScratchpad(false)}
+            />
         </div>
     );
 };

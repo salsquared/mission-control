@@ -33,6 +33,8 @@ Rewrite this one bullet. **Return ONLY the new text — do not return tags.** Ta
 
 {{archive}}                        ← optional, omitted if empty
 
+{{scratchpad}}                     ← optional, omitted if empty (M7.8.5)
+
 {{readme}}                         ← optional, project parents only
 
 ## Current bullet to rewrite
@@ -41,12 +43,12 @@ tags (for context only — do not return or modify): [{{currentBulletTags}}]
 
 ## Output schema
 { "text": "<rewritten bullet text>" }
-Return the new text only. Keep the text length range close to the original (±20%). Do not echo the id — that is preserved by the server. Do not return a `tags` field.
+Return the new text only. Keep the text length range close to the original (±20%). When the scratchpad section is present, draw on the user's actual experience + cadence + specifics — those notes are the most direct evidence of what this work actually involved. Do not echo the id — that is preserved by the server. Do not return a `tags` field.
 ```
 
 ## Variables
 
-Inherits all four from `bullet-assist-fill` (`spine`, `siblings`, `archive`, `readme`) plus:
+Inherits all five from `bullet-assist-fill` (`spine`, `siblings`, `archive`, `scratchpad`, `readme`) plus:
 
 - `currentBulletText` — the original bullet's text, unmodified.
 - `currentBulletTags` — JSON-stringified comma-separated list of the original bullet's tags, e.g. `"typescript", "performance"`. Produced by `current.tags.map(t => JSON.stringify(t)).join(', ')`. Sent as **context only** — the LLM uses tags to understand bullet emphasis but must not output a `tags` field.
@@ -54,7 +56,7 @@ Inherits all four from `bullet-assist-fill` (`spine`, `siblings`, `archive`, `re
 ## Notes
 
 - M7.7.2 (S7.10) narrowed this to text-only. The `M7.6` enhancement that added tag-update is reverted. Tag churn now lives in the sibling `bullet-tag-suggest` callsite (Tags icon in `components/ui/BulletRow.tsx`, next to the wand).
-- The `Current bullet to rewrite` block is **never trimmed** (along with spine + task statement + output schema). Overflow trim order is the same as fill: `archive` → `siblings` → `readme`.
+- The `Current bullet to rewrite` block is **never trimmed** (along with spine + task statement + output schema). Overflow trim order is the same as fill: `archive` → `siblings` → `readme` → `scratchpad` (scratchpad drops last because it's the user's most-targeted grounding for this specific entity).
 - Output schema enforces text length 1–2000 chars. No `tags` field — server preserves all tag-related state (`tags`, `autoTags`, `removedTags`, `pinnedTags`) from the input bullet verbatim.
 - Server post-processing: response replaces only `text` on the existing bullet; `id` / tags / `autoTags` / `removedTags` / `pinnedTags` / `locked` / `excluded` all pass through. The schema instructs the model to not echo the id (server-side enforcement).
 - Lower token cap than fill (2048 vs 4096) because rewrite is single-bullet output.

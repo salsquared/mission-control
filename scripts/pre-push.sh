@@ -105,6 +105,9 @@ SUITES=(
     "scripts/tests/hermetic/bullet-pin-tag-smoke.ts"
     "scripts/tests/hermetic/bullet-rewrite-text-only-smoke.ts"
     "scripts/tests/hermetic/bullet-tag-suggest-smoke.ts"
+    # M7.8 — per-entity scratchpad (profile half)
+    "scripts/tests/hermetic/scratchpad-patch-smoke.ts"
+    "scripts/tests/hermetic/bullet-assist-scratchpad-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do
