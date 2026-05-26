@@ -25,44 +25,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 One scheduler per tier — they're independent. Each scheduler logs with a `[SCHEDULER:<tier>]` prefix. If a tier's DB is schema-behind (Prisma `P2021`, e.g. prod.db is currently missing `Watchlist`/`JobPosting`/etc.), the affected job emits one loud warning and is disabled for that process's lifetime — so the schema-behind tier doesn't spam errors every tick. Bring the lagging DB current with `npx prisma migrate deploy` (point `DATABASE_URL` at the target SQLite first) and `pm2 restart mission-control-scheduler-<tier>` to re-enable.
 
-Restart / inspect:
-- `pm2 restart mission-control-dev` — pick up config changes (next.config.ts, env, etc.) on the dev tier.
-- `pm2 restart mission-control` — same for prod after a fresh build.
-- `pm2 logs mission-control-scheduler-dev` (or `-prod`) — tail per-tier scheduler logs.
-- `pm2 list` — quick status of all processes.
+Dev runs on Turbopack (`npm run dev` → `next dev --turbopack`); prod build stays on webpack (`npm run build`) — don't flip without re-running `npm run test:hermetic` (CSS hashing + prerender behavior differ subtly).
 
-**Dev vs prod tooling split** (2026-05-20):
-- **`npm run dev` uses Turbopack** (`next dev --turbopack`). Measured ~35 % lower worker RSS than webpack dev, ~55 % lower peak CPU during compile bursts. Active on `mission-control-dev`.
-- **`npm run build` stays on webpack** (`next build --webpack`). Prod runtime is a `next start` of the compiled output and doesn't care which compiler produced it; webpack's build path is the verified one. Don't flip `build` to Turbopack without re-running `npm run test:hermetic` and a manual route sweep — a few small differences (CSS chunk hashing, prerender behavior) can bite.
-- The `webpack: (config, { dev, isServer, nextRuntime }) => { ... }` function in `next.config.ts` is **inert during `next dev`** (Turbopack ignores it) but still applies to `next build`. Keep it — the watchOptions.ignored entries and `node:*` scheme fallbacks are still load-bearing for prod builds.
-
-The npm scripts themselves remain useful for one-offs:
-- `npm run build` — production build (webpack). Run before restarting `mission-control` so it picks up new compiled code.
-- `npm run lint` — ESLint (flat config, extends `eslint-config-next`).
-- `npm run test:hermetic` — runs `./scripts/pre-push.sh` (the hermetic suite). Use this to verify before pushing without going through `git push`.
-- `npm run test:integration` — runs `./scripts/test-integration.sh` against the dev PM2 process on :4101. Aborts early with a helpful message if `mission-control-dev` isn't online; bypass with `SKIP_INTEGRATION_TESTS=1`. Not part of the pre-push gate.
-- `npm run test:all` — hermetic + integration in sequence. Use before merging non-trivial changes to `main`.
-- `./launch-ms.sh` — convenience launcher that ensures the prod PM2 process is up and opens Chrome in `--app=` mode at `http://localhost:3101`. `./launch-ms.sh --restart` force-kills and recreates the PM2 process.
-- `npx prisma migrate dev` / `npx prisma generate` — schema lives at `prisma/schema.prisma` (SQLite). Dev and prod use **separate DB files** in `prisma/`.
+Non-obvious scripts: `./launch-ms.sh` (prod launcher, `--restart` recreates the PM2 process); `npm run test:integration` aborts unless `mission-control-dev` is online — bypass with `SKIP_INTEGRATION_TESTS=1`.
 
 ### Pre-push hook (mandatory gate before reaching `main`)
 
 `scripts/pre-push.sh` runs the full hermetic suite (every file under `scripts/tests/hermetic/`). It is wired as a **git pre-push hook** via `simple-git-hooks` (config in `package.json: simple-git-hooks.pre-push`) and is installed automatically on `npm install` via the `postinstall` script. This means **every `git push` is gated on the suite passing** — you do not need to run it manually, but you should never reach for `--no-verify` without a specific load-bearing reason (the hook is the only thing keeping `main` green).
 
-Verifying the hook is installed: `ls -la .git/hooks/pre-push` should show a 200-byte script ending in `./scripts/pre-push.sh`. If a fresh clone is missing it, run `npx simple-git-hooks` (or `npm install`) to re-install.
+No test runner; `scripts/tests/` is partitioned by what each script depends on — pick the right subdir when adding a new one:
 
-There is **no pre-commit hook** — local commits are unrestricted; the gate is at push time. If you want to dry-run the suite before committing, use `npm run test:hermetic`.
+- **`scripts/tests/hermetic/`** — no network, no PM2, no live external API. **Every file runs on every push.** Append new files to the `SUITES` array in `pre-push.sh`.
+- **`scripts/tests/integration/`** — real assertions; require `mission-control-dev` on :4101. Not in the pre-push gate (PM2 startup + live-board flakiness).
+- **`scripts/tests/probes/`** — live external API probes (Gemini, LinkedIn, Greenhouse, ATS verifiers). Diagnostic only — exit-zero not a contract.
+- **`scripts/tests/debug/`** — manual exploration / `console.log` dumps. No assertions.
 
-There is no test runner configured. `scripts/tests/` is partitioned by what each script depends on — pick the right subdir when adding a new one:
-
-- **`scripts/tests/hermetic/`** — no network, no PM2, no live external API. Pure logic + in-process Prisma + optional in-process HTTP fixture server. **Every file here is wired into `scripts/pre-push.sh` and runs on every push.** Add new files here only if they're truly hermetic, and append them to the `SUITES` array in `pre-push.sh`.
-- **`scripts/tests/integration/`** — real assertions, but require the dev PM2 process (`mission-control-dev` on :4101) running. Run via `npm run test:integration` (or `test:all` for hermetic + integration). Not in the pre-push gate because PM2 startup adds 5–10s and some smokes hit live boards (Anthropic Greenhouse, Lever demo, Ashby posthog) which can be flaky. Known-flaky in production: `resume-e2e-smoke` hits Gemini and can 429 on the free tier; `watchlist-phase2-smoke` has occasionally thrown a cleanup-phase ECONNRESET after its assertions pass.
-- **`scripts/tests/probes/`** — live external API probes (Gemini, LinkedIn, Greenhouse, ATS slug verifiers, etc.). Diagnostic, not regression — exit-zero is not a contract. Run ad-hoc when debugging an outside system.
-- **`scripts/tests/debug/`** — manual exploration / `console.log` dumps (`gmail-inbox-debug`, `check-cache`, `fix-lint`). No assertions; cwd-equivalent of `/tmp` for the repo.
-
-Files run with `tsx` (e.g. `npx tsx scripts/tests/debug/check-cache.ts`). This is enforced — do not put experiments in the repo root or `/tmp`. One-off backfills and already-run migrations live under `scripts/archive/migrations/` (kept for forensic record, not re-runnable).
-
-Node.js LTS is required (project pins to v24.x via nvm). Path alias `@/*` resolves to the repo root.
+Files run with `tsx`. Don't put experiments in the repo root or `/tmp` — use `scripts/tests/debug/`.
 
 ## Architecture
 
@@ -74,7 +52,7 @@ Node.js LTS is required (project pins to v24.x via nvm). Path alias `@/*` resolv
 - **Library** (`components/overlays/SavedPapersOverlay.tsx`) — saved research papers, scoped to the current dash's topic via `getTopic(id)`.
 - **AI Companion** (`components/AICompanion.tsx`) — context-aware chat, receives the current dash id as `activeContext`.
 
-Dash order, per-dash hue, custom titles, and screenshots are all owned by the unified Zustand store (`components/providers/state/index.ts:useAppStore`; `themeStore.ts` is a thin re-export shim). `Dashboard` mounts and calls `syncAvailableDashes(BASE_DASHES)` on every load to reconcile persisted state with the current code (purges stale ids, appends new ones, force-pins `internal-systems` last). The active dash id is on the same store as `activeViewId` and persisted **per-device in `localStorage` under `'app-state'`** via Zustand's `persist` middleware (alongside `viewScreenshots`, `autoResearch`, `aiCompanionEnabled`). Cross-device fields (`isDarkMode`, `viewHues`, `dashOrder`, `dashTitles`) sync separately via `/api/settings`. The legacy `'mc-active-view'` localStorage key is read once on mount as a migration path and then cleared.
+Dash order, per-dash hue, custom titles, and screenshots are all owned by the unified Zustand store (`components/providers/state/index.ts:useAppStore`; `themeStore.ts` is a thin re-export shim). `Dashboard` mounts and calls `syncAvailableDashes(BASE_DASHES)` on every load to reconcile persisted state with the current code (purges stale ids, appends new ones, force-pins `internal-systems` last). Per-device state (`activeViewId`, `viewScreenshots`, `autoResearch`, `aiCompanionEnabled`) persists to `localStorage` under `'app-state'` via Zustand's `persist` middleware; cross-device fields (`isDarkMode`, `viewHues`, `dashOrder`, `dashTitles`) sync via `/api/settings`.
 
 When adding a new dash: add an entry to `BASE_DASHES` in `Dashboard.tsx`, register its topic in `getTopic()` if it has saved papers, and add a default title + hue in `themeStore.ts`. `syncAvailableDashes` will pick it up.
 
@@ -89,17 +67,13 @@ When adding a new dash: add an entry to `BASE_DASHES` in `Dashboard.tsx`, regist
 - **Cards rendered directly inside a `<Section>` (bypassing CardGrid)** — e.g. when a Section needs a vertical stack of full-width cards with interleaved Add buttons (as in `ProfileView`) — must replicate the canonical wrapper on their own `Card`: `bg-black/40 rounded-lg border border-white/5 hover:border-{theme}-500/30 transition-colors p-4`. Per-section theme color (`purple`, `cyan`, `emerald`) is fine for the hover border. Do NOT invent new chrome (tinted backgrounds, different radii, different padding) — drift breaks visual consistency across views.
 - Same principle up the chain: Grids arrange Cards (don't re-implement layout inside a card), Sections wrap Grids, Views aggregate Sections. If you find yourself re-creating a lower-layer concern inside a higher-layer file, lift it down to the right layer.
 
-shadcn/ui is configured (`components.json`, "new-york" style, neutral base, lucide icons) but components live under `components/ui/` as hand-written TSX rather than a generated registry.
-
 ### API routes + caching
 
 API routes live under `app/api/<feature>/route.ts`. One cross-cutting wrapper:
 
-- **`lib/cache.ts` `withCache(handler, ttlSeconds)`** — process-memory cache keyed on `pathname + sorted query` (the `?v=...` cache-buster is stripped before keying and forces a refresh). On handler error or non-OK response it falls back to the last good payload and rewrites the entry with a 60s retry TTL. Stats are surfaced via `/api/system`. **Cache-Control is `private, no-store, max-age=0` in both dev and prod** so the browser HTTP cache never short-circuits the server-side cache — previously prod emitted `max-age=ttl` and the browser served repeat fetches from disk without ever contacting the server, leaving `cacheStats.hits` stuck at 0 on the Internal Systems dash. Optional `userKeyFn` opts a route into per-user cache scoping (no current callers — see RAH-5 in `docs/implementation.md`).
+- **`lib/cache.ts` `withCache(handler, ttlSeconds)`** — process-memory cache keyed on `pathname + sorted query` (the `?v=...` cache-buster is stripped and forces a refresh). On handler error or non-OK response, falls back to the last good payload with a 60s retry TTL. Sets `Cache-Control: private, no-store, max-age=0` so the browser never short-circuits server-side cache. Stats via `/api/system`. Optional `userKeyFn` for per-user scoping.
 
-Per-request HTTP logging is **not** done via Next middleware. The in-app log viewer captures every server-side `console.*` call (see "Logger ring buffer" below) including the per-query `[DATABASE]` lines the Prisma middleware in `lib/prisma.ts` emits — that's the canonical observability surface. There is no `middleware.ts` at the repo root.
-
-Wrap any route that hits an external API (or does expensive work) in `withCache`. The cache survives HMR by attaching to `globalThis` in dev.
+Wrap any route that hits an external API (or does expensive work) in `withCache`. Per-request HTTP logging happens via the Logger ring buffer (below), not Next middleware.
 
 ### Logger ring buffer
 
@@ -125,45 +99,33 @@ Three-tier model fleet (`MODEL_FLASH` / `MODEL_LITE` / `MODEL_LITE_CHEAP`) — p
 
 ### LLM observability (Lunary + Promptfoo)
 
-Cross-cutting infra landed 2026-05-24. Design doc: [`docs/implementation.md`](./docs/implementation.md) §LLM observability + prompt registry. Three invariants every new LLM caller respects:
+Design doc: [`docs/implementation.md`](./docs/implementation.md) §LLM observability + prompt registry. Callsite inventory: [`docs/llm-calls.md`](./docs/llm-calls.md). Three invariants every new LLM caller respects:
 
-1. **Every `chatJSON` caller MUST pass a stable kebab-case `name`** — `ChatJSONOptions.name: string` is required, so TypeScript flags the misses. The canonical name list lives in the inventory table at [`docs/llm-calls.md`](./docs/llm-calls.md). The same name is the Lunary slug + the Promptfoo suite key + the prompt-registry slug — pick once, use everywhere. For SDK-bypassing callers (only `lib/email-parser.ts` today, which uses the Vercel AI SDK directly), wrap manually with `lunary.trackEvent('llm', 'start'/'end'/'error', { runId, name, … })` inside a defensive helper so a Lunary failure can never disrupt the caller's path. See `safeTrack` in `lib/email-parser.ts` for the pattern.
+1. **Stable kebab-case `name` on every `chatJSON` call** — `ChatJSONOptions.name: string` is required (TypeScript flags misses). Same string is Lunary slug + Promptfoo key + prompt-registry slug. For SDK-bypassing callers (only `lib/email-parser.ts` today), wrap manually with `lunary.trackEvent` — see `safeTrack` in that file.
+2. **Load prompts via `lib/ai/prompts.ts:loadPrompt(slug, vars)`** — Lunary-preferred, disk fallback to `docs/llm-prompts/<slug>.md` (keeps hermetic smokes + Lunary-less dev working). To push edits: `npx tsx scripts/sync-lunary-templates.ts` (idempotent; needs `LUNARY_SECRET_KEY` in `.env`, distinct from `LUNARY_PUBLIC_KEY`). One async wrinkle: `buildBulletAssistPrompt` is now async — `await` it.
+3. **Output-shape changes need a Promptfoo update** — amend `eval/suites/<slug>.yaml` and run `npm run test:prompts` before pushing. Not in `pre-push.sh` (burns real Gemini tokens). A brand-new callsite needs: name in the inventory, prompt blob in `docs/llm-prompts/`, handler in `eval/provider.ts:HANDLERS`, fixture in `eval/suites/<slug>.yaml`.
 
-2. **All 9 callsites use `lib/ai/prompts.ts:loadPrompt(slug, vars)` (LOP-6 cutover landed 2026-05-24)** — the helper prefers Lunary's `renderTemplate` when `LUNARY_PUBLIC_KEY` is set, else falls back to parsing `docs/llm-prompts/<slug>.md` from disk (what makes hermetic smokes + dev runs without a Lunary account work, and what protects production through transient Lunary API blips). To iterate on a prompt: edit in Lunary's dashboard → mirror back to the disk snapshot same-day so `git log -p` reads cleanly. Or edit the .md, then `npx tsx scripts/sync-lunary-templates.ts` to push to Lunary (idempotent — content-equal versions skipped). The sync script needs `LUNARY_SECRET_KEY` (private API key from Lunary dashboard → Settings) in `.env`, distinct from `LUNARY_PUBLIC_KEY` which gates tracing. Dashboard model-dropdown caveat: Lunary's UI only recognizes its built-in OpenAI/Anthropic SKUs, so our `gemini-3.x` strings display as a fallback like "gpt-5.5"; the actual `extra.model` value is stored and returned correctly. Playground / built-in evals are unusable for our model fleet — `npm run test:prompts` is the eval path. **One async cutover wrinkle**: `buildBulletAssistPrompt` in `lib/profile/bullet-assist.ts` is now async (it loops the registry renderer to enforce the 8 KB overflow cap against the live template); any new caller must `await` it.
-
-3. **Prompt changes that shift output shape MUST come with a Promptfoo fixture + assertion update** — add or amend an entry under [`eval/suites/<slug>.yaml`](./eval/) and run `npm run test:prompts` locally before pushing the prompt change. The harness is not in `pre-push.sh` (burns real Gemini tokens, ~$0.01–0.05/full-run) so it's a manual gate on the author. Adding a brand-new callsite means adding (a) the `name` to the inventory, (b) the prompt blob to `docs/llm-prompts/`, (c) a handler in `eval/provider.ts:HANDLERS`, (d) at least one fixture in `eval/suites/<slug>.yaml`.
-
-Tracing activates when `LUNARY_PUBLIC_KEY` is set in `.env`; otherwise `wrapModel` is bypassed at module-init in `lib/ai/gemini.ts` so dev / CI runs are a true no-op (no queueing, no event-loop hits). To switch on: drop the key into `.env`, then `pm2 restart mission-control-{dev,scheduler-dev,scheduler-prod} --update-env`.
+Tracing is opt-in: set `LUNARY_PUBLIC_KEY` in `.env` + `pm2 restart mission-control-{dev,scheduler-dev,scheduler-prod} --update-env`. Absent = true no-op (`wrapModel` bypassed at module-init).
 
 ### Prisma + dual SQLite databases
 
-`lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (so it lands in the in-app log viewer) — **prod only**. In dev the per-query log is muted by default because every `console.info` fans out to the SSE log subscribers (`/api/system/logs`) and re-renders the Internal Systems dash on each push; set `DEBUG_PRISMA=1` to re-enable when actively debugging. The same dev-mute pattern (prod on, dev off unless `DEBUG_VERBOSE_LOG=1`) gates `[CACHE HIT]` / `[CACHE MISS]` in `lib/cache.ts` and `[API Request]` in `proxy.ts` — both fire per-request and were significant SSE fan-out load in dev. The client is cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by which `.env.{development,production}` Next.js picks up. When debugging prod data issues, point at `prisma/prod.db` explicitly.
+`lib/prisma.ts` exports a single extended `PrismaClient` whose `$allOperations` middleware logs every query through `console.info` (lands in the in-app log viewer) — **prod only; dev muted unless `DEBUG_PRISMA=1`** (see verbose-log gates below). Client cached on `globalThis` in dev to survive HMR. **Dev and prod read different SQLite files** (`prisma/dev.db` vs `prisma/prod.db`) selected by `.env.{development,production}`.
 
-When invoking a `tsx` script against the dev DB (e.g. `scripts/tests/**/*.ts`), pass `DATABASE_URL="file:./dev.db"` — **not** `file:./prisma/dev.db`. Prisma resolves a relative `file:` URL from the schema's directory (`prisma/`), so `file:./prisma/dev.db` silently creates a phantom `prisma/prisma/dev.db` and you'll get empty-DB results.
-
-Schema highlights: standard NextAuth tables (`Account`/`Session`/`User`/`VerificationToken`), `Application` + `ApplicationEvent` (job tracker), `Task` (DB-native, see below), `LifeGoal`, `SavedPaper` + weekly selection tables (`SelectedHistoricalPaper`, `SelectedReviewPaper`), `GlobalSetting` (single row keyed `id="global"`), `Watchlist` + `JobPosting` (discovery feed), `Notification` (in-app bell + email dispatcher), `WebhookDelivery` (Pub/Sub messageId dedup), `GeneratedResume`.
+When invoking a `tsx` script against the dev DB, pass `DATABASE_URL="file:./dev.db"` — **not** `file:./prisma/dev.db`. Prisma resolves relative `file:` URLs from `prisma/`, so the latter silently creates a phantom `prisma/prisma/dev.db`.
 
 Race-safety + dedup invariants baked into the schema (don't paper over by bypassing):
 - `Application.normalizedCompany` + `@@unique([userId, normalizedCompany])` — concurrent `createApplication` for the same employer throws P2002; `lib/applications/ingest.ts` catches and falls through to update. Use `normalizeCompanyName` from `lib/applications/normalize-company.ts` for any new comparison path.
-- `Application.senderDomain` — secondary dedup key for LLM-classifier drift (e.g. CSULB / Cal State Long Beach / California State University Long Beach all referring to the same school). Set on every ingest from the Gmail From header via `extractSenderDomain` in `lib/applications/sender-domain.ts`, which returns null for multi-tenant ATS / admissions roots (Greenhouse, Lever, Common App, …). `ingestGmailMessage` tries `findApplicationByCompany` first, falls back to `findApplicationBySenderDomain` when the company-name lookup misses. On a domain-match hit, the existing `company` value is preserved (no LLM-drift flip-flop) and only status / nextSteps / role refresh.
-- Stale-email status guard (2026-05-20) — `ingestGmailMessage` calls `findLatestStatusAnchor(appId)` before applying an email's classification. If the anchor's `occurredAt` (the most recent `STATUS_CHANGED` or `APPLIED` event — covers both user kanban edits at `new Date()` and prior ingest writes at email sentAt) is newer than the incoming email's `sentAt`, the email is historically older than current truth: skip the `Application.status` / `role` / `nextSteps` / `lastUpdateAt` update and suppress the `STATUS_CHANGED` event emission. Still record `EMAIL_RECEIVED` and factual `OFFER` / `REJECTION` / `INTERVIEW_SCHEDULED` / `ASSESSMENT_REQUESTED` events at the email's date — those happened, even if they no longer represent live status. This also closes a latent backfill bug where Gmail's newest-first iteration meant the OLDEST email processed won on status.
+- `Application.senderDomain` — secondary dedup key for LLM-classifier drift. Set on every ingest from the Gmail From header via `extractSenderDomain` in `lib/applications/sender-domain.ts` (returns null for multi-tenant ATS roots: Greenhouse, Lever, Common App, …). `ingestGmailMessage` tries `findApplicationByCompany` first, falls back to `findApplicationBySenderDomain`. On a domain-match hit, existing `company` is preserved (no LLM-drift flip-flop); only status / nextSteps / role refresh.
+- Stale-email status guard — `ingestGmailMessage` calls `findLatestStatusAnchor(appId)` before applying an email's classification. If the anchor's `occurredAt` (most recent `STATUS_CHANGED` or `APPLIED` event) is newer than the incoming email's `sentAt`, skip the `Application.status` / `role` / `nextSteps` / `lastUpdateAt` update and suppress the `STATUS_CHANGED` emission. Still record `EMAIL_RECEIVED` and factual `OFFER` / `REJECTION` / `INTERVIEW_SCHEDULED` / `ASSESSMENT_REQUESTED` events at the email's date.
 - `ApplicationEvent.notifiedAt` + `gcalSyncedAt` — per-event checkpoints. Ingest re-fires side-effects only for events whose checkpoint is still null. Don't short-circuit ingest on `lastEmailMsgId === msgId` alone.
 - `Notification.dedupKey String? @unique` — `dispatchNotification` returns `Notification | null`; callers passing dedupKey MUST handle null. Use `utcDateBucket()` from `lib/notifications/dispatch.ts` for date buckets, never `new Date().toLocaleDateString()`.
 - `Watchlist.directoryKey` — when set, `config` is hydrated from `COMPANY_DIRECTORY` at read time via `lib/watchlists/hydrate.ts`. Manual PATCH to `config` clears the key so user overrides stick.
 - `WebhookDelivery(messageId @id)` — Gmail webhook's first action is `INSERT OR IGNORE` on the envelope messageId; P2002 = redelivery → return 200 immediately. Daily prune at 30 days.
 - **Closed-posting detection is probe-gated** (2026-05-25, see [`docs/close-detection-probe.md`](./docs/close-detection-probe.md)). `scheduler/jobs/job-watcher.ts` no longer auto-closes a `JobPosting` purely because the fetcher hasn't returned its `externalId` in 6h — it first probes the posting's `sourceUrl` via `lib/postings/liveness.ts:probeBatch` and only flips to `status="closed"` on positive evidence of removal. Probes returning `"alive"` bump `lastSeenAt` instead (re-arming the 6h clock so a posting permanently absent from the fetch list but live on the source — LinkedIn 24h-filtered, Workday past page 10 — never false-closes). Per-ATS profiles (concurrency / delay / cap / timeout) live in `PROBE_PROFILES`. Hermetic-test override: `MC_LIVENESS_BYPASS={alive|closed|unknown}` short-circuits probes for smokes that assert at scale; production never sets it.
 
-### Task system: DB + UI only
+### Task system
 
-The `Task` table in `prisma/schema.prisma` is the source of truth for tasks. There is no markdown file sync — the previous `docs/todo.md` ↔ DB pipeline (`lib/tasks/parser.ts`, `regenerator.ts`, `watcher.ts`) was removed; `docs/todo.archive.md` is the read-only snapshot from before the cutover.
-
-`app/api/tasks/route.ts` is pure DB CRUD:
-- `GET` — returns all tasks ordered by `position` then `createdAt`.
-- `POST` — creates a task; computes `position` via `nextPosition(parentId)` (parent's position + 1, or `MAX(position) + 1`).
-- `PATCH` — partial update (`status`, `text`, `dueDate`, `priority`, `position`, `parentId`).
-- `DELETE` — removes a task; cascading is handled by the schema (`parentId` `onDelete: SET NULL`).
-
-When adding task fields: update `prisma/schema.prisma:Task`, the Zod schemas in `lib/schemas/tasks.ts`, the repository helpers in `lib/repositories/tasks.ts`, and the route in `app/api/tasks/route.ts`. No file-side parser to keep in sync.
+`Task` in `prisma/schema.prisma` is the source of truth; `app/api/tasks/route.ts` is pure DB CRUD. When adding fields, touch: schema, `lib/schemas/tasks.ts` (Zod), `lib/repositories/tasks.ts`, and the route.
 
 ### Pluggable news ingestion
 
@@ -173,29 +135,13 @@ Article count is capped by `MAX_NEWS_ARTICLES` in `lib/constants.ts`.
 
 ### Resume-gen relevance pipeline
 
-`POST /api/resumes` runs a multi-stage relevance pipeline before rendering. Key concepts a future change should be aware of:
+`POST /api/resumes` runs a multi-stage pipeline: importance-weighted bullet scoring (`TAG_WEIGHT=2` × Σ importance + `SUBSTRING_WEIGHT=1` × Σ importance, case-insensitive dedupe) → entity-level `pinKeywords` force-include + lead-of-section → LLM-decided `sectionOrder` + `entityOrder` via the `resume-tagline` callsite → pin-front re-assert → no-match bullet prefilter (skips Flash rewrite) → Skills/Languages/Interests posting-filter → two-phase one-page pruner (entity-level, then bullet-level on `>= 2`-bullet entities).
 
-- **Posting keywords carry per-keyword `importance` (1–5).** `posting-parse`'s output schema accepts both bare-string and `{keyword, importance}` entries (back-compat for stale Lunary templates); `parsePosting` normalizes to a structured form. `ParsedPosting` exposes `keywords: string[]` AND `keywordWeights: Record<string, number>` (lowercased-key map). The scorer in `lib/resumes/select.ts:scoreBullet` multiplies `TAG_WEIGHT` / `SUBSTRING_WEIGHT` by the importance of the matched keyword. Default importance = 1 when missing — so passing only `keywords` (no weights) gives legacy scoring. Importance rubric lives in the prompt's system block.
-
-- **Bullet scoring is case-insensitive in match count.** `scoreBullet` lowercase-dedupes `matchedTags` per posting keyword — a bullet that somehow ended up with both `software engineering` + `Software Engineering` tagged on it contributes ONE match for `Software Engineering` posting keyword, not two. Live data audited 2026-05-26 found 5 doubled-casing pairs on dev — closed via the `auto-tag.ts` + `bullet-tag-suggest.ts` + `scoreBullet` case-insensitive fixes and the one-shot backfill `scripts/dedupe-bullet-tag-casings.ts`.
-
-- **Entity-level `pinKeywords` is the posting-category-conditional pin.** Per-entity column on `WorkRole` / `Project` / `Education` (JSON-stringified `string[]`, nullable). When `entityIsPinned(entity.pinKeywords, posting.keywords) === true` (whole-word case-insensitive intersection), the entity is force-included in `selectBullets` (bypasses `MIN_KEEP_SCORE`), moved to position 0 of its section (overriding score-based + LLM ordering), and added to `getUnremovableEntityIds` so the one-page pruner can't drop it. CLI helper at `scripts/set-entity-pin-keywords.ts` (no Profile UI affordance yet — tracked in `docs/next_steps.md`).
-
-- **Section + entity layout is LLM-decided.** The `resume-tagline` callsite doubles as a "framing decisions" call: returns `tagline` + optional `sectionOrder` (`experience | projects | education | skills | languages | interests`) + optional `entityOrder` (per-section list of entity IDs). `tagline-tailor.ts` normalizes both fields (drops unknown IDs / dedupes / fills missing defaults) and the route applies them via `reorderSelectionByIds`. The `entityIdsBlock` prompt variable includes per-entity matched-tag + aggregate-score + sample-bullet evidence so the LLM ranks by substance, not name similarity. Pin-front pass runs AFTER the LLM reorder to re-assert "pinned entities lead their section."
-
-- **`rewriteBullets` pre-filters no-match bullets.** Bullets with both `matchedTags.length === 0` AND `matchedKeywords.length === 0` are passed through verbatim — they have no posting-keyword lever for the LLM (rules 6 / 6a are no-ops) and a low-value rewrite risks cross-domain invention. Saves ~30% of Flash tokens on a typical profile.
-
-- **One-page pruner has two phases.** `lib/resumes/one-page.ts:pruneOneStep`. Phase 1 drops the lowest-aggregate-score *removable* entity (a section with only 1 entity is skipped — guarantees per-section spine survives). Phase 2 fires when Phase 1 can't make further progress (e.g. user pinned multiple entities → unremovable set fills the page) — drops the lowest-aggregate-score non-locked bullet from any entity with `>= 2` bullets.
-
-- **Skills / Languages / Interests are posting-filtered.** `selectProfileExtras(profile, keywords)` filters `profile.skills` (groups + items) / `profile.languages` (name) / `profile.hobbies` to items matching at least one posting keyword via whole-word lookup. Skill groups with zero matched items drop entirely. Rendered after Education in default `sectionOrder`. `computeSkillsGap` also folds these into its coverage haystack so a posting keyword satisfied by `profile.languages[].name` doesn't get flagged as missing.
-
-- **Resume-gen scoring math (canonical formula).** `score = TAG_WEIGHT × Σ importance(matchedTag) + SUBSTRING_WEIGHT × Σ importance(matchedKeyword)` per bullet. `TAG_WEIGHT = 2`, `SUBSTRING_WEIGHT = 1`. Matched count deduped case-insensitively. Locked bullets get `Number.POSITIVE_INFINITY`. Entity aggregate = `Σ max(0, bullet.score)`.
-
-When adding a new field that affects selection (e.g. a new entity-level flag), the touch list is: (1) `prisma/schema.prisma` + migration; (2) Zod schemas in `lib/schemas/profile.ts` (response + POST + PATCH); (3) `lib/repositories/profile.ts` (parse/serialize helpers + CRUD interfaces + payload assembly); (4) API routes in `app/api/profile/{work-roles,projects,education}/route.ts`; (5) `lib/resumes/select.ts` (selector logic — widen generic constraints if you read it inside `selectFor`); (6) `lib/resumes/one-page.ts:getUnremovableEntityIds` if it affects pruning; (7) hermetic smoke. Skipping step 5 or 6 is the most common cause of "feature is in the DB but doesn't change resume gen."
+Full rules + the touch list for adding a selection-affecting field live in [`docs/resume-pipeline.md`](./docs/resume-pipeline.md). **The most common bug** when adding a profile field intended to influence selection is forgetting to thread it through `lib/resumes/select.ts` and/or `lib/resumes/one-page.ts:getUnremovableEntityIds` — see that doc's touch list.
 
 ### PWA / service worker
 
-`@serwist/next` wraps the Next config in `next.config.ts` and emits `public/sw.js` from `app/sw.ts`. **The service worker is disabled in dev** (`disable: isDev`); the webpack `watchOptions.ignored` list also excludes `public/sw.js`, `public/sw.js.map`, and Prisma DB files to prevent reload loops during prod builds (and previously dev — see note below). If you add generated artifacts in `public/`, add them to that ignore list too. Under Turbopack-driven `next dev`, the watchOptions are inert (Turbopack uses its own watcher) but Turbopack's defaults handle these cases without manual ignores.
+`@serwist/next` emits `public/sw.js` from `app/sw.ts`; disabled in dev. New generated artifacts in `public/` need to be added to the webpack `watchOptions.ignored` list in `next.config.ts` (prod-build only; Turbopack uses its own watcher in dev).
 
 ## Documentation conventions
 
@@ -205,108 +151,16 @@ When adding a new field that affects selection (e.g. a new entity-level flag), t
 ## Conventions and gotchas
 
 - `reactStrictMode: false` in `next.config.ts` — components are not double-mounted in dev. Don't rely on strict-mode side-effect detection.
-- The dev-server-only `--max-old-space-size=2048` is intentional but **comfortably oversized** post-Turbopack: measured idle worker is ~280 MB (prod) / ~720 MB (dev under Turbopack). The 2 GB cap leaves headroom for fetcher/parser routes on big pages. Don't lower without re-measuring under heavy LinkedIn/Workday crawls.
-- **Dev worker profile is asymmetric to PM2's view**: `pm2 jlist` reports the npm wrapper PID (~55 MB), not the `next-server` worker child that actually serves HTTP. To gauge real load, use `/api/system` (in-process `process.memoryUsage()`) or `scripts/perf-monitor.ts` (which walks the process tree to the worker). `pm2 list` will lie to you about how heavy dev is.
-- **Dev process tree:** `npm → next dev → next-server` (3 procs under Turbopack). Prod tree: `npm → next-server` (2 procs — `next start` doesn't fork). `max_memory_restart` in `~/salsquared/ecosystem.config.cjs` watches the npm wrapper, not the worker, so the cap is effectively cosmetic for memory leaks in the actual server. Worker stability lives in `process.memoryUsage()` checks, not PM2's cap.
-- **Verbose-log gates** (added 2026-05-20 for SSE fan-out reasons): `[DATABASE]` Prisma logs muted in dev unless `DEBUG_PRISMA=1`; `[CACHE HIT]` / `[CACHE MISS]` from `lib/cache.ts` and `[API Request]` from `proxy.ts` muted in dev unless `DEBUG_VERBOSE_LOG=1`. All on in production (the in-app log viewer is the canonical observability surface there).
-- **Dev-server perf profile** lives at [`docs/perf-profile.md`](./docs/perf-profile.md). Active perf-monitor harness: `scripts/perf-monitor.ts` (env-configurable, supports `MC_PERF_RESTART=1` for cold-baseline AB comparisons). Writes JSONL + a markdown summary to `data/perf/`.
+- **Dev-server perf + process-tree quirks** — PM2 watches the npm wrapper, not the `next-server` worker, so `pm2 list` understates real memory. Use `/api/system` or `scripts/perf-monitor.ts` for worker numbers. Full notes in [`docs/perf-profile.md`](./docs/perf-profile.md). The `--max-old-space-size=2048` cap is intentional; don't lower without re-measuring.
+- **Verbose-log gates**: `[DATABASE]` Prisma logs muted in dev unless `DEBUG_PRISMA=1`; `[CACHE HIT]` / `[CACHE MISS]` / `[API Request]` muted unless `DEBUG_VERBOSE_LOG=1`. All on in prod.
 - Scope authorization via `lib/auth.ts` is the only place that requests Google tokens. Server-side Gmail/Calendar callers should always go through `getGoogleAuthClient(userId)`, never construct an OAuth client inline.
 - API routes that fetch external data should be wrapped in `withCache` — bare external `fetch` per request is the exception, not the rule.
 - For server-side logging use `console.info` / `console.warn` / `console.error` (they're captured by the in-app log viewer). Don't introduce a separate logger.
-- `.env*` files are gitignored. The checked-in `.env.development` / `.env.production` hold non-secret runtime config: `DATABASE_URL`, `NEXTAUTH_URL`, `PULSAR_URL`, `CACHE_BACKEND`, and `EMAIL_ENABLED` (see below). Real secrets (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NEXTAUTH_SECRET`, `GEMINI_API_KEY`, `CHROME_EXECUTABLE_PATH` override, AI keys, etc.) live in an untracked `.env`. `GOOGLE_GENERATIVE_AI_KEY` powers the resume-generation pipeline (see `lib/ai/gemini.ts`; falls back to `GOOGLE_GEN_AI_KEY` / `GEMINI_API_KEY` / `GOOGLE_API_KEY`). A free key comes from Google AI Studio (aistudio.google.com).
+- Checked-in `.env.{development,production}` hold non-secret runtime config; real secrets (Google OAuth, NextAuth, Gemini) live in an untracked `.env`. `GOOGLE_GENERATIVE_AI_KEY` (or fallbacks `GOOGLE_GEN_AI_KEY` / `GEMINI_API_KEY` / `GOOGLE_API_KEY`) powers Gemini callers — free key from Google AI Studio.
 - **`EMAIL_ENABLED` is the master Gmail-send switch.** `lib/email/send.ts` checks it before calling `gmail.users.messages.send`. `EMAIL_ENABLED=1` in `.env.production` so prod actually delivers application-side notifications (OFFER / REJECTION / INTERVIEW_SCHEDULED / ASSESSMENT_REQUESTED). `EMAIL_ENABLED=0` in `.env.development` so test runs and the pre-push hook don't blast the inbox. When `EMAIL_ENABLED !== "1"`, `dispatchNotificationEmail` records `emailError = "Email muted (EMAIL_ENABLED != 1)"` on the notification row instead of dispatching — the in-app surface still fires. To verify the pipeline ad-hoc: `EMAIL_ENABLED=1 pm2 restart mission-control-dev` and hit `/api/notifications/test`.
 
 ## Backups + recovery
 
-Two pieces of state matter:
+Two pieces of state matter: `prisma/prod.db` (contains plaintext `Account.refresh_token` — treat as mailbox-equivalent) and `data/resumes/<id>.<ext>`. `scripts/backup-db.sh` snapshots both, age-encrypts when `~/.config/mission-control/backup.pub` is present, mirrors to Google Drive via rclone, prunes >30d. Runbook (one-time encryption setup, cron, fresh-machine recovery) lives in [`docs/backup-recovery.md`](./docs/backup-recovery.md).
 
-- **`prisma/prod.db`** — every Application, ApplicationEvent, Profile entity, Watchlist, JobPosting, Notification, GeneratedResume row. **Also contains plaintext `Account.refresh_token` for the Gmail/Calendar OAuth session** — anyone with this file has equivalence to the user's mailbox.
-- **`data/resumes/<id>.<ext>`** — the actual PDF/DOCX bytes archived per generation. `GeneratedResume.artifactPath` points at this directory.
-
-`scripts/backup-db.sh` snapshots both, encrypts each artifact with [age](https://age-encryption.org/) when a recipient is configured (RAH-13), mirrors to Google Drive via rclone, and prunes local copies (and their `.age` variants) older than 30 days. Designed for cron / launchd; run by hand any time. Falls back to local-only if rclone isn't on PATH (warns loudly); falls back to **plaintext** if no age recipient is configured, also warning loudly (so cron doesn't break before the user finishes initial setup).
-
-### Encryption (RAH-13) — one-time setup
-
-The script auto-discovers an age recipient at `~/.config/mission-control/backup.pub`. To activate encryption for an existing install:
-
-```sh
-# 1. Install age (Homebrew)
-brew install age
-
-# 2. Generate a keypair (private key file lives at the canonical config path)
-mkdir -p ~/.config/mission-control
-age-keygen -o ~/.config/mission-control/backup.key
-chmod 600 ~/.config/mission-control/backup.key
-
-# 3. Pull the public-key line into the auto-discovery path the script reads
-grep '^# public key:' ~/.config/mission-control/backup.key \
-    | sed 's/^# public key: //' \
-    > ~/.config/mission-control/backup.pub
-chmod 644 ~/.config/mission-control/backup.pub
-
-# 4. CRITICAL — copy the secret key text into 1Password (or any offline
-#    store NOT named Google Drive). Lose the secret and every encrypted
-#    backup becomes unrecoverable. The file you need to copy is:
-#      ~/.config/mission-control/backup.key
-```
-
-The next `./scripts/backup-db.sh` run will pick up the new public key automatically and emit `.age`-suffixed artifacts — no env-var plumbing or cron edit needed. Override the auto-discovery path by exporting `MC_BACKUP_AGE_RECIPIENT=/path/to/recipients.txt`.
-
-**Clean up the existing plaintext history once encrypted backups are verified working:** the script encrypts new runs but does not retroactively re-encrypt the ~30 days of plaintext snapshots already on disk + Drive. Run the decrypt smoke (`./scripts/backup-decrypt.sh ~/backups/mission-control/$(ls -t ~/backups/mission-control/*.age | head -1)`) end-to-end against the live key first, then:
-
-```sh
-# Local plaintext purge
-rm -f ~/backups/mission-control/mc-*.db ~/backups/mission-control/mc-resumes-*.tar.gz
-# Drive plaintext purge (only if you've verified the new encrypted backups are uploading correctly)
-rclone delete gdrive:backups/mission-control/ --include "mc-*.db" --include "mc-resumes-*.tar.gz"
-```
-
-### Set up the cron (run once)
-
-```sh
-# Open crontab editor
-crontab -e
-
-# Add:
-# 0 4 * * *  cd /Users/sal/salsquared/mission-control && ./scripts/backup-db.sh >> ~/backups/mission-control/backup.log 2>&1
-```
-
-No env-var plumbing in the crontab — the script auto-discovers the recipient from `~/.config/mission-control/backup.pub`.
-
-### Recovery — Mac died, fresh machine
-
-```sh
-# 0. (One-time on the new machine) Install age, restore the secret key from
-#    1Password to ~/.config/mission-control/backup.key, chmod 600 it.
-brew install age
-mkdir -p ~/.config/mission-control
-# paste the secret-key text from 1Password into:
-#   ~/.config/mission-control/backup.key
-chmod 600 ~/.config/mission-control/backup.key
-
-# 1. Pull the latest backup from Drive (encrypted .age artifacts; plaintext
-#    artifacts only if older than the RAH-13 cutover)
-rclone copy gdrive:backups/mission-control/  ~/restore/ \
-    --include "mc-*.db.age" --include "mc-resumes-*.tar.gz.age" \
-    --include "mc-*.db"     --include "mc-resumes-*.tar.gz"
-
-# 2. Decrypt every .age in ~/restore/ (auto-discovers the identity at
-#    ~/.config/mission-control/backup.key)
-./scripts/backup-decrypt.sh ~/restore/
-
-# 3. Stop everything
-pm2 stop mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod
-
-# 4. Restore the DB
-cp ~/restore/mc-LATEST.db prisma/prod.db
-rm -f prisma/prod.db-wal prisma/prod.db-shm   # let SQLite rebuild WAL sidecars
-
-# 5. Restore artifacts
-rm -rf data/resumes/*    # leave .gitkeep
-tar -xzf ~/restore/mc-resumes-LATEST.tar.gz -C data/
-
-# 6. Bring services back up
-pm2 start mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod
-```
-
-The Cloudflare tunnel (`cloudflared` PID checked via `pm2 list` won't show it — it's a system-level process via Homebrew) handles the public-hostname side. `requireLocalOrSession` in `lib/auth-guards.ts` gates tunnel traffic behind NextAuth while LAN hosts (localhost / mc.local) skip auth.
+The Cloudflare tunnel (`cloudflared`, system-level via Homebrew — won't appear in `pm2 list`) handles the public-hostname side. `requireLocalOrSession` in `lib/auth-guards.ts` gates tunnel traffic behind NextAuth while LAN hosts (localhost / mc.local) skip auth.
