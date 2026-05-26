@@ -50,9 +50,10 @@ export interface SelectOptions {
      * posting — is NOT enough to keep an off-topic entity; the entity needs
      * either a real tag match (worth 2) or multiple keyword matches.
      *
-     * Exception: the most-recent work role and all education entries are
-     * always kept regardless of score, so the resume always has at least the
-     * spine.
+     * Exception: a work-role "spine" entry is always kept (so the resume has
+     * at least one work role) — see `pickWorkRoleSpineIndex` for which role
+     * gets that protection. All education entries are always kept regardless
+     * of score.
      */
     dropZeroScoreEntities?: boolean;
 }
@@ -171,6 +172,50 @@ function sortByStartDateDesc<E extends { startDate?: string | null }>(arr: E[]):
     });
 }
 
+/**
+ * Pick which work role gets the always-keep "spine" slot.
+ *
+ * Default: the most-recent role (index 0 after sortByStartDateDesc) — the
+ * resume should reflect what the candidate is doing now.
+ *
+ * Override: if the most-recent role's top bullet scores BELOW
+ * `MIN_KEEP_SCORE` for this posting (i.e. it's off-topic — e.g. a current
+ * security-officer role on a software-engineering posting), fall back to
+ * whichever role scores highest. This prevents an off-topic current job
+ * from occupying the "spine" slot on resumes where it doesn't earn its keep.
+ *
+ * Final fallback: if EVERY role is below MIN_KEEP_SCORE, return index 0
+ * anyway — the work-role section should never be empty when the user has
+ * work roles in their profile.
+ *
+ * `workRoles` must already be sorted by startDate desc.
+ */
+function pickWorkRoleSpineIndex(
+    workRoles: { bullets: { text: string; tags: string[]; locked: boolean; excluded: boolean }[] }[],
+    keywords: string[],
+): number {
+    if (workRoles.length === 0) return -1;
+    const topScoreOf = (idx: number): number => {
+        let top = 0;
+        for (const b of workRoles[idx].bullets) {
+            if (b.excluded) continue;
+            if (b.locked) return Number.POSITIVE_INFINITY;
+            const s = scoreBullet(b.text, b.tags, keywords).score;
+            if (s > top) top = s;
+        }
+        return top;
+    };
+    const mostRecentScore = topScoreOf(0);
+    if (mostRecentScore >= MIN_KEEP_SCORE) return 0;
+    let bestIdx = 0;
+    let bestScore = mostRecentScore;
+    for (let i = 1; i < workRoles.length; i++) {
+        const s = topScoreOf(i);
+        if (s > bestScore) { bestScore = s; bestIdx = i; }
+    }
+    return bestScore >= MIN_KEEP_SCORE ? bestIdx : 0;
+}
+
 export function selectBullets(
     profile: ProfileWire,
     keywords: string[],
@@ -181,6 +226,7 @@ export function selectBullets(
     const workRoles = sortByStartDateDesc(profile.workRoles);
     const projects = [...profile.projects].sort((a, b) => a.position - b.position);
     const education = sortByStartDateDesc(profile.education);
+    const workRoleSpineIdx = pickWorkRoleSpineIndex(workRoles, keywords);
 
     return {
         workRoles: selectFor(
@@ -189,7 +235,7 @@ export function selectBullets(
             (e) => `${e.title} @ ${e.company}`,
             keywords,
             opts.maxBulletsPerWorkRole,
-            (_e, i) => i === 0,
+            (_e, i) => i === workRoleSpineIdx,
             opts.dropZeroScoreEntities,
         ),
         projects: selectFor(
@@ -211,6 +257,47 @@ export function selectBullets(
             opts.dropZeroScoreEntities,
         ),
     };
+}
+
+// ─── Profile extras: skills / languages / hobbies ──────────────────────────
+// Posting-relevance filter for the top-level Profile fields the resume renderer
+// surfaces below the bulleted sections. Whole-word matching (same as the bullet
+// scorer) so a keyword "Go" doesn't pull in "Golang" by substring.
+
+export interface ExtrasSelection {
+    skills: { category: string; items: string[] }[];
+    languages: { name: string; proficiency: string }[];
+    hobbies: string[];
+}
+
+export function selectProfileExtras(
+    profile: ProfileWire,
+    keywords: string[],
+): ExtrasSelection {
+    const lowerKeywords = keywords.map(normalize);
+    const matchesAnyKeyword = (item: string): boolean => {
+        const lowerItem = normalize(item);
+        return lowerKeywords.some(kw => matchesWord(kw, lowerItem));
+    };
+
+    const skills: ExtrasSelection["skills"] = [];
+    for (const group of profile.skills ?? []) {
+        const filtered = group.items.filter(matchesAnyKeyword);
+        if (filtered.length > 0) {
+            skills.push({ category: group.category, items: filtered });
+        }
+    }
+
+    const languages: ExtrasSelection["languages"] = [];
+    for (const lang of profile.languages ?? []) {
+        if (matchesAnyKeyword(lang.name)) {
+            languages.push({ name: lang.name, proficiency: lang.proficiency });
+        }
+    }
+
+    const hobbies = (profile.hobbies ?? []).filter(matchesAnyKeyword);
+
+    return { skills, languages, hobbies };
 }
 
 export function flattenSelections(sel: ResumeSelection): BulletSelection[] {

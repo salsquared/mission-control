@@ -219,6 +219,81 @@ const profile: ProfileWire = {
     }
 }
 
+// 8c) Spine-guard: when the most-recent work role scores below MIN_KEEP_SCORE
+// AND some older role scores above it, the older role becomes the spine and
+// the most-recent (off-topic) role is dropped. Regression guard against
+// security-officer leaking onto a software-internship resume (May 2026).
+{
+    const offTopicRecentProfile: ProfileWire = {
+        ...profile,
+        workRoles: [
+            // Most-recent: off-topic, score 0 for "typescript" posting.
+            {
+                ...profile.workRoles[0],
+                id: "wr-recent-off-topic",
+                startDate: "2025-06-01T00:00:00.000Z",
+                endDate: null,
+                bullets: [
+                    mkBullet("b-r1", "Maintained physical security at a 20k-capacity venue", ["security", "crowd control"]),
+                    mkBullet("b-r2", "Coordinated incident response with on-site teams", ["incident response"]),
+                ],
+            },
+            // Older: relevant, score 2 (tag "typescript").
+            {
+                ...profile.workRoles[0],
+                id: "wr-older-relevant",
+                startDate: "2024-01-01T00:00:00.000Z",
+                endDate: "2025-05-01T00:00:00.000Z",
+                bullets: [
+                    mkBullet("b-o1", "Built a TypeScript service in Node", ["typescript", "node"]),
+                ],
+            },
+        ],
+    };
+    const sel = selectBullets(offTopicRecentProfile, ["typescript"]);
+    if (sel.workRoles.find(w => w.entity.id === "wr-recent-off-topic")) {
+        fail("off-topic most-recent role should be dropped when an older role scores above threshold");
+    } else {
+        pass("spine falls back to top-scoring older role when most-recent is off-topic");
+    }
+    if (!sel.workRoles.find(w => w.entity.id === "wr-older-relevant")) {
+        fail("older relevant role should be kept as the new spine");
+    } else {
+        pass("older relevant role kept as spine");
+    }
+}
+
+// 8d) Spine-guard fallback: when EVERY work role scores below MIN_KEEP_SCORE,
+// the most-recent role is still kept (the work-role section is never empty
+// when the user has work roles in their profile).
+{
+    const allOffTopicProfile: ProfileWire = {
+        ...profile,
+        workRoles: [
+            {
+                ...profile.workRoles[0],
+                id: "wr-recent",
+                startDate: "2025-06-01T00:00:00.000Z",
+                endDate: null,
+                bullets: [mkBullet("b-r", "Worked on completely unrelated stuff", ["unrelated"])],
+            },
+            {
+                ...profile.workRoles[0],
+                id: "wr-older",
+                startDate: "2024-01-01T00:00:00.000Z",
+                endDate: "2025-05-01T00:00:00.000Z",
+                bullets: [mkBullet("b-o", "Different unrelated stuff", ["alsounrelated"])],
+            },
+        ],
+    };
+    const sel = selectBullets(allOffTopicProfile, ["typescript"]);
+    if (!sel.workRoles.find(w => w.entity.id === "wr-recent")) {
+        fail("most-recent role should fall back to spine when all roles are off-topic");
+    } else {
+        pass("most-recent role kept as final fallback when all roles score 0");
+    }
+}
+
 // 9) Stable bullet ids preserved through selection.
 {
     const sel = selectBullets(profile, ["typescript", "go"]);
