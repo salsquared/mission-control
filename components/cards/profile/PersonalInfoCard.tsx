@@ -446,11 +446,17 @@ export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
                 {/* Identity essentials — headline / summary / contact */}
                 <section className="flex flex-col gap-3">
                     <div>
-                        <span className="text-[10px] uppercase tracking-wider text-white/30">Headline</span>
+                        {/* The backing schema field is still `profile.headline` (used as
+                            the resume template's H1 per the M8.4 canonical-naming work)
+                            but the UI label reads "Name" since that's how the user
+                            actually populates it. Renaming the schema column would
+                            cascade through too many consumers; UI label is the cheap
+                            fix. */}
+                        <span className="text-[10px] uppercase tracking-wider text-white/30">Name</span>
                         <EditableField
                             value={headline}
                             onSave={(v) => onSave({ headline: v })}
-                            placeholder="Click to add a headline (e.g. 'Senior Engineer · Distributed Systems')"
+                            placeholder="Your full name (e.g. 'Salvador Salcedo')"
                             readClassName="text-lg font-semibold text-white"
                         />
                     </div>

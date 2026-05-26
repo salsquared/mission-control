@@ -887,6 +887,109 @@ Both wired into `scripts/pre-push.sh`'s `SUITES` array.
 - **Auto-summarize scratchpad** — out. Scratchpad is intentionally raw; summarization changes voice.
 - **Versioning of scratchpad edits** — out. `ProfileSnapshot` (M7.5) can extend to capture scratchpad columns when rollback UX ships (story S7.6 deferred).
 
+### M7.9 — Profile tagline + LLM draft ⏳
+
+Story: **S7.14** (🟡 LLM-drafted tagline). Added 2026-05-26, designed not started. **Splits the dual-purpose `profile.headline` field** — today it's used as both the user's name (resume H1, per M8.4 canonical naming) AND any tagline-y content they happen to put there. M7.9 adds a separate `tagline` column + AI-draft UX so the two concerns stop colliding. UI label rename "Headline" → "Name" on `PersonalInfoCard` ships alongside (already in tree).
+
+**Why now.** The user uses `profile.headline` for their name, but the existing placeholder ("Click to add a headline (e.g. 'Senior Engineer · Distributed Systems')") was confusing. Resume H1 prints the name; a one-sentence tagline as subtitle is a common resume convention but currently the user has no place to put it without overloading the name field. The LLM-draft is the lever — drafting a defensible tagline from scratch is hard, refining a starting point is easier; both flows ground on the full profile so the LLM stops at evidence the profile actually shows.
+
+**Surfaces touched.**
+- `prisma/schema.prisma` — `Profile.tagline String?` (migration `add_profile_tagline`).
+- `lib/schemas/profile.ts` — `ProfileSchema` + `ProfilePatchSchema` accept `tagline` (cap 200 chars at zod).
+- `lib/repositories/profile.ts` — `ProfileHeaderUpdate` + `updateProfileHeader` thread `tagline`.
+- New `lib/profile/tagline-draft.ts` — caller (loads profile, builds prompt, dispatches chatJSON, returns proposal).
+- New `docs/llm-prompts/tagline-draft.md` + `eval/suites/tagline-draft.yaml` + provider handler in `eval/provider.ts`.
+- New `app/api/profile/tagline/draft/route.ts` — POST, session-gated, per-user rate-limit.
+- `components/cards/profile/PersonalInfoCard.tsx` — new Tagline field below Name + AI-draft button + inline diff panel (Accept / Discard).
+- `lib/resumes/templates/ats-plain.tsx` — render `profile.tagline` as a subtitle line under the H1 when non-null.
+
+**LLM model:** `MODEL_LITE` (`gemini-3.1-flash-lite`) — bounded judgment, conservative voice rewrite. Promote to `MODEL_FLASH` only if Promptfoo evals show LITE is poor at the enhance path.
+
+---
+
+#### Task list
+
+##### M7.9.1 — Schema migration: `Profile.tagline` ⏳ (S7.14)
+
+Migration `add_profile_tagline` (dev + prod). Adds `tagline String?` to `Profile`. Pure additive; existing rows default null. Apply against dev.db first; then prod.db with PM2 stopped (same protocol as M7.8.1).
+
+##### M7.9.2 — PATCH schema + repository accept `tagline` ⏳ (S7.14)
+
+- `lib/schemas/profile.ts`: extend `ProfileSchema` (wire-format) with `tagline: z.string().nullable().optional()`; extend `ProfilePatchSchema` with `tagline: z.string().max(200).nullable().optional()`. 200-char cap matches the prompt's hard rule.
+- `lib/repositories/profile.ts`: extend `ProfileHeaderUpdate` type + `updateProfileHeader` payload assembly so the column flows through.
+- `lib/profile/types.ts`: no change (tagline isn't part of the Bullet shape).
+- The existing `/api/profile` PATCH route already accepts the full `ProfilePatchSchema` shape, so no route change is needed for plain text writes — only the new draft endpoint at M7.9.5 needs route wiring.
+
+##### M7.9.3 — `tagline-draft` LLM caller ⏳ (S7.14)
+
+New `lib/profile/tagline-draft.ts:draftTagline({userId})`. Loads the full hydrated profile via `findOrCreateProfile`. Builds a compact profile-summary block (one section per WorkRole / Project / Education with spine + bullets text + scratchpad excerpt; plus skills/hobbies/languages summary; plus current summary; plus current tagline if any). Two dispatch modes:
+- **Empty current tagline** → `mode: 'draft'`. Prompt instructs the LLM to produce a one-sentence tagline grounded ONLY on the profile evidence.
+- **Non-empty current tagline** → `mode: 'enhance'`. Prompt instructs the LLM to refine the user's existing text while preserving their angle — the user's framing is the floor.
+
+Calls `chatJSON({ name: 'tagline-draft', model: MODEL_LITE, maxOutputTokens: 256, temperature: 0.4 })`. Zod-validates the response: `{tagline: z.string().min(1).max(200)}`. Server post-processes: trim, strip trailing newlines, ensure trailing period if absent.
+
+Pure caller — does NOT persist. Returns `{tagline, mode, durationMs}`. Client persists via the existing profile PATCH on Accept.
+
+##### M7.9.4 — Prompt + Promptfoo fixtures ⏳ (S7.14)
+
+- New `docs/llm-prompts/tagline-draft.md`. System prompt enumerates: no fabrication (only claim experience the profile evidences), one sentence ≤ 200 chars typically ≤ 120, no first-person pronouns/possessives, ends with a period, professional one-liner not sales-y, mode-specific behavior (draft from scratch vs enhance user's existing). User template interpolates `{{mode}}` + `{{currentTagline}}` + `{{profileSummary}}`.
+- New `eval/suites/tagline-draft.yaml` with fixtures:
+  - **Draft from empty** — profile with rich work history → output is one sentence covering the profile's most defensible claim.
+  - **Enhance preserves angle** — current tagline "Backend engineer who likes systems" → output keeps "backend systems" focus, doesn't pivot to "full-stack" or invent new domain.
+  - **No-invention** — profile has no Rust experience → output never claims Rust even if "Rust" appears as a posting-keyword-style hint in the input.
+  - **Length cap** — output ≤ 200 chars; assertions check both length and that the rewrite didn't truncate mid-sentence.
+- Provider handler in `eval/provider.ts:HANDLERS["tagline-draft"]`. Mirrors the bullet-tag-suggest handler shape: fixture supplies profile summary directly so the suite is DB-agnostic.
+
+##### M7.9.5 — API route + rate limit ⏳ (S7.14)
+
+New `app/api/profile/tagline/draft/route.ts` `POST`:
+- `requireSession`-gated.
+- Body: `{}` (no payload — server reads `profile.tagline` to decide mode).
+- Rate-limit scope `profile:tagline-draft`, 10 calls / 10 min per user (looser than bullet-assist's 20 since tagline drafts are larger-output, but tighter than resumes:gen since they're cheaper per call).
+- Calls `draftTagline({ userId })`. Returns `{ tagline, mode }`.
+- 502 on AIError (mirror bullet-assist's error shape).
+
+##### M7.9.6 — UI: Tagline field + AI-draft button + diff panel ⏳ (S7.14)
+
+`components/cards/profile/PersonalInfoCard.tsx`:
+- New props: `tagline: string | null`, `onSave({tagline})` already covered by `PersonalInfoPatch` once M7.9.2 lands.
+- New field below Name. Plain text input via `EditableField` for direct edits.
+- AI-draft button: purple `Sparkles` icon, hover state. Click → POST `/api/profile/tagline/draft`, surface "Drafting…" state, render proposal in inline diff panel.
+- Diff panel: original text (line-through if non-empty; "(empty)" placeholder if null) vs proposed text (emerald). Accept → call `onSave({tagline: proposal})`. Discard → close panel. Error → inline rose chip.
+- Cap-hint UX: input has a 200-char counter that turns rose at 180+.
+
+##### M7.9.7 — Resume template subtitle render ⏳ (S7.14)
+
+`lib/resumes/templates/ats-plain.tsx`: extend the header block to render `profile.tagline` as a subtitle line directly under the name H1 when non-null and non-empty. Style: smaller font, muted color, single line. Empty tagline = no subtitle line (no empty row). Matches the existing visual convention used by the location/email/phone metadata block.
+
+Regression-pin via `scripts/tests/hermetic/resume-render-smoke.ts`: extend the fixture profile with a tagline; assert the rendered PDF contains the tagline text. Already a non-AI smoke, so cheap to extend.
+
+##### M7.9.8 — Hermetic smokes ⏳
+
+- `scripts/tests/hermetic/tagline-patch-smoke.ts`: PATCH `/api/profile` with `{tagline: "..."}` persists; 201-char string → 400 (cap enforced); null clears; cross-user → 404 (existing ownership guard).
+- `scripts/tests/hermetic/tagline-draft-smoke.ts`: mocks `chatJSON`; asserts mode dispatch (empty → 'draft', non-empty → 'enhance'); asserts server-side post-filter (trim + trailing period); asserts rate-limit 429 on 11th call; asserts AIError → 502.
+
+Both wired into `scripts/pre-push.sh`'s `SUITES` array.
+
+---
+
+#### Acceptance (whole phase)
+
+- "Headline" label on `PersonalInfoCard` reads "Name" (already shipped pre-M7.9 alongside the rename); placeholder reads "Your full name (e.g. 'Salvador Salcedo')".
+- New Tagline field appears below Name on `PersonalInfoCard` with a Sparkles AI-draft button.
+- Click AI-draft when tagline empty → one-sentence proposal grounded in the profile appears in a diff panel; Accept persists.
+- Click AI-draft when tagline non-empty → proposal preserves the user's existing angle; refined for voice/fit; Accept persists.
+- Generated resume (PDF + DOCX) renders the tagline as a subtitle line under the H1.
+- Forged request to draft endpoint without `profile.tagline` set still works (empty mode dispatches correctly).
+- `npm run test:hermetic` green; two new smokes wired into pre-push.
+
+#### Out of scope for this phase
+
+- **Schema rename `headline` → `name`** — too many cascading consumers (resume renderer, M8.4 canonical-naming helpers, every Promptfoo fixture, two Prisma migrations). UI label rename only.
+- **Multi-tagline variants per posting** — tagline is profile-level, not posting-tailored. The resume rewrite step already tailors bullets per posting; pivoting the tagline per posting too is a future story if it becomes a real need.
+- **Tagline auto-refresh on profile edits** — manual button only. Auto-trigger would surprise the user.
+- **Versioning of tagline edits** — out. `ProfileSnapshot` (M7.5) can extend to capture the column when rollback UX ships.
+
 ### M8 Phase 1 — Tailored resume generation ✅
 
 Story S8.1 (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/integration/resume-e2e-smoke.ts` (47KB PDF in ~11s) · Commit: `b2cbeb6`.
