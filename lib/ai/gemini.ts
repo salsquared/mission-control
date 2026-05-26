@@ -253,8 +253,18 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
     try {
         parsed = JSON.parse(text);
     } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        const posMatch = errMsg.match(/position (\d+)/);
+        const pos = posMatch ? parseInt(posMatch[1], 10) : null;
+        // For trailing-garbage / mid-string failures the relevant bytes are at
+        // `pos`, not the head — log a window around it (with JSON.stringify so
+        // newlines/control chars are visible) plus the tail length so we can
+        // see whether the model double-emitted, fence-wrapped, etc.
+        const window = pos != null
+            ? `pos ${pos} window=${JSON.stringify(text.slice(Math.max(0, pos - 80), pos + 80))}`
+            : `tail=${JSON.stringify(text.slice(-200))}`;
         throw new AIError(
-            `Gemini response was not valid JSON: ${text.slice(0, 200)}…`,
+            `Gemini response was not valid JSON [${errMsg}; total length=${text.length}]: head=${JSON.stringify(text.slice(0, 200))}; ${window}`,
             err,
             "parse",
         );

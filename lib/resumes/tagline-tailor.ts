@@ -27,6 +27,7 @@ import { loadPrompt, loadPromptFromDisk, type PromptVars } from "@/lib/ai/prompt
 import { buildProfileSummary } from "@/lib/profile/tagline-draft";
 import { postFilterTagline } from "@/lib/profile/tagline-draft";
 import type { ParsedPosting } from "@/lib/resumes/posting";
+import type { ResumeSelection, BulletSelection } from "@/lib/resumes/select";
 import type { findOrCreateProfile } from "@/lib/repositories/profile";
 
 // Hydrated shape (Date columns) is what tagline-draft's helper takes; the
@@ -37,21 +38,189 @@ import type { findOrCreateProfile } from "@/lib/repositories/profile";
 type HydratedProfile = Awaited<ReturnType<typeof findOrCreateProfile>>;
 type ProfileLike = HydratedProfile | (object & { headline?: string | null });
 
-const TAILOR_MAX_OUTPUT_TOKENS = 256;
+// 256 was sized for tagline-only; 1024 gives comfortable headroom for the
+// new sectionOrder + entityOrder fields plus the tagline. Each ordering
+// entry is ~12–25 tokens; entityOrder per section may list 5–10 IDs at
+// ~25 chars each; the JSON wrapper adds another ~50 tokens. Live data
+// showed 240-token clip at the 256 cap — 1024 leaves 4× margin.
+const TAILOR_MAX_OUTPUT_TOKENS = 1024;
 const TAILOR_TEMPERATURE = 0.4;
+
+export type SectionKey =
+    | "experience"
+    | "projects"
+    | "education"
+    | "skills"
+    | "languages"
+    | "interests";
+
+export const DEFAULT_SECTION_ORDER: readonly SectionKey[] = [
+    "experience",
+    "projects",
+    "education",
+    "skills",
+    "languages",
+    "interests",
+];
+
+const SectionKeySchema = z.enum([
+    "experience",
+    "projects",
+    "education",
+    "skills",
+    "languages",
+    "interests",
+]);
+
+const EntityOrderSchema = z.object({
+    experience: z.array(z.string()).optional(),
+    projects: z.array(z.string()).optional(),
+    education: z.array(z.string()).optional(),
+}).optional();
 
 const ResponseSchema = z.object({
     tagline: z.string().min(1).max(500),
+    sectionOrder: z.array(SectionKeySchema).optional(),
+    entityOrder: EntityOrderSchema,
 });
 
 export interface TailorTaglineInput {
     profile: ProfileLike;
     posting: ParsedPosting;
+    // Optional. When provided, `entityIdsBlock` is built from the SELECTION
+    // (only entities that survived the bullet-scorer) with their matched
+    // tags + sample bullet text — giving the LLM evidence-grounded info for
+    // entity ordering. Without it, the block falls back to name-only entries
+    // from the full profile (legacy behavior).
+    //
+    // Why this matters: the one-page pruner spares
+    // `selection.{section}[0]` (= the LLM's #1 pick per section) as
+    // unremovable. A name-only block led to "Avionics Engineer, Space
+    // Enterprise at Berkeley" out-ranking Iris on a space-themed posting
+    // purely because the SEB name has the word "Space" in it. Bullet
+    // evidence in the same block as IDs lets the LLM judge on substance.
+    selection?: ResumeSelection;
 }
 
 export interface TailorTaglineResult {
     tagline: string;
+    sectionOrder: SectionKey[];
+    entityOrder: {
+        experience: string[];
+        projects: string[];
+        education: string[];
+    };
     durationMs: number;
+}
+
+interface MinimalProfile {
+    workRoles: ReadonlyArray<{ id: string; title?: string | null; company?: string | null }>;
+    projects: ReadonlyArray<{ id: string; name?: string | null }>;
+    education: ReadonlyArray<{ id: string; degree?: string | null; institution?: string | null }>;
+}
+
+// Fallback: name-only entity listing when no selection is supplied (e.g.
+// the hermetic smoke that calls buildResumeTaglineVars without the resume-
+// gen pipeline running). Lists EVERY entity on the profile, since we don't
+// know which were selected.
+function buildEntityIdsBlockNameOnly(profile: MinimalProfile): string {
+    const parts: string[] = [];
+    if (profile.workRoles.length > 0) {
+        const lines = profile.workRoles.map(r => {
+            const title = r.title?.trim() || "(untitled)";
+            const company = r.company?.trim() || "(unknown company)";
+            return `- ${r.id}: ${title} @ ${company}`;
+        });
+        parts.push(["### Experience", ...lines].join("\n"));
+    }
+    if (profile.projects.length > 0) {
+        const lines = profile.projects.map(p => {
+            const name = p.name?.trim() || "(unnamed)";
+            return `- ${p.id}: ${name}`;
+        });
+        parts.push(["### Projects", ...lines].join("\n"));
+    }
+    if (profile.education.length > 0) {
+        const lines = profile.education.map(e => {
+            const degree = e.degree?.trim() || "Education";
+            const inst = e.institution?.trim() || "(unknown institution)";
+            return `- ${e.id}: ${degree} @ ${inst}`;
+        });
+        parts.push(["### Education", ...lines].join("\n"));
+    }
+    return parts.length > 0 ? parts.join("\n\n") : "(no entities)";
+}
+
+const ENTITY_BLOCK_BULLET_CAP = 3;
+const ENTITY_BLOCK_BULLET_TEXT_CAP = 100;
+
+function clipText(s: string, max: number): string {
+    const t = s.trim().replace(/\s+/g, " ");
+    return t.length > max ? t.slice(0, max - 1) + "…" : t;
+}
+
+// Render one entity's evidence block. Lists matched tags collected across
+// all its selected bullets + the top-N bullets (by score) as samples. The
+// aggregate score is included so the LLM can compare entity strength
+// numerically when names are ambiguous.
+function renderEntityEvidence(
+    id: string,
+    label: string,
+    bullets: ReadonlyArray<BulletSelection>,
+): string {
+    const sorted = [...bullets].sort((a, b) => {
+        const av = Number.isFinite(a.score) ? a.score : 0;
+        const bv = Number.isFinite(b.score) ? b.score : 0;
+        return bv - av;
+    });
+    const aggregate = sorted.reduce((acc, b) => acc + (Number.isFinite(b.score) ? Math.max(0, b.score) : 0), 0);
+    const tagSet = new Set<string>();
+    for (const b of sorted) {
+        for (const t of b.matchedTags) tagSet.add(t);
+        for (const k of b.matchedKeywords) tagSet.add(k);
+    }
+    const tagLine = tagSet.size > 0 ? `[matched: ${Array.from(tagSet).join(", ")}; aggregate-score=${aggregate}]` : `[no posting-keyword matches; aggregate-score=0]`;
+    const lines = [`- ${id}: ${label} ${tagLine}`];
+    for (const b of sorted.slice(0, ENTITY_BLOCK_BULLET_CAP)) {
+        lines.push(`    • ${clipText(b.originalText, ENTITY_BLOCK_BULLET_TEXT_CAP)}`);
+    }
+    if (sorted.length > ENTITY_BLOCK_BULLET_CAP) {
+        lines.push(`    • (+${sorted.length - ENTITY_BLOCK_BULLET_CAP} more bullet${sorted.length - ENTITY_BLOCK_BULLET_CAP === 1 ? "" : "s"})`);
+    }
+    return lines.join("\n");
+}
+
+// Evidence-rich entity listing built from the resume-gen SELECTION (post-
+// scoring, post-scratchpad-synth). Only includes entities that survived
+// the selector. Each entry shows the entity ID + label + matched
+// tags/keywords + top bullet excerpts. This is what the LLM needs to
+// judge ordering by substance, not by name alone.
+function buildEntityIdsBlockEvidence(selection: ResumeSelection): string {
+    const parts: string[] = [];
+    if (selection.workRoles.length > 0) {
+        const blocks = selection.workRoles.map(g => {
+            const wr = g.entity;
+            const label = `${wr.title} @ ${wr.company}`;
+            return renderEntityEvidence(wr.id, label, g.bullets);
+        });
+        parts.push(["### Experience", ...blocks].join("\n"));
+    }
+    if (selection.projects.length > 0) {
+        const blocks = selection.projects.map(g => {
+            const label = g.entity.name;
+            return renderEntityEvidence(g.entity.id, label, g.bullets);
+        });
+        parts.push(["### Projects", ...blocks].join("\n"));
+    }
+    if (selection.education.length > 0) {
+        const blocks = selection.education.map(g => {
+            const ed = g.entity;
+            const label = `${ed.degree ?? "Education"} @ ${ed.institution}`;
+            return renderEntityEvidence(ed.id, label, g.bullets);
+        });
+        parts.push(["### Education", ...blocks].join("\n"));
+    }
+    return parts.length > 0 ? parts.join("\n\n") : "(no entities)";
 }
 
 /**
@@ -60,7 +229,7 @@ export interface TailorTaglineResult {
  * touching Gemini.
  */
 export function buildResumeTaglineVars(input: TailorTaglineInput): PromptVars {
-    const { profile, posting } = input;
+    const { profile, posting, selection } = input;
     return {
         postingTitle: posting.title ?? "(unknown)",
         postingCompany: posting.company ?? "(unknown)",
@@ -69,6 +238,9 @@ export function buildResumeTaglineVars(input: TailorTaglineInput): PromptVars {
             ? posting.keywords.map(k => `  - ${k}`).join("\n")
             : "  (none extracted)",
         profileSummary: buildProfileSummary(profile as HydratedProfile),
+        entityIdsBlock: selection
+            ? buildEntityIdsBlockEvidence(selection)
+            : buildEntityIdsBlockNameOnly(profile as unknown as MinimalProfile),
     };
 }
 
@@ -102,11 +274,59 @@ export async function tailorResumeTagline(input: TailorTaglineInput): Promise<Ta
     });
 
     const tagline = postFilterTagline(response.tagline);
+    const sectionOrder = normalizeSectionOrder(response.sectionOrder);
+    const entityOrder = normalizeEntityOrder(
+        response.entityOrder,
+        input.profile as unknown as MinimalProfile,
+    );
     const durationMs = Date.now() - start;
 
     console.info(
-        `[LLM] resume-tagline → ${tagline.length} chars in ${durationMs}ms (posting=${input.posting.company ?? "?"} / ${input.posting.title ?? "?"})`,
+        `[LLM] resume-tagline → ${tagline.length} chars / sections=[${sectionOrder.join(",")}] / ordered entities exp=${entityOrder.experience.length} proj=${entityOrder.projects.length} edu=${entityOrder.education.length} in ${durationMs}ms (posting=${input.posting.company ?? "?"} / ${input.posting.title ?? "?"})`,
     );
 
-    return { tagline, durationMs };
+    return { tagline, sectionOrder, entityOrder, durationMs };
+}
+
+// Dedup + dropping unknowns + appending any defaults the model omitted so the
+// returned order is always a permutation of the six section keys.
+function normalizeSectionOrder(raw: SectionKey[] | undefined): SectionKey[] {
+    if (!raw || raw.length === 0) return [...DEFAULT_SECTION_ORDER];
+    const seen = new Set<SectionKey>();
+    const out: SectionKey[] = [];
+    for (const k of raw) {
+        if (seen.has(k)) continue;
+        seen.add(k);
+        out.push(k);
+    }
+    for (const k of DEFAULT_SECTION_ORDER) {
+        if (!seen.has(k)) out.push(k);
+    }
+    return out;
+}
+
+// For each section, drop any ID the model invented (not present on the
+// profile) and dedup; preserve the model's order for known IDs. Returns
+// arrays (possibly empty) for all three sections so the caller can apply
+// uniformly without null checks.
+function normalizeEntityOrder(
+    raw: { experience?: string[]; projects?: string[]; education?: string[] } | undefined,
+    profile: MinimalProfile,
+): TailorTaglineResult["entityOrder"] {
+    const filterAndDedup = (ids: string[] | undefined, valid: Set<string>): string[] => {
+        if (!ids) return [];
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const id of ids) {
+            if (!valid.has(id) || seen.has(id)) continue;
+            seen.add(id);
+            out.push(id);
+        }
+        return out;
+    };
+    return {
+        experience: filterAndDedup(raw?.experience, new Set(profile.workRoles.map(r => r.id))),
+        projects: filterAndDedup(raw?.projects, new Set(profile.projects.map(p => p.id))),
+        education: filterAndDedup(raw?.education, new Set(profile.education.map(e => e.id))),
+    };
 }

@@ -97,7 +97,23 @@ export async function rewriteBullets(
 ): Promise<RewrittenBullet[]> {
     if (selections.length === 0) return [];
 
-    const prompt = await loadPrompt("resume-rewrite", buildRewriteVars(selections, posting, readmeCtx));
+    // Bullets with no matchedTags AND no matchedKeywords have no posting-
+    // keyword lever for the LLM to fold in or swap (rules 6 / 6a are no-ops),
+    // so a rewrite would be pure stylistic polish at best and risks a low-
+    // value cross-domain edit at worst. Pass them through verbatim and skip
+    // the tokens. Still emitted in the final output (in original selection
+    // order) so the renderer + trace UI see every selected bullet.
+    const forLLM = selections.filter(s => s.matchedTags.length > 0 || s.matchedKeywords.length > 0);
+
+    if (forLLM.length === 0) {
+        return selections.map(s => ({
+            id: s.bulletId,
+            rewrittenText: s.originalText,
+            matchedKeywords: [],
+        }));
+    }
+
+    const prompt = await loadPrompt("resume-rewrite", buildRewriteVars(forLLM, posting, readmeCtx));
 
     const response = await chatJSON({
         name: "resume-rewrite",
@@ -114,10 +130,10 @@ export async function rewriteBullets(
         maxOutputTokens: 4096,
     });
 
-    const inputIds = new Set(selections.map(s => s.bulletId));
+    const llmInputIds = new Set(forLLM.map(s => s.bulletId));
     const seen = new Set<string>();
     for (const b of response.bullets) {
-        if (!inputIds.has(b.id)) {
+        if (!llmInputIds.has(b.id)) {
             throw new AIError(
                 `Rewrite returned an unknown bullet id ${b.id}; refusing output to avoid mis-targeting.`,
                 undefined,
@@ -135,6 +151,15 @@ export async function rewriteBullets(
     return selections.map(s => {
         const r = byId.get(s.bulletId);
         if (r) return r;
+        // Passthrough by design (no posting-keyword match) — not an LLM
+        // omission; no warning.
+        if (s.matchedTags.length === 0 && s.matchedKeywords.length === 0) {
+            return {
+                id: s.bulletId,
+                rewrittenText: s.originalText,
+                matchedKeywords: [],
+            };
+        }
         console.warn(`[resume/rewrite] Gemini omitted bullet ${s.bulletId}; falling back to original text.`);
         return {
             id: s.bulletId,

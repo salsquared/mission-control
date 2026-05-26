@@ -111,6 +111,8 @@ injectCacheEntry("@/lib/resumes/select", {
         education: [],
     }),
     flattenSelections: () => flatSelections,
+    selectProfileExtras: () => ({ skills: [], languages: [], hobbies: [] }),
+    entityIsPinned: () => false,
 });
 
 injectCacheEntry("@/lib/resumes/rewrite", {

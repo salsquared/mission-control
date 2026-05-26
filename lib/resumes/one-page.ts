@@ -26,6 +26,7 @@
 import { renderResumePDF } from "./render-pdf";
 import { composeResumeProps } from "./templates/ats-plain";
 import type { ResumeSelection, BulletSelection, EntitySelection, ExtrasSelection } from "./select";
+import { entityIsPinned } from "./select";
 import type { RewrittenBullet } from "./rewrite";
 import type { ProfileWire, WorkRoleWire, ProjectWire, EducationWire } from "@/lib/schemas/profile";
 import type { SectionKey } from "./tagline-tailor";
@@ -43,16 +44,35 @@ export interface OnePageResult {
 
 /**
  * Compute the set of entity IDs the pruner must preserve regardless of score.
- * `selection.{workRoles,projects,education}[0]` after the selector's sort:
- *  - workRoles: sortByStartDateDesc → most-recent surviving role (== spine)
- *  - projects: position asc → user's top-pinned project
- *  - education: sortByStartDateDesc → most-recent surviving degree
+ *  - `selection.{workRoles,projects,education}[0]` — the section "spine"
+ *    (most-recent role / top-position project / most-recent degree).
+ *  - Any entity whose `pinKeywords` matches a posting keyword
+ *    (case-insensitive whole-word). Posting-category-conditional pin —
+ *    the user marked this entity "always show on postings with X."
+ *
+ * `postingKeywords` is optional for back-compat with callers (hermetic
+ * smokes, legacy code) that don't have a posting to check against.
+ * Without it, only the section-spine rule applies.
  */
-export function getUnremovableEntityIds(selection: ResumeSelection): Set<string> {
+export function getUnremovableEntityIds(
+    selection: ResumeSelection,
+    postingKeywords: readonly string[] = [],
+): Set<string> {
     const ids = new Set<string>();
     if (selection.workRoles.length > 0) ids.add(selection.workRoles[0].entity.id);
     if (selection.projects.length > 0) ids.add(selection.projects[0].entity.id);
     if (selection.education.length > 0) ids.add(selection.education[0].entity.id);
+    if (postingKeywords.length > 0) {
+        for (const g of selection.workRoles) {
+            if (entityIsPinned(g.entity.pinKeywords, postingKeywords)) ids.add(g.entity.id);
+        }
+        for (const g of selection.projects) {
+            if (entityIsPinned(g.entity.pinKeywords, postingKeywords)) ids.add(g.entity.id);
+        }
+        for (const g of selection.education) {
+            if (entityIsPinned(g.entity.pinKeywords, postingKeywords)) ids.add(g.entity.id);
+        }
+    }
     return ids;
 }
 

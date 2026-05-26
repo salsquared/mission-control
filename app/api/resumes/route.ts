@@ -5,7 +5,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting } from "@/lib/resumes/posting";
-import { selectBullets, selectProfileExtras, flattenSelections, type BulletSelection } from "@/lib/resumes/select";
+import { selectBullets, selectProfileExtras, flattenSelections, entityIsPinned, type BulletSelection } from "@/lib/resumes/select";
 import { autoTagBullets } from "@/lib/profile/auto-tag";
 import { synthesizeBulletsForEntity, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
 import { broadcastEvent } from "@/lib/events";
@@ -484,7 +484,7 @@ export async function POST(req: NextRequest) {
 
         // 3. Select bullets
         stage = "select";
-        const selection = selectBullets(profile, posting.keywords);
+        const selection = selectBullets(profile, posting.keywords, {}, posting.keywordWeights);
         let flat = flattenSelections(selection);
         if (flat.length === 0) {
             return NextResponse.json(
@@ -571,7 +571,7 @@ export async function POST(req: NextRequest) {
             experience: [], projects: [], education: [],
         };
         try {
-            const r = await tailorResumeTagline({ profile, posting });
+            const r = await tailorResumeTagline({ profile, posting, selection });
             tailoredTagline = r.tagline;
             sectionOrder = r.sectionOrder;
             entityOrder = r.entityOrder;
@@ -594,6 +594,25 @@ export async function POST(req: NextRequest) {
         selection.projects = reorderSelectionByIds(selection.projects, entityOrder.projects);
         selection.education = reorderSelectionByIds(selection.education, entityOrder.education);
 
+        // 4e.1. Pin-to-front: entities whose `pinKeywords` matched any
+        // posting keyword (already protected by the keep-always path in
+        // selectBullets) MUST lead their section regardless of how the LLM
+        // reordered them. Stable sort: pinned partition first (in LLM
+        // order), unpinned partition second (in LLM order). No-op when
+        // nothing is pinned.
+        const pinFront = <T extends { entity: { pinKeywords?: string[] | null } }>(items: T[]): T[] => {
+            const pinned: T[] = [];
+            const rest: T[] = [];
+            for (const it of items) {
+                if (entityIsPinned(it.entity.pinKeywords, posting.keywords)) pinned.push(it);
+                else rest.push(it);
+            }
+            return pinned.length === 0 ? items : [...pinned, ...rest];
+        };
+        selection.workRoles = pinFront(selection.workRoles);
+        selection.projects = pinFront(selection.projects);
+        selection.education = pinFront(selection.education);
+
         // 5. Render
         stage = "render";
         const format = parsed.data.options?.format ?? "pdf";
@@ -603,7 +622,7 @@ export async function POST(req: NextRequest) {
             // Iterative PDF render + prune loop. Mutates `selection` in place.
             // For DOCX requests we still use the PDF as the page-fit probe,
             // then re-render the pruned selection as DOCX.
-            const unremovableIds = getUnremovableEntityIds(selection);
+            const unremovableIds = getUnremovableEntityIds(selection, posting.keywords);
             const result = await renderResumePDFOnePage({
                 profile,
                 selection,

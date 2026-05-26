@@ -409,6 +409,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
             postingSeniority?: string | null;
             postingKeywords: string[];
             profileSummary: string;
+            entityIdsBlock?: string;
         };
 
         const prompt = await loadPrompt("resume-tagline", {
@@ -419,10 +420,20 @@ const HANDLERS: Record<string, CallsiteHandler> = {
                 ? args.postingKeywords.map(k => `  - ${k}`).join("\n")
                 : "  (none extracted)",
             profileSummary: args.profileSummary,
+            // Eval fixtures historically didn't supply entity IDs; default to
+            // a "(none)" placeholder so the template substitution succeeds and
+            // existing tagline-only fixtures keep passing.
+            entityIdsBlock: args.entityIdsBlock ?? "(none)",
         });
 
         const schema = z.object({
             tagline: z.string().min(1).max(500),
+            sectionOrder: z.array(z.string()).optional(),
+            entityOrder: z.object({
+                experience: z.array(z.string()).optional(),
+                projects: z.array(z.string()).optional(),
+                education: z.array(z.string()).optional(),
+            }).optional(),
         });
 
         const response = await chatJSON({
@@ -432,7 +443,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
             schema,
             model: MODEL_LITE,
             temperature: 0.4,
-            maxOutputTokens: 256,
+            maxOutputTokens: 512,
         });
 
         const { postFilterTagline } = await import("@/lib/profile/tagline-draft");

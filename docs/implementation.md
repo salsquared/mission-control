@@ -1536,6 +1536,115 @@ If LITE fails the positive-coverage fixture (e.g. fabricates technologies not in
 
 ---
 
+### M8.7 — Resume relevance: ordering, weighting, pinning ✅
+
+Shipped in a single session 2026-05-26. Seven sub-features, all backward compatible — no breaking schema beyond the additive `pinKeywords` column added in `20260526220116_add_pin_keywords_to_entities`. No commits captured (work was iterative against the dev tier; final state landed on `main` in a follow-up).
+
+**Mechanism.** Layered improvements to the resume-gen pipeline that move it from "score-by-tag-count" to a richer relevance model:
+
+1. **Posting parsing** now emits per-keyword `importance` (1–5) so `Space Systems` (5) outweighs `JavaScript` (2) for a Rocket Lab posting.
+2. **Bullet scoring** multiplies its base weight by that importance and dedupes match counts case-insensitively (closing a long-standing bug where double-cased tags double-counted).
+3. **Selection** added a posting-category-conditional pin (`pinKeywords` per entity): if any pin matches a posting keyword, that entity is force-included AND moved to position 0 of its section, surviving the one-page pruner.
+4. **Resume-tagline** doubled as a "framing decisions" call: returns the posting-aware section order + per-section entity ordering alongside the tagline, with an evidence-rich entity-IDs block so the LLM ranks by matched-tag aggregate rather than name similarity.
+5. **Resume-rewrite** pre-filters out bullets with no posting-keyword match — passes them through verbatim instead of paying Gemini Flash tokens for a no-op rewrite.
+6. **Render** added Skills / Languages / Interests sections, each filtered to items whose name matches a posting keyword. Section render order is the LLM-supplied `sectionOrder`.
+7. **One-page pruner** spares pinned entities in addition to the section spines; Phase 2 (bullet-level pruning) fires when entity-level prunes can't reach 1pp because the unremovable set fills the page.
+
+Combined effect on the canonical Rocket Lab Software Intern case from this session: pre-session, **DomeIQ outranked Iris** (DomeIQ 14, Iris 8) and Iris got pruned off single-page resumes. Post-session, with Iris pinned + SEB pinned for SE/space/aerospace keywords, both projects lead the Projects section, the pruner drops only score-0 passthrough bullets to make room, and the page fits with **9 productive bullets across 4 entities**.
+
+---
+
+#### Task list
+
+##### M8.7.1 — Resume-rewrite efficiency: pass-through unmatched bullets ✅
+
+`lib/resumes/rewrite.ts:rewriteBullets`. Pre-filters `selections` into `forLLM` (bullets with `matchedTags.length > 0 || matchedKeywords.length > 0`) and a passthrough group. Bullets with no posting-keyword match have no fold-in / terminology lever for the LLM (rules 6 / 6a are no-ops) and risk a low-value cross-domain "polish" rewrite — so they bypass Gemini entirely with `rewrittenText = originalText`, `matchedKeywords = []`. Final return preserves the original selection order so the renderer + trace UI see every selected bullet.
+
+Companion change in `lib/profile/auto-tag.ts:renderBulletsBlock`: omit `; removedTags=[...]` from each bullet line entirely when the blocklist is empty (the common case). Roughly 120 input tokens saved per `bullet-tags-from-posting` call on a 40-bullet profile.
+
+Eval impact: `eval/suites/resume-rewrite.yaml:107` ("Fold-in: untagged Go bullet must NOT acquire Python") still passes — but now passes because the bullet bypasses the LLM, not because the LLM defends against invention. If you want a real defensive eval, give a future fixture a tagged-but-out-of-domain bullet.
+
+##### M8.7.2 — Skills / Languages / Interests rendering + posting filter ✅
+
+`lib/resumes/select.ts:selectProfileExtras(profile, keywords)` — new pure helper that filters `profile.skills` (grouped by category), `profile.languages`, and `profile.hobbies` down to items matching at least one posting keyword via the same `matchesWord` matcher the bullet scorer uses. Skill groups with zero matched items drop entirely. Returns `ExtrasSelection = { skills, languages, hobbies }`.
+
+Render: `lib/resumes/templates/ats-plain.tsx` extended with three new sections — **Skills** (grouped, comma-joined items), **Languages** (`name (proficiency)`), **Interests** (hobbies). Each renders only when non-empty.
+
+Coverage: `lib/resumes/skills-gap.ts:computeSkillsGap` now folds profile.skills items + profile.languages names + profile.hobbies into its coverage haystack — so a posting keyword satisfied by `profile.languages = [{name: "Spanish", ...}]` isn't flagged as missing.
+
+##### M8.7.3 — LLM-driven section + entity ordering ✅
+
+Folded into the existing `resume-tagline` callsite (per user constraint: no new callsite). The system prompt now instructs the LLM to additionally return `sectionOrder: SectionKey[]` (where SectionKey ∈ `experience | projects | education | skills | languages | interests`) and `entityOrder: { experience, projects, education }` mapping each section to an ordered array of entity IDs. Both fields are optional — when omitted, `normalizeSectionOrder` / `normalizeEntityOrder` fall back to defaults.
+
+`lib/resumes/tagline-tailor.ts`: `TailorTaglineInput` now optionally accepts `selection: ResumeSelection`. When present, the user prompt's `entityIdsBlock` is built by `buildEntityIdsBlockEvidence(selection)` — listing each entity with its matched-tag/keyword set + aggregate-score + 1–3 sample bullet excerpts (~100 chars each). Without selection (hermetic smoke path) falls back to `buildEntityIdsBlockNameOnly` (legacy behavior).
+
+This evidence-richness is load-bearing: pre-evidence, the LLM ranked "Avionics Engineer, Space Enterprise at Berkeley" above "Iris" purely because the SEB name contains "Space." With aggregate-score visible (Iris=8 vs SEB=4 at that point), the LLM ranked Iris first — and the one-page pruner's `getUnremovableEntityIds` spare-the-#1-pick rule kept Iris.
+
+Route wiring: `app/api/resumes/route.ts` step 4e applies `reorderSelectionByIds(selection.{section}, entityOrder.{key})` after the tagline call, then `composeResumeProps` threads `sectionOrder` to the template. `DEFAULT_SECTION_ORDER = ["experience", "projects", "education", "skills", "languages", "interests"]`.
+
+`maxOutputTokens` bumped 256 → 1024 in `tagline-tailor.ts` to accommodate the larger structured response. The `.md` doc value was kept in sync (was 256, bumped to 1024) — `scripts/sync-lunary-templates.ts` reads the .md and pushes max_tokens; without the bump, the Lunary template config caps output at 256 and the LLM clips mid-JSON. Surfaced as a real failure in this session: 240-token clip on the first try; sync + retry succeeded.
+
+##### M8.7.4 — Tag case-sensitivity fixes + dev backfill ✅
+
+Three independent case-sensitive `Set.has()` checks made bullets accumulate both casings of the same canonical keyword:
+
+1. `lib/profile/auto-tag.ts:mergeAutoTagProposals` — `tagSet.has(kw)` and `removedSet.has(kw)` compared verbatim. The auto-tag pass writes posting-keyword titlecase (e.g. `Software Engineering`); user-typed tags via `BulletRow.commitTag` are lowercase. Result: bullets gained `["software engineering", "Software Engineering"]` pairs that double-counted in `scoreBullet`.
+2. `lib/profile/bullet-tag-suggest.ts:applyTagSuggestPostFilter` — same pattern against `removedTags` + `seen`.
+3. `lib/resumes/select.ts:scoreBullet` — the consequence: matched-tag counting iterated the bullet's tags and pushed each match without case-insensitive dedup, so the score inflated 2× on dup-cased bullets.
+
+All three switched to lowercase comparison while preserving first-occurrence casing (no DB churn). Regression tests added in `scripts/tests/hermetic/auto-tag-merge-smoke.ts` (test 5b/5c). Existing select-smoke 14/14 + auto-tag-merge-smoke 12/12 both pass.
+
+One-shot backfill at `scripts/dedupe-bullet-tag-casings.ts`. Walks WorkRole / Project / Education rows, dedupes each bullet's `tags` / `autoTags` / `removedTags` / `pinnedTags` arrays case-insensitively. Two modes: `--dry-run` (preview) and `--apply` (write). A second mode `--resolve-conflicts` retroactively strips lingering lowercase tags whose titlecase variant is in `removedTags` (residue of pre-fix `removeTag` clicks). Conservative posture: preserves all malformed entries verbatim (non-string elements pass through; non-plain-object bullets pass through); only removes confirmed case-insensitive duplicates.
+
+Applied to dev.db: 5 duplicate tags removed + 4 cross-bucket conflicts resolved across 4 affected bullets. Prod.db was already clean (bug fired only on dev where resume gens ran).
+
+##### M8.7.5 — Posting-keyword importance weighting ✅
+
+`posting-parse` schema bumped from `keywords: string[]` to `keywords: Array<string | { keyword: string, importance: number(1..5) }>`. Union schema accepts the legacy bare-string form for back-compat (stale Lunary templates) and normalizes everything to the structured form in `parsePosting`. `ParsedPosting` gains a `keywordWeights: Record<string, number>` field (lowercased key → 1-5 multiplier).
+
+System prompt rubric (in `docs/llm-prompts/posting-parse.md`): 5 = primary differentiator (`Space Systems`, `ITAR`), 4 = strongly emphasized, 3 = standard required, 2 = nice-to-have, 1 = commodity / table-stakes (`Git`, `Version Control`). The rubric gives concrete examples per tier.
+
+`scoreBullet(text, tags, keywords, keywordWeights?)` multiplies its `baseWeight` by `keywordWeights[lower(matched_keyword)] ?? 1` for each match. Default importance = 1 → identical scoring for callers that don't supply weights (preserves legacy behavior). `selectBullets` + `pickWorkRoleSpineIndex` thread the weights through.
+
+Output tokens bumped 2048 → 3072 on `posting-parse` to accommodate `{keyword, importance}` objects (each ~15-25 tokens vs ~5 for bare strings); both `.md` and code constant kept in sync.
+
+##### M8.7.6 — Posting-category-conditional pin (`pinKeywords`) ✅
+
+User-facing feature: "always include this entity on resumes for postings with keywords X / Y / Z." Replaces the workaround of marking individual bullets `locked: true` (which pins for ALL postings, not category-conditional).
+
+Schema migration `20260526220116_add_pin_keywords_to_entities` adds nullable `pinKeywords TEXT` (JSON-stringified array) to `WorkRole` / `Project` / `Education`. Applied to dev.db + prod.db in-session.
+
+Zod schemas (`lib/schemas/profile.ts`): `PinKeywordsSchema = z.array(z.string().min(1).max(60)).max(15).nullable().optional()` added to the response schemas (`WorkRoleSchema`, `ProjectSchema`, `EducationSchema`) and the mutation schemas (POST + PATCH).
+
+Repository (`lib/repositories/profile.ts`): `parsePinKeywords(raw: string | null): string[] | null` + `serializePinKeywords(value): string | null`. The serializer dedupes case-insensitively (same posture as bullet tags). Hydrators (`hydrateWorkRole`/`hydrateProject`/`hydrateEducation`) and CRUD interfaces (`*CreateInput`/`*UpdateInput`) all carry the new field. API routes (`app/api/profile/{work-roles,projects,education}/route.ts`) accept `pinKeywords` on POST/PATCH.
+
+Matcher: `lib/resumes/select.ts:entityIsPinned(pinKeywords, postingKeywords)` — true iff any pin × any posting keyword pair matches via whole-word case-insensitive lookup (bidirectional — so a pin "software engineering" matches both posting "Software Engineering" and posting "Senior Software Engineer").
+
+Selection integration (`selectBullets`):
+- `selectFor`'s generic E constraint widened to `... & { pinKeywords?: string[] | null }`.
+- `keepAlways` predicates extended: any entity with `entityIsPinned(e.pinKeywords, keywords) === true` is keep-always (bypasses `MIN_KEEP_SCORE` drop) in addition to the existing spine rule.
+- After `selectFor` returns, `movePinnedToFront` partitions each section into `[pinned..., unpinned...]` (stable within each partition). Pinned entities lead their section position-0 regardless of subsequent LLM reorder.
+
+One-page pruner (`lib/resumes/one-page.ts`): `getUnremovableEntityIds(selection, postingKeywords)` now collects every pinned entity in addition to `selection.{section}[0]`. When the pruner's removable set is fully drained but the page is still > 1pp, Phase 2 bullet-level pruning fires (drops the lowest-aggregate-score non-locked bullet from any entity with `>= 2` bullets).
+
+Route wiring (`app/api/resumes/route.ts`):
+- `selectBullets(profile, posting.keywords, {}, posting.keywordWeights)` — weights passed through.
+- After the LLM-supplied `entityOrder` reorder runs in step 4e, a `pinFront` helper re-asserts the "pinned entities lead their section" invariant (stable within each partition).
+- `getUnremovableEntityIds(selection, posting.keywords)` — posting keywords plumbed through for the pin-aware unremovable set.
+
+CLI helper at `scripts/set-entity-pin-keywords.ts` provides `--list` / `--kind X --id Y --pin "a,b,c"` / `--clear` for setting pins without UI. Intended as a bridge until M8.7-followup ships the Profile UI chip-list.
+
+##### M8.7.7 — Observability + UX polish ✅
+
+Misc improvements landed alongside the bigger M8.7 work:
+
+- **Gemini JSON parse error window** (`lib/ai/gemini.ts:chatJSON`). Previously the AIError message included only `text.slice(0, 200)` — useless for trailing-garbage parse failures (where the broken byte is far from the head). Now extracts the failure position from the `SyntaxError.message` (`position N`), logs a 160-char window around it (via `JSON.stringify` so control chars are visible) + total response length + the head 200 bytes. Surfaced the resume-tagline 256→1024 token bump as a real failure on the first try.
+- **`[LLM] resume-tagline` log line** now reports `sections=[...] / ordered entities exp=N proj=M edu=K` so the run output makes it visible whether the LLM is actually producing ordering output or falling back to defaults.
+- **`BulletRow` tag chip order**: pinned tags render first within each bullet's chip list. Stable sort — pinned in original relative order, then unpinned in original relative order. `bullet.tags` storage is unchanged (display-only reordering at render time).
+- **`docs/next_steps.md`** — added planned-but-not-implemented follow-ups: (a) Profile UI affordance for pin-editing (chip-list per entity row, parallel to `BulletRow` tag chips); (b) commodity-only entity penalty (scoring change #3 — entities whose match share `differentiatorShare = sum(weight≥4 matches) / sum(all matches)` falls below a threshold get a haircut); (c) pin-priority among multiple pinned entities in the same section (the SEB-before-Iris ordering nuance).
+
+---
+
 ### M9 Phase 1 — GitHub-driven project metrics ✅
 
 Stories: S9.1, S9.2, S9.3 (🟡). Shipped 2026-05-15.

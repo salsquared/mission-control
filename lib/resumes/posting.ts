@@ -17,14 +17,37 @@ export interface ParsedPosting {
     rawText: string;
     sourceUrl: string | null;
     keywords: string[];
+    // Posting-keyword importance multiplier, keyed by LOWERCASED keyword.
+    // Range 1–5: 1 = commodity skill / table stakes, 5 = primary
+    // differentiator (e.g. domain-specific keyword like "Space Systems"
+    // for a Rocket Lab posting, or compliance-specific like "ITAR"). The
+    // bullet scorer multiplies its base weight by this when computing per-
+    // bullet score. Missing keys default to 1 — i.e. legacy behavior for
+    // any caller that doesn't supply weights.
+    //
+    // Optional on the interface so existing in-tree fixture literals don't
+    // need to spell out an empty `{}`; `parsePosting` always populates it.
+    keywordWeights?: Record<string, number>;
 }
+
+// Posting-parse LLM output. Accepts BOTH the legacy `string[]` form (for
+// safety against stale Lunary templates that haven't been re-synced) AND
+// the new `{keyword, importance}` form. Normalized into the structured
+// form by `parsePosting` after validation.
+const KeywordEntrySchema = z.union([
+    z.string(),
+    z.object({
+        keyword: z.string().min(1),
+        importance: z.number().min(1).max(5),
+    }),
+]);
 
 const PostingExtractSchema = z.object({
     title: z.string().nullable(),
     company: z.string().nullable(),
     location: z.string().nullable(),
     seniority: z.string().nullable(),
-    keywords: z.array(z.string()).min(1).max(40),
+    keywords: z.array(KeywordEntrySchema).min(1).max(40),
 });
 
 // Job postings have their signal up top — title, must-haves, tech stack.
@@ -97,9 +120,25 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
         schema: PostingExtractSchema,
         temperature: 0.2,
         // Inherits MODEL_LITE default — keyword extraction is mechanical.
-        // Output is ~5 short fields + 10–25 keyword strings; 2k is plenty.
-        maxOutputTokens: 2048,
+        // Output is ~5 short fields + 10–25 `{keyword, importance}` objects;
+        // 3k accommodates the per-keyword importance objects (each ~15-25
+        // tokens vs ~5 for bare strings) plus headroom.
+        maxOutputTokens: 3072,
     });
+
+    const keywords: string[] = [];
+    const keywordWeights: Record<string, number> = {};
+    for (const entry of extracted.keywords) {
+        if (typeof entry === "string") {
+            // Legacy form — default importance to 1 (neutral, identical to
+            // pre-importance behavior).
+            keywords.push(entry);
+            keywordWeights[entry.toLowerCase()] = 1;
+        } else {
+            keywords.push(entry.keyword);
+            keywordWeights[entry.keyword.toLowerCase()] = entry.importance;
+        }
+    }
 
     return {
         title: extracted.title,
@@ -108,6 +147,7 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
         seniority: extracted.seniority,
         rawText,
         sourceUrl,
-        keywords: extracted.keywords,
+        keywords,
+        keywordWeights,
     };
 }

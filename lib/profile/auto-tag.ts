@@ -92,12 +92,18 @@ export function renderBulletsBlock(flat: readonly FlatBullet[]): string {
     return flat
         .map(({ bullet }) => {
             const tags = bullet.tags.map(t => JSON.stringify(t)).join(', ');
-            const removed = bullet.removedTags.map(t => JSON.stringify(t)).join(', ');
             // Escape only embedded double quotes; the surrounding `text="..."`
             // delimiter is the only thing that needs protecting. Single-line
             // per bullet — the model parses positionally, not over multi-line
             // blocks.
             const text = bullet.text.replace(/"/g, '\\"').replace(/\r?\n/g, ' ');
+            // Omit removedTags entirely when empty — most bullets have no
+            // blocklist, and the post-filter in mergeAutoTagProposals enforces
+            // rule 3 server-side regardless of what the prompt sees.
+            if (bullet.removedTags.length === 0) {
+                return `- id=${bullet.id}; text="${text}"; tags=[${tags}]`;
+            }
+            const removed = bullet.removedTags.map(t => JSON.stringify(t)).join(', ');
             return `- id=${bullet.id}; text="${text}"; tags=[${tags}]; removedTags=[${removed}]`;
         })
         .join('\n');
@@ -171,15 +177,22 @@ export function mergeAutoTagProposals(
         const proposal = proposalsByBulletId.get(entry.bullet.id);
         if (!proposal) return entry;
 
-        const tagSet = new Set(entry.bullet.tags);
-        const removedSet = new Set(entry.bullet.removedTags);
-        const dedup = new Set<string>();
+        // Case-insensitive dedup. The posting-keyword block uses the
+        // posting's titlecasing ("Software Engineering") while user-typed
+        // tags are lowercased by the UI ("software engineering"). A
+        // case-sensitive Set would treat them as distinct and double-tag
+        // the bullet. Compare lowercased; keep the EXISTING casing (no DB
+        // churn).
+        const tagSetLower = new Set(entry.bullet.tags.map(t => t.toLowerCase()));
+        const removedSetLower = new Set(entry.bullet.removedTags.map(t => t.toLowerCase()));
+        const dedupLower = new Set<string>();
         const filtered: string[] = [];
         for (const kw of proposal.addedTags) {
-            if (tagSet.has(kw)) continue;
-            if (removedSet.has(kw)) continue;
-            if (dedup.has(kw)) continue;
-            dedup.add(kw);
+            const lk = kw.toLowerCase();
+            if (tagSetLower.has(lk)) continue;
+            if (removedSetLower.has(lk)) continue;
+            if (dedupLower.has(lk)) continue;
+            dedupLower.add(lk);
             filtered.push(kw);
         }
 

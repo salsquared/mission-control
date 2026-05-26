@@ -71,6 +71,7 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         postingSeniority: "entry-level",
         postingKeywordsBlock: "  - security\n  - patrol\n  - incident-reporting\n  - customer-service",
         profileSummary: "## Identity\nName: Salvador Salcedo\n\n## Education\nB.S. in Applied Mathematics at California State University Long Beach\n  • Coursework in linear algebra, probability, numerical methods\n  notes: Currently enrolled.\n\n## Work history\nBartender at Freckle.tv\n  • Optimized bar operations and customer-facing service",
+        entityIdsBlock: "### Experience\n- wr_freckle: Bartender @ Freckle.tv [matched: ; aggregate-score=0]\n    • Optimized bar operations and customer-facing service\n\n### Education\n- ed_csulb: B.S. @ California State University Long Beach [matched: ; aggregate-score=0]\n    • Coursework in linear algebra, probability, numerical methods",
     },
     "discovery-suggest": {
         topic: "space",

@@ -100,6 +100,11 @@ export const LanguageEntrySchema = z.object({
 // `scratchpad` is .nullable().optional() so pre-M7.8.1 snapshots and fixtures
 // validate without spelling out a null. Server reads always emit the column
 // explicitly (null when unset).
+// `pinKeywords` (added 2026-05-26): posting-category-conditional pin. Same
+// nullable+optional posture as scratchpad so pre-migration snapshots /
+// fixtures pass.
+const PinKeywordsSchema = z.array(z.string().min(1).max(60)).max(15).nullable().optional();
+
 export const WorkRoleSchema = z.object({
     id: z.string(),
     profileId: z.string(),
@@ -110,6 +115,7 @@ export const WorkRoleSchema = z.object({
     endDate: z.string().datetime().nullable(),
     bullets: z.array(BulletSchema),
     scratchpad: z.string().nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -129,6 +135,7 @@ export const ProjectSchema = z.object({
     readme: z.string().nullable().optional(),
     readmeUpdatedAt: z.string().datetime().nullable().optional(),
     scratchpad: z.string().nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -144,6 +151,7 @@ export const EducationSchema = z.object({
     endDate: z.string().datetime().nullable(),
     bullets: z.array(BulletSchema),
     scratchpad: z.string().nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
@@ -217,6 +225,7 @@ export const WorkRolePostSchema = z.object({
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int().optional(),
 });
 
@@ -229,6 +238,7 @@ export const WorkRolePatchSchema = z.object({
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int().optional(),
 });
 
@@ -239,6 +249,7 @@ export const ProjectPostSchema = z.object({
     liveUrl: z.string().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int().optional(),
 });
 
@@ -250,6 +261,7 @@ export const ProjectPatchSchema = z.object({
     liveUrl: z.string().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int().optional(),
 });
 
@@ -261,6 +273,7 @@ export const EducationPostSchema = z.object({
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int().optional(),
 });
 
@@ -273,6 +286,7 @@ export const EducationPatchSchema = z.object({
     endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
+    pinKeywords: PinKeywordsSchema,
     position: z.number().int().optional(),
 });
 

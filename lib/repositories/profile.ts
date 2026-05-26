@@ -13,10 +13,52 @@ import {
 export type { ProfileLink, SkillGroup, LanguageEntry, LanguageProficiency };
 export { LANGUAGE_PROFICIENCIES };
 
-// Hydrated shapes: bullets parsed from JSON string into Bullet[].
-export type HydratedWorkRole = Omit<WorkRole, 'bullets'> & { bullets: Bullet[] };
-export type HydratedProject = Omit<Project, 'bullets'> & { bullets: Bullet[] };
-export type HydratedEducation = Omit<Education, 'bullets'> & { bullets: Bullet[] };
+// Hydrated shapes: bullets parsed from JSON string into Bullet[]; pinKeywords
+// parsed from JSON string into string[] | null.
+export type HydratedWorkRole = Omit<WorkRole, 'bullets' | 'pinKeywords'> & {
+    bullets: Bullet[];
+    pinKeywords: string[] | null;
+};
+export type HydratedProject = Omit<Project, 'bullets' | 'pinKeywords'> & {
+    bullets: Bullet[];
+    pinKeywords: string[] | null;
+};
+export type HydratedEducation = Omit<Education, 'bullets' | 'pinKeywords'> & {
+    bullets: Bullet[];
+    pinKeywords: string[] | null;
+};
+
+function parsePinKeywords(raw: string | null): string[] | null {
+    if (!raw) return null;
+    try {
+        const arr = JSON.parse(raw);
+        if (!Array.isArray(arr)) return null;
+        const filtered = arr.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+            .map((s) => s.trim());
+        return filtered.length > 0 ? filtered : null;
+    } catch {
+        return null;
+    }
+}
+
+function serializePinKeywords(value: string[] | null | undefined): string | null {
+    if (!value || value.length === 0) return null;
+    // Dedup case-insensitively (keeps first occurrence's casing) and drop empty
+    // entries — same posture as bullet tag dedup so the system doesn't accumulate
+    // both casings of the same pin keyword.
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const v of value) {
+        if (typeof v !== 'string') continue;
+        const trimmed = v.trim();
+        if (!trimmed) continue;
+        const lk = trimmed.toLowerCase();
+        if (seen.has(lk)) continue;
+        seen.add(lk);
+        out.push(trimmed);
+    }
+    return out.length > 0 ? JSON.stringify(out) : null;
+}
 
 export type HydratedProfile = Omit<Profile, 'links' | 'skills' | 'hobbies' | 'languages'> & {
     links: ProfileLink[] | null;
@@ -81,13 +123,13 @@ function parseLanguages(raw: string | null): LanguageEntry[] | null {
 }
 
 function hydrateWorkRole(row: WorkRole): HydratedWorkRole {
-    return { ...row, bullets: parseBullets(row.bullets) };
+    return { ...row, bullets: parseBullets(row.bullets), pinKeywords: parsePinKeywords(row.pinKeywords) };
 }
 function hydrateProject(row: Project): HydratedProject {
-    return { ...row, bullets: parseBullets(row.bullets) };
+    return { ...row, bullets: parseBullets(row.bullets), pinKeywords: parsePinKeywords(row.pinKeywords) };
 }
 function hydrateEducation(row: Education): HydratedEducation {
-    return { ...row, bullets: parseBullets(row.bullets) };
+    return { ...row, bullets: parseBullets(row.bullets), pinKeywords: parsePinKeywords(row.pinKeywords) };
 }
 
 // Lazily create an empty profile on first read so the UI always has something
@@ -185,6 +227,7 @@ export interface WorkRoleCreateInput {
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
+    pinKeywords?: string[] | null;
     position?: number;
 }
 
@@ -202,6 +245,7 @@ export async function createWorkRole(userId: string, input: WorkRoleCreateInput)
             endDate: input.endDate ?? null,
             bullets: serializeBullets(bullets),
             scratchpad: input.scratchpad ?? null,
+            pinKeywords: serializePinKeywords(input.pinKeywords),
             position,
         },
     });
@@ -216,6 +260,7 @@ export interface WorkRoleUpdateInput {
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
+    pinKeywords?: string[] | null;
     position?: number;
 }
 
@@ -235,6 +280,7 @@ export async function updateWorkRole(userId: string, id: string, input: WorkRole
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
     if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;
+    if (input.pinKeywords !== undefined) payload.pinKeywords = serializePinKeywords(input.pinKeywords);
     const row = await prisma.workRole.update({ where: { id }, data: payload });
     return hydrateWorkRole(row);
 }
@@ -257,6 +303,7 @@ export interface ProjectCreateInput {
     liveUrl?: string | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
+    pinKeywords?: string[] | null;
     position?: number;
 }
 
@@ -273,6 +320,7 @@ export async function createProject(userId: string, input: ProjectCreateInput): 
             liveUrl: input.liveUrl ?? null,
             bullets: serializeBullets(bullets),
             scratchpad: input.scratchpad ?? null,
+            pinKeywords: serializePinKeywords(input.pinKeywords),
             position,
         },
     });
@@ -286,6 +334,7 @@ export interface ProjectUpdateInput {
     liveUrl?: string | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
+    pinKeywords?: string[] | null;
     position?: number;
 }
 
@@ -303,6 +352,7 @@ export async function updateProject(userId: string, id: string, input: ProjectUp
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
     if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;
+    if (input.pinKeywords !== undefined) payload.pinKeywords = serializePinKeywords(input.pinKeywords);
     const row = await prisma.project.update({ where: { id }, data: payload });
     return hydrateProject(row);
 }
@@ -326,6 +376,7 @@ export interface EducationCreateInput {
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
+    pinKeywords?: string[] | null;
     position?: number;
 }
 
@@ -343,6 +394,7 @@ export async function createEducation(userId: string, input: EducationCreateInpu
             endDate: input.endDate ?? null,
             bullets: serializeBullets(bullets),
             scratchpad: input.scratchpad ?? null,
+            pinKeywords: serializePinKeywords(input.pinKeywords),
             position,
         },
     });
@@ -357,6 +409,7 @@ export interface EducationUpdateInput {
     endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
+    pinKeywords?: string[] | null;
     position?: number;
 }
 
@@ -375,6 +428,7 @@ export async function updateEducation(userId: string, id: string, input: Educati
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
     if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;
+    if (input.pinKeywords !== undefined) payload.pinKeywords = serializePinKeywords(input.pinKeywords);
     const row = await prisma.education.update({ where: { id }, data: payload });
     return hydrateEducation(row);
 }

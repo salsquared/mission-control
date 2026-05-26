@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
             liveUrl: parsed.data.liveUrl ?? null,
             bullets: parsed.data.bullets,
             scratchpad: parsed.data.scratchpad ?? null,
+            pinKeywords: parsed.data.pinKeywords ?? null,
             position: parsed.data.position,
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: project.id, timestamp: Date.now() });
@@ -63,6 +64,7 @@ export async function PATCH(req: NextRequest) {
             liveUrl: parsed.data.liveUrl,
             bullets: parsed.data.bullets,
             scratchpad: parsed.data.scratchpad,
+            pinKeywords: parsed.data.pinKeywords,
             position: parsed.data.position,
         });
         if (!project) return NextResponse.json({ error: "Project not found" }, { status: 404 });

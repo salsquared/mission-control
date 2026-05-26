@@ -45,7 +45,7 @@ Only include a proposal entry when `addedTags` is non-empty. Bullets you decide 
   ```
   - id=<bulletId>; text="<bullet text>"; tags=[<existing tag1>, <existing tag2>]; removedTags=[<blocked tag1>]
   ```
-  Excluded bullets (`bullet.excluded === true`) are filtered out by the caller before this list is built — the model never sees them and never proposes for them.
+  The trailing `removedTags=[...]` segment is omitted entirely when the bullet's blocklist is empty (the common case) — the post-filter in `mergeAutoTagProposals` still enforces rule 3 server-side regardless. Excluded bullets (`bullet.excluded === true`) are filtered out by the caller before this list is built — the model never sees them and never proposes for them.
 
 ## Notes
 

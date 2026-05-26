@@ -132,6 +132,40 @@ function mkFlat(parentKind: FlatBullet['parentKind'], parentId: string, bullet: 
     else pass('duplicate kws inside one proposal collapse to one tag');
 }
 
+// ─── 5b. Case-insensitive dedup — existing lowercase vs titlecase proposal ──
+// Regression for the case-sensitivity bug: a bullet with the user-typed
+// lowercase "python" tag should NOT also get the titlecase "Python" appended
+// when `bullet-tags-from-posting` proposes it from posting keywords.
+{
+    const original = mkBullet('b1', 'Built a Python API', { tags: ['python'] });
+    const flat: FlatBullet[] = [mkFlat('work-role', 'wr_1', original)];
+    const proposals: AutoTagProposal[] = [
+        { bulletId: 'b1', addedTags: ['Python'] },
+    ];
+    const { merged, tagsAdded, bulletsAffected } = mergeAutoTagProposals(flat, proposals);
+    if (tagsAdded !== 0) fail('case-insensitive tags: tagsAdded must be 0', tagsAdded);
+    else if (bulletsAffected !== 0) fail('case-insensitive tags: bulletsAffected must be 0', bulletsAffected);
+    else if (merged[0].bullet.tags.length !== 1) fail('case-insensitive tags: must remain a single tag', merged[0].bullet.tags);
+    else if (merged[0].bullet.tags[0] !== 'python') fail('case-insensitive tags: existing casing preserved', merged[0].bullet.tags);
+    else if (merged[0].bullet !== original) fail('case-insensitive tags: bullet reference must be stable when no effective change');
+    else pass('case-insensitive dedup: lowercase tag blocks titlecase proposal, existing casing kept');
+}
+
+// ─── 5c. Case-insensitive removedTags blocklist ─────────────────────────────
+// Regression: removed "python" (lowercase) must block proposed "Python".
+{
+    const original = mkBullet('b1', 'Built a Python API', { removedTags: ['python'] });
+    const flat: FlatBullet[] = [mkFlat('work-role', 'wr_1', original)];
+    const proposals: AutoTagProposal[] = [
+        { bulletId: 'b1', addedTags: ['Python'] },
+    ];
+    const { merged, tagsAdded, bulletsAffected } = mergeAutoTagProposals(flat, proposals);
+    if (tagsAdded !== 0) fail('case-insensitive removedTags: tagsAdded must be 0', tagsAdded);
+    else if (bulletsAffected !== 0) fail('case-insensitive removedTags: bulletsAffected must be 0', bulletsAffected);
+    else if (merged[0].bullet.tags.includes('Python')) fail('case-insensitive removedTags: must NOT acquire blocked kw', merged[0].bullet.tags);
+    else pass('case-insensitive blocklist: lowercase removedTags blocks titlecase proposal');
+}
+
 // ─── 6. Excluded bullets — flattenProfileBullets must filter them out ───────
 {
     const profile = {

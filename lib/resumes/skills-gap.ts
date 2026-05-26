@@ -80,6 +80,21 @@ export function computeSkillsGap(
         haystack += "\n" + normalize(b.text);
     }
 
+    // Profile.skills / languages / hobbies count as coverage too — a posting
+    // requiring "Spanish" shouldn't be flagged missing when the user lists
+    // Spanish as a language, and "Customer Service" shouldn't be missing when
+    // the user has it as a skill. Folded into the same haystack so the
+    // existing matchesWord boundary semantics apply uniformly.
+    for (const group of profile.skills ?? []) {
+        for (const item of group.items) haystack += "\n" + normalize(item);
+    }
+    for (const lang of profile.languages ?? []) {
+        haystack += "\n" + normalize(lang.name);
+    }
+    for (const hobby of profile.hobbies ?? []) {
+        haystack += "\n" + normalize(hobby);
+    }
+
     const seen = new Set<string>(); // dedup keywords that repeat in the input
     const missing: string[] = [];
     const covered: string[] = [];

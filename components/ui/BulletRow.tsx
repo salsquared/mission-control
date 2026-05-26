@@ -244,7 +244,15 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
                     )}
 
                     <div className="mt-1 flex flex-wrap gap-1 items-center">
-                        {bullet.tags.map((tag) => {
+                        {bullet.tags
+                            .slice()
+                            .sort((a, b) => {
+                                const aPinned = bullet.pinnedTags.includes(a);
+                                const bPinned = bullet.pinnedTags.includes(b);
+                                if (aPinned === bPinned) return 0;
+                                return aPinned ? -1 : 1;
+                            })
+                            .map((tag) => {
                             // M8.5.6 Decision 6.3 — auto-added tags get a
                             // Sparkles icon + cyan border until next save folds
                             // them in. M7.7.6 — pinned tags get a Pin icon +

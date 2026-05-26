@@ -6,8 +6,9 @@ import type {
     ProjectWire,
     EducationWire,
 } from "@/lib/schemas/profile";
-import type { ResumeSelection } from "@/lib/resumes/select";
+import type { ResumeSelection, ExtrasSelection } from "@/lib/resumes/select";
 import type { RewrittenBullet } from "@/lib/resumes/rewrite";
+import { DEFAULT_SECTION_ORDER, type SectionKey } from "@/lib/resumes/tagline-tailor";
 
 interface ResumeProps {
     profile: ProfileWire;
@@ -21,6 +22,15 @@ interface ResumeProps {
         projects: { entity: ProjectWire; bullets: { id: string; text: string }[] }[];
         education: { entity: EducationWire; bullets: { id: string; text: string }[] }[];
     };
+    // Posting-relevance-filtered skills / languages / hobbies. Each section
+    // is omitted from the rendered output when empty. See
+    // `selectProfileExtras` in lib/resumes/select.ts for the matcher.
+    extras: ExtrasSelection;
+    // Order in which the six sections render. LLM-supplied via resume-tagline;
+    // defaults to DEFAULT_SECTION_ORDER when no override is provided. Sections
+    // with no content are still omitted from the rendered output regardless
+    // of their position in this array.
+    sectionOrder: readonly SectionKey[];
 }
 
 export function composeResumeProps(
@@ -28,6 +38,8 @@ export function composeResumeProps(
     selection: ResumeSelection,
     rewrites: RewrittenBullet[],
     tagline: string | null = null,
+    extras: ExtrasSelection = { skills: [], languages: [], hobbies: [] },
+    sectionOrder: readonly SectionKey[] = DEFAULT_SECTION_ORDER,
 ): ResumeProps {
     const rewriteById = new Map(rewrites.map(r => [r.id, r.rewrittenText]));
     const render = <E,>(group: { entity: E; bullets: { bulletId: string; originalText: string }[] }[]) =>
@@ -46,6 +58,8 @@ export function composeResumeProps(
             projects: render(selection.projects),
             education: render(selection.education),
         },
+        extras,
+        sectionOrder,
     };
 }
 
@@ -98,9 +112,12 @@ body {
 .entity-sub { color: #444; font-size: 9.5pt; font-style: italic; }
 ul.bullets { margin: 2px 0 0 0.22in; padding: 0; }
 ul.bullets li { margin-bottom: 1px; }
+.extras-line { margin-bottom: 2px; }
+.extras-line .label { font-weight: 700; }
+.extras-inline { display: inline; }
 `;
 
-function ResumeDoc({ profile, tagline, sections }: ResumeProps) {
+function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeProps) {
     // Defense in depth — even if legacy corrupt entries (e.g. {url:"Github"})
     // exist in the DB, they shouldn't render as broken links in the resume.
     const links = (profile.links ?? []).filter(l => isValidUrl(l.url));
@@ -141,69 +158,112 @@ function ResumeDoc({ profile, tagline, sections }: ResumeProps) {
                             now. */}
                     </header>
 
-                    {sections.workRoles.length > 0 && (
-                        <section className="section">
-                            <h2>Experience</h2>
-                            {sections.workRoles.map(({ entity, bullets }) => (
-                                <div key={entity.id} className="entity">
-                                    <div className="entity-line">
-                                        <span className="title">{entity.title} · {entity.company}</span>
-                                        <span className="right">{fmtDateRange(entity.startDate, entity.endDate)}</span>
-                                    </div>
-                                    {entity.location ? <div className="entity-sub">{entity.location}</div> : null}
-                                    {bullets.length > 0 && (
-                                        <ul className="bullets">
-                                            {bullets.map(b => <li key={b.id}>{b.text}</li>)}
-                                        </ul>
-                                    )}
-                                </div>
-                            ))}
-                        </section>
-                    )}
-
-                    {sections.projects.length > 0 && (
-                        <section className="section">
-                            <h2>Projects</h2>
-                            {sections.projects.map(({ entity, bullets }) => {
-                                return (
-                                    <div key={entity.id} className="entity">
-                                        <div className="entity-line">
-                                            <span className="title">{entity.name}</span>
-                                            {entity.repoUrl ? <span className="right"><a href={entity.repoUrl}>{entity.repoUrl}</a></span> : null}
-                                        </div>
-                                        {entity.description ? <div className="entity-sub">{entity.description}</div> : null}
-                                        {bullets.length > 0 && (
-                                            <ul className="bullets">
-                                                {bullets.map(b => <li key={b.id}>{b.text}</li>)}
-                                            </ul>
-                                        )}
-                                    </div>
+                    {/* Sections render in sectionOrder. Each renderer is a
+                        no-op when its data is empty, so an empty section
+                        listed first in the order just doesn't draw. The
+                        order is supplied by resume-tagline's LLM output
+                        (or DEFAULT_SECTION_ORDER as fallback). */}
+                    {sectionOrder.map(key => {
+                        switch (key) {
+                            case "experience":
+                                return sections.workRoles.length === 0 ? null : (
+                                    <section key="experience" className="section">
+                                        <h2>Experience</h2>
+                                        {sections.workRoles.map(({ entity, bullets }) => (
+                                            <div key={entity.id} className="entity">
+                                                <div className="entity-line">
+                                                    <span className="title">{entity.title} · {entity.company}</span>
+                                                    <span className="right">{fmtDateRange(entity.startDate, entity.endDate)}</span>
+                                                </div>
+                                                {entity.location ? <div className="entity-sub">{entity.location}</div> : null}
+                                                {bullets.length > 0 && (
+                                                    <ul className="bullets">
+                                                        {bullets.map(b => <li key={b.id}>{b.text}</li>)}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </section>
                                 );
-                            })}
-                        </section>
-                    )}
-
-                    {sections.education.length > 0 && (
-                        <section className="section">
-                            <h2>Education</h2>
-                            {sections.education.map(({ entity, bullets }) => (
-                                <div key={entity.id} className="entity">
-                                    <div className="entity-line">
-                                        <span className="title">{entity.institution}</span>
-                                        <span className="right">{fmtDateRange(entity.startDate, entity.endDate)}</span>
-                                    </div>
-                                    {(entity.degree || entity.field) ? (
-                                        <div className="entity-sub">{[entity.degree, entity.field].filter(Boolean).join(", ")}</div>
-                                    ) : null}
-                                    {bullets.length > 0 && (
-                                        <ul className="bullets">
-                                            {bullets.map(b => <li key={b.id}>{b.text}</li>)}
-                                        </ul>
-                                    )}
-                                </div>
-                            ))}
-                        </section>
-                    )}
+                            case "projects":
+                                return sections.projects.length === 0 ? null : (
+                                    <section key="projects" className="section">
+                                        <h2>Projects</h2>
+                                        {sections.projects.map(({ entity, bullets }) => (
+                                            <div key={entity.id} className="entity">
+                                                <div className="entity-line">
+                                                    <span className="title">{entity.name}</span>
+                                                    {entity.repoUrl ? <span className="right"><a href={entity.repoUrl}>{entity.repoUrl}</a></span> : null}
+                                                </div>
+                                                {entity.description ? <div className="entity-sub">{entity.description}</div> : null}
+                                                {bullets.length > 0 && (
+                                                    <ul className="bullets">
+                                                        {bullets.map(b => <li key={b.id}>{b.text}</li>)}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </section>
+                                );
+                            case "education":
+                                return sections.education.length === 0 ? null : (
+                                    <section key="education" className="section">
+                                        <h2>Education</h2>
+                                        {sections.education.map(({ entity, bullets }) => (
+                                            <div key={entity.id} className="entity">
+                                                <div className="entity-line">
+                                                    <span className="title">{entity.institution}</span>
+                                                    <span className="right">{fmtDateRange(entity.startDate, entity.endDate)}</span>
+                                                </div>
+                                                {(entity.degree || entity.field) ? (
+                                                    <div className="entity-sub">{[entity.degree, entity.field].filter(Boolean).join(", ")}</div>
+                                                ) : null}
+                                                {bullets.length > 0 && (
+                                                    <ul className="bullets">
+                                                        {bullets.map(b => <li key={b.id}>{b.text}</li>)}
+                                                    </ul>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </section>
+                                );
+                            case "skills":
+                                return extras.skills.length === 0 ? null : (
+                                    <section key="skills" className="section">
+                                        <h2>Skills</h2>
+                                        {extras.skills.map(g => (
+                                            <div key={g.category} className="extras-line">
+                                                <span className="label">{g.category}: </span>
+                                                <span className="extras-inline">{g.items.join(", ")}</span>
+                                            </div>
+                                        ))}
+                                    </section>
+                                );
+                            case "languages":
+                                return extras.languages.length === 0 ? null : (
+                                    <section key="languages" className="section">
+                                        <h2>Languages</h2>
+                                        <div className="extras-line">
+                                            {extras.languages.map((l, i) => (
+                                                <React.Fragment key={l.name}>
+                                                    {i > 0 ? ", " : null}
+                                                    <span>{l.name} ({l.proficiency})</span>
+                                                </React.Fragment>
+                                            ))}
+                                        </div>
+                                    </section>
+                                );
+                            case "interests":
+                                return extras.hobbies.length === 0 ? null : (
+                                    <section key="interests" className="section">
+                                        <h2>Interests</h2>
+                                        <div className="extras-line">{extras.hobbies.join(", ")}</div>
+                                    </section>
+                                );
+                            default:
+                                return null;
+                        }
+                    })}
                 </div>
             </body>
         </html>

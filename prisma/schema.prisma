@@ -301,6 +301,15 @@ model WorkRole {
   // into a resume. Capped at 8 KB at the schema layer (lib/schemas/profile.ts)
   // to bound prompt budgets.
   scratchpad String?
+  // Posting-category-conditional pin. JSON array of keyword strings. When a
+  // resume is generated against a posting whose extracted keywords contain
+  // any of these (case-insensitive whole-word match — same matcher as
+  // lib/resumes/select.ts), this entity is forced into the selection,
+  // marked unremovable by the one-page pruner, and moved to position 0 of
+  // its section regardless of score-based / LLM-suggested ordering. Empty
+  // array (or null) means no conditional pin. Stored as JSON-stringified
+  // array, same pattern as `bullets`.
+  pinKeywords String?
   position  Int       @default(0)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -329,6 +338,8 @@ model Project {
   // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-project user-voice
   // notes; consumed by bullet-assist + resume-gen synthesis.
   scratchpad         String?
+  // See WorkRole.pinKeywords — same semantic.
+  pinKeywords        String?
   position           Int       @default(0)
   createdAt          DateTime  @default(now())
   updatedAt          DateTime  @updatedAt
@@ -350,6 +361,8 @@ model Education {
   // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-education user-voice
   // notes; consumed by bullet-assist + resume-gen synthesis.
   scratchpad  String?
+  // See WorkRole.pinKeywords — same semantic.
+  pinKeywords String?
   position    Int       @default(0)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt

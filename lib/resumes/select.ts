@@ -96,35 +96,91 @@ function matchesWord(keyword: string, haystack: string): boolean {
     return haystack.includes(keyword);
 }
 
+// Posting-category-conditional pin: an entity is pinned for THIS posting if
+// any of its `pinKeywords` matches any of the posting's keywords via whole-
+// word case-insensitive lookup. Same matcher the bullet scorer uses, so the
+// pin behavior is consistent with how matches are counted elsewhere.
+//
+// Returns true when at least one pin-keyword × posting-keyword pair matches.
+// Empty / null pinKeywords → never pinned. Empty posting keywords → never
+// pinned (no posting to match against).
+export function entityIsPinned(
+    pinKeywords: string[] | null | undefined,
+    postingKeywords: readonly string[],
+): boolean {
+    if (!pinKeywords || pinKeywords.length === 0) return false;
+    if (postingKeywords.length === 0) return false;
+    const lowerPostingKeywords = postingKeywords.map(normalize);
+    for (const pin of pinKeywords) {
+        const lowerPin = normalize(pin);
+        if (lowerPin.length < 2) continue;
+        for (const lowerPosting of lowerPostingKeywords) {
+            if (matchesWord(lowerPin, lowerPosting)) return true;
+            if (matchesWord(lowerPosting, lowerPin)) return true;
+        }
+    }
+    return false;
+}
+
+// `keywordWeights` is a lowercased-keyword → importance multiplier map.
+// When a tag or substring match lands on keyword K, the contribution is
+// `baseWeight × keywordWeights[lower(K)]` instead of plain `baseWeight`.
+// Missing keys default to 1 (preserves legacy behavior for callers that
+// don't supply weights). Importance is sourced from `posting-parse`'s
+// per-keyword importance field; see `lib/resumes/posting.ts`.
 function scoreBullet(
     text: string,
     tags: string[],
     keywords: string[],
+    keywordWeights?: Record<string, number>,
 ): { score: number; matchedTags: string[]; matchedKeywords: string[] } {
     const lowerKeywords = keywords.map(normalize);
     const lowerTags = tags.map(normalize);
     const lowerText = normalize(text);
+    const weightOf = (lowerKw: string): number => {
+        if (!keywordWeights) return 1;
+        const w = keywordWeights[lowerKw];
+        return typeof w === "number" && w > 0 ? w : 1;
+    };
 
+    // Case-insensitive dedup when counting tag matches: a bullet that
+    // somehow ended up with both "software engineering" and "Software
+    // Engineering" tagged on it should still only contribute ONE match for
+    // the posting keyword "Software Engineering", not two. Without this
+    // dedup, legacy double-casing data in the DB (see auto-tag.ts merge
+    // bug pre-fix) doubles the score. Keeps the first tag's casing for
+    // display in matchedTags.
     const matchedTags: string[] = [];
+    const matchedTagLowerSeen = new Set<string>();
+    let tagContribution = 0;
     for (const tag of tags) {
-        if (lowerKeywords.includes(normalize(tag))) matchedTags.push(tag);
+        const lowerTag = normalize(tag);
+        if (matchedTagLowerSeen.has(lowerTag)) continue;
+        if (lowerKeywords.includes(lowerTag)) {
+            matchedTagLowerSeen.add(lowerTag);
+            matchedTags.push(tag);
+            tagContribution += TAG_WEIGHT * weightOf(lowerTag);
+        }
     }
 
     const matchedKeywords: string[] = [];
+    let keywordContribution = 0;
     for (let i = 0; i < keywords.length; i++) {
         const kw = lowerKeywords[i];
         if (kw.length < 2) continue;
-        if (matchesWord(kw, lowerText)) matchedKeywords.push(keywords[i]);
-        else if (lowerTags.includes(kw) && !matchedKeywords.includes(keywords[i])) {
+        if (matchesWord(kw, lowerText)) {
+            matchedKeywords.push(keywords[i]);
+            keywordContribution += SUBSTRING_WEIGHT * weightOf(kw);
+        } else if (lowerTags.includes(kw) && !matchedKeywords.includes(keywords[i])) {
             // already counted via matchedTags — don't double-count
         }
     }
 
-    const score = TAG_WEIGHT * matchedTags.length + SUBSTRING_WEIGHT * matchedKeywords.length;
+    const score = tagContribution + keywordContribution;
     return { score, matchedTags, matchedKeywords };
 }
 
-function selectFor<E extends { id: string; bullets: { id: string; text: string; tags: string[]; locked: boolean; excluded: boolean }[] }>(
+function selectFor<E extends { id: string; bullets: { id: string; text: string; tags: string[]; locked: boolean; excluded: boolean }[]; pinKeywords?: string[] | null }>(
     entities: E[],
     kind: SelectionKind,
     labelOf: (e: E) => string,
@@ -132,13 +188,14 @@ function selectFor<E extends { id: string; bullets: { id: string; text: string; 
     maxBullets: number,
     keepAlways: (e: E, index: number) => boolean,
     dropZeroScoreEntities: boolean,
+    keywordWeights?: Record<string, number>,
 ): EntitySelection<E>[] {
     const out: EntitySelection<E>[] = [];
     entities.forEach((entity, index) => {
         const candidates: BulletSelection[] = [];
         for (const b of entity.bullets) {
             if (b.excluded) continue;
-            const { score, matchedTags, matchedKeywords } = scoreBullet(b.text, b.tags, keywords);
+            const { score, matchedTags, matchedKeywords } = scoreBullet(b.text, b.tags, keywords, keywordWeights);
             candidates.push({
                 kind,
                 sourceId: entity.id,
@@ -193,6 +250,7 @@ function sortByStartDateDesc<E extends { startDate?: string | null }>(arr: E[]):
 function pickWorkRoleSpineIndex(
     workRoles: { bullets: { text: string; tags: string[]; locked: boolean; excluded: boolean }[] }[],
     keywords: string[],
+    keywordWeights?: Record<string, number>,
 ): number {
     if (workRoles.length === 0) return -1;
     const topScoreOf = (idx: number): number => {
@@ -200,7 +258,7 @@ function pickWorkRoleSpineIndex(
         for (const b of workRoles[idx].bullets) {
             if (b.excluded) continue;
             if (b.locked) return Number.POSITIVE_INFINITY;
-            const s = scoreBullet(b.text, b.tags, keywords).score;
+            const s = scoreBullet(b.text, b.tags, keywords, keywordWeights).score;
             if (s > top) top = s;
         }
         return top;
@@ -220,34 +278,61 @@ export function selectBullets(
     profile: ProfileWire,
     keywords: string[],
     options: SelectOptions = {},
+    keywordWeights?: Record<string, number>,
 ): ResumeSelection {
     const opts = { ...DEFAULTS, ...options };
 
     const workRoles = sortByStartDateDesc(profile.workRoles);
     const projects = [...profile.projects].sort((a, b) => a.position - b.position);
     const education = sortByStartDateDesc(profile.education);
-    const workRoleSpineIdx = pickWorkRoleSpineIndex(workRoles, keywords);
+    const workRoleSpineIdx = pickWorkRoleSpineIndex(workRoles, keywords, keywordWeights);
+
+    // Posting-category-conditional pin. When an entity's `pinKeywords`
+    // matches any posting keyword, treat it as keep-always (bypasses the
+    // MIN_KEEP_SCORE drop) AND move it to position 0 of its section after
+    // selection (overriding score-based / LLM-suggested order). See
+    // `entityIsPinned`.
+    const isPinned = <E extends { pinKeywords?: string[] | null }>(e: E) =>
+        entityIsPinned(e.pinKeywords, keywords);
+
+    // Per section, partition selection so pinned entities come first
+    // (in their original sub-order), unpinned follow. Stable. Empty pin
+    // partition is a no-op — no wasted work for users who haven't set any
+    // pinKeywords.
+    const movePinnedToFront = <E extends { entity: { pinKeywords?: string[] | null } }>(
+        groups: E[],
+    ): E[] => {
+        const pinned: E[] = [];
+        const rest: E[] = [];
+        for (const g of groups) {
+            if (isPinned(g.entity)) pinned.push(g);
+            else rest.push(g);
+        }
+        return pinned.length === 0 ? groups : [...pinned, ...rest];
+    };
 
     return {
-        workRoles: selectFor(
+        workRoles: movePinnedToFront(selectFor(
             workRoles,
             "workRole",
             (e) => `${e.title} @ ${e.company}`,
             keywords,
             opts.maxBulletsPerWorkRole,
-            (_e, i) => i === workRoleSpineIdx,
+            (e, i) => i === workRoleSpineIdx || isPinned(e),
             opts.dropZeroScoreEntities,
-        ),
-        projects: selectFor(
+            keywordWeights,
+        )),
+        projects: movePinnedToFront(selectFor(
             projects,
             "project",
             (e) => e.name,
             keywords,
             opts.maxBulletsPerProject,
-            () => false,
+            (e) => isPinned(e),
             opts.dropZeroScoreEntities,
-        ),
-        education: selectFor(
+            keywordWeights,
+        )),
+        education: movePinnedToFront(selectFor(
             education,
             "education",
             (e) => `${e.degree ?? ""} ${e.institution}`.trim(),
@@ -255,7 +340,8 @@ export function selectBullets(
             opts.maxBulletsPerEducation,
             () => true,
             opts.dropZeroScoreEntities,
-        ),
+            keywordWeights,
+        )),
     };
 }
 

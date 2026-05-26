@@ -39,6 +39,7 @@ export async function POST(req: NextRequest) {
             endDate: parsed.data.endDate ? new Date(parsed.data.endDate) : null,
             bullets: parsed.data.bullets,
             scratchpad: parsed.data.scratchpad ?? null,
+            pinKeywords: parsed.data.pinKeywords ?? null,
             position: parsed.data.position,
         });
         broadcastEvent({ model: 'Profile', action: 'upsert', id: workRole.id, timestamp: Date.now() });
@@ -69,6 +70,7 @@ export async function PATCH(req: NextRequest) {
             endDate: parsed.data.endDate === undefined ? undefined : (parsed.data.endDate ? new Date(parsed.data.endDate) : null),
             bullets: parsed.data.bullets,
             scratchpad: parsed.data.scratchpad,
+            pinKeywords: parsed.data.pinKeywords,
             position: parsed.data.position,
         });
         if (!workRole) return NextResponse.json({ error: "WorkRole not found" }, { status: 404 });

@@ -303,26 +303,32 @@ export function applyTagSuggestPostFilter(
     pinnedTags: string[],
     removedTags: string[],
 ): string[] {
-    const removedSet = new Set(removedTags);
-    const seen = new Set<string>();
+    // Case-insensitive blocklist + seen dedup. Without this a removed
+    // "python" doesn't block a proposed "Python", and "git" + "Git" both
+    // land in the result. The visible tag string keeps its original casing
+    // (first occurrence wins).
+    const removedSetLower = new Set(removedTags.map(t => t.toLowerCase()));
+    const seenLower = new Set<string>();
     const result: string[] = [];
 
     // Pinned tags ALWAYS appear first in the output, regardless of where
     // they showed up (or didn't) in the model's response. This is the
     // S7.11 invariant in concrete form.
     for (const tag of pinnedTags) {
-        if (removedSet.has(tag)) continue; // shouldn't happen — schema invariant — but defensive
-        if (seen.has(tag)) continue;
-        seen.add(tag);
+        const lt = tag.toLowerCase();
+        if (removedSetLower.has(lt)) continue; // shouldn't happen — schema invariant — but defensive
+        if (seenLower.has(lt)) continue;
+        seenLower.add(lt);
         result.push(tag);
     }
 
     // Then the LLM's proposed tags in order, skipping any in the blocklist
     // or any duplicate of a pin we already emitted.
     for (const tag of proposed) {
-        if (removedSet.has(tag)) continue;
-        if (seen.has(tag)) continue;
-        seen.add(tag);
+        const lt = tag.toLowerCase();
+        if (removedSetLower.has(lt)) continue;
+        if (seenLower.has(lt)) continue;
+        seenLower.add(lt);
         result.push(tag);
         if (result.length >= MAX_TAGS) break;
     }

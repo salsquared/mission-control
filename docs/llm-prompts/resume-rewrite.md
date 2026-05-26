@@ -72,6 +72,7 @@ Bullets to rewrite (preserve every `id` exactly):
 ## Notes
 
 - This is the **only** callsite on MODEL_FLASH (3.5) — output is what the user emails to employers, so quality dominates cost.
+- **Pre-filter before the LLM call:** `rewriteBullets` only ships bullets with `matchedTags.length > 0 || matchedKeywords.length > 0` to Gemini. Bullets with both arrays empty have no posting-keyword lever (rules 6 / 6a are no-ops) and are passed through verbatim in the final output. Saves tokens and avoids low-value cross-domain "polish" rewrites. The final return preserves original selection order — renderer + trace UI still see every selected bullet.
 - Strict validation: the response's `bullets[].id` must match an id from the input; unknown or duplicate ids throw `AIError`. Missing ids fall back to the original text (logged warn, never silently dropped).
 - `matchedKeywords` in the response is metadata for the "Why these bullets?" trace UI — it tells the user which posting keywords each rewrite leaned on. Distinct from the input's `matchedKeywords` (deterministic scorer output).
 - The rewriter does NOT regenerate bullet tags — tags stay frozen from the input. (Contrast `bullet-assist-rewrite`, which IS allowed to change tags because the user manually reviews each one.)
