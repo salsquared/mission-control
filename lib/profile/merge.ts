@@ -47,7 +47,11 @@ export interface ExistingEducation {
 }
 export interface ExistingProfileForMerge {
     headline: string | null;
-    summary: string | null;
+    // Story S7.14 follow-up (2026-05-26): `summary` column dropped from
+    // Profile; merge layer no longer plumbs it through. Tagline (new
+    // column post-M7.9) replaces it as the only one-line pitch — and
+    // tagline isn't merged through import-llm, so it's not part of this
+    // interface.
     location: string | null;
     email: string | null;
     phone: string | null;
@@ -61,7 +65,6 @@ export interface ExistingProfileForMerge {
 
 export interface HeaderPatch {
     headline?: string | null;
-    summary?: string | null;
     location?: string | null;
     email?: string | null;
     phone?: string | null;
@@ -356,8 +359,8 @@ interface Accumulator {
 
 function mergeHeader(acc: Accumulator, existing: ExistingProfileForMerge, incoming: ExtractedProfile["header"]): MergeCounts {
     const counts = emptyCounts();
-    type StringField = "headline" | "summary" | "location" | "email" | "phone";
-    const fields: StringField[] = ["headline", "summary", "location", "email", "phone"];
+    type StringField = "headline" | "location" | "email" | "phone";
+    const fields: StringField[] = ["headline", "location", "email", "phone"];
     for (const f of fields) {
         const existingVal = existing[f];
         const accVal = acc.headerPatch[f];

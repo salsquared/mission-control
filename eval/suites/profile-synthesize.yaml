@@ -9,7 +9,6 @@
     input:
       existing:
         headline: null
-        summary: null
         location: "San Francisco, CA"
         email: "jane@example.com"
         phone: null
@@ -29,8 +28,7 @@
           tree:
             header:
               headline: null
-              summary: null
-              location: "SF Bay Area"
+                    location: "SF Bay Area"
               email: "jane@example.com"
               phone: null
               links: []
@@ -57,8 +55,7 @@
           tree:
             header:
               headline: null
-              summary: null
-              location: null
+                    location: null
               email: null
               phone: null
               links: []

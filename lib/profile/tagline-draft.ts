@@ -127,10 +127,12 @@ function renderEntitySection(
 export function buildProfileSummary(profile: HydratedProfile): string {
     const sections: string[] = [];
 
-    // Identity essentials.
+    // Identity essentials. Story S7.14 follow-up (2026-05-26): the legacy
+    // `summary` column was dropped, so identity is just the name — every
+    // other pitch lives in the tagline (which is the OUTPUT of this caller,
+    // not its input grounding).
     const identity: string[] = [];
     if (profile.headline?.trim()) identity.push(`Name: ${profile.headline.trim()}`);
-    if (profile.summary?.trim()) identity.push(`Summary: ${clip(profile.summary, 400)}`);
     if (identity.length > 0) sections.push(['## Identity', ...identity].join('\n'));
 
     // Work roles.

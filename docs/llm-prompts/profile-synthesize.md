@@ -55,7 +55,7 @@ DRAFTS — {{draftCount}} per-file extraction(s):
 
 Return JSON with this exact shape:
 {
-  "header": { "headline": string|null, "summary": string|null, "location": string|null, "email": string|null, "phone": string|null, "links": Array<{label,url}>|null },
+  "header": { "headline": string|null, "location": string|null, "email": string|null, "phone": string|null, "links": Array<{label,url}>|null },
   "workRoles": Array<{ "company": string, "title": string, "location": string|null, "startDate": string|null, "endDate": string|null, "bullets": string[] }>,
   "projects": Array<{ "name": string, "description": string|null, "repoUrl": string|null, "liveUrl": string|null, "bullets": string[] }>,
   "education": Array<{ "institution": string, "degree": string|null, "field": string|null, "startDate": string|null, "endDate": string|null, "bullets": string[] }>

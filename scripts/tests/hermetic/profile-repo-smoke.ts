@@ -44,10 +44,10 @@ async function main() {
     // 2. Header PATCH round-trip.
     const before = p1.headline;
     const sentinel = `smoke-${Date.now()}`;
-    const updated = await updateProfileHeader(user.id, { headline: sentinel, summary: 'smoke summary', links: [{ label: 'gh', url: 'https://github.com/x' }] });
+    const updated = await updateProfileHeader(user.id, { headline: sentinel, links: [{ label: 'gh', url: 'https://github.com/x' }] });
     record('updateProfileHeader: writes headline', updated.headline === sentinel);
     record('updateProfileHeader: writes links array', Array.isArray(updated.links) && updated.links?.[0]?.label === 'gh');
-    await updateProfileHeader(user.id, { headline: before, summary: null, links: null });
+    await updateProfileHeader(user.id, { headline: before, links: null });
     const restored = await findOrCreateProfile(user.id);
     record('updateProfileHeader: restored', restored.headline === before && restored.links === null);
 

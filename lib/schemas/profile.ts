@@ -166,8 +166,9 @@ export const ProfileSchema = z.object({
     // M7.9.1 — one-sentence subtitle for the resume (story S7.14).
     // Optional on the wire so pre-migration snapshots + fixtures don't need
     // to spell out a null. Server always sets explicitly when serializing.
+    // Story S7.14 follow-up (2026-05-26): `summary` was dropped — tagline
+    // replaces it.
     tagline: z.string().nullable().optional(),
-    summary: z.string().nullable(),
     location: z.string().nullable(),
     email: z.string().nullable(),
     phone: z.string().nullable(),
@@ -196,7 +197,6 @@ export const ProfileDeleteResponseSchema = z.object({ success: z.literal(true), 
 export const ProfilePatchSchema = z.object({
     headline: z.string().nullable().optional(),
     tagline: z.string().max(TAGLINE_MAX_BYTES).nullable().optional(),
-    summary: z.string().nullable().optional(),
     location: z.string().nullable().optional(),
     email: z.string().nullable().optional(),
     phone: z.string().nullable().optional(),

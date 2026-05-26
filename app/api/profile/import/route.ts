@@ -154,7 +154,6 @@ export async function POST(req: NextRequest) {
         const existing = await findOrCreateProfile(userId);
         const existingForMerge: ExistingProfileForMerge = {
             headline: existing.headline,
-            summary: existing.summary,
             location: existing.location,
             email: existing.email,
             phone: existing.phone,

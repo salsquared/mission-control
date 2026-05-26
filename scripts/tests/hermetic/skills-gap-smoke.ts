@@ -25,7 +25,7 @@ const ISO = "2026-01-01T00:00:00.000Z";
 function mkProfile(overrides: Partial<ProfileWire> = {}): ProfileWire {
     return {
         id: "p1", userId: "u1",
-        headline: null, summary: null, location: null, email: null, phone: null,
+        headline: null, location: null, email: null, phone: null,
         links: null,
         skills: null, hobbies: null, languages: null,
         workRoles: [],

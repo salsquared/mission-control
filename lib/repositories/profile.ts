@@ -128,7 +128,6 @@ export async function findOrCreateProfile(userId: string): Promise<HydratedProfi
 export interface ProfileHeaderUpdate {
     headline?: string | null;
     tagline?: string | null;
-    summary?: string | null;
     location?: string | null;
     email?: string | null;
     phone?: string | null;
@@ -142,7 +141,6 @@ export async function updateProfileHeader(userId: string, data: ProfileHeaderUpd
     const payload: Record<string, unknown> = {};
     if (data.headline !== undefined) payload.headline = data.headline;
     if (data.tagline !== undefined) payload.tagline = data.tagline;
-    if (data.summary !== undefined) payload.summary = data.summary;
     if (data.location !== undefined) payload.location = data.location;
     if (data.email !== undefined) payload.email = data.email;
     if (data.phone !== undefined) payload.phone = data.phone;

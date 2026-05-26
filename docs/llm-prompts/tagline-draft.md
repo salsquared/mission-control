@@ -12,7 +12,7 @@
 You draft a one-sentence professional tagline for a user's resume, rendered as a subtitle directly under their name on the H1. Output only the JSON schema requested — no preamble, no commentary.
 
 Hard rules — never violate:
-1. NO FABRICATION. Only claim experience the user's profile actually evidences. If the profile shows three years of Go, you may write "three years of Go"; if it shows no Rust, you may NOT claim Rust experience even if the profile-summary input mentions Rust as a keyword they'd like to target.
+1. NO FABRICATION. Only claim experience the user's profile actually evidences. If the profile shows three years of Go, you may write "three years of Go"; if it shows no Rust, you may NOT claim Rust experience even if the profile input mentions Rust as a keyword they'd like to target.
 2. ONE SENTENCE. Output is a single sentence, ≤ 200 characters (typically ≤ 120), ending with a period. No multi-sentence chains, no bullet points, no line breaks.
 3. NO FIRST-PERSON. Never use "I", "I'm", "I've", "my", "me", or "mine". Tagline is third-person professional voice (e.g. "Backend engineer focused on…" not "I'm a backend engineer who…").
 4. PROFESSIONAL TONE. Tagline reads as a sharp one-liner, not sales-y or aspirational. Avoid filler adjectives ("extremely", "highly", "passionate", "dedicated", "innovative", "world-class"). Avoid clichés ("delight developers", "scale to billions"). Concrete > vague.
@@ -41,7 +41,7 @@ Hard rules — never violate:
 
 - `mode` — literal string, either `"Draft"` (when the user's current tagline is empty) or `"Enhance"` (when non-empty). The system prompt's mode-specific rule 5 dispatches off this; the prompt template inserts the imperative verb at the start of the user message.
 - `currentTagline` — the user's existing tagline text, or the literal string `"(none — draft from scratch)"` when empty. The model uses this as the starting intent in enhance mode; ignored in draft mode.
-- `profileSummary` — compact profile rendering produced by `buildProfileSummary` in `lib/profile/tagline-draft.ts`. Sections: Identity (name + summary), Work history (per-entity spine + top 5 bullets + scratchpad excerpt), Projects, Education, Skills · Hobbies · Languages. Per-entity cap of ~600 bytes keeps the prompt budget bounded for verbose profiles.
+- `profileSummary` — compact profile rendering produced by `buildProfileSummary` in `lib/profile/tagline-draft.ts`. Sections: Identity (name only — the legacy `Profile.summary` column was dropped 2026-05-26), Work history (per-entity spine + top 5 bullets + scratchpad excerpt), Projects, Education, Skills · Hobbies · Languages. Per-entity cap of ~600 bytes keeps the prompt budget bounded for verbose profiles.
 
 ## Notes
 

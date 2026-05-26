@@ -110,7 +110,6 @@ async function main(): Promise<void> {
             data: {
                 userId,
                 headline: "Sal Salcedo",
-                summary: "Engineer focused on backend systems.",
             },
         });
         profileId = profile.id;

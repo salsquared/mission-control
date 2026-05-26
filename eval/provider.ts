@@ -104,7 +104,6 @@ const HANDLERS: Record<string, CallsiteHandler> = {
         const ex = args.existing;
         const existing: Parameters<typeof synthesizeMasterResume>[0] = {
             headline: (ex.headline ?? null) as string | null,
-            summary: (ex.summary ?? null) as string | null,
             location: (ex.location ?? null) as string | null,
             email: (ex.email ?? null) as string | null,
             phone: (ex.phone ?? null) as string | null,

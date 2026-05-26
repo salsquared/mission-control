@@ -279,7 +279,6 @@ export const ProfileView: React.FC = () => {
                 <PersonalInfoCard
                     headline={profile.headline}
                     tagline={profile.tagline ?? null}
-                    summary={profile.summary}
                     location={profile.location}
                     email={profile.email}
                     phone={profile.phone}

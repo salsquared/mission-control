@@ -102,7 +102,6 @@ body {
 .header .tagline { font-size: 10.5pt; color: #444; font-style: italic; margin: 0 0 4px 0; }
 .header .meta { font-size: 9.5pt; color: #333; }
 .header .meta a { color: #1b56b8; text-decoration: none; }
-.header .summary { margin-top: 0.06in; font-size: 10pt; }
 .section { margin-top: 0.16in; }
 .section h2 {
   font-size: 11pt;
@@ -158,7 +157,10 @@ function ResumeDoc({ profile, sections }: ResumeProps) {
                                 </React.Fragment>
                             ))}
                         </div>
-                        {profile.summary ? <div className="summary">{profile.summary}</div> : null}
+                        {/* Story S7.14 follow-up (2026-05-26): legacy
+                            `profile.summary` block dropped — tagline (rendered
+                            above the meta line) is the only one-line pitch
+                            now. */}
                     </header>
 
                     {sections.workRoles.length > 0 && (

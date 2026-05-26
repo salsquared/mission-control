@@ -42,12 +42,13 @@ const COMMON_LANGUAGES = [
 ] as const;
 
 // HeaderPatch is the union of every field this card writes — headline +
-// tagline + summary + contact + skills/hobbies/languages. Each setter on
-// the parent view dispatches through this single patch shape.
+// tagline + contact + skills/hobbies/languages. Each setter on the parent
+// view dispatches through this single patch shape. (Story S7.14 follow-up
+// 2026-05-26: legacy `summary` field dropped — tagline is the only
+// one-line pitch now.)
 export type PersonalInfoPatch = {
     headline?: string | null;
     tagline?: string | null;
-    summary?: string | null;
     location?: string | null;
     email?: string | null;
     phone?: string | null;
@@ -60,7 +61,6 @@ export type PersonalInfoPatch = {
 interface PersonalInfoCardProps {
     headline: string | null;
     tagline: string | null;
-    summary: string | null;
     location: string | null;
     email: string | null;
     phone: string | null;
@@ -575,7 +575,6 @@ const LanguagesEditor: React.FC<{
 export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
     headline,
     tagline,
-    summary,
     location,
     email,
     phone,
@@ -610,18 +609,11 @@ export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
                     </div>
                     {/* M7.9.6 (story S7.14) — one-sentence subtitle for the resume
                         with AI-draft button. Sits directly under Name since it
-                        renders directly under the H1 on the generated resume. */}
+                        renders directly under the H1 on the generated resume.
+                        Story S7.14 follow-up (2026-05-26): the legacy multi-
+                        line Summary field was dropped — tagline is the only
+                        one-line pitch now. */}
                     <TaglineRow tagline={tagline} onSave={(v) => onSave({ tagline: v })} />
-                    <div>
-                        <span className="text-[10px] uppercase tracking-wider text-white/30">Summary</span>
-                        <EditableField
-                            value={summary}
-                            onSave={(v) => onSave({ summary: v })}
-                            placeholder="One-paragraph elevator pitch"
-                            multiline
-                            readClassName="text-sm text-white/70 whitespace-pre-wrap"
-                        />
-                    </div>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
                         <div className="flex items-center gap-2">
                             <MapPin className="w-3.5 h-3.5 text-white/40 shrink-0" />

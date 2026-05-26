@@ -264,8 +264,12 @@ model Profile {
   // per the M8.4 canonical-naming work). Capped at 200 chars at the
   // zod schema layer; the column itself is unbounded TEXT. Optional —
   // null means no subtitle line on the resume.
+  //
+  // Story S7.14 follow-up (2026-05-26): the legacy `summary` column was
+  // dropped (`drop_profile_summary` migration) — tagline replaces it as
+  // the only one-line pitch. Existing summary content was discarded in
+  // the migration.
   tagline   String?
-  summary   String?
   location  String?
   email     String?
   phone     String?

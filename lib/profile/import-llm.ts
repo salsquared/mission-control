@@ -2,9 +2,10 @@ import { z } from "zod";
 import { chatJSON } from "@/lib/ai/gemini";
 import { loadPrompt } from "@/lib/ai/prompts";
 
+// Story S7.14 follow-up (2026-05-26): `summary` dropped from Profile —
+// importer no longer asks the LLM to extract one.
 const HeaderSchema = z.object({
     headline: z.string().nullable(),
-    summary: z.string().nullable(),
     location: z.string().nullable(),
     email: z.string().nullable(),
     phone: z.string().nullable(),

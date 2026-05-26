@@ -25,7 +25,8 @@ const profile: ProfileWire = {
     headline: "Sal Salcedo — Software Engineer",
     // M7.9.7 — tagline renders as italic subtitle under the H1 on the resume.
     tagline: "Backend engineer focused on developer-facing systems and reliability.",
-    summary: "Engineer focused on developer-facing systems and reliability.",
+    // Story S7.14 follow-up (2026-05-26): `summary` field dropped from
+    // Profile — tagline (already in this fixture) is the only one-line pitch.
     location: "Brooklyn, NY",
     email: "salsalcedo4321@gmail.com",
     phone: null,

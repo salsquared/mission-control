@@ -21,7 +21,6 @@ const profile: ProfileWire = {
     id: "p1",
     userId: "u1",
     headline: "Engineer",
-    summary: null,
     location: null,
     email: null,
     phone: null,

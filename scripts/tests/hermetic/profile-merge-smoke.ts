@@ -17,14 +17,17 @@ function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, de
 
 function emptyExisting(): ExistingProfileForMerge {
     return {
-        headline: null, summary: null, location: null, email: null, phone: null, links: null,
+        headline: null, location: null, email: null, phone: null, links: null,
         workRoles: [], projects: [], education: [],
     };
 }
 
 function emptyIncoming(): ExtractedProfile {
     return {
-        header: { headline: null, summary: null, location: null, email: null, phone: null, links: null },
+        // Story S7.14 follow-up (2026-05-26): `summary` dropped from
+        // HeaderSchema in import-llm.ts — no longer plumbed through the
+        // merge layer.
+        header: { headline: null, location: null, email: null, phone: null, links: null },
         workRoles: [], projects: [], education: [],
     };
 }
@@ -37,7 +40,6 @@ function emptyIncoming(): ExtractedProfile {
     const incoming = emptyIncoming();
     incoming.header = {
         headline: "Senior Engineer",
-        summary: null,
         location: "Brooklyn, NY",
         email: "new@example.com",  // shouldn't overwrite existing
         phone: "555-1212",
@@ -459,7 +461,7 @@ function emptyIncoming(): ExtractedProfile {
     const existing = emptyExisting();
     const incoming = emptyIncoming();
     incoming.header = {
-        headline: null, summary: null, location: null, email: null, phone: null,
+        headline: null, location: null, email: null, phone: null,
         links: [
             { label: "LinkedIn", url: "LinkedIn" },                         // bogus
             { label: "Github", url: "Github" },                             // bogus
@@ -488,7 +490,7 @@ function emptyIncoming(): ExtractedProfile {
     ];
     const incoming = emptyIncoming();
     incoming.header = {
-        headline: null, summary: null, location: null, email: null, phone: null,
+        headline: null, location: null, email: null, phone: null,
         links: [{ label: "Site", url: "https://example.com" }],
     };
     const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);

@@ -26,9 +26,10 @@ import { loadPrompt } from "@/lib/ai/prompts";
 import type { ExtractedProfile } from "@/lib/profile/import-llm";
 import type { ExistingProfileForMerge } from "@/lib/profile/merge";
 
+// Story S7.14 follow-up (2026-05-26): `summary` dropped from Profile —
+// synthesizer no longer asks the LLM to produce one.
 const HeaderSchema = z.object({
     headline: z.string().nullable(),
-    summary: z.string().nullable(),
     location: z.string().nullable(),
     email: z.string().nullable(),
     phone: z.string().nullable(),
@@ -81,7 +82,6 @@ function summarizeExisting(existing: ExistingProfileForMerge): string {
     return JSON.stringify({
         header: {
             headline: existing.headline,
-            summary: existing.summary,
             location: existing.location,
             email: existing.email,
             phone: existing.phone,
