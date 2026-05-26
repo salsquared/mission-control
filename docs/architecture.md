@@ -55,7 +55,7 @@ The codebase is organized along the lines defined in `docs/frontend_terminology.
 | **Hosting / Process** | `launch-ms.sh`, PM2 | Process supervision, environment loading, port management, Chrome app launcher |
 | **Framework** | `next.config.ts`, `instrumentation.ts`, `middleware.ts` | Next.js (webpack), Serwist PWA wrapping, request logging, in-process logger init |
 | **Persistence** | `prisma/`, `lib/prisma.ts` | SQLite via Prisma; dual DB files for dev/prod; query-level logging via `$extends` |
-| **Domain libraries** | `lib/` | `cache`, `auth`, `googleapis`, `email-parser`, `company-registry`, `fetchers/*`, `logger` |
+| **Domain libraries** | `lib/` | `cache`, `auth`, `googleapis`, `email-parser`, `company-registry`, `fetchers/*`, `logger`, plus the resume-gen + profile + LLM subsystems (`ai/`, `profile/`, `resumes/`, `notifications/`, `postings/`, `watchlists/`, `applications/`) — see §4.2 + §8.4 + §8.5 |
 | **HTTP API** | `app/api/**/route.ts` | Thin route handlers; dispatch to lib code; wrap with `withCache` where useful |
 | **App shell** | `app/layout.tsx`, `app/page.tsx`, `app/globals.css`, `app/sw.ts` | Root providers, font loading, PWA SW, OKLCH theme variables |
 | **Dashboard** | `components/Dashboard.tsx` | Slide carousel of dashes, global overlays (Launchpad, Library, AI Companion), bottom nav |
@@ -85,18 +85,29 @@ This is appropriate for the single-host use case but means **every restart of `n
 
 ### 4.2 Schema overview
 
-The Prisma schema groups into six roughly orthogonal subdomains:
+The Prisma schema groups into ten roughly orthogonal subdomains:
 
 | Subdomain | Models | Purpose |
 |---|---|---|
 | **NextAuth** | `User`, `Account`, `Session`, `VerificationToken` | Standard NextAuth + Prisma adapter; stores Google refresh/access tokens on `Account` |
-| **Applications pipeline** | `Application` | Job/internship/admissions tracker; owned by user; fed by Gmail webhook + manual edits |
+| **Applications pipeline** | `Application`, `ApplicationEvent`, `Contact` | Job/internship/admissions tracker; owned by user; fed by Gmail webhook + manual edits. `Application.normalizedCompany` + `senderDomain` are the dedup keys. `ApplicationEvent.notifiedAt` + `gcalSyncedAt` are per-event side-effect checkpoints. |
+| **Profile + resume sources** | `Profile`, `WorkRole`, `Project`, `Education`, `ResumeUpload` | The user's structured profile (one `Profile` per user, with arrays of work roles / projects / education entries — each storing `bullets` as JSON-stringified `Bullet[]` and an optional per-entity `scratchpad` string of user-voice notes). `ResumeUpload` archives every raw PDF/DOCX/TXT/JSON the user has imported, with parsed text in `extractedText` for LLM grounding. Each entity (work role / project / education) also carries a `pinKeywords` JSON array — posting-category-conditional always-include (see §8.5). |
+| **Generated resumes** | `GeneratedResume` | One row per tailored resume the user has produced. Stores `postingInput` (URL/text), `postingTitle`/`postingCompany`, `profileSnapshot` (full ProfileWire JSON at gen time), `selections` (flat bullet array post-prune), `skillsGap`, `tagline`, `templateKey`, `format`, `artifactPath` → `data/resumes/<id>.<ext>`, optional `applicationId` link to the Application this resume was sent for. Status field gates the rendered/error states. |
+| **Job discovery** | `Watchlist`, `JobPosting`, `Notification` | `Watchlist` rows declare what to crawl (careers page / Greenhouse / Lever / Ashby / Workday / LinkedIn / Indeed / company directory). `JobPosting` is the deduped result row across crawls (`(watchlistId, externalId)` unique, plus `(boardKind, externalId)` cross-watchlist dedup). `Notification` is the in-app bell + email dispatcher target with a `dedupKey` for daily-bucketed notifs. |
+| **Calendar sync** | `GcalSyncState` | Per-user pagination state for the Google Calendar sync job. Stores the `nextSyncToken` so a daily tick only pulls the delta. |
+| **Webhook dedup** | `WebhookDelivery` | First action in `/api/gmail/webhook` is `INSERT OR IGNORE` on `messageId`; P2002 → "redelivery → 200" without re-running ingest. Daily prune at 30 days. |
 | **Research library** | `SavedPaper`, `SelectedHistoricalPaper`, `SelectedReviewPaper` | User's saved papers + per-week deduplication ledgers for "paper of the week" features |
 | **Tasks / Goals** | `Task`, `LifeGoal` | Both DB-native. The `Task` table is the source of truth (a previous `docs/todo.md` ↔ DB sync was removed; the archived file lives at `docs/todo.archive.md`). |
-| **Settings** | `GlobalSetting` | One row keyed `"global"` with typed columns for theme prefs + a `version` integer for optimistic concurrency |
-| **Cache** | `CacheEntry` | Durable L2 backing for `withCache` (gated by `CACHE_BACKEND=sqlite`); the scheduler prunes expired rows |
+| **Settings + Cache** | `GlobalSetting`, `CacheEntry` | One settings row keyed `"global"` with typed columns for theme prefs + a `version` integer for optimistic concurrency. `CacheEntry` is the durable L2 backing for `withCache` (gated by `CACHE_BACKEND=sqlite`); the scheduler prunes expired rows. |
 
-Notable: ordering for tasks is by `Task.position` (integer), which was backfilled from the old `lineNumber` column when the markdown sync was removed.
+Notable race-safety + dedup invariants baked into the schema (don't paper over by bypassing):
+- `Application` has both `normalizedCompany` (LLM-class company name) and `senderDomain` (Gmail From-header host) as dedup keys; ingest tries company first, falls back to senderDomain on miss so CSULB / Cal State Long Beach / California State University Long Beach all collapse to one row.
+- `ApplicationEvent` has `notifiedAt` + `gcalSyncedAt` so re-ingest of the same Gmail message only fires side-effects (email, calendar sync) once per event.
+- `Notification.dedupKey @unique` — `dispatchNotification` returns null when the dedupKey is already taken; callers passing dedupKey MUST handle null. Use `utcDateBucket()` from `lib/notifications/dispatch.ts` for date buckets.
+- `Watchlist.directoryKey` — when set, `config` is hydrated at read time from `COMPANY_DIRECTORY` via `lib/watchlists/hydrate.ts`. Manual PATCH to `config` clears the key so user overrides stick.
+- Ordering for tasks is by `Task.position` (integer), backfilled from the old `lineNumber` column when the markdown sync was removed.
+
+Bullets inside `WorkRole.bullets` / `Project.bullets` / `Education.bullets` are stored as a JSON-stringified `Bullet[]` with the shape `{id, text, tags[], autoTags[], removedTags[], pinnedTags[], locked, excluded}` — see `lib/profile/types.ts`. The JSON shape evolves without migrations; `parseBullets` filters malformed entries and `hydrateBulletDefaults` back-fills new fields with `[]`.
 
 ### 4.3 Data flow patterns
 
@@ -119,16 +130,19 @@ Pattern 1 is the dominant one: **most endpoints are stateless cache-fronted exte
 A complete inventory is maintained in `docs/apis.md`. The brief by-feature breakdown:
 
 - **Auth** — `[...nextauth]` only. Google provider; offline access; Gmail r/o + Gmail send + Calendar events scopes.
-- **System** — `/api/system` (telemetry — CPU, RSS, uptime, DB ping, cache stats), `/api/system/logs` (SSE stream).
+- **System** — `/api/system` (telemetry — CPU, RSS, uptime, DB ping, cache stats), `/api/system/logs` (SSE stream), `/api/system/logs/historical` (PM2 log tail), `/api/system/cache/invalidate` (operator-triggered `withCache` invalidation).
 - **AI** — `/api/ai` (HN Algolia AI stories), `/api/ai/llmleaderboard` (LM Arena scrape).
 - **Research** — `/api/research`, `/research/hf`, `/research/historical`, `/research/review`, `/research/import`, `/research/saved`. Backed by Hugging Face Daily Papers, arXiv RSS, Semantic Scholar batch enrichment.
 - **Finance** — `/api/finance`, `/api/finance/history`. Both proxy Pulsar (`PULSAR_URL`); mission-control no longer talks to CoinGecko/Mempool/Yahoo directly. `FinanceTick` SSE events from `lib/pulsar-ws-relay.ts` push live updates to the frontend.
 - **Space** — `/api/space` (SNAPI), `/space/launches` (Space Devs LL2), `/space/satellites` (CelesTrak), `/space/solar` (NOAA SWPC), `/space/moon` (deterministic ephemeris + hardcoded phenomena).
 - **Company news** — `/api/company-news?company=<id>`. Adapter-dispatched (see §6).
-- **Applications / Calendar / Gmail** — `/api/applications` (session-gated read), `/api/calendar/event` (Google Calendar; accepts session **or** `SERVICE_TOKEN_PULSAR` + `?onBehalfOf=<userId>`), `/api/gmail/webhook` (Pub/Sub push, OIDC-verified).
+- **Applications / Calendar / Gmail** — `/api/applications` (kanban CRUD + filters), `/api/applications/events` (per-app event log), `/api/applications/events/adopt` (link existing Calendar event), `/api/applications/pipeline-picker` (resume-card filter to INTERESTED + has-sourceUrl), `/api/applications/backfill` (one-time 6-month inbox scan), `/api/calendar/event` (Google Calendar; accepts session **or** `SERVICE_TOKEN_PULSAR` + `?onBehalfOf=<userId>`), `/api/gmail/webhook` (Pub/Sub push, OIDC-verified).
+- **Profile (resume source-of-truth)** — `/api/profile` (GET + PATCH on top-level fields: headline, tagline, location, email, phone, links, skills, hobbies, languages). Per-entity CRUD: `/api/profile/work-roles` (POST/PATCH/DELETE), `/api/profile/projects`, `/api/profile/education`. Plus `/api/profile/snapshots` (M7.5 — versioned snapshots with rollback deferred), `/api/profile/import` (multi-resume upload → LLM extract → append-merge), `/api/profile/tagline/draft` (posting-agnostic AI tagline draft), `/api/profile/bullets/assist` (per-bullet fill / rewrite via wand icon), `/api/profile/bullets/tags/suggest` (per-bullet on-demand tag refresh), `/api/profile/bullets/scratchpad` (per-entity user-voice notes overlay). All session-gated.
+- **Resumes (tailored generation)** — `POST /api/resumes` runs the full relevance pipeline (see §8.5) and returns `{ generatedResume, bytes }`. `GET /api/resumes` returns the user's resume archive (optional `?applicationId=` filter + `?limit=` clamp). `GET /api/resumes/[id]` returns one row. `GET /api/resumes/[id]/download` streams the PDF/DOCX artifact from `data/resumes/`. `POST /api/resumes/diff` compares two generated resumes side-by-side.
+- **Watchlists (job discovery)** — `/api/watchlists` (CRUD), `/api/watchlists/[id]` (single row), `/api/watchlists/[id]/run` (operator-triggered "run now" — DB mutex via `inFlightAt` to prevent cross-process duplicate fetches). Discovery results land as `JobPosting` rows; the scheduler runs the `job-watcher` job hourly.
+- **Notifications (in-app bell + email dispatcher)** — `/api/notifications` (list, mark-read), `/api/notifications/[id]` (single). Backed by `Notification` rows with `dedupKey @unique` (see §4.2). `dispatchNotification` is the entry point; emails go through Gmail Send API when `EMAIL_ENABLED=1`.
 - **Tasks / Goals / Settings** — `/api/tasks` (DB CRUD: GET/POST/PATCH/DELETE), `/api/goals` (DB CRUD on `LifeGoal`), `/api/settings` (typed `GlobalSetting` columns with `version`-based optimistic concurrency via `If-Match`).
-- **System / Cache** — `/api/system` (telemetry incl. Pulsar reachability), `/api/system/logs` (SSE), `/api/system/logs/historical` (PM2 log tail), `/api/system/cache/invalidate` (operator-triggered `withCache` invalidation).
-- **Events** — `/api/events` is the SSE channel for every model invalidation (`Task`, `Goal`, `SavedPaper`, `Application`, `CalendarEvent`, `Setting`, `FinanceTick`, `Cache`).
+- **Events** — `/api/events` is the SSE channel for every model invalidation (`Task`, `Goal`, `SavedPaper`, `Application`, `CalendarEvent`, `Setting`, `FinanceTick`, `Cache`, `Profile`, `GeneratedResume`, `Notification`, `Watchlist`, `JobPosting`).
 
 ### 5.2 Cross-cutting concerns
 
@@ -295,11 +309,71 @@ There's still no LRU eviction or size cap on L1 — for the single-user case tho
 
 Adding a new Google scope requires bumping the `scope` string in `authOptions` and re-consenting — there's no incremental authorization flow.
 
-### 8.4 LLM-driven email parsing
+### 8.4 LLM subsystem
 
-`lib/email-parser.ts:parseApplicationEmail()` calls `generateObject` from `ai` with `google("gemini-3.5-flash")` and a Zod schema (`applicationSchema`). The schema enforces the canonical fields the dashboard needs (`company`, `role?`, `status` ∈ APPLIED/UPDATED/ASSESSMENT/INTERVIEW_REQUESTED/INTERVIEW/OFFER/REJECTED, `nextSteps?`, `extractedDates[]?`). The Gmail webhook only invokes this if the subject contains "application" or "interview" — a cheap heuristic to avoid wasting LLM calls on every inbound email.
+The system uses Google Gemini across **14 distinct callsites**, all routed through `lib/ai/gemini.ts:chatJSON` (which wraps `@google/genai` with retries, rate limiting, JSON-mode response, schema validation via Zod, and structured tracing) — with one exception, `lib/email-parser.ts:parseApplicationEmail` which uses the Vercel AI SDK (`generateObject` + `@ai-sdk/google`) and traces manually via `lunary.trackEvent`. The full inventory + per-callsite model + max-tokens lives in [`docs/llm-calls.md`](./llm-calls.md). At a glance:
 
-This is the **only LLM call in the system**. The author-facing AICompanion is a stub.
+| Track | Callsites |
+|---|---|
+| **Gmail ingest** | `email-parser` (parse inbound emails into Application upserts) |
+| **Posting parsing** | `posting-parse` (raw posting → structured `{title, company, keywords[]}` with per-keyword `importance(1-5)`) |
+| **Resume generation** | `resume-rewrite` (Flash — quality-sensitive bullet rewrite), `resume-tagline` (LLM-supplied posting-aware tagline + section/entity ordering), `bullet-tags-from-posting` (auto-tag bullets with posting keywords at gen time), `scratchpad-synth` (synthesize fresh bullets from per-entity scratchpad text when the profile under-covers a posting) |
+| **Profile editing** | `bullet-assist-fill` / `bullet-assist-rewrite` (per-bullet draft + rewrite via wand icon), `bullet-tags-from-profile` (per-bullet on-demand tag refresh), `tagline-draft` (posting-agnostic profile-level tagline draft), `profile-import` (per-file mechanical extraction from uploaded resume PDF/DOCX/TXT/JSON), `profile-synthesize` (Flash — consolidates all per-file extractions + existing profile into the canonical master resume) |
+| **Posting discovery** | `discovery-suggest` (suggest similar companies), `employment-type-classifier` (5-class enum picker per posting) |
+
+**Three-tier model fleet** (`lib/ai/gemini.ts:MODEL_FLASH` / `MODEL_LITE` / `MODEL_LITE_CHEAP`). Most callsites use `MODEL_LITE` (`gemini-3.1-flash-lite`); only `resume-rewrite` + `profile-synthesize` use `MODEL_FLASH` (output ships directly to employers, quality dominates cost); `employment-type-classifier` uses `MODEL_LITE_CHEAP` (cheapest model, invisible-quality difference for a 5-class enum).
+
+**Rate limiting.** `lib/ai/rate-limit.ts:acquireGeminiSlot()` is a process-shared token bucket (12 req/min default, 60 burst) gating every Gemini call. Both `chatJSON` and `email-parser` await it before each attempt; retries pay the rate cost too. New Gemini callers MUST go through one of those two helpers, never call the SDK directly.
+
+**Observability (Lunary + Promptfoo, landed 2026-05-24, LOP-1 → LOP-11).** Every `chatJSON` callsite passes a stable kebab-case `name` (TypeScript enforces it). When `LUNARY_PUBLIC_KEY` is set in `.env`, `lib/ai/gemini.ts` wraps `chatJSON` with `lunary.wrapModel` so every call lands in the Lunary dashboard with tokens, latency, model id, system + user prompts. Without the key, the wrapping is bypassed at module init — true no-op in dev / CI / hermetic smokes.
+
+**Prompt registry.** All 14 callsites load their system + user templates via `lib/ai/prompts.ts:loadPrompt(slug, vars)` — which prefers Lunary's `renderTemplate` (with versioning + dashboard-side editing) and falls back to disk-parsing `docs/llm-prompts/<slug>.md` when Lunary is offline or the key is unset. The disk `.md` files are the source-of-truth snapshot tracked in git; `scripts/sync-lunary-templates.ts` idempotently pushes them to Lunary (versions content-diffs only). When iterating on a prompt: either edit in Lunary's dashboard then mirror to the disk snapshot same-day so `git log -p` stays readable, OR edit the `.md` then run the sync script.
+
+**Eval harness (Promptfoo).** `eval/suites/<slug>.yaml` carries fixtures + assertions per callsite; `eval/provider.ts` dispatches each fixture to the real `chatJSON`-wrapped lib functions so the eval exercises the exact production code path. Run via `npm run test:prompts`. Burns real Gemini tokens (~$0.01–0.05 per full-run) so it's NOT in the pre-push gate — manual responsibility of the prompt author. Adding a new callsite requires: (a) inventory row in `docs/llm-calls.md`, (b) prompt blob in `docs/llm-prompts/`, (c) handler in `eval/provider.ts:HANDLERS`, (d) at least one fixture in `eval/suites/<slug>.yaml`.
+
+**Defensive parsing.** `chatJSON` validates the response against the supplied Zod schema; on parse failure it surfaces `AIError` with the response text window (head + position context) so the caller can decide whether to retry or fall back. Callers that are best-effort (resume-tagline, scratchpad-synth, auto-tag) catch `AIError` and degrade gracefully — the resume still generates if the tagline call fails; the auto-tag pass writes zero tags rather than aborting.
+
+### 8.5 Resume-gen relevance pipeline
+
+`POST /api/resumes` runs a 5-stage relevance pipeline before rendering, all in one route handler. The pipeline lives at `app/api/resumes/route.ts` and pulls from `lib/resumes/*` + `lib/profile/*`. Stages:
+
+```mermaid
+flowchart TD
+    Start[posting URL or text]
+    Start --> Parse["1. posting-parse (LLM)<br/>→ keywords: Array&lt;{keyword, importance(1-5)}&gt;"]
+    Parse --> AutoTag["2. bullet-tags-from-posting (LLM)<br/>→ writes posting keywords as tags<br/>onto profile bullets that already<br/>evidence them (per-bullet judgment)"]
+    AutoTag --> Select["3. selectBullets (deterministic)<br/>→ score: 2 × Σ importance(matched_tags)<br/>+ 1 × Σ importance(matched_kws)<br/>→ top-N per entity by score"]
+    Select --> Synth["3.5 scratchpad-synth (LLM, optional)<br/>→ per-entity, synthesizes fresh bullets<br/>from user-voice scratchpad when<br/>the profile under-covers posting kws"]
+    Synth --> Rewrite["4. rewriteBullets (LLM)<br/>→ pre-filters: bullets with both<br/>matchedTags=[] AND matchedKeywords=[]<br/>pass through verbatim, no LLM call"]
+    Rewrite --> Tagline["4c. resume-tagline (LLM)<br/>→ tagline + sectionOrder +<br/>entityOrder (posting-aware layout)"]
+    Tagline --> Extras["4d. selectProfileExtras<br/>→ filter Skills/Languages/Hobbies<br/>to items matching ≥ 1 posting kw"]
+    Extras --> Reorder["4e. apply LLM ordering<br/>→ reorderSelectionByIds +<br/>pin-front re-sort"]
+    Reorder --> Render["5. composeResumeProps + render<br/>(PDF via react-pdf OR<br/>DOCX via html-to-docx)"]
+    Render --> OnePage{onePage<br/>option?}
+    OnePage -->|yes| Prune["renderResumePDFOnePage:<br/>iteratively prune until 1pp<br/>(Phase 1: drop lowest-score<br/>removable entity;<br/>Phase 2: drop lowest-score<br/>non-locked bullet)"]
+    OnePage -->|no| Persist
+    Prune --> Persist["6. Persist GeneratedResume row<br/>+ write artifact to data/resumes/"]
+```
+
+**Key concepts** (most also documented under "Resume-gen relevance pipeline" in CLAUDE.md):
+
+- **Keyword importance multiplier.** Posting keywords carry per-keyword `importance(1-5)` from `posting-parse`. `lib/resumes/select.ts:scoreBullet` multiplies its base weight (`TAG_WEIGHT = 2`, `SUBSTRING_WEIGHT = 1`) by the importance of the matched keyword. So `Space Systems` (importance 5) on a Rocket Lab posting outweighs `JavaScript` (importance 2) — the system distinguishes commodity skills from domain differentiators without hard-coded weights.
+
+- **Case-insensitive match counting.** A bullet that somehow ended up with both `software engineering` (lowercase, user-typed) and `Software Engineering` (titlecase, auto-tag-added) tagged contributes ONE match for the `Software Engineering` posting keyword, not two. The fix landed 2026-05-26 alongside a one-shot backfill (`scripts/dedupe-bullet-tag-casings.ts`) that cleaned duplicate-casing pairs from existing data.
+
+- **Posting-category-conditional pin (`pinKeywords`).** Per-entity JSON column on `WorkRole` / `Project` / `Education`. When `entityIsPinned(entity.pinKeywords, posting.keywords) === true` (whole-word case-insensitive intersection), the entity is **force-included** in selectBullets (bypasses `MIN_KEEP_SCORE`), **moved to position 0** of its section (overriding score-based + LLM ordering), and **added to** `getUnremovableEntityIds` so the one-page pruner can't drop it. No UI affordance yet — set pins via `scripts/set-entity-pin-keywords.ts`.
+
+- **LLM-decided layout.** `resume-tagline` doubles as a "framing decisions" call: returns optional `sectionOrder` (`experience | projects | education | skills | languages | interests`) + optional `entityOrder` (per-section list of entity IDs). `tagline-tailor.ts` normalizes both fields (drops unknown IDs / dedupes / fills missing defaults) and the route applies them via `reorderSelectionByIds`. The `entityIdsBlock` prompt variable includes per-entity matched-tag + aggregate-score + sample-bullet evidence so the LLM ranks by substance, not name similarity. Pin-front pass runs AFTER the LLM reorder to re-assert "pinned entities lead their section."
+
+- **`rewriteBullets` pre-filters no-match bullets.** Bullets with both `matchedTags.length === 0` AND `matchedKeywords.length === 0` are passed through verbatim — they have no posting-keyword lever for the LLM (rules 6 / 6a are no-ops) and a low-value rewrite risks cross-domain invention. Saves ~30% of Flash tokens on a typical profile.
+
+- **One-page pruner has two phases.** `lib/resumes/one-page.ts:pruneOneStep`. **Phase 1** drops the lowest-aggregate-score *removable* entity (a section with only 1 entity is skipped — guarantees per-section spine survives). **Phase 2** fires when Phase 1 can't make further progress (e.g. user pinned multiple entities → unremovable set fills the page) — drops the lowest-aggregate-score non-locked bullet from any entity with `>= 2` bullets.
+
+- **Skills / Languages / Interests are posting-filtered.** `selectProfileExtras(profile, keywords)` filters `profile.skills` (groups + items) / `profile.languages` (name) / `profile.hobbies` to items matching at least one posting keyword via whole-word lookup. Skill groups with zero matched items drop entirely. Rendered after Education in default `sectionOrder`. `computeSkillsGap` also folds these into its coverage haystack so a posting keyword satisfied by `profile.languages[].name` doesn't get flagged as missing.
+
+- **Scoring math (canonical formula).** `score = TAG_WEIGHT × Σ importance(matchedTag) + SUBSTRING_WEIGHT × Σ importance(matchedKeyword)` per bullet. `TAG_WEIGHT = 2`, `SUBSTRING_WEIGHT = 1`. Matched count deduped case-insensitively. Locked bullets get `Number.POSITIVE_INFINITY`. Entity aggregate = `Σ max(0, bullet.score)`.
+
+**When adding a new field that affects selection** (e.g. a new entity-level flag): (1) `prisma/schema.prisma` + migration; (2) Zod schemas in `lib/schemas/profile.ts` (response + POST + PATCH); (3) `lib/repositories/profile.ts` (parse/serialize helpers + CRUD interfaces + payload assembly); (4) API routes in `app/api/profile/{work-roles,projects,education}/route.ts`; (5) `lib/resumes/select.ts` (selector logic — widen generic constraints if you read it inside `selectFor`); (6) `lib/resumes/one-page.ts:getUnremovableEntityIds` if it affects pruning; (7) hermetic smoke. Skipping step 5 or 6 is the most common cause of "feature is in the DB but doesn't change resume gen."
 
 ---
 
@@ -347,13 +421,14 @@ The Gmail webhook is intended to be reached via **Cloudflare Tunnels** (`salsqua
 
 ## 10. Observability
 
-The system has three observability surfaces, all in-process:
+The system has four observability surfaces:
 
-1. **`console`-based ring buffer** → `/api/system/logs` SSE → InternalView's "Event Log" panel. Provides ~500 most recent log lines with method/status colorization (`InternalView.tsx:formatLogMessage`). Server logs include request lines from `middleware.ts`, `[DATABASE]` lines from the Prisma `$extends` middleware, `[CACHE HIT|MISS|FALLBACK]` lines from `withCache`, `[EXTERNAL API]` lines from fetchers.
-2. **Process telemetry** → `/api/system` polled at 5 s. Reports CPU% (delta over the polling window), RSS in GB vs. the `--max-old-space-size` parsed from `package.json`, uptime, DB connectivity (`SELECT 1`), and cache hit/miss + active entries.
-3. **Cache stats** — embedded in (2). Lists active entry keys with remaining TTL. This is the only way to introspect the cache state.
+1. **`console`-based ring buffer** (in-process) → `/api/system/logs` SSE → InternalView's "Event Log" panel. Provides ~500 most recent log lines with method/status colorization (`InternalView.tsx:formatLogMessage`). Server logs include request lines from `proxy.ts` middleware, `[DATABASE]` lines from the Prisma `$extends` middleware (prod only by default; dev gated on `DEBUG_PRISMA=1` due to SSE fan-out cost), `[CACHE HIT|MISS|FALLBACK]` lines from `withCache` (same prod/dev gating), `[EXTERNAL API]` lines from fetchers, `[AI] <slug> tokens=...` lines from every Gemini call, `[LUNARY] tracing enabled` when the key is set.
+2. **Process telemetry** (in-process) → `/api/system` polled at 5 s. Reports CPU% (delta over the polling window), RSS in GB vs. the `--max-old-space-size` parsed from `package.json`, uptime, DB connectivity (`SELECT 1`), and cache hit/miss + active entries. Also reports Pulsar reachability + scheduler tier status.
+3. **Cache stats** (in-process) — embedded in (2). Lists active entry keys with remaining TTL. This is the only way to introspect the cache state.
+4. **Lunary LLM tracing** (external) — when `LUNARY_PUBLIC_KEY` is set, every Gemini call lands in the Lunary dashboard with tokens, latency, model, system + user prompts, and (for `chatJSON` callers) the typed response. Bypassed entirely at module init when the key is unset — true no-op in dev / CI / hermetic smokes. See §8.4.
 
-**There is no external observability**: no metric export, no error reporting (Sentry, etc.), no log persistence beyond the ring buffer (lost on restart), no tracing. For a single-user system that's an explicit choice, but it means post-mortem debugging is limited to whatever was on screen.
+**There is no other external observability**: no metric export, no error reporting (Sentry, etc.), no log persistence beyond the ring buffer (lost on restart), no distributed tracing. For a single-user system that's an explicit choice, but it means post-mortem debugging is limited to whatever was on screen + whatever Lunary captured for LLM-touched flows.
 
 ---
 
@@ -365,7 +440,7 @@ This is a **personal, LAN-bound** system, but several integration points still w
 - **Calendar endpoint accepts session OR a configured service token.** `/api/calendar/event` derives `userId` from the NextAuth session by default; service callers (e.g. Pulsar) can present `Authorization: Bearer $SERVICE_TOKEN_PULSAR` plus `?onBehalfOf=<userId>` matching the configured user. Mismatched `onBehalfOf` returns 403; missing token + missing session returns 401. The whole service-token path is a no-op when `SERVICE_TOKEN_PULSAR` / `SERVICE_TOKEN_PULSAR_USER_ID` are unset, so the route fails closed.
 - **`requireLocalOrSession` for LAN-skip.** `/api/goals`, `/api/research/saved`, `/api/settings`, `/api/tasks`, `/api/system/cache/invalidate` accept LAN traffic (host in `{localhost, 127.0.0.1, mc.local, ...}`) without a session, and require a session for any other host (e.g., a Cloudflare tunnel). The Caddy reverse proxy at `mc.local` is the LAN boundary.
 - **HTML scrapers send a Mac UA and parse with regex.** Scrapers can break or hang on adversarial markup. The `withCache` STALE-FALLBACK behavior insulates the user from breakage but not from latency. The `ScraperBrokenError` sentinel (`lib/fetchers/errors.ts`) lights up InternalView's fetcher-health card when an adapter returns 0 items from a non-empty response. Timeouts on `fetch` are not consistently set; OGS calls do set a 4 s timeout.
-- **LLM input is uncontrolled email content.** A malicious sender could attempt prompt injection inside an email subject/body to coerce `parseApplicationEmail` into emitting a status it shouldn't. The Zod schema bounds the *shape* of the output but not its semantics; worst case is a wrong DB upsert.
+- **LLM input is uncontrolled external content (multiple surfaces).** A malicious actor could attempt prompt injection through any of: (a) inbound Gmail subject/body (parsed by `parseApplicationEmail`), (b) job-posting URL the user pastes into the resume card (parsed by `posting-parse`), (c) raw resume PDF/DOCX text the user uploads (parsed by `profile-import`), (d) careers-page HTML the discovery crawler scrapes (parsed by `bullet-tags-from-posting` indirectly via posting keywords). For every callsite the Zod schema bounds the *shape* of the output but not its semantics; worst case is a wrong DB upsert (Gmail), a wrong field extracted from a posting (resume gen), or a poisoned bullet on the profile (import). Defense-in-depth: the resume-rewrite system prompt enforces "never invent" rules, and the auto-tag merge step has a server-side post-filter that re-enforces invariants the LLM might violate. The author trusts the LLM for shape, not semantics, on every callsite.
 - **Stored OAuth tokens.** Refresh tokens live in `prisma/prod.db` unencrypted. SQLite file permissions are the only defense. Acceptable for a personal Mac; not acceptable for any kind of multi-user deployment.
 - **Service worker + `dangerouslySetInnerHTML` in `layout.tsx`** — only runs in dev, contents are static, no user input. Not a real risk but worth noting because it's the only `dangerouslySetInnerHTML` in the codebase.
 
@@ -398,6 +473,8 @@ The general posture is "trust the LAN, distrust nothing else." LAN traffic is ga
 | **`reactStrictMode: false`** | No double-mounts in dev. Cost: bugs that strict mode would catch (effect cleanup omissions, unstable identifiers) survive. |
 | **Inline custom fetchers in the company registry** | New RSS company is 5 lines, idiosyncratic ones live next to their config. Cost: `company-registry.ts` is 900 lines and growing. |
 | **Stub AICompanion** | Ships the surface area of the feature without the spend on LLM calls / persistence. Cost: mismatch between marketing copy ("Systems online. Monitoring all frequencies.") and reality. |
+| **All LLM through Gemini, three-tier model fleet** | Single provider keeps the prompt registry + Lunary tracing + Promptfoo eval coherent. Three-tier model split (Flash for resume-rewrite + profile-synthesize only; LITE_CHEAP for the 5-class classifier; LITE default for everything else) keeps cost predictable. Cost: vendor lock to Google AI; a Gemini outage takes down resume gen + Gmail ingest. Mitigated by graceful degradation at most callsites (failed tagline → fallback to profile.tagline; failed auto-tag → still generate). |
+| **`pinKeywords` per entity instead of a separate "pin rule" table** | Pin lives next to the entity it pins — no FK to maintain, no orphan-pin problem when an entity is deleted. JSON-stringified column keeps the migration trivial. Cost: can't query "show me all entities pinned for keyword X" without scanning every entity (acceptable at single-user scale). |
 | **Two databases, one schema** | Clean separation between dev and prod data. Cost: no upgrade story, easy to forget which one a script is hitting. |
 
 ---
@@ -408,7 +485,7 @@ Roughly ordered by severity. Items closed by MVP1 + MVP2 are listed for context 
 
 1. **No automated tests beyond a small Vitest suite.** MVP1 6B introduced Vitest with parser + cache coverage; everything else (route handlers, repositories, schemas, the company-news adapters) is uncovered. `scripts/tests/*` are exploratory tsx scripts.
 2. **HTML scrapers rot silently — but louder.** When LM Arena or Anthropic redesigns its page, the regex still breaks. MVP1 Task 2B's `ScraperBrokenError` sentinel surfaces this on the InternalView fetcher-health card within ~1 minute, but the operator still has to fix the regex. xAI, AMD, Google AI, ARM, and Qualcomm currently sit in this state (see MVP2 §0 Task 0B — moved to backlog rather than papered over with `google-news` fallbacks).
-3. **AICompanion is a stub.** UI promises functionality that doesn't exist; this is the most user-visible mismatch. The Gemini infrastructure already exists (`email-parser.ts`); reusing it for the chat is a small extension. Hidden behind the `aiCompanionEnabled` device-pref flag (default off) and a "PREVIEW — not connected to a real model yet" banner.
+3. **AICompanion is a stub.** UI promises functionality that doesn't exist; this is the most user-visible mismatch. Gemini infrastructure is now mature (14 callsites, Lunary tracing, prompt registry — see §8.4) so wiring AICompanion to a real model is a small extension. Hidden behind the `aiCompanionEnabled` device-pref flag (default off) and a "PREVIEW — not connected to a real model yet" banner.
 4. **L1 cache still has no eviction.** A bug or attacker that keeps minting unique query strings will grow the in-memory map without limit. The L2 SQLite tier prunes expired entries via the scheduler (`scheduler/jobs/cache-prune.ts`); L1 only invalidates by TTL or explicit `invalidateCacheKey`.
 5. **`scope` migration in NextAuth requires re-consent.** Adding a new Google scope silently breaks the app for the user until they re-sign-in; there's no mid-session prompt.
 6. **`reactStrictMode: true` re-enabled in MVP1 8B**, so the worst class of effect-cleanup bugs now surfaces in dev. But the interval+EventSource teardown in InternalView is the most cleanup-sensitive area; if it regresses, only manual testing catches it.
@@ -435,24 +512,33 @@ Concrete extension points implied by the design — these are the seams the code
 - **A new external API endpoint** → route under `app/api/...`, wrap with `withCache` if cacheable, log via `console.info('[EXTERNAL API] ...')` so the SSE viewer picks it up. If it's a write surface, define request + response Zod schemas under `lib/schemas/` and add wrappers to `lib/api-client.ts` so the frontend gets typed access.
 - **A new Prisma model** → add to `prisma/schema.prisma`, generate the migration via `prisma migrate diff` + apply with `migrate deploy` (the bash environment is non-interactive — `migrate dev` blocks on prompts), wrap access in a new `lib/repositories/<model>.ts`. Routes import the repo functions, not `prisma` directly.
 - **A new scheduled background job** → add `scheduler/jobs/<name>.ts` with an exported `async function run()` and register it in `scheduler/index.ts`'s `JOBS` array. The PM2 `mission-control-scheduler` process picks it up on next restart. Cron-based jobs need a cron library (or scheduler-side parsing) added when the first cron job lands.
-- **AICompanion productionization** → reuse `@ai-sdk/google` from `email-parser.ts`. Streaming via the AI SDK's `streamText` would integrate cleanly with the existing client-side message state; the API surface (`POST /api/ai/chat` returning a stream) is the obvious next route. Gate behind the existing `aiCompanionEnabled` device-pref flag.
-- **Notification surface** (open todo) → the scheduler process is the natural home. Push notifications would need a Web Push subscription stored alongside `User`.
+- **AICompanion productionization** → reuse `chatJSON` from `lib/ai/gemini.ts` (or `@ai-sdk/google`'s `streamText` if streaming is needed). Pick a stable `name` slug, write the prompt to `docs/llm-prompts/<slug>.md`, add a row to `docs/llm-calls.md`, add a Promptfoo suite + provider handler in `eval/`. Gate behind the existing `aiCompanionEnabled` device-pref flag.
+- **A new LLM callsite (general)** → see "Adding a new Gemini caller" in `docs/llm-calls.md`. Five touch-points: (a) pick a stable kebab-case slug; (b) add `docs/llm-prompts/<slug>.md`; (c) implement the caller via `chatJSON({name: slug, schema, ...})`; (d) add inventory row in `docs/llm-calls.md`; (e) at least one Promptfoo fixture in `eval/suites/<slug>.yaml` + handler in `eval/provider.ts:HANDLERS`. Run `scripts/sync-lunary-templates.ts` to push the prompt to Lunary.
+- **A new resume-gen selector signal** (e.g. a new entity-level flag) → seven touch-points: (1) schema migration; (2) Zod schemas in `lib/schemas/profile.ts` (response + POST + PATCH); (3) `lib/repositories/profile.ts` (parse/serialize + CRUD interfaces); (4) API routes in `app/api/profile/{work-roles,projects,education}/route.ts`; (5) `lib/resumes/select.ts` (selector logic — widen generic constraints if you read it inside `selectFor`); (6) `lib/resumes/one-page.ts:getUnremovableEntityIds` if it affects pruning; (7) hermetic smoke. See §8.5.
+- **A new bullet metadata field** → JSON-shape evolution only. Update the `Bullet` type in `lib/profile/types.ts`; add a default fallback in `lib/profile/bullets.ts:hydrateBulletDefaults` so legacy bullets back-compat; extend the Zod write schema in `lib/schemas/profile.ts:BulletWriteSchema` if user-controllable. No Prisma migration.
+- **A new resume template** → add a new file under `lib/resumes/templates/`. The `templateKey` field on `GeneratedResume` is the dispatch axis (currently only `ats-plain`). New template authors a `composeResumeProps` + a `ResumeDoc` JSX component; renderers (`render-pdf.ts` + `render-docx.ts`) consume the JSX uniformly. Bump `lib/resumes/labels.ts:KNOWN_TEMPLATES` so the UI lets the user pick.
+- **A new watchlist board kind** → add an entry to `WATCHLIST_KINDS` + a `lib/fetchers/<kind>-fetcher.ts` with a stable signature, plus a probe profile in `lib/postings/liveness.ts:PROBE_PROFILES`. The job-watcher dispatches by board kind.
+- **Notification surface** (open todo) → push notifications would need a Web Push subscription stored alongside `User`. In-app notifs land via `dispatchNotification` already.
 - **A new external service that needs to write to mission-control** → add a `ServiceTokenConfig` to the relevant route via `requireSessionOrService`. Operator generates a token and adds `SERVICE_TOKEN_<NAME>` + `SERVICE_TOKEN_<NAME>_USER_ID` to `.env`; the service includes `Authorization: Bearer ...` + `?onBehalfOf=<userId>` on every call.
 
 ---
 
 ## 16. Summary
 
-Mission Control is a **single-host aggregation layer over many noisy external APIs**, presented through a single-page client carousel of "dashes" and persisted in SQLite. Its architecture is shaped by three forces: a tight RAM budget, the unreliability of upstream sources, and the fact that it has exactly one user.
+Mission Control is a **single-host application that wraps three classes of work** for one user: (a) an aggregation layer over many noisy external APIs (finance, space, research, AI news, company news), (b) a job-application pipeline driven by Gmail webhook ingest + a posting discovery crawler, and (c) a resume-gen subsystem that uses a 14-callsite LLM pipeline + structured profile data to produce posting-tailored PDFs / DOCXs. It's presented through a single-page client carousel of "dashes" and persisted in SQLite.
+
+Its architecture is shaped by four forces: a tight RAM budget, the unreliability of upstream sources, the fact that it has exactly one user, and the dependence on LLM calls for the job-application + resume tracks.
 
 The key invariants that make it work:
 
 - **Stale-while-revalidate everything**: `withCache` makes flaky upstream APIs an internal concern, not a user-facing one.
 - **Console-as-bus**: every server-side `console.*` becomes an event in the in-app log viewer, no extra plumbing.
-- **One source of truth per concern**: `useAppStore.theme`/`/api/settings` for cross-device prefs; `localStorage` for per-device prefs; the `Task` table for tasks (DB-native, no file mirror); `prisma` for everything else.
-- **A registry, not a switch statement**: company news is a config table, not a tree of `if (company === ...)`. New sources are config; new shapes are code.
+- **One source of truth per concern**: `useAppStore.theme`/`/api/settings` for cross-device prefs; `localStorage` for per-device prefs; the `Task` table for tasks (DB-native, no file mirror); the `Profile` + child entity tables for resume source data; `prisma` for everything else.
+- **A registry, not a switch statement**: company news is a config table, not a tree of `if (company === ...)`. New sources are config; new shapes are code. Same posture for LLM callsites: `name` slug + `docs/llm-prompts/<slug>.md` + `eval/suites/<slug>.yaml` + handler in `eval/provider.ts`.
+- **LLM as judgment, code as guard rail**: every LLM callsite has a Zod schema bounding output shape and (where it matters) a server-side post-filter re-enforcing invariants the LLM might violate (e.g. `mergeAutoTagProposals` strips proposals that would re-add tags from a bullet's `removedTags` blocklist even if the prompt told the LLM not to).
+- **Resume relevance is a stack, not a single call**: posting-parse → bullet-auto-tag → score-based selection → optional scratchpad-synth → rewrite → tagline+ordering → posting-filtered extras → optional one-page prune. Each layer has a graceful fallback so a single LLM failure doesn't crater the request.
 
-The most material open work is the **Gmail webhook auth gap**, the **stub AICompanion**, and the absence of any **automated tests**. Most other items in §14 are improvements rather than risks; together they describe a system that is comfortably correct for its current single-user, localhost deployment but would need meaningful hardening to face a wider blast radius.
+The most material open work is the **stub AICompanion**, the absence of any **automated tests beyond hermetic smokes**, and the **three M8.7 follow-ups** (Profile UI for pin-editing, commodity-only entity penalty, pin-priority ordering). Most other items in §14 are improvements rather than risks; together they describe a system that is comfortably correct for its current single-user, localhost deployment but would need meaningful hardening to face a wider blast radius.
 
 ---
 
@@ -488,7 +574,8 @@ The event bus is a **`globalThis`-backed `Set<EventListener>`**. Using `globalTh
 ```typescript
 // Shape of every event
 interface ServerEvent {
-    model: 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick' | 'Cache';
+    model: 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick' | 'Cache'
+        | 'Profile' | 'GeneratedResume' | 'Notification' | 'Watchlist' | 'JobPosting';
     action: 'upsert' | 'delete' | 'invalidate';
     id?: string;        // omitted for 'invalidate' (whole model refresh)
     timestamp: number;
