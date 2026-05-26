@@ -161,27 +161,19 @@ export async function GET(req: NextRequest) {
                 where,
                 orderBy: { lastSeenAt: "desc" },
                 take: fetchTake,
-                // Need `watchlist.track` so per-track filters can be applied
-                // per row when the query doesn't restrict by track.
-                include: { watchlist: { select: { negativeFilters: true, track: true } } },
+                include: { watchlist: { select: { negativeFilters: true } } },
             }),
             includeFiltered ? Promise.resolve(null) : findGlobalSetting(),
         ]);
 
-        // Per-track negative filters (see lib/repositories/settings.ts). Compile
-        // each track's pattern set once per request; the per-row check picks
-        // the right slice based on that row's watchlist.track.
-        const filtersByTrack = globalSettingRow
-            ? parseGlobalSetting(globalSettingRow).negativeFiltersByTrack
-            : { career: [] as string[], side: [] as string[] };
-        const careerRegexes = compileNegativeFiltersFromArray(filtersByTrack.career);
-        const sideRegexes = compileNegativeFiltersFromArray(filtersByTrack.side);
+        const globalRegexes = compileNegativeFiltersFromArray(
+            globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
+        );
 
         const filtered = includeFiltered
             ? rows
             : rows.filter(r => {
-                const rowRegexes = r.watchlist.track === "side" ? sideRegexes : careerRegexes;
-                if (rowRegexes.length > 0 && matchesNegativeFilters(r, rowRegexes)) return false;
+                if (globalRegexes.length > 0 && matchesNegativeFilters(r, globalRegexes)) return false;
                 const perWatchlist = compileNegativeFilters(r.watchlist.negativeFilters);
                 return !matchesNegativeFilters(r, perWatchlist);
             });

@@ -20,13 +20,13 @@ interface ThemeSlice {
     dashTitles: Record<string, string>;
     defaultDashTitles: Record<string, string>;
     viewScreenshots: Record<string, string>;
-    // Cross-device per-track negative filters (regex patterns). Hydrated
-    // from /api/settings GET alongside the theme fields. Excluded from
+    // Cross-device negative filters (regex patterns). Hydrated from
+    // /api/settings GET alongside the theme fields. Excluded from
     // ThemeProvider's auto-sync diff (it has its own explicit Save UX in
     // WatchlistsCard); writes update both this field and `version` directly.
-    // The career and side WatchlistsCard instances each edit their own slice
-    // so adding "Senior" to career doesn't hide gigs on the side card.
-    negativeFiltersByTrack: { career: string[]; side: string[] };
+    // One shared list applied to every watchlist regardless of track — a
+    // company blocked here is blocked everywhere.
+    negativeFilters: string[];
     // Optimistic-concurrency counter. Hydrated from /api/settings GET, sent
     // back as If-Match on POST, bumped on successful save. Deliberately
     // excluded from the synced-state diff so updating it doesn't trigger a
@@ -139,7 +139,7 @@ export const useAppStore = create<AppState>()(
             dashTitles: {},
             defaultDashTitles: DEFAULT_DASH_TITLES,
             viewScreenshots: {},
-            negativeFiltersByTrack: { career: [], side: [] },
+            negativeFilters: [],
             version: 0,
 
             setViewHuesEnabled: (viewHuesEnabled) => set({ viewHuesEnabled }),

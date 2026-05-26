@@ -37,23 +37,16 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
             id: true, userId: true, name: true,
             lastDigestAt: true, createdAt: true,
             negativeFilters: true,
-            // Track scopes which slice of negativeFiltersByTrack to apply.
-            track: true,
         },
     });
 
-    // Per-track negative-filter parity with /api/postings GET and job-watcher
-    // per-posting dispatch. Compile each track's pattern set once per run;
-    // watchlist-specific set is compiled per iteration (cached by JSON
-    // identity in negative-filters.ts).
+    // Global negative-filter parity with /api/postings GET and job-watcher
+    // per-posting dispatch. Compiled once per run; watchlist-specific set is
+    // compiled per iteration (cached by JSON identity in negative-filters.ts).
     const globalSettingRow = await findGlobalSetting();
-    const filtersByTrack = globalSettingRow
-        ? parseGlobalSetting(globalSettingRow).negativeFiltersByTrack
-        : { career: [] as string[], side: [] as string[] };
-    const trackRegexes = {
-        career: compileNegativeFiltersFromArray(filtersByTrack.career),
-        side: compileNegativeFiltersFromArray(filtersByTrack.side),
-    };
+    const globalNegativeRegexes = compileNegativeFiltersFromArray(
+        globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
+    );
 
     let summarized = 0;
     let totalPostings = 0;
@@ -74,14 +67,12 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
         });
 
         // Cull postings the user has chosen to ignore via negative filters
-        // (track-scoped + per-watchlist). Filtered postings stay in the
-        // JobPosting table so the user can resurface them by toggling the
-        // filter off; they're only excluded from this digest dispatch.
-        const trackKey: "career" | "side" = w.track === "side" ? "side" : "career";
-        const trackNegativeRegexes = trackRegexes[trackKey];
+        // (global + per-watchlist). Filtered postings stay in the JobPosting
+        // table so the user can resurface them by toggling the filter off;
+        // they're only excluded from this digest dispatch.
         const watchlistNegativeRegexes = compileNegativeFilters(w.negativeFilters);
         const filteredPostings = postings.filter(p =>
-            !matchesNegativeFilters(p, trackNegativeRegexes) &&
+            !matchesNegativeFilters(p, globalNegativeRegexes) &&
             !matchesNegativeFilters(p, watchlistNegativeRegexes)
         );
 

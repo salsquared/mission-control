@@ -99,6 +99,8 @@ SUITES=(
     "scripts/tests/hermetic/resume-rewrite-fold-in-smoke.ts"
     # M8.4 polish (canonical resume naming)
     "scripts/tests/hermetic/resume-labels-smoke.ts"
+    # Find Roles edit (group-by-search)
+    "scripts/tests/hermetic/find-roles-grouping-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

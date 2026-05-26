@@ -27,6 +27,7 @@ import { fetchRecruitee } from "@/lib/fetchers/recruitee-fetcher";
 import { fetchPersonio } from "@/lib/fetchers/personio-fetcher";
 import { fetchClearCompany } from "@/lib/fetchers/clearcompany-fetcher";
 import { fetchLinkedin } from "@/lib/fetchers/linkedin-fetcher";
+import { fetchIndeed } from "@/lib/fetchers/indeed-fetcher";
 import { WatchlistConfigSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
 import { broadcastEvent } from "@/lib/events";
@@ -139,6 +140,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             case "personio":        return fetchPersonio(config);
             case "clearcompany":    return fetchClearCompany(config);
             case "linkedin":        return fetchLinkedin(config);
+            case "indeed":          return fetchIndeed(config);
             case "careers-page":    return fetchCareersPage(config);
         }
     })();
@@ -171,17 +173,15 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     const willNotifyForNew = modeAllowsPerPosting && (!isFirstRun || fetchResult.postings.length <= FIRST_RUN_NOTIFY_LIMIT);
 
     // Negative-filter gate (parity with /api/postings GET). Postings matching
-    // the track-scoped or per-watchlist negative filter still land in the
+    // the global or per-watchlist negative filter still land in the
     // JobPosting table — the user can surface them later by toggling the
     // filter off or hitting ?includeFiltered=true. We only suppress the
     // *notification*. Compiled once per run; both regex sets cached by JSON
     // identity in lib/postings/negative-filters.ts.
     const globalSettingRow = await findGlobalSetting();
-    const filtersByTrack = globalSettingRow
-        ? parseGlobalSetting(globalSettingRow).negativeFiltersByTrack
-        : { career: [] as string[], side: [] as string[] };
-    const trackKey: "career" | "side" = watchlist.track === "side" ? "side" : "career";
-    const trackNegativeRegexes = compileNegativeFiltersFromArray(filtersByTrack[trackKey]);
+    const globalNegativeRegexes = compileNegativeFiltersFromArray(
+        globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
+    );
     const watchlistNegativeRegexes = compileNegativeFilters(watchlist.negativeFilters);
 
     // Pre-compute externalIds + one bulk existence check. Replaces what used
@@ -356,7 +356,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         }
         const postingForFilter = { title: raw.title, snippet: raw.snippet, location: raw.location };
         const filteredOut =
-            matchesNegativeFilters(postingForFilter, trackNegativeRegexes) ||
+            matchesNegativeFilters(postingForFilter, globalNegativeRegexes) ||
             matchesNegativeFilters(postingForFilter, watchlistNegativeRegexes);
         if (willNotifyForNew && !filteredOut) {
             // Low-tier — in-app only. Posting notifications are high-volume by

@@ -1,15 +1,18 @@
 import { prisma } from '@/lib/prisma';
 import type { GlobalSetting } from '@prisma/client';
+// Pure string helper lives in a client-safe module so React Client Components
+// (WatchlistsCard) can use it without dragging prisma into the browser bundle.
+// Re-exported below for backward compat with server callers that still import
+// it from here.
+import { normalizeNegativeFilterForDedup } from '@/lib/postings/negative-filters';
 
 // Negative filters are stored on a single `globalNegativeFilters` JSON
-// column (legacy name kept to avoid a prisma migration). The in-memory
-// shape is per-track so career/side WatchlistsCard instances can each
-// edit their own list — see WatchlistsCard's FilterButton. Parser below
-// migrates legacy array values into the `career` bucket on read.
-export type NegativeFilterTrack = "career" | "side";
-export type NegativeFiltersByTrack = Record<NegativeFilterTrack, string[]>;
+// column (legacy name kept to avoid a prisma migration). One shared list
+// applies to every watchlist regardless of track — see WatchlistsCard's
+// FilterButton. Parser below unions both legacy shapes (raw array and
+// per-track `{career,side}` map) into one flat list on read.
 
-export const EMPTY_NEGATIVE_FILTERS: NegativeFiltersByTrack = { career: [], side: [] };
+export { normalizeNegativeFilterForDedup };
 
 export interface GlobalSettingData {
     isDarkMode: boolean;
@@ -17,7 +20,7 @@ export interface GlobalSettingData {
     viewHues: Record<string, number>;
     dashOrder: string[];
     dashTitles: Record<string, string>;
-    negativeFiltersByTrack: NegativeFiltersByTrack;
+    negativeFilters: string[];
     version: number;
 }
 
@@ -57,28 +60,34 @@ export async function upsertGlobalSettingWithVersion(
     return { ok: false, currentVersion: current.version };
 }
 
-// Parse the `globalNegativeFilters` JSON column into the per-track map.
-// Accepts the legacy `["a","b"]` shape (promotes to the career bucket — the
-// original use case) and the new `{"career":[...],"side":[...]}` shape.
-// Any pre-existing user data lands under `career` on first read, then the
-// next write persists the new shape.
-export function parseNegativeFiltersByTrack(raw: string | null | undefined): NegativeFiltersByTrack {
-    if (!raw) return { career: [], side: [] };
+// Parse the `globalNegativeFilters` JSON column into the flat list.
+// Accepts both legacy shapes: the original `["a","b"]` array and the
+// intermediate `{"career":[...],"side":[...]}` per-track map (unions both
+// buckets, dedupes case-insensitively). Next write persists the flat shape.
+export function parseNegativeFilters(raw: string | null | undefined): string[] {
+    if (!raw) return [];
     let parsed: unknown;
-    try { parsed = JSON.parse(raw); } catch { return { career: [], side: [] }; }
+    try { parsed = JSON.parse(raw); } catch { return []; }
+    const pickArray = (v: unknown): string[] =>
+        Array.isArray(v) ? v.filter((p): p is string => typeof p === "string") : [];
+    let collected: string[];
     if (Array.isArray(parsed)) {
-        return {
-            career: parsed.filter((p): p is string => typeof p === "string"),
-            side: [],
-        };
-    }
-    if (parsed && typeof parsed === "object") {
+        collected = pickArray(parsed);
+    } else if (parsed && typeof parsed === "object") {
         const obj = parsed as Record<string, unknown>;
-        const pickArray = (v: unknown): string[] =>
-            Array.isArray(v) ? v.filter((p): p is string => typeof p === "string") : [];
-        return { career: pickArray(obj.career), side: pickArray(obj.side) };
+        collected = [...pickArray(obj.career), ...pickArray(obj.side)];
+    } else {
+        return [];
     }
-    return { career: [], side: [] };
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const p of collected) {
+        const key = normalizeNegativeFilterForDedup(p);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(p);
+    }
+    return out;
 }
 
 export function parseGlobalSetting(row: {
@@ -96,7 +105,7 @@ export function parseGlobalSetting(row: {
         viewHues: JSON.parse(row.viewHues),
         dashOrder: JSON.parse(row.dashOrder),
         dashTitles: JSON.parse(row.dashTitles),
-        negativeFiltersByTrack: parseNegativeFiltersByTrack(row.globalNegativeFilters),
+        negativeFilters: parseNegativeFilters(row.globalNegativeFilters),
         version: row.version,
     };
 }
@@ -108,11 +117,10 @@ export function serializeGlobalSetting(data: Partial<GlobalSettingData>) {
     if (data.viewHues !== undefined) out.viewHues = JSON.stringify(data.viewHues);
     if (data.dashOrder !== undefined) out.dashOrder = JSON.stringify(data.dashOrder);
     if (data.dashTitles !== undefined) out.dashTitles = JSON.stringify(data.dashTitles);
-    if (data.negativeFiltersByTrack !== undefined) {
-        // Always write the new per-track shape, even if both tracks are empty —
-        // future reads stay consistent. Don't drop empty arrays; the editor
-        // round-trips them to mean "user explicitly cleared this track".
-        out.globalNegativeFilters = JSON.stringify(data.negativeFiltersByTrack);
+    if (data.negativeFilters !== undefined) {
+        // Always write the flat array, even when empty — an explicit clear is
+        // a meaningful state, not a default to drop.
+        out.globalNegativeFilters = JSON.stringify(data.negativeFilters);
     }
     return out;
 }

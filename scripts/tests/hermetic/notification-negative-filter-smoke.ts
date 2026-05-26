@@ -3,12 +3,18 @@
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/notification-negative-filter-smoke.ts
  *
- * The bug (May 2026): /api/postings GET applies BOTH GlobalSetting.global
+ * Original bug (May 2026): /api/postings GET applies BOTH GlobalSetting.global
  * NegativeFilters AND Watchlist.negativeFilters to cull rows at read time,
  * but scheduler/jobs/job-watcher.ts and scheduler/jobs/posting-digest.ts
  * dispatched notifications for every new posting regardless. So "Senior",
  * "Lead", etc. would show up in the notification bell even though the user
  * had filtered them out of the New Postings card.
+ *
+ * Follow-up (May 2026): the global filter was briefly split into per-track
+ * career/side buckets, which let an "anduril" entry on the career list miss
+ * an Anduril job surfaced by a side watchlist. The blocklist is now a single
+ * shared list applied to every watchlist regardless of track — Part 5
+ * regression-tests that.
  *
  * Covered here:
  *   1. Per-posting dispatch (notificationMode='each' via runWatchlist + a
@@ -19,6 +25,7 @@
  *      the window is culled (so the digest doesn't re-evaluate the same
  *      culled cohort forever), and respects PB-3 "no advance on transient
  *      dispatch failure" by only advancing when we considered ≥1 posting.
+ *   3. Global filters cull postings on side-tracked watchlists too (Part 5).
  *
  * Cleans up: deletes scratch watchlists, postings, notifications, and
  * RESTORES the prior GlobalSetting.globalNegativeFilters value so this smoke
@@ -38,6 +45,7 @@ process.env.MC_ALLOW_PRIVATE_FETCH = "1";
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 import { runPostingDigest } from "@/scheduler/jobs/posting-digest";
 import { _resetNegativeFilterCache } from "@/lib/postings/negative-filters";
+import { parseNegativeFilters, normalizeNegativeFilterForDedup } from "@/lib/repositories/settings";
 
 const prisma = new PrismaClient();
 
@@ -80,12 +88,9 @@ async function snapshotGlobalNegativeFilters(): Promise<{ existed: boolean; raw:
     return { existed: true, raw: row.globalNegativeFilters };
 }
 
-async function setNegativeFiltersByTrack(byTrack: { career?: string[]; side?: string[] }): Promise<void> {
+async function setGlobalNegativeFilters(patterns: string[]): Promise<void> {
     _resetNegativeFilterCache(); // ensure new patterns get compiled (cache is keyed by JSON string)
-    const json = JSON.stringify({
-        career: byTrack.career ?? [],
-        side: byTrack.side ?? [],
-    });
+    const json = JSON.stringify(patterns);
     const existing = await prisma.globalSetting.findUnique({ where: { id: "global" } });
     if (existing) {
         await prisma.globalSetting.update({
@@ -129,10 +134,30 @@ async function main() {
 
     try {
         await fixture.start();
+
+        // ────────────────────────────────────────────────────────────────
+        // Part 0: parseNegativeFilters dedup uses case + punctuation +
+        // whitespace normalization. Pure unit-style — no DB / no fixture.
+        // ────────────────────────────────────────────────────────────────
+        // Legacy `{career,side}` shape with "Sr" on one side and "Sr." on
+        // the other should collapse to a single entry. Without the
+        // normalizer the parser would emit both, producing redundant regex
+        // patterns that look identical to a human.
+        const legacyRaw = JSON.stringify({ career: ["Sr"], side: ["Sr.", "Sr  Engineer"] });
+        const parsed = parseNegativeFilters(legacyRaw);
+        if (parsed.length !== 2) {
+            fail(`dedup: expected 2 entries after collapsing "Sr"/"Sr." + "Sr Engineer"/"Sr  Engineer", got ${parsed.length} (${parsed.join(" | ")})`);
+        } else pass(`dedup: legacy {career,side} collapses Sr/Sr. and folds double-space → ${parsed.join(" | ")}`);
+        // Regex-metachar invariant: `Sr\.` (literal "Sr.") and `Sr` must
+        // stay distinct — they target different inputs.
+        const escapedKey = normalizeNegativeFilterForDedup("Sr\\.");
+        const plainKey = normalizeNegativeFilterForDedup("Sr");
+        if (escapedKey === plainKey) {
+            fail(`dedup: escaped "Sr\\." collapsed onto "Sr" (regex intent lost): "${escapedKey}" === "${plainKey}"`);
+        } else pass(`dedup: "Sr\\." stays distinct from "Sr" (regex metachars preserved)`);
+
         await prisma.user.create({ data: { id: userId, email: `negfilt-smoke-${tag}@example.invalid` } });
-        // Career-scoped filters only; side is left empty so the Part 5
-        // isolation check can prove side postings ignore career patterns.
-        await setNegativeFiltersByTrack({ career: ["Senior", "Lead"], side: [] });
+        await setGlobalNegativeFilters(["Senior", "Lead"]);
 
         // ────────────────────────────────────────────────────────────────
         // Part 1: per-posting dispatch (notificationMode='each')
@@ -328,29 +353,31 @@ async function main() {
         } else pass("empty: lastDigestAt unchanged on empty window (PB-3 preserved)");
 
         // ────────────────────────────────────────────────────────────────
-        // Part 5: per-track filter isolation
+        // Part 5: global filter applies to side-tracked watchlists too
         // ────────────────────────────────────────────────────────────────
-        // The whole point of the per-track schema: career patterns must NOT
-        // apply to side postings, and vice versa. We use runWatchlist via the
-        // fixture server (notificationMode='each') instead of runPostingDigest
-        // here — the digest path is shared with the live dev scheduler
-        // (mission-control-scheduler-dev), which races on lastDigestAt and
-        // makes count assertions flaky. The job-watcher path is per-posting
-        // so the assertions are about individual dispatches, immune to
-        // watermark races.
-        await setNegativeFiltersByTrack({ career: ["Senior", "Lead"], side: ["Manager"] });
+        // The shared-blocklist model: a global pattern culls postings
+        // regardless of watchlist.track. Originally the schema split career
+        // and side filters apart, which let an "anduril" entry on the career
+        // list miss an Anduril job surfaced by a side watchlist. We use
+        // runWatchlist via the fixture server (notificationMode='each')
+        // instead of runPostingDigest here — the digest path is shared with
+        // the live dev scheduler (mission-control-scheduler-dev), which races
+        // on lastDigestAt and makes count assertions flaky. The job-watcher
+        // path is per-posting so the assertions are about individual
+        // dispatches, immune to watermark races.
+        await setGlobalNegativeFilters(["Senior", "Lead", "Manager"]);
 
-        // 4 fixture postings on a SIDE-tracked watchlist. Under the old
-        // shared-blocklist model, the career patterns ("Senior", "Lead")
-        // would cull s-Senior and s-Lead — but with per-track filters those
-        // patterns only apply to career watchlists, so the side card sees
-        // them. The side filter ("Manager") culls s-Manager. s-Plain has
-        // no relevant patterns and always survives. Net: 3 notifications.
+        // 4 fixture postings on a SIDE-tracked watchlist. Every global
+        // pattern applies regardless of track now, so:
+        //   - "Senior Warehouse Associate" → culled
+        //   - "Lead Driver"                 → culled
+        //   - "Engineering Manager"         → culled
+        //   - "Warehouse Picker"            → SURVIVES
         fixture.setPostings([
-            { slug: "s-senior", title: "Senior Warehouse Associate" }, // career-pattern, but side track → SURVIVES
-            { slug: "s-lead",   title: "Lead Driver" },                 // same                                → SURVIVES
-            { slug: "s-mgr",    title: "Engineering Manager" },         // side-pattern                        → CULLED
-            { slug: "s-plain",  title: "Warehouse Picker" },            // no match                            → SURVIVES
+            { slug: "s-senior", title: "Senior Warehouse Associate" }, // global "Senior" → CULLED
+            { slug: "s-lead",   title: "Lead Driver" },                 // global "Lead"   → CULLED
+            { slug: "s-mgr",    title: "Engineering Manager" },         // global "Manager"→ CULLED
+            { slug: "s-plain",  title: "Warehouse Picker" },            // no match         → SURVIVES
         ]);
         const wSide = await prisma.watchlist.create({
             data: {
@@ -372,10 +399,10 @@ async function main() {
 
         const beforeRun = Date.now();
         const r5 = await runWatchlist(wSide.id);
-        if (r5.error) fail(`isolation: side run errored: ${r5.error}`);
-        else pass("isolation: side run completed");
-        if (r5.newPostings !== 4) fail(`isolation: expected 4 newPostings (all land in DB), got ${r5.newPostings}`);
-        else pass("isolation: 4 side JobPosting rows created (filter does not gate row creation)");
+        if (r5.error) fail(`shared-blocklist: side run errored: ${r5.error}`);
+        else pass("shared-blocklist: side run completed");
+        if (r5.newPostings !== 4) fail(`shared-blocklist: expected 4 newPostings (all land in DB), got ${r5.newPostings}`);
+        else pass("shared-blocklist: 4 side JobPosting rows created (filter does not gate row creation)");
 
         const sideNotifs = await prisma.notification.findMany({
             where: {
@@ -387,14 +414,16 @@ async function main() {
             orderBy: { createdAt: "asc" },
         });
         const sideTitles = new Set(sideNotifs.map(n => n.title));
-        if (sideNotifs.length !== 3) fail(`isolation: expected 3 side notifications, got ${sideNotifs.length} (${[...sideTitles].join(" | ")})`);
-        else pass("isolation: exactly 3 side notifications fired (career filter does NOT cull side postings)");
-        if (!sideTitles.has("Side Co — Senior Warehouse Associate")) fail(`isolation: missing "Senior Warehouse Associate" notif — career "Senior" pattern leaked into side track`);
-        else pass(`isolation: "Senior Warehouse Associate" notif fired (career "Senior" pattern correctly scoped out)`);
-        if (!sideTitles.has("Side Co — Lead Driver")) fail(`isolation: missing "Lead Driver" notif — career "Lead" pattern leaked into side track`);
-        else pass(`isolation: "Lead Driver" notif fired (career "Lead" pattern correctly scoped out)`);
-        if (sideTitles.has("Side Co — Engineering Manager")) fail(`isolation: "Engineering Manager" notif fired but should be culled by side "Manager" pattern`);
-        else pass(`isolation: "Engineering Manager" notif suppressed by SIDE filter (per-watchlist scoping works)`);
+        if (sideNotifs.length !== 1) fail(`shared-blocklist: expected 1 side notification, got ${sideNotifs.length} (${[...sideTitles].join(" | ")})`);
+        else pass("shared-blocklist: exactly 1 side notification fired (global filters DO cull side postings)");
+        if (sideTitles.has("Side Co — Senior Warehouse Associate")) fail(`shared-blocklist: "Senior Warehouse Associate" leaked through despite global "Senior"`);
+        else pass(`shared-blocklist: "Senior Warehouse Associate" suppressed by global "Senior"`);
+        if (sideTitles.has("Side Co — Lead Driver")) fail(`shared-blocklist: "Lead Driver" leaked through despite global "Lead"`);
+        else pass(`shared-blocklist: "Lead Driver" suppressed by global "Lead"`);
+        if (sideTitles.has("Side Co — Engineering Manager")) fail(`shared-blocklist: "Engineering Manager" leaked through despite global "Manager"`);
+        else pass(`shared-blocklist: "Engineering Manager" suppressed by global "Manager"`);
+        if (!sideTitles.has("Side Co — Warehouse Picker")) fail(`shared-blocklist: missing "Warehouse Picker" survivor`);
+        else pass(`shared-blocklist: "Warehouse Picker" survived (no matching pattern)`);
     } finally {
         await prisma.notification.deleteMany({ where: { userId } }).catch(() => undefined);
         for (const id of watchlistIds) {

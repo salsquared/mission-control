@@ -1,15 +1,23 @@
 "use client";
 import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Briefcase } from "lucide-react";
+import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Briefcase, Pencil, Sparkles } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
 import { useAppStore } from "../providers/state";
 import { AddWatchlistModal } from "../overlays/AddWatchlistModal";
+import { EditFindRolesModal } from "../overlays/EditFindRolesModal";
 import { Card } from "../ui/Card";
 import { FilterButton } from "../ui/FilterButton";
 import type { WatchlistWire } from "@/lib/schemas/watchlists";
+import { normalizeNegativeFilterForDedup } from "@/lib/postings/negative-filters";
+import {
+    groupWatchlists,
+    groupTitle,
+    rowItemMatchesSearch,
+    type FindRolesGroup,
+} from "@/lib/watchlists/find-roles-grouping";
 
 // MB Phase 4. Per-track presentation. Crawl mechanism is identical between
 // tracks (same fetcher fleet, same schedule loop) — only the surfaces differ.
@@ -84,16 +92,31 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
     const queryClient = useQueryClient();
     const preset = TRACK_PRESETS[track];
     const [adding, setAdding] = useState(false);
-    const [busyId, setBusyId] = useState<string | null>(null);
+    // Set, not single string, because find-roles group actions fan out across
+    // N member watchlists — every member should look busy while the batch is
+    // in flight. Helpers below mark/unmark in bulk.
+    const [busyIds, setBusyIds] = useState<Set<string>>(() => new Set());
+    const isBusy = (id: string) => busyIds.has(id);
+    const beginBusy = (ids: string[]) => setBusyIds(prev => {
+        const next = new Set(prev);
+        for (const id of ids) next.add(id);
+        return next;
+    });
+    const endBusy = (ids: string[]) => setBusyIds(prev => {
+        const next = new Set(prev);
+        for (const id of ids) next.delete(id);
+        return next;
+    });
+    const [editingGroup, setEditingGroup] = useState<FindRolesGroup | null>(null);
     const [page, setPage] = useState(0);
     const [search, setSearch] = useState("");
-    // Per-track negative filters: dropdown open state lives here so the
+    // Global negative filters: dropdown open state lives here so the
     // trigger button in `action` controls it (parity with NewPostingsCard's
-    // Filters dropdown). The chip editor itself is `TrackNegativeFiltersEditor`
-    // below, rendered conditionally on this flag and scoped to `track` so
-    // the career + side cards edit independent lists.
+    // Filters dropdown). The chip editor itself is `GlobalNegativeFiltersEditor`
+    // below, rendered conditionally on this flag. Both the career and side
+    // cards edit the same shared list.
     const [filtersOpen, setFiltersOpen] = useState(false);
-    const filterCount = useAppStore(s => s.negativeFiltersByTrack[track]?.length ?? 0);
+    const filterCount = useAppStore(s => s.negativeFilters?.length ?? 0);
 
     // MB Phase 4: per-track cache scoping. Career uses the original key
     // [queryKeys.watchlists] so existing useServerEvents listeners + manual
@@ -115,13 +138,20 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
 
     const watchlists = data?.watchlists ?? [];
 
-    // Client-side name search. Filters before pagination so the page meta /
-    // counter reflect the matching subset, not the whole list.
+    // Group linkedin + indeed watchlists with the same keywords/location/track
+    // into a single "Find Roles search" row. Other kinds always render as
+    // their own row. See lib/watchlists/find-roles-grouping.ts.
+    const rowItems = useMemo(() => groupWatchlists(watchlists), [watchlists]);
+
+    // Client-side name search. Filters by group title (for groups) or
+    // watchlist name (for singles). Order of operations: group first, then
+    // filter — so a group's title can match even when no single underlying
+    // name does.
     const trimmedSearch = search.trim().toLowerCase();
-    const filteredWatchlists = useMemo(() => {
-        if (!trimmedSearch) return watchlists;
-        return watchlists.filter(w => w.name.toLowerCase().includes(trimmedSearch));
-    }, [watchlists, trimmedSearch]);
+    const filteredItems = useMemo(() => {
+        if (!trimmedSearch) return rowItems;
+        return rowItems.filter(item => rowItemMatchesSearch(item, trimmedSearch));
+    }, [rowItems, trimmedSearch]);
 
     // Reset to page 0 when the search narrows the list so an in-progress query
     // doesn't land on an empty page. Render-time adjustment matches the
@@ -132,13 +162,13 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
         setPage(0);
     }
 
-    // Pagination — mirrors the pattern in NewPostingsCard.tsx. safePage
-    // clamps the live `page` against the current count so deleting the last
-    // watchlist on page 3 doesn't strand the view on an empty page.
-    const pageCount = Math.max(1, Math.ceil(filteredWatchlists.length / PAGE_SIZE));
+    // Pagination — over GROUP/ROW items (each group counts as 1 row regardless
+    // of how many underlying watchlists it owns). safePage clamps the live
+    // `page` against the current count.
+    const pageCount = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
     const safePage = Math.min(page, pageCount - 1);
     const pageStart = safePage * PAGE_SIZE;
-    const pageWatchlists = filteredWatchlists.slice(pageStart, pageStart + PAGE_SIZE);
+    const pageItems = filteredItems.slice(pageStart, pageStart + PAGE_SIZE);
 
     // MB Phase 4: predicate-based invalidation. A watchlist mutation in
     // either track is interesting to both lists (e.g. you might rename a
@@ -154,7 +184,7 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
         });
 
     async function runNow(id: string) {
-        setBusyId(id);
+        beginBusy([id]);
         try {
             // `api.watchlists.run` throws on non-2xx (the route returns 502 when
             // the fetcher errors), so reaching this point means success.
@@ -169,36 +199,36 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
         } catch (e) {
             toastStore.push({ message: `Run failed: ${errMessage(e)}`, type: "error" });
         } finally {
-            setBusyId(null);
+            endBusy([id]);
         }
     }
 
     async function togglePause(id: string, currentlyActive: boolean) {
-        setBusyId(id);
+        beginBusy([id]);
         try {
             await api.watchlists.update(id, { active: !currentlyActive });
             invalidateWatchlists();
         } catch (e) {
             toastStore.push({ message: `Pause toggle failed: ${errMessage(e)}`, type: "error" });
         } finally {
-            setBusyId(null);
+            endBusy([id]);
         }
     }
 
     async function setNotificationMode(id: string, mode: "each" | "digest" | "silent") {
-        setBusyId(id);
+        beginBusy([id]);
         try {
             await api.watchlists.update(id, { notificationMode: mode });
             invalidateWatchlists();
         } catch (e) {
             toastStore.push({ message: `Notification mode change failed: ${errMessage(e)}`, type: "error" });
         } finally {
-            setBusyId(null);
+            endBusy([id]);
         }
     }
 
     async function saveNegativeFilters(id: string, patterns: string[]) {
-        setBusyId(id);
+        beginBusy([id]);
         try {
             await api.watchlists.update(id, { negativeFilters: patterns });
             toastStore.push({
@@ -212,13 +242,13 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
         } catch (e) {
             toastStore.push({ message: `Filter save failed: ${errMessage(e)}`, type: "error" });
         } finally {
-            setBusyId(null);
+            endBusy([id]);
         }
     }
 
     async function remove(id: string, name: string) {
         if (!window.confirm(`Delete watchlist "${name}" and all its postings?`)) return;
-        setBusyId(id);
+        beginBusy([id]);
         try {
             await api.watchlists.delete(id);
             toastStore.push({ message: `Deleted: ${name}`, type: "info" });
@@ -227,7 +257,85 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
         } catch (e) {
             toastStore.push({ message: `Delete failed: ${errMessage(e)}`, type: "error" });
         } finally {
-            setBusyId(null);
+            endBusy([id]);
+        }
+    }
+
+    // ─── Group fan-out actions ───
+    // Every action below operates on the full member set. We mark all members
+    // busy up front, settle all the ops, then clear busy in `finally`.
+    async function runGroup(group: FindRolesGroup) {
+        const ids = group.members.map(m => m.id);
+        beginBusy(ids);
+        try {
+            const results = await Promise.allSettled(group.members.map(m => api.watchlists.run(m.id)));
+            let totalNew = 0;
+            let totalSeen = 0;
+            const failures: string[] = [];
+            results.forEach((r, i) => {
+                if (r.status === "fulfilled") {
+                    totalNew += r.value.newPostings;
+                    totalSeen += r.value.seenAgain;
+                } else {
+                    failures.push(group.members[i].kind);
+                }
+            });
+            if (failures.length === 0) {
+                toastStore.push({
+                    message: `Run complete — ${totalNew} new, ${totalSeen} seen-again across ${group.members.length} source${group.members.length === 1 ? "" : "s"}`,
+                    type: "info",
+                });
+            } else {
+                toastStore.push({
+                    message: `${results.length - failures.length}/${results.length} sources ran; ${failures.join(", ")} failed`,
+                    type: "error",
+                });
+            }
+            invalidateWatchlists();
+            invalidatePostings();
+            queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
+        } finally {
+            endBusy(ids);
+        }
+    }
+
+    async function pauseGroup(group: FindRolesGroup, nextActive: boolean) {
+        const ids = group.members.map(m => m.id);
+        beginBusy(ids);
+        try {
+            await Promise.allSettled(group.members.map(m =>
+                api.watchlists.update(m.id, { active: nextActive }),
+            ));
+            invalidateWatchlists();
+        } finally {
+            endBusy(ids);
+        }
+    }
+
+    async function removeGroup(group: FindRolesGroup) {
+        const title = groupTitle(group);
+        const n = group.members.length;
+        const sourceLabels = group.members.map(m => (m.kind === "linkedin" ? "LinkedIn" : "Indeed")).join(" + ");
+        if (!window.confirm(`Delete the "${title}" Find Roles search? Removes ${n} source watchlist${n === 1 ? "" : "s"} (${sourceLabels}) and all their postings.`)) {
+            return;
+        }
+        const ids = group.members.map(m => m.id);
+        beginBusy(ids);
+        try {
+            const results = await Promise.allSettled(group.members.map(m => api.watchlists.delete(m.id)));
+            const failures = results.filter(r => r.status === "rejected").length;
+            if (failures === 0) {
+                toastStore.push({ message: `Deleted: ${title}`, type: "info" });
+            } else {
+                toastStore.push({
+                    message: `Partial delete: ${results.length - failures}/${results.length} succeeded`,
+                    type: "error",
+                });
+            }
+            invalidateWatchlists();
+            invalidatePostings();
+        } finally {
+            endBusy(ids);
         }
     }
 
@@ -254,8 +362,7 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
             }
         >
             {filtersOpen && (
-                <TrackNegativeFiltersEditor
-                    track={track}
+                <GlobalNegativeFiltersEditor
                     onSaved={() => invalidatePostings()}
                 />
             )}
@@ -289,25 +396,37 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
                 </div>
             ) : watchlists.length === 0 ? (
                 <p className="text-xs text-white/40 italic">{preset.emptyText}</p>
-            ) : filteredWatchlists.length === 0 ? (
+            ) : filteredItems.length === 0 ? (
                 <p className="text-xs text-white/40 italic">
                     No watchlists match &quot;{search}&quot;.{" "}
                     <button onClick={() => setSearch("")} className="underline text-cyan-300/80 hover:text-cyan-200">Clear</button>
                 </p>
             ) : (
                 <ul className="space-y-2">
-                    {pageWatchlists.map(w => (
-                        <WatchlistRow
-                            key={w.id}
-                            w={w}
-                            busy={busyId === w.id}
-                            onRunNow={runNow}
-                            onTogglePause={togglePause}
-                            onRemove={remove}
-                            onSetNotificationMode={setNotificationMode}
-                            onSaveNegativeFilters={saveNegativeFilters}
-                        />
-                    ))}
+                    {pageItems.map(item =>
+                        item.kind === "group" ? (
+                            <FindRolesGroupRow
+                                key={item.groupKey}
+                                group={item}
+                                anyBusy={item.members.some(m => isBusy(m.id))}
+                                onEdit={() => setEditingGroup(item)}
+                                onRun={() => runGroup(item)}
+                                onPauseToggle={(nextActive) => pauseGroup(item, nextActive)}
+                                onRemove={() => removeGroup(item)}
+                            />
+                        ) : (
+                            <WatchlistRow
+                                key={item.watchlist.id}
+                                w={item.watchlist}
+                                busy={isBusy(item.watchlist.id)}
+                                onRunNow={runNow}
+                                onTogglePause={togglePause}
+                                onRemove={remove}
+                                onSetNotificationMode={setNotificationMode}
+                                onSaveNegativeFilters={saveNegativeFilters}
+                            />
+                        ),
+                    )}
                 </ul>
             )}
 
@@ -322,7 +441,7 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
                         Prev
                     </button>
                     <span className="text-[11px] text-white/40 tabular-nums">
-                        {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredWatchlists.length)} of {filteredWatchlists.length} · page {safePage + 1}/{pageCount}
+                        {pageStart + 1}–{Math.min(pageStart + PAGE_SIZE, filteredItems.length)} of {filteredItems.length} · page {safePage + 1}/{pageCount}
                     </span>
                     <button
                         onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}
@@ -341,6 +460,15 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
                 onCreated={() => invalidateWatchlists()}
                 existingWatchlists={watchlists}
                 defaultTrack={track}
+            />
+            <EditFindRolesModal
+                open={editingGroup !== null}
+                group={editingGroup}
+                onClose={() => setEditingGroup(null)}
+                onSaved={() => {
+                    invalidateWatchlists();
+                    invalidatePostings();
+                }}
             />
         </Card>
     );
@@ -383,6 +511,137 @@ function NotificationModeToggle({
                 );
             })}
         </div>
+    );
+}
+
+// Source-chip palette. Per-source colors so the user can scan the row and tell
+// at a glance which sources are wired up for this search.
+const SOURCE_CHIP_CLASS: Record<"linkedin" | "indeed", string> = {
+    linkedin: "bg-blue-500/15 text-blue-100 border border-blue-400/40",
+    indeed: "bg-emerald-500/15 text-emerald-100 border border-emerald-400/40",
+};
+const SOURCE_LABEL: Record<"linkedin" | "indeed", string> = {
+    linkedin: "LinkedIn",
+    indeed: "Indeed",
+};
+
+function FindRolesGroupRow({
+    group,
+    anyBusy,
+    onEdit,
+    onRun,
+    onPauseToggle,
+    onRemove,
+}: {
+    group: FindRolesGroup;
+    anyBusy: boolean;
+    onEdit: () => void;
+    onRun: () => void;
+    onPauseToggle: (nextActive: boolean) => void;
+    onRemove: () => void;
+}) {
+    // Aggregate state across members. lastRunAt: most recent (so the row shows
+    // the freshest run). nextRun: based on anchor's schedule (members share the
+    // same schedule after the Edit modal's flatten). active: true only when ALL
+    // members are active.
+    const allActive = group.members.every(m => m.active);
+    const anyActive = group.members.some(m => m.active);
+    const mostRecentRun = group.members.reduce<string | null>((latest, m) => {
+        if (!m.lastRunAt) return latest;
+        if (!latest) return m.lastRunAt;
+        return m.lastRunAt > latest ? m.lastRunAt : latest;
+    }, null);
+    const anchor = group.members[0];
+    const anchorScheduleMinutes = anchor?.scheduleMinutes ?? 240;
+    const mixedSchedules = group.members.some(m => m.scheduleMinutes !== anchorScheduleMinutes);
+    // Surface the LATEST error so a transient 403/Cloudflare on one source
+    // doesn't get hidden behind a healthy sibling.
+    const latestError = group.members
+        .map(m => m.lastError)
+        .filter((e): e is string => !!e)
+        .at(-1) ?? null;
+
+    return (
+        <li className="rounded-lg bg-black/30 border border-white/10 px-3 py-2">
+            <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                        <Sparkles className="w-3.5 h-3.5 text-cyan-300/70 shrink-0" aria-hidden />
+                        <span className="text-sm font-semibold text-white truncate">{groupTitle(group)}</span>
+                        {!allActive && (
+                            <span className="text-[10px] uppercase tracking-wide text-yellow-300/80 bg-yellow-500/10 px-1.5 py-0.5 rounded shrink-0">
+                                {anyActive ? "partial" : "paused"}
+                            </span>
+                        )}
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-wrap mt-1">
+                        <span className="text-[10px] uppercase tracking-wide text-white/40">Sources:</span>
+                        {group.members.map(m => {
+                            const k = m.kind as "linkedin" | "indeed";
+                            return (
+                                <span
+                                    key={m.id}
+                                    title={!m.active ? `${SOURCE_LABEL[k]} (paused)` : SOURCE_LABEL[k]}
+                                    className={[
+                                        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-semibold transition-opacity",
+                                        SOURCE_CHIP_CLASS[k],
+                                        m.active ? "" : "opacity-50",
+                                    ].join(" ")}
+                                >
+                                    {SOURCE_LABEL[k]}
+                                </span>
+                            );
+                        })}
+                    </div>
+                    <div className="text-[11px] text-white/40 mt-1 flex items-center gap-3 flex-wrap">
+                        <span>last run {fmtRelative(mostRecentRun)}</span>
+                        <span title={mixedSchedules ? `Mixed cadences across sources — anchor is ${fmtSchedule(anchorScheduleMinutes)}` : fmtSchedule(anchorScheduleMinutes)}>
+                            {fmtNextRun(mostRecentRun, anchorScheduleMinutes)}{mixedSchedules ? " · mixed" : ""}
+                        </span>
+                        {latestError && (
+                            <span className="flex items-center gap-1 text-red-300/80">
+                                <AlertCircle className="w-3 h-3" />
+                                <span className="truncate max-w-[40ch]">{latestError}</span>
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <div className="flex items-center gap-1 shrink-0">
+                    <button
+                        onClick={onEdit}
+                        disabled={anyBusy}
+                        title="Edit search (role, location, sources, cadence)"
+                        className="p-1.5 rounded text-white/50 hover:text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                        <Pencil className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                        onClick={onRun}
+                        disabled={anyBusy || !anyActive}
+                        title={anyActive ? "Run now (all sources)" : "All sources paused"}
+                        className="p-1.5 rounded text-white/50 hover:text-cyan-300 hover:bg-cyan-500/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                    >
+                        {anyBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                        onClick={() => onPauseToggle(!allActive)}
+                        disabled={anyBusy}
+                        title={allActive ? "Pause all sources" : "Resume all sources"}
+                        className="p-1.5 rounded text-white/50 hover:text-white/90 hover:bg-white/10 disabled:opacity-30"
+                    >
+                        {allActive ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+                    </button>
+                    <button
+                        onClick={onRemove}
+                        disabled={anyBusy}
+                        title="Delete search (all sources)"
+                        className="p-1.5 rounded text-white/50 hover:text-red-300 hover:bg-red-500/10 disabled:opacity-30"
+                    >
+                        <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            </div>
+        </li>
     );
 }
 
@@ -581,23 +840,23 @@ function FiltersEditor({
     );
 }
 
-// Per-track negative filters, stored on GlobalSetting.globalNegativeFilters
-// (legacy column name) as a `{career, side}` JSON map and hydrated into the
-// Zustand store by ThemeProvider on mount. Auto-saves on every add/remove
-// (no Save button); shows each pattern as a chip with hover-X to remove.
-// Open/close is controlled by the parent — this component is only rendered
-// when the Filters button in WatchlistsCard's action slot is toggled on,
-// matching NewPostingsCard's filter-panel pattern. The `track` prop scopes
-// reads + writes so the career and side card instances edit independent
-// lists, even though they share the same DB row.
-function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSaved?: () => void }) {
-    const filters = useAppStore(s => s.negativeFiltersByTrack[track] ?? []);
+// Global negative filters, stored on GlobalSetting.globalNegativeFilters
+// (legacy column name) as a flat JSON array and hydrated into the Zustand
+// store by ThemeProvider on mount. Auto-saves on every add/remove (no Save
+// button); shows each pattern as a chip with hover-X to remove. Open/close
+// is controlled by the parent — this component is only rendered when the
+// Filters button in WatchlistsCard's action slot is toggled on, matching
+// NewPostingsCard's filter-panel pattern. One shared list across every
+// watchlist regardless of track — so blocking "anduril" hides it on both
+// career and side cards.
+function GlobalNegativeFiltersEditor({ onSaved }: { onSaved?: () => void }) {
+    const filters = useAppStore(s => s.negativeFilters ?? []);
     const [input, setInput] = useState("");
     const [busy, setBusy] = useState(false);
 
     async function persist(next: string[]) {
-        if (next.length > 20) {
-            toastStore.push({ message: "Max 20 filters per track", type: "error" });
+        if (next.length > 40) {
+            toastStore.push({ message: "Max 40 filters", type: "error" });
             return;
         }
         setBusy(true);
@@ -605,13 +864,8 @@ function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSav
             // Read the version at fire time — ThemeProvider may have bumped it
             // (theme change in a sibling component) since this card rendered.
             const expectedVersion = useAppStore.getState().version;
-            // Merge with the OTHER track's current value so the partial update
-            // doesn't clobber it. The server replaces `negativeFiltersByTrack`
-            // wholesale on a write.
-            const current = useAppStore.getState().negativeFiltersByTrack;
-            const merged = { ...current, [track]: next };
             const result = await api.settings.update(
-                { negativeFiltersByTrack: merged },
+                { negativeFilters: next },
                 expectedVersion,
             );
             if (!result.ok) {
@@ -623,7 +877,7 @@ function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSav
                 });
                 return;
             }
-            useAppStore.setState({ negativeFiltersByTrack: merged, version: result.version });
+            useAppStore.setState({ negativeFilters: next, version: result.version });
             onSaved?.();
         } catch (e) {
             toastStore.push({ message: `Filter save failed: ${errMessage(e)}`, type: "error" });
@@ -656,13 +910,13 @@ function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSav
         if (invalid.length > 0) {
             toastStore.push({ message: `Invalid regex: ${invalid.slice(0, 3).join(", ")}`, type: "error" });
         }
-        const existingLower = new Set(filters.map(f => f.toLowerCase()));
+        const existingNormalized = new Set(filters.map(normalizeNegativeFilterForDedup));
         const additions: string[] = [];
         for (const p of valid) {
-            const lower = p.toLowerCase();
-            if (!existingLower.has(lower)) {
+            const norm = normalizeNegativeFilterForDedup(p);
+            if (!existingNormalized.has(norm)) {
                 additions.push(p);
-                existingLower.add(lower);
+                existingNormalized.add(norm);
             }
         }
         setInput("");
@@ -679,7 +933,7 @@ function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSav
         <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 flex flex-col gap-2 shrink-0">
             <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase tracking-wide text-white/40">
-                    {track === "career" ? "Career negative filters" : "Side negative filters"}
+                    Negative filters
                 </span>
                 {filters.length > 0 && (
                     <button
@@ -693,8 +947,8 @@ function TrackNegativeFiltersEditor({ track, onSaved }: { track: TrackKey; onSav
                 )}
             </div>
             <p className="text-[10px] text-white/40 leading-tight">
-                Applies to every {track === "career" ? "career" : "side"} watchlist below. Plain keywords match
-                whole words only (case-insensitive) — &ldquo;armed&rdquo; won&rsquo;t hit &ldquo;unarmed&rdquo;.
+                Applies to every watchlist on both career and side cards. Plain keywords match whole words
+                only (case-insensitive) — &ldquo;armed&rdquo; won&rsquo;t hit &ldquo;unarmed&rdquo;.
                 Include regex metacharacters (e.g. <code className="text-white/60">.*</code>) for substring or
                 pattern matches. Comma or Enter to add; hover a tag and click × to remove.
             </p>

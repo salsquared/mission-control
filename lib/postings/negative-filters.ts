@@ -71,3 +71,36 @@ export function matchesNegativeFilters(
 export function _resetNegativeFilterCache() {
     regexCache.clear();
 }
+
+// Normalization for dedup ONLY — never used to mutate stored patterns.
+// Folds away differences that are visual-only between two filter entries
+// (case, whitespace, and "safe" trailing/inline punctuation) so that "Sr"
+// and "Sr." don't both land on the list. Regex metacharacters are
+// preserved: a user typing `Sr\.` (literal "Sr.") vs `Sr` (word "Sr") is
+// expressing distinct intent, so collapsing them would be wrong. We only
+// strip an UNESCAPED literal period; a `\.` survives normalization.
+// Punctuation kept harmless to strip: `,;:!?'"`. Punctuation left alone
+// (regex metachars or grouping): `()[]{}*+?\|^$`.
+//
+// Lives in this client-safe module (no prisma imports) so WatchlistsCard
+// and other client components can dedup without dragging the server
+// runtime into the browser bundle.
+export function normalizeNegativeFilterForDedup(s: string): string {
+    let out = "";
+    for (let i = 0; i < s.length; i++) {
+        const ch = s[i];
+        // Preserve any `\X` escape pair as-is so `Sr\.` stays distinct from
+        // `Sr.`. Skip the following char regardless of what it is.
+        if (ch === "\\" && i + 1 < s.length) {
+            out += ch + s[i + 1];
+            i++;
+            continue;
+        }
+        // Strip standalone literal period and other visual-only punctuation.
+        if (ch === "." || ch === "," || ch === ";" || ch === ":" || ch === "!" || ch === "?" || ch === "'" || ch === '"') {
+            continue;
+        }
+        out += ch;
+    }
+    return out.toLowerCase().replace(/\s+/g, " ").trim();
+}
