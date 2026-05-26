@@ -20,15 +20,15 @@ Each milestone lists the **user stories** it satisfies (numbers refer to `user-s
 
 ## Status snapshot (2026-05-25)
 
-**TL;DR — roadmap re-opened 2026-05-24 with five new §8 stories; two milestone phases (M8.4 + M8.5) now queued.** Every 🔴 must-have remains shipped; 🟡/🔵 priorities have a fresh batch of ⏳ open stories on the resume-card surface. **2026-05-24:** Five new stories added to §8 (S8.9–S8.13) covering LLM auto-tag pass + rewrite-time keyword fold-in + global previous-resumes dropdown + Pipeline picker for Interested-column applications + Pipeline/URL/Paste segmented input. Five product calls resolved as user-stories.md Decision 6. Two milestones designed: **M8.4 (UX refactor)** ships first — global dropdown + Pipeline picker + segmented control on `GenerateResumeCard`; **M8.5 (LLM keyword coverage)** ships second — auto-tag pass writing to `tags` + new `autoTags` / `removedTags` bullet-JSON fields, fold-in directive in `resume-rewrite` prompt. **2026-05-25:** [Close-detection probe gate](./close-detection-probe.md) shipped across all 11 ATS kinds — fixes a class of false-closures (LinkedIn 24h filter, Workday 200-per-crawl page cap) and recovered 921 dev + 629 prod erroneously-closed postings. Commits `9fcd6df` `0deef8e` `2626760` `9e29040`. **Deferred-by-design**: **Story S7.6** restore-from-snapshot UX, parked until the read-only safety net proves useful enough to justify a destructive path.
+**TL;DR — every designed milestone phase is now shipped; the open backlog is the audit-found soft-bug list + deferred S7.6 rollback UX.** Three milestones landed in the past 72 hours: **M7.6** (LLM bullet assist + resume-upload archive, 2026-05-23) — `7ffd5ba`, `fffa038`. **M8.4** (resume card v2 UX refactor) and **M8.5** (LLM keyword coverage), both 2026-05-25 — commits `ea0fe7b` → `c69fcc6` + polish through `98e1daa`. Also 2026-05-25: [Close-detection probe gate](./close-detection-probe.md) across all 11 ATS kinds — fixes false-closures (LinkedIn 24h filter, Workday 200-per-crawl page cap) and recovered 921 dev + 629 prod erroneously-closed postings (`9fcd6df` → `9e29040`). **Forward motion now runs through real-world use** (apply, observe LLM rewrites, iterate prompts via the Promptfoo harness) plus the parked audit-bug list in `docs/next_steps.md`. **Deferred-by-design**: **Story S7.6** restore-from-snapshot UX, parked until the read-only safety net proves useful enough to justify a destructive path.
 
 ### Coverage by priority
 
 | Priority | Shipped | Open | Declined | Total |
 |---|---|---|---|---|
 | 🔴 must-have | **20** | 0 | 0 | 20 (incl. §13 S13.1–S13.4 and story S7.3) |
-| 🟡 important | **25** | 7 | 1 | 34 (S7.7 ⏳ LLM bullet fill + S7.9 ⏳ resume-upload archive ship as M7.6; **S8.9 + S8.10 + S8.11 + S8.12 + S8.13 ⏳ added 2026-05-24, ship as M8.4 + M8.5**; S10.1 ◐ partial — resume side shipped, cover-letter side OOS; S8.4 ⛔ multi-template user-declined 2026-05-15) |
-| 🔵 nice-to-have | **12** | 1 | 1 | 14 (excluding 4 future/OOS items S14.1–S14.4; story S7.8 ⏳ LLM bullet rewrite open; story S8.7 ⛔ cover letter). Story S7.6 ◐ — capture side shipped, rollback deferred. |
+| 🟡 important | **32** | 0 | 1 | 34 (S10.1 ◐ partial — resume side shipped, cover-letter side OOS; S8.4 ⛔ multi-template user-declined 2026-05-15) |
+| 🔵 nice-to-have | **13** | 0 | 1 | 14 (excluding 4 future/OOS items S14.1–S14.4; story S8.7 ⛔ cover letter). Story S7.6 ◐ — capture side shipped, rollback deferred. |
 
 ### Per-track status
 
@@ -48,14 +48,14 @@ One row per `###` section below — this table is the doc's ToC.
 | C | M7.4 — Multi-resume import (append-merge) | ✅ | PDF/DOCX/TXT/JSON → LLM extract → append-merge |
 | C | M7.5 — Profile snapshots | ◐ | Capture shipped (33); rollback/restore UX deferred until needed |
 | C | M7.4 followups — Fuzzy dedup + extra formats | ◐ | Tag editing UI ✅; LLM fuzzy dedup, LinkedIn ZIP, legacy `.doc` 💤 |
-| C | M7.6 — LLM bullet assist + resume-upload archive | ⏳ | Stories S7.7 (🟡 fill) + S7.8 (🔵 rewrite) + S7.9 (🟡 archive). 11 tasks M7.6.1–M7.6.11; archive primitive ships first (M7.6.1–M7.6.4), then prompt + route, then UI, then smokes. `MODEL_LITE` (`gemini-3.1-flash-lite`). New `ResumeUpload` table + `data/resume-uploads/` storage. |
+| C | M7.6 — LLM bullet assist + resume-upload archive | ✅ | Stories S7.7 (🟡 fill) + S7.8 (🔵 rewrite) + S7.9 (🟡 archive). Shipped 2026-05-23 (`7ffd5ba`, `fffa038`). `ResumeUpload` table + `data/resume-uploads/`; `lib/profile/bullet-assist.ts` + `lib/profile/upload-archive.ts`; `MODEL_LITE` (`gemini-3.1-flash-lite`) with 20/10min rate limit. Three hermetic smokes (`archive-spans-smoke`, `bullet-assist-smoke`, `resume-uploads-smoke`). |
 | C | M8 Phase 1 — Tailored resume generation | ✅ | posting → keywords → selection → rewrite → PDF |
 | C | M8 — DOCX export | ✅ | html-to-docx renderer + PDF/DOCX toggle |
 | C | M8 Phase 2 — Archival + traceability + Application linkage | ✅ | `GeneratedResume` + "Why these bullets?" trace (S8.2, S8.6) |
 | C | M8 Phase 2-followup | ✅ | Lock/exclude UI prominence (36) |
 | C | M8 Phase 3 — Multi-template + cover letter + skills-gap | ✅ | Skills-gap (41) ✅; multi-template (37) ❌ killed; cover letter (40) ❌ killed |
-| C | M8.4 — Resume card v2: UX refactor | ⏳ | Stories S8.11 (🟡 global previous-resumes dropdown) + S8.12 (🟡 Pipeline picker for Interested-column apps) + S8.13 (🟡 Pipeline/URL/Paste segmented control). 10 tasks M8.4.1–M8.4.10. Ships **first** of the two M8 v2 milestones per Decision 6.5. No new LLM callsite; `GeneratedResume` gains `postingTitle` + `postingCompany` columns; new `app/api/applications/pipeline-picker/route.ts`. |
-| C | M8.5 — Resume card v2: LLM keyword coverage | ⏳ | Stories S8.9 (🟡 LLM auto-tag pass) + S8.10 (🟡 rewrite-time keyword fold-in). 9 tasks M8.5.1–M8.5.9. Ships **second**. New `bullet-auto-tag` LLM callsite on `MODEL_LITE`; new prompt under `docs/llm-prompts/`; new Promptfoo fixture suite; bullet JSON gains `autoTags` + `removedTags` fields (no Prisma migration — JSON shape). Fold-in is a prompt-template change to `resume-rewrite.md`. |
+| C | M8.4 — Resume card v2: UX refactor | ✅ | Stories S8.11 + S8.12 + S8.13 (🟡). Shipped 2026-05-25 (`ea0fe7b` → `c69fcc6` + polish through `98e1daa`). Migration adds `GeneratedResume.postingTitle` + `postingCompany`; new `app/api/applications/pipeline-picker/route.ts`; `GenerateResumeCard.tsx` gains Pipeline/URL/Paste segmented control (Pipeline default) + `InterestedAppPicker` + `PreviousResumesDropdown` popover. Three hermetic smokes (`pipeline-picker-smoke`, `resume-from-application-smoke`, `resume-list-smoke`). |
+| C | M8.5 — Resume card v2: LLM keyword coverage | ✅ | Stories S8.9 + S8.10 (🟡). Shipped 2026-05-25 (same wave as M8.4: `ea0fe7b` → `87d81d0`). New `bullet-auto-tag` callsite on `MODEL_LITE`; `lib/profile/auto-tag.ts`; `docs/llm-prompts/bullet-auto-tag.md`; bullet JSON gains `autoTags` + `removedTags` (no Prisma migration). Fold-in rule 6a added to `resume-rewrite.md`. Four hermetic smokes (`auto-tag-smoke`, `auto-tag-merge-smoke`, `bullet-remove-tag-smoke`, `resume-rewrite-fold-in-smoke`) + Promptfoo green. |
 | C | M9 Phase 1 — GitHub-driven project metrics | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
 | C | M9 Phase 2 — GitHub UX polish | ✅ | Portfolio toggle UI on `ProjectRow`, suggested rewrites (45), README ingestion (46) |
 | **D** — Mobile layout | MD-0 → MD-7 (incl. design Decisions + File touch estimate) | ✅ | Shipped 2026-05-23 in `893628a`. Viewport meta + `useEffectiveMobileLayout` + Dashboard fork into `DesktopShell` / `MobileShell` + swipe carousel + Launchpad sheet variant + inner-scroller `touch-pan-x` audit + Auto/Mobile/Desktop preference UI. ~450 lines, 11 files. |
@@ -64,7 +64,7 @@ One row per `###` section below — this table is the doc's ToC.
 | Cross-cutting | Dev-server perf + stability | ✅ | Worker RSS −43 % median post-Turbopack + 9 fixes; investigation in [`docs/perf-profile.md`](./perf-profile.md) |
 | Cross-cutting | LLM observability + prompt registry | ✅ | LOP-1 → LOP-11 landed 2026-05-24. Lunary tracing live on all 9 callsites via `wrapModel` + manual `trackEvent` for the SDK-bypassing email-parser. All 9 prompts uploaded to Lunary's registry via `scripts/sync-lunary-templates.ts`; runtime calls go through `lib/ai/prompts.ts:loadPrompt(slug, vars)` (Lunary-preferred, disk-fallback). Promptfoo harness at `eval/` with 9 suites + 13 starter fixtures, run via `npm run test:prompts`. LOP-9 starter fixtures are synthetic-but-realistic; real-fixture capture seam is still a TODO. |
 | Cross-cutting | Close-detection probe gate | ✅ | Landed 2026-05-25 across all 11 ATS kinds — design in [`docs/close-detection-probe.md`](./close-detection-probe.md). `lib/postings/liveness.ts` (`probePostingLiveness` + `probeBatch` + per-ATS `PROBE_PROFILES`) GETs every stale candidate's `sourceUrl` and only flips to `status="closed"` on positive evidence of removal (404/410, source-specific redirect, body markers). LinkedIn 1×serial @ 1.5s, Workday 6×parallel cap 500, Greenhouse/Lever hit their public APIs. On HTTP 429 the batch aborts to avoid escalating bot-detection. Race-guarded `updateMany` re-asserts `status notIn [closed,hidden]` so a concurrent user "Hide" beats the gate. Recovery: `scripts/tests/debug/recover-false-closed.ts` reopened 921 dev + 629 prod false-closed postings. Commits `9fcd6df` `0deef8e` `2626760` `9e29040`. |
-| Cross-cutting | Prompt tuning | ⏳ | Ongoing — blocked on real-user observation of resume rewrites. Folds into §LLM observability once the Promptfoo eval suite lands (LOP-9); the free-text observations below become canned fixtures + assertions. |
+| Cross-cutting | Prompt tuning | ⏳ | Ongoing — blocked on real-user observation of resume rewrites. Now folds into §LLM observability via the live Promptfoo eval suite at `eval/suites/`; new free-text observations should land as canned fixtures + assertions rather than prose. |
 | Cross-cutting | Decision log | — | Reference — Gemini model pin + DOCX converter choice |
 | Cross-cutting | Smoke matrix | — | Reference — hermetic + integration + E2E coverage map |
 
@@ -115,9 +115,9 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S7.4** | 🟡 | ✅ | Edit any history entry | M7 | — |
 | **S7.5** | 🟡 | ✅ | Tag bullets | M7.4 followups | — |
 | **S7.6** | 🔵 | ◐ | Profile snapshots + rollback | M7.5 | **Rollback UI**: open snapshot row → destructive-overwrite confirm → single-transaction bulk-replace of `WorkRole` / `Project` / `Education` rows (+ bullet JSON) from the stored payload. Deferred until the read-only safety net proves useful enough to warrant a destructive path. |
-| **S7.7** | 🟡 | ⏳ | LLM bullet fill (empty entry → 3–5 starter bullets) | M7.6 (tasks .5–.8 + .11) | **Build M7.6 fill mode** after S7.9's archive primitive lands. Prompt grounds on spine + sibling tags + archive spans + README. `MODEL_LITE` (`gemini-3.1-flash-lite`). Empty-state "Draft with LLM" button on each entry card. |
-| **S7.8** | 🔵 | ⏳ | LLM bullet rewrite (existing bullet → diff + Accept/Discard) | M7.6 (tasks .5–.7 + .9 + .11) | **Build M7.6 rewrite mode**: wand icon on `BulletRow` (hidden when `locked`) + inline diff panel + Accept persists via existing PATCH. Same prompt builder + route + rate-limit as S7.7; same archive grounding. |
-| **S7.9** | 🟡 | ⏳ | Resume-upload archive (raw text + extracted JSON + bytes retained per import) | M7.6 (tasks .1–.4 + .11) | **Ship the archive primitive first**: `ResumeUpload` table + `data/resume-uploads/` storage + retain raw upload at M7.4 import time + retrieval helper `findArchiveSpansFor(parent, uploads)`. Append-only — no backfill of pre-M7.6 uploads. |
+| **S7.7** | 🟡 | ✅ | LLM bullet fill (empty entry → 3–5 starter bullets) | M7.6 | — |
+| **S7.8** | 🔵 | ✅ | LLM bullet rewrite (existing bullet → diff + Accept/Discard) | M7.6 | — |
+| **S7.9** | 🟡 | ✅ | Resume-upload archive (raw text + extracted JSON + bytes retained per import) | M7.6 | — |
 | **§8 Tailored resume** | | | | | |
 | **S8.1** | 🔴 | ✅ | Tailored generation from posting | M8 Phase 1 | — |
 | **S8.2** | 🟡 | ✅ | "Why these bullets?" trace | M8 Phase 2 | — |
@@ -127,11 +127,11 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S8.6** | 🟡 | ✅ | Archive per Application | M8 Phase 2 | — |
 | **S8.7** | 🔵 | ⛔ | Cover letter generator | M8 Phase 3 | **Killed** — user writes cover letters by hand. |
 | **S8.8** | 🔵 | ✅ | Skills gap report | M8 Phase 3 (M8-3.3) | — |
-| **S8.9** | 🟡 | ⏳ | LLM auto-tag pass (writes posting keywords as bullet tags where evidence exists) | M8.5 (tasks .1–.4, .6–.8) | **Build M8.5 auto-tag pass.** New `bullet-auto-tag` LLM slug, `MODEL_LITE`, prompt at `docs/llm-prompts/bullet-auto-tag.md`. New `lib/profile/auto-tag.ts:autoTagBullets()`. Bullet JSON gains `autoTags` + `removedTags` per Decisions 6.1 + 6.3. Best-effort: errors don't block the resume generate. |
-| **S8.10** | 🟡 | ⏳ | Rewrite-time keyword fold-in (verbatim where natural) | M8.5 (task .5 + .9) | **Build M8.5 fold-in directive.** Prompt-template change to `docs/llm-prompts/resume-rewrite.md` rule 6a + new Promptfoo fixtures in `eval/suites/resume-rewrite.yaml`. No code change to `lib/resumes/rewrite.ts`. |
-| **S8.11** | 🟡 | ⏳ | Global previous-resumes dropdown on `GenerateResumeCard` | M8.4 (tasks .1–.3, .6, .9, .10) | **Build M8.4 dropdown.** Schema migration adds `GeneratedResume.postingTitle` + `postingCompany`. POST writes them at gen time; GET projects them. UI replaces "Download last:" link with a popover listing every resume regardless of application. |
-| **S8.12** | 🟡 | ⏳ | Generate against an Interested-column application (auto-attach via S8.6) | M8.4 (tasks .4, .5, .7, .10) | **Build M8.4 Pipeline source.** New `app/api/applications/pipeline-picker/route.ts` returns Interested apps with `posting.sourceUrl != null` (URL-less Apps hidden per Decision 6.4). POST `/api/resumes` accepts `applicationId`; auto-links GeneratedResume via S8.6. |
-| **S8.13** | 🟡 | ⏳ | Pipeline / URL / Paste segmented input control (Pipeline default) | M8.4 (task .8) | **Build M8.4 segmented control.** Replaces the stacked URL+Paste inputs in `GenerateResumeCard`. Per-tab state preserved across switches. Pipeline default tab per Decision 6.5. No localStorage persistence of last-used tab. |
+| **S8.9** | 🟡 | ✅ | LLM auto-tag pass (writes posting keywords as bullet tags where evidence exists) | M8.5 | — |
+| **S8.10** | 🟡 | ✅ | Rewrite-time keyword fold-in (verbatim where natural) | M8.5 | — |
+| **S8.11** | 🟡 | ✅ | Global previous-resumes dropdown on `GenerateResumeCard` | M8.4 | — |
+| **S8.12** | 🟡 | ✅ | Generate against an Interested-column application (auto-attach via S8.6) | M8.4 | — |
+| **S8.13** | 🟡 | ✅ | Pipeline / URL / Paste segmented input control (Pipeline default) | M8.4 | — |
 | **§9 GitHub project metrics** | | | | | |
 | **S9.1** | 🟡 | ✅ | Connect GitHub (public API per Decision 5) | M9 Phase 1 | — |
 | **S9.2** | 🟡 | ✅ | Portfolio repos → resume bullets | M9 Phase 1 (metrics) + M9 Phase 2 (toggle UI) | — |
@@ -161,16 +161,16 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S14.3** | 🔵 | 💤 | Interview prep tracker | — | Future. Not blocking. |
 | **S14.4** | 🔵 | 💤 | Salary research | — | Future. Not blocking. |
 
-**Actionable items** (rows above with content in the Next action column): three open implementation phases — **M7.6** (S7.7 fill + S7.8 rewrite + S7.9 archive, bundled), **M8.4** (S8.11 + S8.12 + S8.13 — resume-card UX refactor), **M8.5** (S8.9 + S8.10 — LLM auto-tag + fold-in). **Story S7.6** (rollback UI for profile snapshots) remains deferred-by-design. Everything else is ✅ shipped, ⛔ user-declined, or 💤 future. Track D (mobile layout, not user-story-tied) shipped 2026-05-23.
+**Actionable items**: every designed milestone is now ✅. The remaining open work lives in `docs/next_steps.md` as the **10 audit-found soft bugs** parked from the 2026-05-24 audit (impact bounded, each a 5-line to ~30 min fix) and the **LOP-9 real-fixture capture** (CAPTURE_FIXTURES seam live in dev — needs ~30 min of app use + harvest into `eval/suites/`). **Story S7.6** (rollback UI for profile snapshots) remains deferred-by-design. Everything else is ✅ shipped, ⛔ user-declined, or 💤 future. Track D (mobile layout, not user-story-tied) shipped 2026-05-23.
 
 ### Open work, by leverage (next-up order)
 
 Story S8.4 (multi-template) and Story S8.7 (cover letter) are ⛔ user-declined; not in this list. Track D (MD-0 → MD-7) shipped 2026-05-23 in `893628a`. Story S7.6 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful.
 
-1. **M7.6 — LLM bullet assist + resume-upload archive** (stories S7.7 🟡 + S7.8 🔵 + S7.9 🟡, bundled into one phase, 11 tasks). The archive primitive (M7.6.1–M7.6.4) ships first and unlocks S7.7's cold-start quality + S7.8's polish quality + future grounding for other LLM features. See §M7.6 for the full design — `ResumeUpload` table + `MODEL_LITE` (`gemini-3.1-flash-lite`) + 20 / 10 min rate-limit + three hermetic smokes wired into pre-push. Ship order: **archive → prompt + route → UI → smoke**.
-2. **M8.4 — Resume card v2: UX refactor** (stories S8.11 🟡 + S8.12 🟡 + S8.13 🟡, 10 tasks). Ships ahead of M8.5 per Decision 6.5 — smaller surface, mostly frontend, no new LLM callsite. Schema migration `add_generated_resume_posting_metadata`; new `app/api/applications/pipeline-picker/route.ts`; `GenerateResumeCard.tsx` grows a Pipeline/URL/Paste segmented control with Pipeline as default + previous-resumes popover replacing "Download last:". Three new hermetic smokes. See §M8.4 for the full design.
-3. **M8.5 — Resume card v2: LLM keyword coverage** (stories S8.9 🟡 + S8.10 🟡, 9 tasks). Ships after M8.4. New `bullet-auto-tag` LLM callsite on `MODEL_LITE`; new prompt at `docs/llm-prompts/bullet-auto-tag.md`; new Promptfoo suite `eval/suites/bullet-auto-tag.yaml`; bullet JSON gains `autoTags` + `removedTags` (no Prisma migration). Fold-in is a prompt-template change to `resume-rewrite.md` rule 6a. Four new hermetic smokes. See §M8.5 for the full design.
-4. **Story S7.6 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Deferred-by-design — wait until you've actually made an edit you want to undo.
+1. **Audit-found soft bugs (10 parked items).** Full table in `docs/next_steps.md` §Audit-found soft bugs. Recommended order: **quick wins** (#4 email-parser model constant, #9 cache pruner startup-skip, #10 call-time `lunaryEnabled()` wrapper) → **high-value** (#2 Notification retention prune job, #5 `bulkMoveApplicationsTrack` notIn limit) → **real product calls** (#1 `nextSteps` wipe semantics, #7 resume-gen orphan row recovery) → **bigger lifts** (#3 Gmail history pagination, #6 cross-process mutex, #8 paid Gemini backfill for 4659 null employmentType rows).
+2. **LOP-9 real-fixture capture.** The `CAPTURE_FIXTURES=1` seam is live on `mission-control-dev` + `mission-control-scheduler-dev` (`lib/ai/gemini.ts:chatJSON` + `lib/email-parser.ts` inline gates). Use the app ~30 min, then grep pm2 logs for `[FIXTURE]` lines and translate captures into `eval/suites/<name>.yaml` entries — replaces the synthetic-but-realistic seeds from LOP-9 landing.
+3. **Story S7.6 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Deferred-by-design — wait until you've actually made an edit you want to undo.
+4. **Manual visual smoke + Lunary trace check.** Verify GenerateResumeCard golden path (Pipeline tab default → pick INTERESTED-with-URL app → generate → resume appears under app's Resumes section + in previous-resumes dropdown without refresh) and confirm any LLM run in dev shows up in Lunary's dashboard tagged by `name`. Backend pipe is verified end-to-end by hermetic smokes; this is the visual confirmation gap.
 
 ### User-declined
 
@@ -469,9 +469,9 @@ New `ProfileSnapshot` Prisma model — `(id, userId, takenAt, label?, payload, c
 - 💤 **M7.4-f.2 — LinkedIn export ZIP**: unzip → read `Positions.csv` / `Education.csv` / `Projects.csv` → run through the same merge layer. No LLM needed. Deferred — currently uploading the PDF version of a resume covers the same data.
 - 💤 **M7.4-f.3 — Legacy `.doc`**: mammoth handles `.docx` only. Either skip `.doc` with a clearer error or wire a converter (libreoffice CLI? `textract`?). Defer — niche format these days.
 
-### M7.6 — LLM bullet assist + resume-upload archive ⏳
+### M7.6 — LLM bullet assist + resume-upload archive ✅
 
-Stories: **S7.7** (🟡 fill empty entries) + **S7.8** (🔵 rewrite existing bullets) + **S7.9** (🟡 resume-upload archive as grounding). Added 2026-05-23, designed not started.
+Stories: **S7.7** (🟡 fill empty entries) + **S7.8** (🔵 rewrite existing bullets) + **S7.9** (🟡 resume-upload archive as grounding). Shipped 2026-05-23 in commits `7ffd5ba` (initial 11-task wave) + `fffa038` (rewrite-tag enhancement). All 11 sub-tasks below landed; design content preserved as historical reference for the implementation.
 
 S7.9 is the load-bearing primitive: today's M7.4 import path extracts → merges → discards. That discard is lossy — wording variants and details that lose the dedup race vanish forever. M7.6 closes the discard (raw text + extracted JSON + original bytes persisted) and exposes the archive as a retrieval surface that S7.7 and S7.8 query alongside the live profile. Ship order is **archive first** (M7.6.1–M7.6.4) → **prompt + route** (M7.6.5–M7.6.7) → **UI** (M7.6.8–M7.6.9) → **smoke + telemetry** (M7.6.10–M7.6.11). Each numbered task is a discrete shippable chunk.
 
@@ -497,7 +497,7 @@ S7.9 is the load-bearing primitive: today's M7.4 import path extracts → merges
 
 #### Task list
 
-##### M7.6.1 — Schema: `ResumeUpload` table ⏳ (S7.9)
+##### M7.6.1 — Schema: `ResumeUpload` table ✅ (S7.9)
 
 Migration `add_resume_uploads` (both `dev.db` + `prod.db`). New Prisma model:
 
@@ -520,7 +520,7 @@ model ResumeUpload {
 
 Reverse relation on `User.resumeUploads`. `rawText` cap of 200 KB matches the M7.4 import-pipeline ceiling. `artifactPath` mirrors how `GeneratedResume.artifactPath` works for the generation side. Storage root: `data/resume-uploads/` with `.gitkeep`, gitignored — symmetric to `data/resumes/`.
 
-##### M7.6.2 — Persist raw upload at import time ⏳ (S7.9)
+##### M7.6.2 — Persist raw upload at import time ✅ (S7.9)
 
 Modify `app/api/profile/import/route.ts`:
 - Before the existing merge step, write a `ResumeUpload` row per file: `{filename, mimeType, sizeBytes, rawText: extracted, parsedJson: JSON.stringify(llmExtraction), importBatchId: cuid()}`.
@@ -530,7 +530,7 @@ Modify `app/api/profile/import/route.ts`:
 
 `lib/profile/storage.ts` — new file or extend existing. Mirror the `data/resumes/` pattern: `STORAGE_ROOT = path.join(process.cwd(), "data/resume-uploads")`, `writeUpload(uploadId, ext, bytes)`, `readUpload(uploadId, ext)`.
 
-##### M7.6.3 — Repository helpers ⏳ (S7.9)
+##### M7.6.3 — Repository helpers ✅ (S7.9)
 
 `lib/repositories/resume-uploads.ts`:
 - `listResumeUploads(userId)` — summary projection (no `rawText` / `parsedJson` columns), ordered newest-first.
@@ -538,7 +538,7 @@ Modify `app/api/profile/import/route.ts`:
 - `findUploadsMatchingParent(userId, parent: WorkRole | Project | Education)` — returns rows whose `rawText` contains the parent's identifying string (`company` / `name` / `institution`, case-insensitive). Capped at 5 rows by recency.
 - `deleteResumeUpload(uploadId, userId)` — removes row + artifact file. (Out of scope for this phase to wire a delete UI, but the helper exists for future use.)
 
-##### M7.6.4 — Archive retrieval helper ⏳ (S7.7 / S7.8 / S7.9)
+##### M7.6.4 — Archive retrieval helper ✅ (S7.7 / S7.8 / S7.9)
 
 `lib/profile/upload-archive.ts:findArchiveSpansFor(parent, uploads)`:
 - Input: a parent entity (`WorkRole` / `Project` / `Education`) plus pre-fetched `ResumeUpload[]` (caller scopes by userId).
@@ -548,7 +548,7 @@ Modify `app/api/profile/import/route.ts`:
 
 Pure function — unit-testable without a DB. Hermetic smoke `archive-spans-smoke.ts` exercises the boundary cases.
 
-##### M7.6.5 — Prompt builder ⏳ (S7.7 / S7.8)
+##### M7.6.5 — Prompt builder ✅ (S7.7 / S7.8)
 
 `lib/profile/bullet-assist.ts:buildBulletAssistPrompt(profile, parent, mode, currentBullet?, archiveSpans?, readmeContext?)`. Pure function — no I/O. Sections in order:
 
@@ -562,7 +562,7 @@ Pure function — unit-testable without a DB. Hermetic smoke `archive-spans-smok
 
 Total prompt budget aims at ≤ 8 KB to leave headroom for the response. Hermetic-testable: feed canned inputs, assert sections present in correct order, assert size caps respected.
 
-##### M7.6.6 — Gemini caller ⏳ (S7.7 / S7.8)
+##### M7.6.6 — Gemini caller ✅ (S7.7 / S7.8)
 
 `lib/profile/bullet-assist.ts:callBulletAssist({prompt, mode})`:
 - Calls `chatJSON({model: MODEL_LITE /* gemini-3.1-flash-lite */, maxOutputTokens: mode === 'fill' ? 4096 : 2048, ...})`.
@@ -570,7 +570,7 @@ Total prompt budget aims at ≤ 8 KB to leave headroom for the response. Hermeti
 - Server fills in `id` (new cuid) / `locked: false` / `excluded: false` for fill bullets.
 - Server preserves `id` / `tags` / `locked` / `excluded` for rewrite proposal; only `text` flows from the LLM.
 
-##### M7.6.7 — API route + rate limit ⏳ (S7.7 / S7.8)
+##### M7.6.7 — API route + rate limit ✅ (S7.7 / S7.8)
 
 `app/api/profile/bullets/assist/route.ts`. `POST`:
 - Body schema: `{mode: 'fill' | 'rewrite', parentKind: 'work-role' | 'project' | 'education', parentId: string, bulletId?: string}`. Zod-validate: `bulletId` required when `mode === 'rewrite'`, rejected when `mode === 'fill'`.
@@ -579,11 +579,11 @@ Total prompt budget aims at ≤ 8 KB to leave headroom for the response. Hermeti
 - Rate-limit at `profile:bullet-assist` scope, **20 calls / 10 min**. Higher than the 5 / 10 min on `profile:import` and `resumes:gen` because bullet-assist is per-bullet; tight enough that a stuck loop can't burn the Gemini budget. Returns 429 with `Retry-After`.
 - Returns `{mode: 'fill', suggestions: Bullet[]}` or `{mode: 'rewrite', proposal: Bullet}`. Route does **not** persist — client persists via the existing entry PATCH on Accept.
 
-##### M7.6.8 — Fill UI ⏳ (S7.7)
+##### M7.6.8 — Fill UI ✅ (S7.7)
 
 Empty-state pane on the entry cards (`components/cards/WorkRoleCard.tsx` / `ProjectCard.tsx` / `EducationCard.tsx`, verify file locations at implementation time). "Draft with LLM" button below the existing "+ Add bullet" affordance. Click → API call → inline "Drafting…" spinner → response inserted as draft rows the user can edit / lock / exclude / delete before saving. Locked-or-excluded toggles on the draft rows behave as on saved bullets.
 
-##### M7.6.9 — Rewrite UI + diff panel ⏳ (S7.8)
+##### M7.6.9 — Rewrite UI + diff panel ✅ (S7.8)
 
 `components/ui/BulletRow.tsx`:
 - Wand / sparkle icon next to existing lock + eye-off icons. Hidden when `locked === true`. Excluded bullets keep the wand (user might want to revive).
@@ -591,12 +591,12 @@ Empty-state pane on the entry cards (`components/cards/WorkRoleCard.tsx` / `Proj
 - Accept → calls the existing entry PATCH route with the bullets array containing the swapped `text`. Discard → closes the panel, no write.
 - Errors surface as an inline rose chip; doesn't block other bullets in the entry.
 
-##### M7.6.10 — Telemetry + llm-calls doc ⏳
+##### M7.6.10 — Telemetry + llm-calls doc ✅
 
 - Each assist call logs `[LLM] bullet-assist:<mode>:<parentKind>:<parentId>` to the in-app log buffer (`lib/logger.ts`). Surfaces on the Internal Systems dash via the existing log-tail SSE — no new metric.
 - Add a row to `docs/llm-calls.md`: caller `lib/profile/bullet-assist.ts`, model `MODEL_LITE` (`gemini-3.1-flash-lite`), `maxOutputTokens` 2048 (rewrite) / 4096 (fill), scope "Profile bullet drafting + rewriting + archive grounding (S7.7 / S7.8 / S7.9)".
 
-##### M7.6.11 — Hermetic smokes ⏳
+##### M7.6.11 — Hermetic smokes ✅
 
 - `scripts/tests/hermetic/archive-spans-smoke.ts` — covers M7.6.4 `findArchiveSpansFor`. Asserts: empty uploads → `[]`; no-match parent → `[]`; multi-match in one upload returns only first window; ranking by `uploadedAt desc`; ±500-char window; case-insensitive match.
 - `scripts/tests/hermetic/bullet-assist-smoke.ts` — covers M7.6.5–M7.6.7. Mocks `chatJSON` with fixture responses. Asserts: fill returns 3–5 cuids + correct shape; rewrite preserves id / tags / locked / excluded and only changes text; rate-limit returns 429 with `Retry-After`; locked bullets get 400 at the API layer; cross-user `parentId` returns 404; archive spans appear in the prompt when uploads match.
@@ -667,9 +667,9 @@ Story S8.3 (lock/exclude UI surfacing) deferred — toggles already exist; just 
 
 Stories: S8.4 (🟡 templates), S8.7 (🔵 cover letter), S8.8 (🔵 skills-gap).
 
-### M8.4 — Resume card v2: UX refactor ⏳
+### M8.4 — Resume card v2: UX refactor ✅
 
-Stories: **S8.11** (🟡 global previous-resumes dropdown) + **S8.12** (🟡 generate against an Interested-column application) + **S8.13** (🟡 Pipeline / URL / Paste segmented control). Added 2026-05-24; queued behind [user-stories.md Decision 6](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls). **Ships first** of the two M8 v2 milestones per Decision 6.5 — smaller surface, mostly frontend, no new LLM callsite.
+Stories: **S8.11** (🟡 global previous-resumes dropdown) + **S8.12** (🟡 generate against an Interested-column application) + **S8.13** (🟡 Pipeline / URL / Paste segmented control). Shipped 2026-05-25 in commits `ea0fe7b` (Wave 0 schema + design) → `54d558f` + `98761e6` (Wave 1 Agent A backend) → `87d81d0` (Wave 2 frontend + route wiring) → `c69fcc6` (smoke cleanup) → polish through `98e1daa`. All 10 sub-tasks below landed; design content preserved as historical reference. Resolved [user-stories.md Decision 6](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls).
 
 **Surfaces touched.**
 - `components/cards/GenerateResumeCard.tsx` — segmented control + Pipeline tab UI + previous-resumes dropdown.
@@ -685,7 +685,7 @@ Stories: **S8.11** (🟡 global previous-resumes dropdown) + **S8.12** (🟡 gen
 
 #### Task list
 
-##### M8.4.1 — Schema: `GeneratedResume` posting-metadata columns ⏳ (S8.11)
+##### M8.4.1 — Schema: `GeneratedResume` posting-metadata columns ✅ (S8.11)
 
 Migration `add_generated_resume_posting_metadata` (dev + prod). Adds two optional columns to `GeneratedResume`:
 
@@ -699,17 +699,17 @@ model GeneratedResume {
 
 Pure additive; existing rows leave columns null and the dropdown shows "(no metadata)" for them. No backfill — historical resumes pre-M8.4.1 stay null-labeled.
 
-##### M8.4.2 — POST `/api/resumes` writes posting metadata ⏳ (S8.11)
+##### M8.4.2 — POST `/api/resumes` writes posting metadata ✅ (S8.11)
 
 In `app/api/resumes/route.ts` POST handler, after `parsePostingFromInput()` runs, capture `parsedPosting.title` + `parsedPosting.company` into the `GeneratedResume.create()` payload. The two fields are already in scope — the route currently emits them as the `X-Resume-Title` / `X-Resume-Company` response headers — just persist them too.
 
-##### M8.4.3 — GET `/api/resumes` returns posting metadata ⏳ (S8.11)
+##### M8.4.3 — GET `/api/resumes` returns posting metadata ✅ (S8.11)
 
 Extend the response projection in `app/api/resumes/route.ts:GET` (currently lines 78–103) to include `postingTitle` and `postingCompany`. Two optional fields; existing callers (`ApplicationDetailOverlay`'s resume diff) ignore extras.
 
 Already ordered `createdAt desc` — verify and confirm the projection caps via a `limit` query param (default 100). Past 100 is paginate-or-search territory and is OOS for v1.
 
-##### M8.4.4 — Pipeline picker endpoint ⏳ (S8.12)
+##### M8.4.4 — Pipeline picker endpoint ✅ (S8.12)
 
 New `app/api/applications/pipeline-picker/route.ts`. `GET`:
 
@@ -718,7 +718,7 @@ New `app/api/applications/pipeline-picker/route.ts`. `GET`:
 - Projects to `{ items: Array<{ id, company, role, postingUrl, postingTitle }> }`. `postingTitle` falls back to `application.role` if `posting.title` is empty.
 - No `?status` param — endpoint is purpose-built for the picker; the filter is hardcoded to `INTERESTED`.
 
-##### M8.4.5 — POST `/api/resumes` accepts `applicationId` ⏳ (S8.12)
+##### M8.4.5 — POST `/api/resumes` accepts `applicationId` ✅ (S8.12)
 
 Extend the existing zod body schema in `app/api/resumes/route.ts`:
 
@@ -742,7 +742,7 @@ Handler logic when `posting.applicationId` is set:
 
 All four error codes reuse the existing `STAGE_LABELS['input']` ("Bad input") in `GenerateResumeCard.tsx`.
 
-##### M8.4.6 — Previous-resumes dropdown UI ⏳ (S8.11)
+##### M8.4.6 — Previous-resumes dropdown UI ✅ (S8.11)
 
 In `components/cards/GenerateResumeCard.tsx`, replace the lone `Download last: <filename>` anchor (currently lines 218–226) with a popover-style dropdown:
 
@@ -760,7 +760,7 @@ resumes: {
 ```
 Plus `queryKeys.resumes()` returning `['resumes']` and a `ResumeListItem` type co-located with the API.
 
-##### M8.4.7 — Pipeline picker UI ⏳ (S8.12)
+##### M8.4.7 — Pipeline picker UI ✅ (S8.12)
 
 New child component in `GenerateResumeCard.tsx` (inline; extract to `components/cards/InterestedAppPicker.tsx` only if it grows past ~80 LOC):
 
@@ -770,7 +770,7 @@ New child component in `GenerateResumeCard.tsx` (inline; extract to `components/
 - Empty state: "No Interested-column applications with a posting URL yet." with a small link to the Applications dash.
 - **No multi-select** — single-pick per [user-stories.md Decision 6.5](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls)'s S8.12 framing.
 
-##### M8.4.8 — Segmented control ⏳ (S8.13)
+##### M8.4.8 — Segmented control ✅ (S8.13)
 
 Refactor the input area at the top of `GenerateResumeCard.tsx` (currently lines 163–187: URL `<input>` + textarea):
 
@@ -785,12 +785,12 @@ Refactor the input area at the top of `GenerateResumeCard.tsx` (currently lines 
 - POST payload selector: `inputMode === 'pipeline' ? { applicationId: selectedApplicationId } : inputMode === 'url' ? { url } : { text }`.
 - Localstorage persistence of last-used tab is **explicitly out of scope** — Pipeline is always the default per Decision 6.5.
 
-##### M8.4.9 — TanStack invalidation + SSE ⏳
+##### M8.4.9 — TanStack invalidation + SSE ✅
 
 - POST `/api/resumes` already broadcasts `Application.upsert` for `applicationId`-linked rows (verify in `lib/events/broadcaster.ts`). **Add** a `GeneratedResume.create` broadcast topic so the previous-resumes dropdown auto-refreshes after a generate, not just on next mount.
 - Subscriber side: `GenerateResumeCard.tsx` subscribes to the broadcast on mount; invalidates `queryKeys.resumes()`.
 
-##### M8.4.10 — Hermetic smokes ⏳
+##### M8.4.10 — Hermetic smokes ✅
 
 - `scripts/tests/hermetic/pipeline-picker-smoke.ts` (covers M8.4.4):
   - Setup: one user with four Apps — `APPLIED` (excluded by status), `INTERESTED` + posting+URL (included), `INTERESTED` no postingId (excluded per Decision 6.4), `INTERESTED` + posting but `sourceUrl=null` (excluded). Plus second user with valid Interested+URL App (must be excluded — cross-user isolation).
@@ -822,9 +822,9 @@ All three wired into `scripts/pre-push.sh`'s `SUITES` array.
 
 ---
 
-### M8.5 — Resume card v2: LLM keyword coverage ⏳
+### M8.5 — Resume card v2: LLM keyword coverage ✅
 
-Stories: **S8.9** (🟡 LLM auto-tag pass) + **S8.10** (🟡 rewrite-time keyword fold-in). Added 2026-05-24; queued behind [user-stories.md Decision 6](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls). **Ships second** — after M8.4 lands and after the new auto-tag prompt has Promptfoo fixtures.
+Stories: **S8.9** (🟡 LLM auto-tag pass) + **S8.10** (🟡 rewrite-time keyword fold-in). Shipped 2026-05-25 in the same M8.4/M8.5 wave: commits `ea0fe7b` (Wave 0 — Bullet JSON shape + invariant) → `6aae335` + `ab5e8f4` (Wave 1 Agent B — LLM scaffold + fold-in directive) → `b5ff824` + `861e0ee` (Wave 1 Agent C — BulletRow auto-badge + remove-to-blocklist) → `7b2ee07` (smokes wired + prompt-render invariants extended) → `87d81d0` (Wave 2 — route wiring). All 9 sub-tasks below landed; design content preserved as historical reference. Resolved [user-stories.md Decision 6](./user-stories.md#-6-s89s813-resumecard-v2--five-product-calls).
 
 **Mechanism.** On every resume generate, after the posting is parsed but before bullet selection, a single batched LLM call ("auto-tag pass") iterates the user's profile bullets: for each `(bullet, posting_keyword)` pair, decide if the bullet's existing text already evidences the work the keyword describes. If yes, **add** the keyword as a tag on that bullet — unless the keyword is in the bullet's `removedTags` blocklist (Decision 6.1). Newly added tags also land in a per-bullet `autoTags` array that the UI uses to render an "auto" badge until the user touches the tag (Decision 6.3). Selection runs as today — `lib/resumes/select.ts:scoreBullet` reads `tags` directly, so auto-tagged tags become indistinguishable from user-set tags at selection time. The rewrite prompt gets a new fold-in directive (S8.10): where a bullet's tags ∩ posting keywords is non-empty, weave the keyword verbatim into the rewritten text — subject to existing no-invention + ≤25-word rules.
 
@@ -838,7 +838,7 @@ Stories: **S8.9** (🟡 LLM auto-tag pass) + **S8.10** (🟡 rewrite-time keywor
 
 #### Task list
 
-##### M8.5.1 — Schema: `Bullet.autoTags` + `Bullet.removedTags` ⏳ (S8.9)
+##### M8.5.1 — Schema: `Bullet.autoTags` + `Bullet.removedTags` ✅ (S8.9)
 
 Bullets are stored as JSON inside their parent entity's `bulletsJson` column (per Decision 4). **No Prisma migration is needed** — the JSON shape evolves and all readers default-fallback unknown fields.
 
@@ -860,7 +860,7 @@ Read-time defaults: in the loader that hydrates `bulletsJson` (verify at impl-ti
 
 **Invariant**: a tag cannot be in both `tags` AND `removedTags` simultaneously. Enforce via `.refine()` in the bullet PATCH schema.
 
-##### M8.5.2 — Auto-tag prompt + callsite registration ⏳ (S8.9)
+##### M8.5.2 — Auto-tag prompt + callsite registration ✅ (S8.9)
 
 New LLM callsite, slug `bullet-auto-tag`. Steps per the LLM-observability invariants in CLAUDE.md:
 
@@ -884,7 +884,7 @@ Output schema (single batched call):
 }
 ```
 
-##### M8.5.3 — Caller library + write-merge logic ⏳ (S8.9)
+##### M8.5.3 — Caller library + write-merge logic ✅ (S8.9)
 
 New `lib/profile/auto-tag.ts`. Exports:
 
@@ -914,7 +914,7 @@ Hallucination guardrails in the system prompt (additional to the no-fab rule in 
 - "Do not propose tags in the bullet's `removedTags` array."
 - "Return an empty `addedTags` array for any bullet you're unsure about."
 
-##### M8.5.4 — Wire auto-tag pass into POST `/api/resumes` ⏳ (S8.9)
+##### M8.5.4 — Wire auto-tag pass into POST `/api/resumes` ✅ (S8.9)
 
 In `app/api/resumes/route.ts` POST handler, between `parsePostingFromInput()` and `selectBullets()`:
 
@@ -935,7 +935,7 @@ try {
 
 The reload-then-select sequence is intentional: profile mutation + read are not racy on the same request because the request is single-threaded; concurrent requests are gated by the existing `resumes:gen` per-user rate limit (5 / 10 min) so cross-request races are minimal.
 
-##### M8.5.5 — Fold-in directive in `resume-rewrite` prompt ⏳ (S8.10)
+##### M8.5.5 — Fold-in directive in `resume-rewrite` prompt ✅ (S8.10)
 
 Modify `docs/llm-prompts/resume-rewrite.md`. Insert a new rule **6a** between rules 6 and 7:
 
@@ -949,7 +949,7 @@ Update `eval/suites/resume-rewrite.yaml`:
 
 No code change to `lib/resumes/rewrite.ts` — the prompt-template + fixtures cover this.
 
-##### M8.5.6 — Tag-edit UI: "auto" badge + remove → blocklist ⏳ (S8.9)
+##### M8.5.6 — Tag-edit UI: "auto" badge + remove → blocklist ✅ (S8.9)
 
 `components/ui/BulletRow.tsx` — tag rendering at lines 146–183:
 
@@ -958,13 +958,13 @@ No code change to `lib/resumes/rewrite.ts` — the prompt-template + fixtures co
 - `removeTag(tag)` updates the bullet payload as: `tags = tags.filter(t => t !== tag)`; `autoTags = autoTags.filter(t => t !== tag)`; `removedTags = [...new Set([...removedTags, tag])]`. **Any tag removal — auto or user-set — adds to the blocklist.** Symmetric and predictable. Manually re-adding a tag (via the existing "+ tag" input) removes it from `removedTags` as a side effect; document in the schema's PATCH validator.
 - On bullet save (existing PATCH path): server-side validator clears `autoTags` to `[]` whenever the bullet body is touched (M8.5.1's schema `transform`). Implicit "next save" accept per Decision 6.3.
 
-##### M8.5.7 — Selection trace shows auto-source tags ⏳ (S8.9 — minor)
+##### M8.5.7 — Selection trace shows auto-source tags ✅ (S8.9 — minor)
 
 `GeneratedResume.selections` already records `matchedTags` per selected bullet (see schema). Auto-added tags appear here indistinguishably from user-set tags — which is the correct semantic; selection doesn't care about provenance. No code change required; just verify the trace surfaces correctly in M8.5.8's smoke.
 
 (If you later want provenance in the trace — "this match was auto-tagged this run" — extend `selections` shape and `GenerateResumeCard.tsx`'s trace list. Not in scope for M8.5.)
 
-##### M8.5.8 — Hermetic smokes ⏳
+##### M8.5.8 — Hermetic smokes ✅
 
 - `scripts/tests/hermetic/auto-tag-smoke.ts` (covers M8.5.2 + M8.5.3 end-to-end):
   - Mocks `chatJSON` with fixture responses.
@@ -978,7 +978,7 @@ No code change to `lib/resumes/rewrite.ts` — the prompt-template + fixtures co
 
 All four wired into `scripts/pre-push.sh`'s `SUITES` array.
 
-##### M8.5.9 — Promptfoo eval pass ⏳
+##### M8.5.9 — Promptfoo eval pass ✅
 
 Run `npm run test:prompts` end-to-end after prompts + fixtures land. Expected:
 - Two new `bullet-auto-tag` fixtures pass against `MODEL_LITE`.
@@ -1300,9 +1300,9 @@ Investigation lives in [`docs/perf-profile.md`](./perf-profile.md); the ranked f
 
 Total dev cut: −43 % median, −35 % max. The 100 % CPU peg is gone. Dev/prod ratio is now ~2.6 ×, normal for a Next app of this size.
 
-### LLM observability + prompt registry ⏳
+### LLM observability + prompt registry ✅
 
-Cross-cutting infra. Today LLM calls fan out from 7 callsites through `chatJSON` in `lib/ai/gemini.ts` + 1 callsite (`lib/email-parser.ts`) that bypasses it via the Vercel AI SDK. Every prompt lives inline in code; every call is fire-and-forget aside from a single `[AI] ... tokens: ...` line in the log buffer. No way to A/B prompts, no way to regression-test a prompt change, no per-callsite cost breakdown beyond grepping logs.
+Cross-cutting infra. Shipped 2026-05-24 (LOP-1 → LOP-11) in commits `d9ecd07` (infra: tracing + naming convention + Promptfoo scaffold) → `a02ace1` + `5089b88` (LOP-6 cutover: all 9 callsites moved off inline prompts onto `lib/ai/prompts.ts:loadPrompt`). One open caveat: **LOP-9 real-fixture capture** seam is live (`CAPTURE_FIXTURES=1` gate in `lib/ai/gemini.ts:chatJSON` + `lib/email-parser.ts`) but the starter fixtures in `eval/suites/*.yaml` are still synthetic-but-realistic; ~30 min of app use + harvest from pm2 logs will replace them with real captures. Today LLM calls fan out from 7 callsites through `chatJSON` in `lib/ai/gemini.ts` + 1 callsite (`lib/email-parser.ts`) that bypasses it via the Vercel AI SDK. Every prompt lives inline in code; every call is fire-and-forget aside from a single `[AI] ... tokens: ...` line in the log buffer. No way to A/B prompts, no way to regression-test a prompt change, no per-callsite cost breakdown beyond grepping logs.
 
 This phase wires three things:
 1. **Tracing** — every call (all 8 sites) lands in Lunary cloud free tier with input / output / model / token usage / latency, queryable + filterable per-callsite from their dashboard.
@@ -1335,17 +1335,17 @@ This phase wires three things:
 
 #### Task list
 
-##### LOP-1 — Install + init Lunary SDK ⏳
+##### LOP-1 — Install + init Lunary SDK ✅
 
 - `npm install lunary` (TS SDK, MIT, ~30 KB minified).
 - `LUNARY_PUBLIC_KEY` added to `.env` (untracked) per the existing pattern — sign up at lunary.ai → create project → copy public key.
 - `instrumentation.ts` gets `if (process.env.LUNARY_PUBLIC_KEY) lunary.init({ publicKey })` next to `initLogger()`. Guarded on env presence so dev tier + test runs without the key emit nothing to Lunary's servers — symmetrical with how `EMAIL_ENABLED=0` mutes Gmail sends in dev.
 
-##### LOP-2 — Required `name` on `ChatJSONOptions` ⏳
+##### LOP-2 — Required `name` on `ChatJSONOptions` ✅
 
 `lib/ai/gemini.ts` `ChatJSONOptions<T>` gains required `name: string`. Forcing it required (not optional) means TypeScript flags every callsite — no quiet "unnamed" runs leak into Lunary. Naming convention enforced via the inventory table above plus a row in `docs/llm-calls.md` (see LOP-10).
 
-##### LOP-3 — Wrap inner `generateContent` with `lunary.wrapModel` ⏳
+##### LOP-3 — Wrap inner `generateContent` with `lunary.wrapModel` ✅
 
 In `chatJSON`, the `client.models.generateContent({...})` call inside `withRetry` is replaced by a `lunary.wrapModel(...)`-wrapped function. Parser mapping:
 - `nameParser` → `args.name` (the per-call name from LOP-2).
@@ -1356,11 +1356,11 @@ In `chatJSON`, the `client.models.generateContent({...})` call inside `withRetry
 
 Existing retry + rate-limit + Zod validation surround the wrapped call unchanged — observability sits below them so retries trace as separate runs but share a parent name. `withRetry` and `acquireGeminiSlot` are never instrumented; they're flow-control, not LLM events.
 
-##### LOP-4 — Pass `name` at every chatJSON callsite ⏳
+##### LOP-4 — Pass `name` at every chatJSON callsite ✅
 
 Mass mechanical edit — 7 chatJSON callers each gain `name: '<kebab-case-id>'` per the inventory above. Bullet-assist has a single `chatJSON` call but selects between `bullet-assist-fill` and `bullet-assist-rewrite` by `mode` so they show up as separate runs in Lunary. Compiler-driven — TypeScript flags the misses after LOP-2 lands.
 
-##### LOP-5 — Trace email-parser (bypasses chatJSON) ⏳
+##### LOP-5 — Trace email-parser (bypasses chatJSON) ✅
 
 `lib/email-parser.ts:parseApplicationEmail` uses the Vercel AI SDK directly (`generateObject` from `ai` package) so it doesn't pick up LOP-3's wrap. Wrap manually with `lunary.trackEvent('llm', 'start'/'end'/'error', {...})` around the `generateObject` call:
 - `runId` derived from the Gmail message id for trace correlation across retries.
@@ -1384,7 +1384,7 @@ Iteration workflow post-cutover: edit prompt in Lunary's dashboard → mirror to
 
 45/45 hermetic green after cutover. Promptfoo harness verified via dry-run earlier in the day.
 
-##### LOP-7 — Extract prompt blobs for Lunary copy-paste ⏳
+##### LOP-7 — Extract prompt blobs for Lunary copy-paste ✅
 
 New dir `docs/llm-prompts/` with one `.md` per callsite. Each file contains the system + user template text in Lunary's variable-substitution format ready to paste into their UI. Acts as:
 - The migration source-of-truth artifact during LOP-6 rollout.
@@ -1393,14 +1393,14 @@ New dir `docs/llm-prompts/` with one `.md` per callsite. Each file contains the 
 
 Updated as part of every prompt edit going forward — disk copy stays canonical, Lunary is the runtime live copy. Diff via `git log -p docs/llm-prompts/<slug>.md`.
 
-##### LOP-8 — Scaffold Promptfoo `eval/` directory ⏳
+##### LOP-8 — Scaffold Promptfoo `eval/` directory ✅
 
 - `eval/provider.mjs` — single custom JS provider that imports `chatJSON` and dispatches per-callsite by the `vars.name` field. Returns `{ output: JSON.stringify(result) }` or `{ error }`. Handles the `messages`-shape vs `system+user`-shape branch for mid-migration callsites.
 - `eval/promptfooconfig.yaml` — one suite per callsite (9 total per the name table). Each suite references `file://./provider.mjs` + a fixture dir + assertions.
 - `package.json` — new `test:prompts` script: `promptfoo eval -c eval/promptfooconfig.yaml`. **NOT** wired into `pre-push.sh` — burns real Gemini tokens (~$0.05/full-run at 9 × 3 fixtures × MODEL_LITE); pre-push stays hermetic.
 - `.gitignore` — `eval/results.json`, `eval/output/`.
 
-##### LOP-9 — Capture starter fixtures + write assertions ⏳
+##### LOP-9 — Capture starter fixtures + write assertions ◐ (seam shipped; real-capture harvest still pending)
 
 For each callsite, 2–3 representative fixtures captured from real runs. Per fixture:
 - `eval/fixtures/<name>/<scenario>.json` — input shape (whatever the prompt builder consumes: `BuildBulletAssistPromptInput`, posting raw text, etc.) + optional expected-output snapshot.
@@ -1411,12 +1411,12 @@ For each callsite, 2–3 representative fixtures captured from real runs. Per fi
 
 Capture path: gate `console.info('[FIXTURE]', JSON.stringify({ name, system, user }))` inside `chatJSON` behind `CAPTURE_FIXTURES=1`, use the app for ~30 min, grep + manually clean into `eval/fixtures/`.
 
-##### LOP-10 — Update `docs/llm-calls.md` ⏳
+##### LOP-10 — Update `docs/llm-calls.md` ✅
 
 - Add an "Observability" section noting Lunary integration, the `name` field convention, the `renderTemplate` migration path, and the Promptfoo eval workflow.
 - Inventory table gains a "Lunary slug" column + a "Template migrated?" status column. Cross-references this section for the canonical naming list.
 
-##### LOP-11 — `CLAUDE.md` additions ⏳
+##### LOP-11 — `CLAUDE.md` additions ✅
 
 New subsection under "Gemini rate limiting + model fleet" → "LLM observability". Captures the three invariants:
 - Every new `chatJSON` caller MUST pass `name`. TypeScript enforces this; the inventory table in this section is the canonical list.
