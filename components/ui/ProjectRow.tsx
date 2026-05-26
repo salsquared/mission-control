@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink, Github, Sparkles, X, StickyNote } from "lucide-react";
+import { Plus, Trash2, ArrowUp, ArrowDown, ExternalLink, Github, Sparkles, X, StickyNote, ChevronDown, ChevronRight } from "lucide-react";
 import { EditableField } from "./EditableField";
 import { BulletRow } from "./BulletRow";
 import { ScratchpadOverlay } from "@/components/overlays/ScratchpadOverlay";
@@ -37,6 +37,7 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
     const [newBulletText, setNewBulletText] = useState("");
     const [drafting, setDrafting] = useState(false);
     const [draftError, setDraftError] = useState<string | null>(null);
+    const [collapsed, setCollapsed] = useState(false);
     // M7.8.4 — per-entity scratchpad overlay.
     const [showScratchpad, setShowScratchpad] = useState(false);
     const scratchpadLen = project.scratchpad?.length ?? 0;
@@ -73,6 +74,14 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
     return (
         <div className="relative bg-white/5 border border-white/5 hover:border-cyan-500/20 rounded-md p-6 transition-colors">
             <div className="absolute top-4 right-4 flex items-center gap-0.5">
+                <button
+                    onClick={() => setCollapsed((c) => !c)}
+                    className="p-1.5 rounded text-white/30 hover:text-white/70 hover:bg-white/10 transition-colors"
+                    title={collapsed ? "Expand" : "Collapse"}
+                    aria-expanded={!collapsed}
+                >
+                    {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+                </button>
                 <button
                     onClick={() => setShowScratchpad(true)}
                     className={`p-1.5 rounded transition-colors ${
@@ -111,6 +120,7 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
                 />
             </div>
 
+            {!collapsed && (<>
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
                 <div className="flex items-center gap-2">
                     <Github className="w-3.5 h-3.5 text-white/40 shrink-0" />
@@ -192,6 +202,7 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
                     </button>
                 </div>
             </div>
+            </>)}
 
             <ScratchpadOverlay
                 open={showScratchpad}

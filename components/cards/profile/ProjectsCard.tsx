@@ -36,6 +36,7 @@ export const ProjectsCard: React.FC<ProjectsCardProps> = ({
             title="Projects"
             icon={FolderGit}
             iconColorClass="text-cyan-300"
+            collapsible
         >
             <div className="flex flex-col gap-3">
                 {projects.length === 0 ? (

@@ -37,6 +37,7 @@ export const WorkHistoryCard: React.FC<WorkHistoryCardProps> = ({
             title="Work history"
             icon={Briefcase}
             iconColorClass="text-purple-300"
+            collapsible
         >
             <div className="flex flex-col gap-3">
                 {workRoles.length === 0 ? (

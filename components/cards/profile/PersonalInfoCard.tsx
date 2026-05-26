@@ -588,6 +588,7 @@ export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
             title="Personal info"
             icon={UserIcon}
             iconColorClass="text-purple-300"
+            collapsible
         >
             <div className="flex flex-col gap-8">
                 {/* Identity essentials — headline / summary / contact */}

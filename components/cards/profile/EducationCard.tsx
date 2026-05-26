@@ -37,6 +37,7 @@ export const EducationCard: React.FC<EducationCardProps> = ({
             title="Education"
             icon={GraduationCap}
             iconColorClass="text-emerald-300"
+            collapsible
         >
             <div className="flex flex-col gap-3">
                 {education.length === 0 ? (
