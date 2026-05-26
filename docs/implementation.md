@@ -49,6 +49,8 @@ One row per `###` section below — this table is the doc's ToC.
 | C | M7.5 — Profile snapshots | ◐ | Capture shipped (33); rollback/restore UX deferred until needed |
 | C | M7.4 followups — Fuzzy dedup + extra formats | ◐ | Tag editing UI ✅; LLM fuzzy dedup, LinkedIn ZIP, legacy `.doc` 💤 |
 | C | M7.6 — LLM bullet assist + resume-upload archive | ✅ | Stories S7.7 (🟡 fill) + S7.8 (🔵 rewrite) + S7.9 (🟡 archive). Shipped 2026-05-23 (`7ffd5ba`, `fffa038`). `ResumeUpload` table + `data/resume-uploads/`; `lib/profile/bullet-assist.ts` + `lib/profile/upload-archive.ts`; `MODEL_LITE` (`gemini-3.1-flash-lite`) with 20/10min rate limit. Three hermetic smokes (`archive-spans-smoke`, `bullet-assist-smoke`, `resume-uploads-smoke`). |
+| C | M7.7 — Bullet tag/AI UX refactor | ⏳ | Stories S7.10 (🟡 split text rewrite from tag generation + 3-7 cap) + S7.11 (🟡 pin tags) + S7.12 (🔵 tag click no-op + bigger X). 8 tasks M7.7.1–M7.7.8. **Ships first** of the new C-track wave. New `bullet-tag-suggest` LLM callsite on `MODEL_LITE`; narrows `bullet-assist-rewrite` to text-only; `Bullet.pinnedTags` field added to JSON shape (no Prisma migration). BulletRow refactor: split wand into two icons + pin toggle + chip-body click removed + X bumped to `w-3.5`. |
+| C | M7.8 — Per-entity scratchpad: profile half | ⏳ | Story S7.13 (🟡) — first of two milestones covering this story. 6 tasks M7.8.1–M7.8.6. **Ships second.** Migration `add_entity_scratchpads` adds `scratchpad: String?` to `WorkRole`, `Project`, `Education`. New `components/overlays/ScratchpadOverlay.tsx`; entity rows get a `StickyNote` trigger button with empty/populated visual state. Bullet-assist grounding gains scratchpad as 5th source. |
 | C | M8 Phase 1 — Tailored resume generation | ✅ | posting → keywords → selection → rewrite → PDF |
 | C | M8 — DOCX export | ✅ | html-to-docx renderer + PDF/DOCX toggle |
 | C | M8 Phase 2 — Archival + traceability + Application linkage | ✅ | `GeneratedResume` + "Why these bullets?" trace (S8.2, S8.6) |
@@ -56,6 +58,7 @@ One row per `###` section below — this table is the doc's ToC.
 | C | M8 Phase 3 — Multi-template + cover letter + skills-gap | ✅ | Skills-gap (41) ✅; multi-template (37) ❌ killed; cover letter (40) ❌ killed |
 | C | M8.4 — Resume card v2: UX refactor | ✅ | Stories S8.11 + S8.12 + S8.13 (🟡). Shipped 2026-05-25 (`ea0fe7b` → `c69fcc6` + polish through `98e1daa`). Migration adds `GeneratedResume.postingTitle` + `postingCompany`; new `app/api/applications/pipeline-picker/route.ts`; `GenerateResumeCard.tsx` gains Pipeline/URL/Paste segmented control (Pipeline default) + `InterestedAppPicker` + `PreviousResumesDropdown` popover. Three hermetic smokes (`pipeline-picker-smoke`, `resume-from-application-smoke`, `resume-list-smoke`). |
 | C | M8.5 — Resume card v2: LLM keyword coverage | ✅ | Stories S8.9 + S8.10 (🟡). Shipped 2026-05-25 (same wave as M8.4: `ea0fe7b` → `87d81d0`). New `bullet-auto-tag` callsite on `MODEL_LITE`; `lib/profile/auto-tag.ts`; `docs/llm-prompts/bullet-auto-tag.md`; bullet JSON gains `autoTags` + `removedTags` (no Prisma migration). Fold-in rule 6a added to `resume-rewrite.md`. Four hermetic smokes (`auto-tag-smoke`, `auto-tag-merge-smoke`, `bullet-remove-tag-smoke`, `resume-rewrite-fold-in-smoke`) + Promptfoo green. |
+| C | M8.6 — Resume-gen scratchpad synthesis | ⏳ | Story S7.13 (🟡) — second of two milestones covering this story. 6 tasks M8.6.1–M8.6.6. **Ships third** (depends on M7.8's `scratchpad` columns). New `scratchpad-synth` LLM callsite on `MODEL_LITE`; `lib/profile/scratchpad-synth.ts`; `docs/llm-prompts/scratchpad-synth.md`; new synthesis pass in `app/api/resumes/route.ts` POST after select + auto-tag. TraceList in `GenerateResumeCard.tsx` renders new `kind: "scratchpad-synth"` distinctly; skills-gap counts synthesized coverage. |
 | C | M9 Phase 1 — GitHub-driven project metrics | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
 | C | M9 Phase 2 — GitHub UX polish | ✅ | Portfolio toggle UI on `ProjectRow`, suggested rewrites (45), README ingestion (46) |
 | **D** — Mobile layout | MD-0 → MD-7 (incl. design Decisions + File touch estimate) | ✅ | Shipped 2026-05-23 in `893628a`. Viewport meta + `useEffectiveMobileLayout` + Dashboard fork into `DesktopShell` / `MobileShell` + swipe carousel + Launchpad sheet variant + inner-scroller `touch-pan-x` audit + Auto/Mobile/Desktop preference UI. ~450 lines, 11 files. |
@@ -118,6 +121,10 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S7.7** | 🟡 | ✅ | LLM bullet fill (empty entry → 3–5 starter bullets) | M7.6 | — |
 | **S7.8** | 🔵 | ✅ | LLM bullet rewrite (existing bullet → diff + Accept/Discard) | M7.6 | — |
 | **S7.9** | 🟡 | ✅ | Resume-upload archive (raw text + extracted JSON + bytes retained per import) | M7.6 | — |
+| **S7.10** | 🟡 | ⏳ | Split per-bullet AI: text-only rewrite + tag-only generator + 3–7 cap | M7.7 | **Build M7.7 split + cap.** Narrow `bullet-assist-rewrite` to text-only; new `bullet-tag-suggest` callsite on `MODEL_LITE` with `mode: 'tags'` API + 7-tag guard at the route layer. |
+| **S7.11** | 🟡 | ⏳ | Pin tags so AI regenerate doesn't overwrite | M7.7 | **Build M7.7 pin.** `Bullet.pinnedTags: string[]` added to bullet JSON shape (no Prisma migration). LLM prompt receives pinned vs unpinned categorization; server-side patch-back if LLM drops a pinned tag. Invariants enforced in PATCH validator. |
+| **S7.12** | 🔵 | ⏳ | Tag chip click is no-op; X-only delete; X ~1px bigger | M7.7 | **Build M7.7 click semantics.** Remove `onClick` from BulletRow tag chip body; X icon bumped from `w-3 h-3` to `w-3.5 h-3.5` + larger hit-target padding. `removeTag` semantics (clears tag + adds to `removedTags` blocklist per M8.5.6) unchanged. |
+| **S7.13** | 🟡 | ⏳ | Per-entity scratchpad + resume-gen synthesis from scratchpad | M7.8 + M8.6 | **Build M7.8 then M8.6.** M7.8 adds `scratchpad: String?` to `WorkRole`/`Project`/`Education` + `ScratchpadOverlay` modal + `StickyNote` trigger button per row + bullet-assist 5th-grounding-source. M8.6 adds `scratchpad-synth` LLM callsite + synthesis pass in `app/api/resumes/route.ts` POST after select + auto-tag + trace-surface for `kind: "scratchpad-synth"` rows. |
 | **§8 Tailored resume** | | | | | |
 | **S8.1** | 🔴 | ✅ | Tailored generation from posting | M8 Phase 1 | — |
 | **S8.2** | 🟡 | ✅ | "Why these bullets?" trace | M8 Phase 2 | — |
@@ -161,16 +168,19 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S14.3** | 🔵 | 💤 | Interview prep tracker | — | Future. Not blocking. |
 | **S14.4** | 🔵 | 💤 | Salary research | — | Future. Not blocking. |
 
-**Actionable items**: every designed milestone is now ✅. The remaining open work lives in `docs/next_steps.md` as the **10 audit-found soft bugs** parked from the 2026-05-24 audit (impact bounded, each a 5-line to ~30 min fix) and the **LOP-9 real-fixture capture** (CAPTURE_FIXTURES seam live in dev — needs ~30 min of app use + harvest into `eval/suites/`). **Story S7.6** (rollback UI for profile snapshots) remains deferred-by-design. Everything else is ✅ shipped, ⛔ user-declined, or 💤 future. Track D (mobile layout, not user-story-tied) shipped 2026-05-23.
+**Actionable items**: three new milestone phases queued 2026-05-25 — **M7.7** (S7.10 + S7.11 + S7.12) → **M7.8** (S7.13 profile half) → **M8.6** (S7.13 resume-gen half). Beyond those, the remaining open work lives in `docs/next_steps.md` as the **10 audit-found soft bugs** parked from the 2026-05-24 audit (impact bounded, each a 5-line to ~30 min fix) and the **LOP-9 real-fixture capture** (CAPTURE_FIXTURES seam live in dev — needs ~30 min of app use + harvest into `eval/suites/`). **Story S7.6** (rollback UI for profile snapshots) remains deferred-by-design. Everything else is ✅ shipped, ⛔ user-declined, or 💤 future. Track D (mobile layout, not user-story-tied) shipped 2026-05-23.
 
 ### Open work, by leverage (next-up order)
 
 Story S8.4 (multi-template) and Story S8.7 (cover letter) are ⛔ user-declined; not in this list. Track D (MD-0 → MD-7) shipped 2026-05-23 in `893628a`. Story S7.6 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful.
 
-1. **Audit-found soft bugs (10 parked items).** Full table in `docs/next_steps.md` §Audit-found soft bugs. Recommended order: **quick wins** (#4 email-parser model constant, #9 cache pruner startup-skip, #10 call-time `lunaryEnabled()` wrapper) → **high-value** (#2 Notification retention prune job, #5 `bulkMoveApplicationsTrack` notIn limit) → **real product calls** (#1 `nextSteps` wipe semantics, #7 resume-gen orphan row recovery) → **bigger lifts** (#3 Gmail history pagination, #6 cross-process mutex, #8 paid Gemini backfill for 4659 null employmentType rows).
-2. **LOP-9 real-fixture capture.** The `CAPTURE_FIXTURES=1` seam is live on `mission-control-dev` + `mission-control-scheduler-dev` (`lib/ai/gemini.ts:chatJSON` + `lib/email-parser.ts` inline gates). Use the app ~30 min, then grep pm2 logs for `[FIXTURE]` lines and translate captures into `eval/suites/<name>.yaml` entries — replaces the synthetic-but-realistic seeds from LOP-9 landing.
-3. **Story S7.6 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Deferred-by-design — wait until you've actually made an edit you want to undo.
-4. **Manual visual smoke + Lunary trace check.** Verify GenerateResumeCard golden path (Pipeline tab default → pick INTERESTED-with-URL app → generate → resume appears under app's Resumes section + in previous-resumes dropdown without refresh) and confirm any LLM run in dev shows up in Lunary's dashboard tagged by `name`. Backend pipe is verified end-to-end by hermetic smokes; this is the visual confirmation gap.
+1. **M7.7 — Bullet tag/AI UX refactor** (S7.10 🟡 + S7.11 🟡 + S7.12 🔵, 8 tasks). Pure UI/UX surface plus one new `bullet-tag-suggest` LLM callsite; no schema migration (just Bullet JSON shape evolution). Ships first because it's small, self-contained, and fixes two real UX footguns shipped with M7.6/M8.5 (combined wand-button conflates text + tags; click-to-remove tag is mis-trigger prone). See §M7.7 for the full design.
+2. **M7.8 — Per-entity scratchpad: profile half** (S7.13 🟡, 6 tasks). Migration adds `scratchpad: String?` to three entity tables; new modal overlay editor; bullet-assist gets scratchpad as 5th grounding source. Immediate value via M7.6 bullet-assist paths reading user voice. See §M7.8 for the full design.
+3. **M8.6 — Resume-gen scratchpad synthesis** (S7.13 🟡, 6 tasks). Ships third, depends on M7.8's schema. New `scratchpad-synth` LLM callsite + synthesis pass in resume-gen pipeline + trace-surface for synthesized bullets. The bigger payoff: synthesize fresh bullets from scratchpad text + posting keywords to close skills-gap. See §M8.6 for the full design.
+4. **Audit-found soft bugs (10 parked items).** Full table in `docs/next_steps.md` §Audit-found soft bugs. Recommended order: **quick wins** (#4 email-parser model constant, #9 cache pruner startup-skip, #10 call-time `lunaryEnabled()` wrapper) → **high-value** (#2 Notification retention prune job, #5 `bulkMoveApplicationsTrack` notIn limit) → **real product calls** (#1 `nextSteps` wipe semantics, #7 resume-gen orphan row recovery) → **bigger lifts** (#3 Gmail history pagination, #6 cross-process mutex, #8 paid Gemini backfill for 4659 null employmentType rows).
+5. **LOP-9 real-fixture capture.** The `CAPTURE_FIXTURES=1` seam is live on `mission-control-dev` + `mission-control-scheduler-dev` (`lib/ai/gemini.ts:chatJSON` + `lib/email-parser.ts` inline gates). Use the app ~30 min, then grep pm2 logs for `[FIXTURE]` lines and translate captures into `eval/suites/<name>.yaml` entries — replaces the synthetic-but-realistic seeds from LOP-9 landing.
+6. **Story S7.6 — rollback/restore UX (🔵).** Capture side ✅ via `ProfileSnapshot`. "Restore from snapshot" needs a destructive-overwrite confirm + transactional bulk-replace of `WorkRole` / `Project` / `Education` (+ bullet json) from the stored payload. Deferred-by-design — wait until you've actually made an edit you want to undo.
+7. **Manual visual smoke + Lunary trace check.** Verify GenerateResumeCard golden path (Pipeline tab default → pick INTERESTED-with-URL app → generate → resume appears under app's Resumes section + in previous-resumes dropdown without refresh) and confirm any LLM run in dev shows up in Lunary's dashboard tagged by `name`. Backend pipe is verified end-to-end by hermetic smokes; this is the visual confirmation gap.
 
 ### User-declined
 
@@ -627,6 +637,256 @@ The archive is populated **going forward** — pre-M7.6 uploads aren't preserved
 - Embedding-based semantic retrieval of archive spans — keyword match on parent identifier is the MVP; embeddings only if keyword retrieval underperforms in practice.
 - UI for browsing / deleting individual archive uploads — repository helpers exist (M7.6.3) but no surface yet. Future polish.
 
+### M7.7 — Bullet tag/AI UX refactor ⏳
+
+Stories: **S7.10** (🟡 split text rewrite from tag generation + 3-7 cap) + **S7.11** (🟡 pin tags) + **S7.12** (🔵 tag click no-op + bigger X). Added 2026-05-25, designed not started. **Ships first** of the three new C-track milestones — pure UI/UX surface, one new LLM callsite, no Prisma migration (just Bullet JSON shape evolution).
+
+**Why now.** M7.6 shipped bullet-assist with a single wand icon that does both text rewrite AND tag updates; M8.5 added auto-tagging from posting keywords. Two pain points in real use: (a) a sentence-polish click clobbers carefully chosen tags, and (b) clicking a tag chip removes it (footgun on busy bullets). This milestone separates concerns: text rewrite narrows to text-only; new tag-only generator handles tag churn with explicit accept/discard; pinned tags lock specific choices against either flow; tag removal moves to an explicit X-icon affordance.
+
+**Surfaces touched.**
+- `components/ui/BulletRow.tsx` — split wand into two icon buttons, add pin toggle per tag chip, remove chip-body onClick, bump X size.
+- `lib/profile/types.ts` + `lib/schemas/profile.ts` — Bullet JSON shape gains `pinnedTags: string[]`.
+- `lib/profile/bullet-assist.ts` — rewrite mode narrows to text-only.
+- New `lib/profile/bullet-tag-suggest.ts` — per-bullet tag generator.
+- `app/api/profile/bullets/assist/route.ts` — new `mode: 'tags'` + 7-tag cap guard.
+- New `docs/llm-prompts/bullet-tag-suggest.md` + `eval/suites/bullet-tag-suggest.yaml`.
+
+**LLM model.** `MODEL_LITE` (same tier as M7.6 + M8.5 — per-bullet tag suggestion is bounded judgment, not free-form generation).
+
+---
+
+#### Task list
+
+##### M7.7.1 — Schema: `Bullet.pinnedTags` + invariants ⏳ (S7.11)
+
+Bullets are stored as JSON inside parent entity columns (Decision 4) — no Prisma migration. Update `lib/profile/types.ts`:
+
+```typescript
+export interface Bullet {
+    id: string;
+    text: string;
+    tags: string[];
+    autoTags: string[];
+    removedTags: string[];
+    pinnedTags: string[];    // NEW
+    locked: boolean;
+    excluded: boolean;
+}
+```
+
+Read-time defaults in `lib/profile/bullets.ts:hydrateBulletDefaults` (the M8.5.1 helper): missing `pinnedTags` defaults to `[]`. Write-time zod schema: `pinnedTags: z.array(z.string()).default([])`.
+
+Invariants enforced via `.refine()` on the bullet PATCH schema:
+- `pinnedTags ⊆ tags` (can't pin a tag that isn't applied)
+- `pinnedTags ∩ removedTags = ∅` (blocklist wins; pinning a blocked tag is rejected)
+
+Side-effects in the PATCH validator:
+- Removing a tag from `tags` also strips it from `pinnedTags` (a pinned tag deletion implicitly unpins).
+- Adding a tag to `removedTags` strips it from `pinnedTags` (blocklist eviction).
+
+##### M7.7.2 — Narrow `bullet-assist-rewrite` to text-only ⏳ (S7.10)
+
+`lib/profile/bullet-assist.ts` rewrite mode currently returns `{text, tags}` and persists both — that was the M7.6 `fffa038` enhancement to S7.8. After this task it returns `{text}` only; server preserves the input bullet's `tags` / `autoTags` / `removedTags` / `pinnedTags` / `locked` / `excluded` verbatim.
+
+Edit `docs/llm-prompts/bullet-assist.md` rewrite-mode section to drop the tag-update directive. Update `eval/suites/bullet-assist-rewrite.yaml` fixtures: add assertion that proposal does NOT include `tags`; assertion that persisted bullet keeps original tags. Sync via `npx tsx scripts/sync-lunary-templates.ts`.
+
+Same prompt slug (`bullet-assist-rewrite`); behavior change only.
+
+##### M7.7.3 — New `bullet-tag-suggest` LLM callsite ⏳ (S7.10 + S7.11)
+
+New file `lib/profile/bullet-tag-suggest.ts`:
+
+```typescript
+export async function suggestTagsForBullet(opts: {
+    userId: string;
+    parentKind: 'work-role' | 'project' | 'education';
+    parentId: string;
+    bulletId: string;
+}): Promise<{ tags: string[]; reason?: string }>;
+```
+
+Grounds on:
+1. Bullet's current text.
+2. Bullet's current `tags`, with each tag marked as `pinned` / `auto` / `user` so the LLM knows which are anchors vs replaceable candidates.
+3. Bullet's `removedTags` (blocklist — don't propose these).
+4. Profile-wide tag vocabulary (top N tags across all bullets, for consistency — encourages reuse over inventing new tags every call).
+
+Output: `{tags: string[]}` — the proposed final tag list. Must include all `pinned` tags verbatim, must respect the 3-7 cap, may swap out unpinned tags. Server post-filters defensively: any pinned tag missing from proposal gets re-added; any tag from `removedTags` gets stripped; if the result is still > 7 after re-adding pins, the unpinned tail is truncated; if the result is < 3, return what we have (soft floor).
+
+`chatJSON({name: 'bullet-tag-suggest', model: MODEL_LITE, maxOutputTokens: 1024, ...})`.
+
+##### M7.7.4 — Prompt + Promptfoo fixtures for `bullet-tag-suggest` ⏳ (S7.10 + S7.11)
+
+New `docs/llm-prompts/bullet-tag-suggest.md`. System prompt enumerates:
+- Output **3 to 7 tags total** (count includes pinned + unpinned).
+- Every tag in the input's `pinned` list MUST appear verbatim in the output.
+- Never propose a tag in the input's `removedTags` list.
+- Prefer reusing tags from the profile vocabulary over inventing new ones.
+- Tags should be concrete skills, technologies, or methodologies — not generic adjectives.
+- Conservative over aggressive — if you can't defend 3, return what you can defend.
+
+New `eval/suites/bullet-tag-suggest.yaml` with fixtures:
+- **Pin preservation**: input `{text: "Built Python API", tags: [{label: "Python", state: "pinned"}, {label: "API", state: "user"}]}` → assert `Python` in output.
+- **Cap respected**: input with 0 existing tags + tag-rich text → assert 3–7 in output.
+- **Blocklist filtered**: input with `removedTags: ["JavaScript"]` and text mentioning JS → assert `JavaScript` not in output.
+- **Vocabulary reuse**: input with profile vocabulary `["TypeScript"]` + bullet text mentioning JS → assert proposal includes `TypeScript` rather than inventing a synonym.
+
+Provider handler: add `bullet-tag-suggest` case to `eval/provider.ts:HANDLERS`.
+
+##### M7.7.5 — API route + 7-tag cap guard ⏳ (S7.10)
+
+Extend `app/api/profile/bullets/assist/route.ts` POST body schema to accept `mode: 'fill' | 'rewrite' | 'tags'` (was `'fill' | 'rewrite'`).
+
+Handler logic when `mode === 'tags'`:
+1. Load parent + bullet, ownership-check (same as fill/rewrite paths).
+2. Locked-bullet guard: 400 with `{error: 'cannot-suggest-tags-locked'}` (defense-in-depth — UI hides the button).
+3. **Cap guard**: if `bullet.tags.length >= 7`, return 400 `{error: 'tag-limit-reached'}` **before** calling the LLM. No token spend; UI catches this status and shows a "remove or unpin a tag first" hint.
+4. Call `suggestTagsForBullet`, return `{mode: 'tags', proposal: {tags, reason?}}`.
+
+Same `profile:bullet-assist` rate-limit scope (shared 20 / 10 min) — tag suggestions are cheap but count against the budget.
+
+##### M7.7.6 — BulletRow refactor: split buttons + pin toggle + click semantics + bigger X ⏳ (S7.10 + S7.11 + S7.12)
+
+In `components/ui/BulletRow.tsx`:
+
+- **Split AI buttons**: wand icon (existing) → text-only rewrite (per [[M7.7.2]]). New `Tags` (lucide) icon next to it → tag-suggest (per [[M7.7.5]]). Both hidden when `locked === true`.
+- **Tag chip rendering**:
+  - Click on chip body: `onClick` removed — chip body is non-interactive.
+  - **Pin toggle**: small `Pin` lucide icon inside the chip (left of text), click toggles membership in `pinnedTags` via existing entity PATCH. Pinned chips render with the Pin icon visible + an amber-tinted border (`border-amber-500/30`) to differentiate from regular tags.
+  - **Delete X**: existing X icon stays but bumped from `w-3 h-3` to `w-3.5 h-3.5` (~1px larger). Hit-target padding increased proportionally (chip padding goes from `px-1` to `px-1.5` on the X-side). This is the only tag-removal trigger.
+  - **Auto-tag + pinned**: a chip can be in both `autoTags` AND `pinnedTags` — both glyphs (Sparkles + Pin) render inside the chip, expressing "auto-suggested but locked in" state from S7.11.
+- **`removeTag` semantics unchanged from M8.5.6**: clears tag from `tags`, `autoTags`, `pinnedTags` (pinned deletion implicitly unpins); adds to `removedTags`.
+
+##### M7.7.7 — Tag-suggest accept/discard UI ⏳ (S7.10)
+
+On tag-suggest API response: bullet row expands into a diff panel — current tags (with pin/auto annotations) on the left, proposed tags on the right (added in emerald, removed in rose line-through). Pins are visually distinct in both columns so the user can verify they survived.
+
+Accept persists via existing entity PATCH path with updated `tags` + `autoTags` (any newly proposed tag gets marked `autoTags`, same semantic as M8.5.3 auto-tag merge). Discard closes panel.
+
+Error states surface as inline rose chip (same pattern as M7.6.9 rewrite UI). 400 `{error: 'tag-limit-reached'}` shows "Tag limit reached — remove or unpin a tag first."
+
+##### M7.7.8 — Hermetic smokes ⏳
+
+- `bullet-tag-suggest-smoke.ts` — covers M7.7.3, M7.7.5 end-to-end. Mocks `chatJSON`. Asserts: proposal preserves pinned tags; LLM proposal that drops a pinned tag → server-side patched back in; respects 3–7 cap (server-side trims if LLM over-shoots); `removedTags` blocklist filtered; 7-tag bullet → 400 `tag-limit-reached` BEFORE LLM call (verify chatJSON was not invoked); locked bullet → 400; cross-user → 404; rate-limit 429.
+- `bullet-rewrite-text-only-smoke.ts` — covers M7.7.2. Mocks `chatJSON`. Asserts: rewrite proposal only contains `text`; persisted bullet keeps original `tags` / `autoTags` / `removedTags` / `pinnedTags` / `locked` / `excluded` unchanged.
+- `bullet-pin-tag-smoke.ts` — covers M7.7.1 invariants. Pure-function via PATCH schema. Asserts: PATCH with `pinnedTags` containing a tag not in `tags` → 400; PATCH with `pinnedTags ∩ removedTags ≠ ∅` → 400; removing a tag from `tags` via PATCH also strips it from `pinnedTags`; adding a tag to `removedTags` strips it from `pinnedTags`.
+
+All three wired into `scripts/pre-push.sh`'s `SUITES` array.
+
+---
+
+#### Acceptance (whole phase)
+
+- Wand on a bullet rewrites text only; tags are visibly unchanged after Accept.
+- New Tags-icon button on a bullet generates tag suggestions; pinned tags survive the proposal; 3–7 cap is enforced; 7-tag bullet shows "remove or unpin a tag first" hint, no LLM call fires.
+- Pin a tag → run tag-suggest → pinned tag is in the proposed output verbatim.
+- Click on a tag chip body does nothing; click the X removes the tag (and adds to blocklist per existing M8.5.6).
+- Locked bullets: no wand, no Tags button (defense-in-depth: forged requests return 400).
+- `npm run test:hermetic` green; three new smokes wired into pre-push.
+
+#### Out of scope for this phase
+
+- **Bulk pin/unpin all tags on a bullet** — single-tag toggle only; bulk affordance is YAGNI until use proves otherwise.
+- **Cross-bullet pin** — pin is per-bullet-tag, not "globally pin Python everywhere on the profile."
+- **Tag-suggest provenance log** — the trace already shows which tags drove a selection; per-tag history not stored.
+- **Tag-suggest grounded on posting** — that's [[S8.9]] auto-tag pass (M8.5), runs at resume-gen time. Per-bullet manual flow is posting-agnostic by design.
+- **Confidence score per tag proposal** — LLM returns a flat list. If quality varies wildly, revisit and add per-tag confidence display.
+
+### M7.8 — Per-entity scratchpad: profile half ⏳
+
+Story: **S7.13** (🟡 per-entity scratchpad) — first of two milestones covering this story. Added 2026-05-25, designed not started. **Ships second** of the new C-track wave (after M7.7). Schema migration touches three entity tables. Resume-gen synthesis half ships separately in [[M8.6]].
+
+**Why now.** Generated bullets sometimes read in generic resume-speak rather than the user's voice — and bullets are constrained to whatever's in the structured profile, so a role's *new* experiences (post-import) get under-represented. A per-entity free-form scratchpad gives the user a place to dump unfiltered context about each role / project / education in their own words. The LLM uses it as voice + experience grounding for bullet-assist (M7.6 paths) immediately, and as the substrate for resume-gen synthesis later ([[M8.6]]).
+
+**Surfaces touched.**
+- `prisma/schema.prisma` — `scratchpad: String?` on `WorkRole`, `Project`, `Education` (migration `add_entity_scratchpads`).
+- `lib/schemas/profile.ts` — three PATCH schemas accept `scratchpad`.
+- New `components/overlays/ScratchpadOverlay.tsx` — modal editor.
+- `components/ui/WorkRoleRow.tsx` + `ProjectRow.tsx` + `EducationRow.tsx` — trigger button + visual state.
+- `lib/profile/bullet-assist.ts` — fifth grounding source after archive spans.
+
+---
+
+#### Task list
+
+##### M7.8.1 — Schema migration: `scratchpad` on three entity tables ⏳
+
+Migration `add_entity_scratchpads` (dev + prod). Adds `scratchpad String?` to `WorkRole`, `Project`, `Education`. Existing rows default null — pure additive.
+
+Apply against dev.db first: stop `mission-control-dev` + `mission-control-scheduler-dev`, run `npx prisma migrate dev --name add_entity_scratchpads`, restart. Then against prod.db: stop `mission-control` + `mission-control-scheduler-prod`, point `DATABASE_URL` at `prisma/prod.db`, run `npx prisma migrate deploy`, restart. (Same protocol as M8.4.1 — SQLite WAL hold from PM2 blocks the migrate without the stop.)
+
+##### M7.8.2 — Repository + PATCH schema updates ⏳
+
+Extend `WorkRolePatchSchema` / `ProjectPatchSchema` / `EducationPatchSchema` in `lib/schemas/profile.ts`:
+
+```typescript
+scratchpad: z.string().max(8192).nullable().optional(),
+```
+
+Cap at 8 KB to bound prompt budgets. Existing PATCH routes pass through unchanged — no new routes needed. Existing repository helpers in `lib/repositories/profile.ts` need their `select` projections updated to include the new column on read (otherwise GET responses won't surface it).
+
+##### M7.8.3 — Scratchpad overlay component ⏳
+
+New `components/overlays/ScratchpadOverlay.tsx`. Modal mounts via portal to `document.body` (matching `NotificationBell` / M8.4.6 popover pattern — escapes CardGrid's `overflow-hidden`). Props:
+
+```typescript
+interface Props {
+    entityKind: 'work-role' | 'project' | 'education';
+    entityLabel: string;         // e.g. "Acme Corp — Senior Engineer" for header
+    initialValue: string | null;
+    onSave: (value: string | null) => void;  // null when textarea is empty after save
+    onClose: () => void;
+}
+```
+
+Body: large multi-line `<textarea>` (rows={12}), placeholder *"In your own words: what did you build at this role, what problems did you solve, what was hard, what energizes you?"*, character count badge (`X / 8000`), Save / Cancel buttons. Esc closes (= cancel); Ctrl/Cmd+Enter saves. Click outside the modal body = cancel (matches Launchpad overlay behavior). Backdrop is `bg-black/60 backdrop-blur-sm`.
+
+##### M7.8.4 — Entity row trigger button + visual state ⏳
+
+Update `components/ui/WorkRoleRow.tsx`, `ProjectRow.tsx`, `EducationRow.tsx`. New `<ScratchpadTriggerButton>` inline (extract to shared `components/ui/ScratchpadTriggerButton.tsx` only if it grows past ~60 LOC):
+
+- Icon: lucide `StickyNote`.
+- **Empty state**: outlined, `text-white/30` border + icon stroke. Title attribute: `"No notes yet — click to add"`.
+- **Populated state**: filled tinted icon in the row's theme color (purple for WorkRole, cyan for Project, emerald for Education), with a small filled dot to the side. Title attribute: `"{N} chars of notes — click to edit"` (where N = `scratchpad.length`).
+- Click → opens `ScratchpadOverlay` for this entity. On save → PATCH the entity → TanStack invalidate (`['profile']` is already invalidated by the existing PATCH path; just verify the projection from M7.8.2 includes scratchpad).
+
+##### M7.8.5 — Bullet-assist grounding (5th source) ⏳
+
+Update `lib/profile/bullet-assist.ts:buildBulletAssistPrompt`. Insert a new grounding section after archive spans (M7.6.4 output) and before the README excerpt:
+
+5. **Parent scratchpad** (if non-empty) — up to 2 KB of the entity's own scratchpad. Truncated from the end with an ellipsis if longer. Header in the prompt: `"User's notes about this role/project/education (their own voice):"`.
+
+**Cross-entity isolation**: only `parent.scratchpad` is included; sibling entities' scratchpads never leak in. Tested explicitly in M7.8.6.
+
+Update `docs/llm-prompts/bullet-assist.md` to reference the new section in both fill and rewrite modes' grounding lists. The 8 KB overflow logic in `buildBulletAssistPrompt` already drops sections oldest-first when over budget — scratchpad sits between archive spans and README in the drop order. Sync via `npx tsx scripts/sync-lunary-templates.ts`.
+
+Promptfoo fixtures in `eval/suites/bullet-assist-fill.yaml` + `bullet-assist-rewrite.yaml`: add one scratchpad-grounded fixture per suite, assert the generated bullet picks up wording from the scratchpad text.
+
+##### M7.8.6 — Hermetic smokes ⏳
+
+- `scratchpad-patch-smoke.ts` — covers M7.8.2. Asserts: PATCH accepts `scratchpad` string, persists, GET returns it for all three entity kinds; cap enforcement (8001 chars → 400); null-clear works (PATCH `{scratchpad: null}`); cross-user → 404.
+- `bullet-assist-scratchpad-smoke.ts` — covers M7.8.5. Mocks `chatJSON`. Asserts: prompt body includes `parent.scratchpad` text when entity has non-empty scratchpad; doesn't include the section header when empty; sibling entities' scratchpads NEVER appear in the prompt for entity X (cross-entity isolation).
+
+Both wired into `scripts/pre-push.sh`'s `SUITES` array.
+
+---
+
+#### Acceptance (whole phase)
+
+- Each WorkRole / Project / Education row has a Notes button.
+- Empty entity: button is outlined and muted. Populated entity: button is theme-colored and filled with a small dot.
+- Click button → modal opens with the scratchpad textarea, character count, Save/Cancel.
+- Save persists; cross-tab SSE updates the button visual state on other open tabs.
+- Bullet-assist fill on an entity with scratchpad → generated bullets visibly use scratchpad wording/cadence (manual sanity check; Promptfoo fixture covers automated regression).
+- `npm run test:hermetic` green; two new smokes wired into pre-push.
+
+#### Out of scope for this phase
+
+- **Resume-gen synthesis** — ships in [[M8.6]].
+- **Profile-level scratchpad** — per-entity only per user direction 2026-05-25 (initial design was profile-level; user redirected to per-entity for scoping clarity). Easier to extend to profile-level later if cross-entity narrative becomes useful.
+- **Auto-summarize scratchpad** — out. Scratchpad is intentionally raw; summarization changes voice.
+- **Versioning of scratchpad edits** — out. `ProfileSnapshot` (M7.5) can extend to capture scratchpad columns when rollback UX ships (story S7.6 deferred).
+
 ### M8 Phase 1 — Tailored resume generation ✅
 
 Story S8.1 (🔴) · Shipped 2026-05-15 · Smoke: `scripts/tests/integration/resume-e2e-smoke.ts` (47KB PDF in ~11s) · Commit: `b2cbeb6`.
@@ -1006,6 +1266,170 @@ If LITE fails the auto-tag fixtures (false positives proposing tags without evid
 - **Confidence score per tag proposal** — the LLM returns binary add/don't-add. If false-positive rate is high in practice, revisit + store + display confidence.
 - **Cross-profile bullet similarity grounding** — auto-tag prompt grounds only on the bullet's own text + posting keywords. Could improve with sibling-bullet context if quality is poor.
 - **Cover-letter fold-in** — story S8.7 user-declined; no fold-in target.
+
+---
+
+### M8.6 — Resume-gen scratchpad synthesis ⏳
+
+Story: **S7.13** (🟡 per-entity scratchpad) — second of two milestones covering this story. Added 2026-05-25, designed not started. **Ships third** of the new C-track wave (after M7.7 + M7.8). **Depends on M7.8's `scratchpad` columns being live.** New LLM callsite + new pipeline pass in resume-gen.
+
+**Why now.** M7.8 puts user-voice scratchpad text on every entity. M8.6 puts that text to work at resume-gen time — when a posting's keywords aren't well-covered by an entity's structured bullets but the scratchpad mentions relevant work, synthesize fresh bullets that close the gap using posting terminology + scratchpad evidence. Mixes into the existing selection pool so the rewrite step can pick scratchpad-synthesized bullets when they're stronger evidence than what's in the structured profile.
+
+**Surfaces touched.**
+- New `lib/profile/scratchpad-synth.ts` — synthesis caller.
+- New prompt `docs/llm-prompts/scratchpad-synth.md` + Promptfoo suite `eval/suites/scratchpad-synth.yaml`.
+- `app/api/resumes/route.ts` POST handler — new synthesis pass between select (and auto-tag) and rewrite.
+- `components/cards/GenerateResumeCard.tsx` `TraceList` — render `kind: "scratchpad-synth"` rows distinctly.
+- `lib/resumes/skills-gap.ts` — count synthesized coverage as gap-closing.
+
+**LLM model.** `MODEL_LITE` initially. Promote to `MODEL_FLASH` if Promptfoo evals show LITE under-uses scratchpad detail in synthesis.
+
+---
+
+#### Task list
+
+##### M8.6.1 — Scratchpad-synth caller ⏳
+
+New `lib/profile/scratchpad-synth.ts`:
+
+```typescript
+export async function synthesizeBulletsForEntity(opts: {
+    entityKind: 'work-role' | 'project' | 'education';
+    entityId: string;
+    entitySpine: {
+        company?: string;
+        title?: string;
+        name?: string;
+        institution?: string;
+        startDate?: string;
+        endDate?: string | null;
+    };
+    scratchpad: string;          // non-empty (caller filters)
+    postingKeywords: string[];
+    uncoveredKeywords: string[];  // posting keywords with no existing bullet evidence
+    maxBullets?: number;          // default 3
+}): Promise<{ bullets: Array<{ id: string; text: string; tags: string[] }>; durationMs: number }>;
+```
+
+Internals:
+1. Build prompt via `loadPrompt('scratchpad-synth', vars)`.
+2. Call `chatJSON({name: 'scratchpad-synth', model: MODEL_LITE, maxOutputTokens: 2048, ...})`.
+3. Zod-validate response shape.
+4. Server fills bullet ids (cuid), defaults `autoTags: tags`, `removedTags: []`, `pinnedTags: []`, `locked: false`, `excluded: false`.
+
+**Does NOT persist** — synthesized bullets exist only in the in-memory resume-gen selection list and in the `GeneratedResume.selections` archive. User's stored profile is untouched. (Persisting synthesized bullets back to the profile is a future story.)
+
+##### M8.6.2 — Prompt + Promptfoo fixtures ⏳
+
+New `docs/llm-prompts/scratchpad-synth.md`. System prompt enumerates:
+- Output up to N bullets grounded ONLY on the scratchpad text + the posting's uncovered keywords + the entity spine.
+- Use posting keywords VERBATIM where the scratchpad evidences the work.
+- **No invention**: do NOT add metrics, dates, technologies, or claims that aren't in the scratchpad or the posting.
+- If the scratchpad has no evidence for any uncovered keyword, return an empty array. **Conservative over aggressive.**
+- Match the user's voice from the scratchpad — keep their cadence, don't over-formalize.
+- Tag the synthesized bullet with concrete skills/technologies the bullet actually demonstrates (3–7 tags, same convention as M7.7.4).
+
+New `eval/suites/scratchpad-synth.yaml`:
+- **Positive coverage**: scratchpad mentions "ran the data pipeline migration to PostgreSQL"; posting needs "PostgreSQL" → assert synthesized bullet contains "PostgreSQL" + references migration work.
+- **No-invention**: scratchpad mentions Go work; posting needs "Rust" → assert empty `bullets` array (no fabricated Rust experience).
+- **Voice preservation**: scratchpad reads colloquially ("we hacked together a quick prototype"); assert synthesized bullet is professional but recognizably first-person-experience-derived, not generic resume-speak (rubric assertion).
+- **Empty scratchpad guard**: handler should short-circuit before LLM (caller-level check) — covered in M8.6.3 smoke, not Promptfoo.
+
+Provider handler in `eval/provider.ts:HANDLERS`.
+
+##### M8.6.3 — Resume-gen pipeline: synthesis pass ⏳
+
+In `app/api/resumes/route.ts` POST handler, after `selectBullets()` runs AND after the M8.5 `autoTagBullets` pass:
+
+```typescript
+// Compute uncovered keywords (skills-gap signal).
+const uncovered = parsedPosting.keywords.filter(kw =>
+    !selectedBullets.some(b => b.tags.includes(kw) || textEvidencesKeyword(b.text, kw))
+);
+
+// For each entity already represented in selection AND with non-empty scratchpad
+// AND at least one uncovered keyword the scratchpad mentions (heuristic):
+const synthesizedPromises = entitiesInSelection.map(async entity => {
+    if (!entity.scratchpad?.trim()) return [];
+    const relevant = uncovered.filter(kw =>
+        entity.scratchpad!.toLowerCase().includes(kw.toLowerCase())
+    );
+    if (relevant.length === 0) return [];
+    try {
+        const result = await synthesizeBulletsForEntity({
+            entityKind: entity.kind,
+            entityId: entity.id,
+            entitySpine: spineOf(entity),
+            scratchpad: entity.scratchpad,
+            postingKeywords: parsedPosting.keywords,
+            uncoveredKeywords: relevant,
+        });
+        return result.bullets.map(b => ({
+            kind: 'scratchpad-synth',
+            sourceId: entity.id,
+            sourceLabel: spineToLabel(entity),
+            bulletId: b.id,
+            originalText: b.text,
+            rewrittenText: b.text,    // synthesized bullets pass through rewrite as-is on first emission
+            score: 0,
+            matchedTags: b.tags,
+            matchedKeywords: relevant.filter(kw => b.text.toLowerCase().includes(kw.toLowerCase())),
+            locked: false,
+        }));
+    } catch (e) {
+        console.warn(`[scratchpad-synth] entity ${entity.id} skipped: ${errMessage(e)}`);
+        return [];
+    }
+});
+const synthesized = (await Promise.all(synthesizedPromises)).flat();
+```
+
+Synthesized rows append to the selection list. They flow through the existing rewrite step like any other selection (rewrite may polish further or leave alone — but rewrite is now text-only per M7.7.2 so tags are preserved). **Best-effort posture**: synthesis errors never block the generate, mirroring the auto-tag pass shape from M8.5.4.
+
+##### M8.6.4 — Trace surface for `scratchpad-synth` ⏳
+
+`components/cards/GenerateResumeCard.tsx` `TraceList`: existing renderer already iterates `selections[].kind`. Add a styling branch for `kind === 'scratchpad-synth'` — distinct color (suggest: amber chip for "user's own notes turned into a bullet" — visually distinct from purple `work-role` / cyan `project` / emerald `education` kinds, and from M8.5's `auto` Sparkles convention).
+
+Update `SkillsGapBlock` so synthesized coverage counts toward closing the gap: a posting keyword evidenced by a `scratchpad-synth` bullet's `matchedKeywords` should not appear in the "skills gap" list. `lib/resumes/skills-gap.ts:computeSkillsGap` currently runs against the profile pre-synthesis — refactor to run post-synthesis against the full selection list (or compute twice: pre-synth for an internal audit signal, post-synth for user display).
+
+##### M8.6.5 — Hermetic smokes ⏳
+
+- `scratchpad-synth-smoke.ts` — covers M8.6.1 + M8.6.3 end-to-end. Mocks `chatJSON`. Asserts:
+  - Synthesis pass fires only for entities with non-empty scratchpad (empty scratchpad → no LLM call).
+  - Synthesis pass fires only when there's at least one uncovered keyword the scratchpad mentions (no relevant uncovered → no LLM call, no token spend).
+  - Synthesized rows land in selections array with `kind: 'scratchpad-synth'` and the entity's spine as `sourceLabel`.
+  - Resume-gen route still succeeds when synthesis throws (best-effort posture, mirrors M8.5.4 try/catch).
+  - **Cross-entity scratchpad bleed prevented** — entity A's scratchpad never appears in entity B's synth prompt (verify by asserting the prompt body for entity B's synth call doesn't contain entity A's scratchpad string).
+
+Wired into `scripts/pre-push.sh`'s `SUITES` array.
+
+##### M8.6.6 — Promptfoo eval pass ⏳
+
+Run `npm run test:prompts` after prompts + fixtures land. Expected:
+- The four `scratchpad-synth` fixtures pass against `MODEL_LITE`.
+- Added Gemini spend ~$0.01 per full eval run.
+
+If LITE fails the positive-coverage fixture (e.g. fabricates technologies not in scratchpad) or the no-invention fixture, bump to `MODEL_FLASH` in `lib/profile/scratchpad-synth.ts` and re-run. Document the actual model picked in `docs/llm-calls.md`.
+
+---
+
+#### Acceptance (whole phase)
+
+- Generate a resume against a posting with keywords your structured bullets don't cover; if those keywords appear in the relevant entity's scratchpad, the generated PDF/DOCX includes synthesized bullets that use the posting's terminology in your scratchpad's voice.
+- "Why these bullets?" trace shows synthesized rows distinctly (amber `scratchpad-synth` kind chip).
+- Skills-gap report doesn't double-count keywords that synthesized bullets now cover.
+- Entity with empty scratchpad → no synthesis pass for that entity (no token spend).
+- Synthesis throws for one entity → other entities still synth; resume still generates.
+- `npm run test:hermetic` green; one new smoke wired into pre-push.
+- `npm run test:prompts` green for the new fixture suite.
+
+#### Out of scope for this phase
+
+- **Persisting synthesized bullets back to the profile** — synthesized bullets exist only in the generated resume's selection record (already serialized in `GeneratedResume.selections`). User can copy-paste a winner into the entity's bullets via the Profile dash if they want to keep one.
+- **Per-entity opt-in/opt-out of synthesis** — global on. Empty scratchpad already opts out; explicit per-entity toggle is YAGNI.
+- **Cross-entity scratchpad synthesis** — scope is per-entity. Cross-entity narrative ("at Acme then at Beta I did X across both") doesn't fit single-entity-row bullet structure.
+- **Synthesis without posting** — synthesis requires posting keywords as the targeting signal. Per-bullet on-demand scratchpad-driven bullet generation (no posting) overlaps with [[S7.7]] fill mode + scratchpad grounding (M7.8.5) — covered there.
+- **Streaming synthesis to UI** — synthesis runs server-side as part of POST, no streaming. Total request time ~3–8 s on top of existing rewrite; acceptable.
 
 ---
 
