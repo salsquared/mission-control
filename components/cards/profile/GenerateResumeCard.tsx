@@ -13,6 +13,7 @@ import {
     History,
     Download,
     Search,
+    Minimize2,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
@@ -52,6 +53,7 @@ interface SelectionRow {
 }
 
 const FORMAT_STORAGE_KEY = "mc-resume-format";
+const ONE_PAGE_STORAGE_KEY = "mc-resume-one-page";
 
 // Human-readable labels for the API route's internal `stage` values. The
 // stage field comes from app/api/resumes/route.ts — keep this map in sync
@@ -96,6 +98,12 @@ export function GenerateResumeCard() {
         } catch { /* localStorage unavailable */ }
         return "pdf";
     });
+    const [onePage, setOnePage] = useState<boolean>(() => {
+        try {
+            return window.localStorage.getItem(ONE_PAGE_STORAGE_KEY) === "1";
+        } catch { /* localStorage unavailable */ }
+        return false;
+    });
     const [busy, setBusy] = useState(false);
     const [stage, setStage] = useState<string | null>(null);
     const [lastResult, setLastResult] = useState<GenerateResult | null>(null);
@@ -129,6 +137,11 @@ export function GenerateResumeCard() {
         try { window.localStorage.setItem(FORMAT_STORAGE_KEY, f); } catch { /* noop */ }
     }
 
+    function pickOnePage(v: boolean) {
+        setOnePage(v);
+        try { window.localStorage.setItem(ONE_PAGE_STORAGE_KEY, v ? "1" : "0"); } catch { /* noop */ }
+    }
+
     const hasInput =
         inputMode === "pipeline" ? !!selectedApplicationId :
         inputMode === "url" ? url.trim().length > 0 :
@@ -148,7 +161,7 @@ export function GenerateResumeCard() {
             const res = await fetch("/api/resumes", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ posting: postingBody, options: { format } }),
+                body: JSON.stringify({ posting: postingBody, options: { format, onePage } }),
             });
             if (!res.ok) {
                 let detail = "";
@@ -272,6 +285,30 @@ export function GenerateResumeCard() {
                         </button>
                     ))}
                 </div>
+                {/* 1-page toggle. When on, the server iteratively prunes the
+                    lowest-scoring removable entities (then bullets) until the
+                    rendered PDF fits on one Letter page. Unremovables: the
+                    most-recent surviving work role, top-pinned project, and
+                    most-recent education. Adds a few seconds per render. */}
+                <button
+                    type="button"
+                    onClick={() => pickOnePage(!onePage)}
+                    disabled={busy}
+                    aria-pressed={onePage}
+                    title={onePage
+                        ? "1-page mode ON — server will prune to fit one page"
+                        : "1-page mode OFF — render full-length resume"}
+                    className={[
+                        "inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-semibold uppercase tracking-wide transition-colors",
+                        onePage
+                            ? "bg-purple-500/30 text-purple-100 border-purple-400/40"
+                            : "bg-black/40 text-white/50 hover:text-white/80 border-white/10",
+                        busy ? "opacity-40 cursor-not-allowed" : "",
+                    ].join(" ")}
+                >
+                    <Minimize2 className="w-3 h-3" />
+                    1 page
+                </button>
                 <button
                     onClick={handleGenerate}
                     disabled={!canSubmit}

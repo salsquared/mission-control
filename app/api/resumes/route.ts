@@ -5,18 +5,19 @@ import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting } from "@/lib/resumes/posting";
-import { selectBullets, flattenSelections, type BulletSelection } from "@/lib/resumes/select";
+import { selectBullets, selectProfileExtras, flattenSelections, type BulletSelection } from "@/lib/resumes/select";
 import { autoTagBullets } from "@/lib/profile/auto-tag";
 import { synthesizeBulletsForEntity, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
 import { broadcastEvent } from "@/lib/events";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
-import { tailorResumeTagline } from "@/lib/resumes/tagline-tailor";
+import { tailorResumeTagline, DEFAULT_SECTION_ORDER, type SectionKey } from "@/lib/resumes/tagline-tailor";
 import { computeSkillsGap } from "@/lib/resumes/skills-gap";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
 import { renderResumePDF } from "@/lib/resumes/render-pdf";
 import { renderResumeDOCX } from "@/lib/resumes/render-docx";
 import { writeResumeArtifact, deleteResumeArtifact } from "@/lib/resumes/storage";
 import { buildResumeDownloadFilename } from "@/lib/resumes/labels";
+import { renderResumePDFOnePage, getUnremovableEntityIds } from "@/lib/resumes/one-page";
 import { AIError } from "@/lib/ai/gemini";
 import type { ProfileWire } from "@/lib/schemas/profile";
 
@@ -45,6 +46,10 @@ const ResumePostBodySchema = z.object({
     options: z.object({
         template: z.literal("ats-plain").optional(),
         format: z.enum(["pdf", "docx"]).optional(),
+        // When true, the renderer iteratively prunes the lowest-scoring
+        // removable entities (and then bullets) until the resume fits on one
+        // Letter page. See lib/resumes/one-page.ts.
+        onePage: z.boolean().optional(),
     }).optional(),
 });
 
@@ -300,6 +305,25 @@ function extractDisplayName(snapshotJson: string): string | null {
     }
 }
 
+// Stable reorder: entities whose id appears in `orderedIds` are placed in
+// that order; entities not listed retain their original relative position
+// after the ordered set. No mutation of input arrays.
+function reorderSelectionByIds<T extends { entity: { id: string } }>(
+    items: T[],
+    orderedIds: string[],
+): T[] {
+    if (orderedIds.length === 0) return items;
+    const rank = new Map(orderedIds.map((id, i) => [id, i]));
+    const ranked: T[] = [];
+    const unranked: T[] = [];
+    for (const item of items) {
+        if (rank.has(item.entity.id)) ranked.push(item);
+        else unranked.push(item);
+    }
+    ranked.sort((a, b) => (rank.get(a.entity.id) ?? 0) - (rank.get(b.entity.id) ?? 0));
+    return [...ranked, ...unranked];
+}
+
 function summarizeResumeRow(r: GeneratedResumeRow) {
     return {
         id: r.id,
@@ -542,21 +566,71 @@ export async function POST(req: NextRequest) {
         // profile.tagline is SWE-coded).
         stage = "rewrite";
         let tailoredTagline: string | null = null;
+        let sectionOrder: SectionKey[] = [...DEFAULT_SECTION_ORDER];
+        let entityOrder: { experience: string[]; projects: string[]; education: string[] } = {
+            experience: [], projects: [], education: [],
+        };
         try {
             const r = await tailorResumeTagline({ profile, posting });
             tailoredTagline = r.tagline;
+            sectionOrder = r.sectionOrder;
+            entityOrder = r.entityOrder;
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             console.warn(`[resume-tagline] skipped: ${msg}`);
         }
 
+        // 4d. Posting-relevance filter for top-level Profile fields (skills /
+        // languages / hobbies). Deterministic, no LLM — items that don't match
+        // any posting keyword are dropped so the rendered resume stays on-topic.
+        const extras = selectProfileExtras(profile, posting.keywords);
+
+        // 4e. Apply the LLM's per-section entity ordering. Reorders the kept
+        // entity groups in `selection`; unknown IDs were already dropped by
+        // normalizeEntityOrder. Entities not listed by the model retain their
+        // default position (chronological for work/education, manual for
+        // projects) appended after the ordered set.
+        selection.workRoles = reorderSelectionByIds(selection.workRoles, entityOrder.experience);
+        selection.projects = reorderSelectionByIds(selection.projects, entityOrder.projects);
+        selection.education = reorderSelectionByIds(selection.education, entityOrder.education);
+
         // 5. Render
         stage = "render";
         const format = parsed.data.options?.format ?? "pdf";
-        const props = composeResumeProps(profile, selection, rewrites, tailoredTagline);
-        const bytes = format === "docx"
-            ? await renderResumeDOCX(props)
-            : await renderResumePDF(props);
+        const onePage = parsed.data.options?.onePage === true;
+        let bytes: Buffer;
+        if (onePage) {
+            // Iterative PDF render + prune loop. Mutates `selection` in place.
+            // For DOCX requests we still use the PDF as the page-fit probe,
+            // then re-render the pruned selection as DOCX.
+            const unremovableIds = getUnremovableEntityIds(selection);
+            const result = await renderResumePDFOnePage({
+                profile,
+                selection,
+                rewrites,
+                tagline: tailoredTagline,
+                extras,
+                sectionOrder,
+                unremovableIds,
+            });
+            console.info(
+                `[resume one-page] pruned ${result.prunedEntities.length} entit${result.prunedEntities.length === 1 ? "y" : "ies"} + ${result.prunedBullets.length} bullet${result.prunedBullets.length === 1 ? "" : "s"} in ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}, final ${result.finalPages}pp${result.hitIterationCap ? " (cap hit)" : ""}`,
+            );
+            // Refresh `flat` so the persisted selections row reflects the
+            // post-prune view rather than the pre-prune one.
+            flat = flattenSelections(selection);
+            if (format === "pdf") {
+                bytes = result.bytes;
+            } else {
+                const docxProps = composeResumeProps(profile, selection, rewrites, tailoredTagline, extras, sectionOrder);
+                bytes = await renderResumeDOCX(docxProps);
+            }
+        } else {
+            const props = composeResumeProps(profile, selection, rewrites, tailoredTagline, extras, sectionOrder);
+            bytes = format === "docx"
+                ? await renderResumeDOCX(props)
+                : await renderResumePDF(props);
+        }
 
         // Canonical filename — "<headline>, <role>, <company> Resume.<ext>".
         // The user's name comes from profile.headline (what the resume's H1

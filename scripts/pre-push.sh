@@ -113,6 +113,8 @@ SUITES=(
     "scripts/tests/hermetic/tagline-patch-smoke.ts"
     "scripts/tests/hermetic/tagline-draft-smoke.ts"
     "scripts/tests/hermetic/resume-tagline-smoke.ts"
+    # 1-page resume prune
+    "scripts/tests/hermetic/resume-one-page-prune-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do
