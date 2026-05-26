@@ -153,7 +153,11 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
     const companyOptions = useMemo(() => {
         const byKey = new Map<string, string>(); // lowercased → display
         for (const w of watchlistsData?.watchlists ?? []) {
-            if (w.kind === "linkedin") continue;
+            // Aggregator kinds carry a placeholder `companyName` on the
+            // watchlist itself — the real per-card company is set on each
+            // posting. Skip these so the filter dropdown doesn't list
+            // "LinkedIn search" / "Indeed search" as faux companies.
+            if (w.kind === "linkedin" || w.kind === "indeed") continue;
             const clean = (w.config.companyName ?? "").trim();
             if (!clean) continue;
             const key = clean.toLowerCase();

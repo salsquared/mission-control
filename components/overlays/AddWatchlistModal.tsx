@@ -74,7 +74,26 @@ type AdvancedKind =
     | "personio"
     | "clearcompany"
     | "linkedin"
+    | "indeed"
     | "careers-page";
+
+// Cross-company keyword-search sources surfaced in the "Find roles" tab.
+// LinkedIn and Indeed are the only two aggregators we currently scrape — every
+// other ATS is per-company (you need a slug to fetch its postings). Keep
+// `id` in sync with the discriminated-union literals in lib/schemas/watchlists.ts.
+const FIND_SOURCES = [
+    {
+        id: "linkedin" as const,
+        label: "LinkedIn",
+        hint: "Largest general index. Fragile — DOM shifts and bot detection.",
+    },
+    {
+        id: "indeed" as const,
+        label: "Indeed",
+        hint: "Mass-market aggregator. Cloudflare-gated; intermittent challenges.",
+    },
+];
+type FindSourceId = (typeof FIND_SOURCES)[number]["id"];
 
 // Kinds that take a single boardSlug + companyName (the most common shape).
 // Used to keep render conditions / submit dispatch concise.
@@ -97,6 +116,7 @@ const ADVANCED_KIND_HELP: Record<AdvancedKind, string> = {
     "personio": "Subdomain on jobs.personio.com — e.g. \"personio\" → personio.jobs.personio.com. Lots of European companies.",
     "clearcompany": "siteId (UUID) from careers-api.clearcompany.com/v1/<siteId>. Find it in the careers page's <script src=\"careers-content.clearcompany.com/js/v1/career-site.js?siteId=...\"> tag. Firefly Aerospace and other mid-market companies.",
     "linkedin": "Free-text keyword search (matches what you'd type in LinkedIn's job search bar). Fragile by design — LinkedIn DOM-shifts often, expect occasional breakage.",
+    "indeed": "Free-text keyword search across Indeed's mass-market index (the \"what\" + \"where\" inputs on indeed.com). Same fragility class as LinkedIn — Cloudflare-gated, expect occasional 0-result days.",
     "careers-page": "Use only for old-school static-HTML careers pages. Most modern pages are SPAs and won't work here — try one of the aggregator kinds first.",
 };
 
@@ -141,9 +161,15 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
     const [mode, setMode] = useState<Mode>("find");
     const [submitting, setSubmitting] = useState(false);
 
-    // ─── "find" mode (LinkedIn keyword search) ───────────────────────────────
+    // ─── "find" mode (cross-company keyword search) ──────────────────────────
     const [findKeywords, setFindKeywords] = useState("");
     const [findLocation, setFindLocation] = useState("");
+    // Multi-select: which aggregator(s) to crawl. Defaults to all (both checked)
+    // so the simplest user flow ("type a role, hit search") fans out to maximum
+    // coverage; the user can uncheck any source they don't want.
+    const [findSources, setFindSources] = useState<Set<FindSourceId>>(
+        () => new Set(FIND_SOURCES.map(s => s.id)),
+    );
 
     // ─── "company" mode (directory picker) ───────────────────────────────────
     const [companyQuery, setCompanyQuery] = useState("");
@@ -329,6 +355,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         setMode("find");
         setFindKeywords("");
         setFindLocation("");
+        setFindSources(new Set(FIND_SOURCES.map(s => s.id)));
         setCompanyQuery("");
         setCompanyTagFilter(new Set());
         setSelectedDirKeys(new Set());
@@ -425,34 +452,81 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         });
     }
 
+    function toggleFindSource(id: FindSourceId) {
+        setFindSources(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id);
+            else next.add(id);
+            return next;
+        });
+    }
+
     async function submitFind(e: React.FormEvent) {
         e.preventDefault();
         if (submitting) return;
         const kw = findKeywords.trim();
         if (!kw) return;
+        const selected = FIND_SOURCES.filter(s => findSources.has(s.id));
+        if (selected.length === 0) return;
         const loc = findLocation.trim();
-        const name = loc ? `${kw} — ${loc}` : kw;
+        const baseName = loc ? `${kw} — ${loc}` : kw;
+        // companyName on a keyword search is semantically "the source," not
+        // a specific employer — each fetcher fills the actual employer onto
+        // every posting. We just stamp the source name so admin surfaces have
+        // something readable.
+        const sourceCompanyName: Record<FindSourceId, string> = {
+            linkedin: "LinkedIn search",
+            indeed: "Indeed search",
+        };
+        // Disambiguate row names only when we're creating >1 — single-source
+        // (the legacy shape) keeps the bare title.
+        const labelFor = (label: string) =>
+            selected.length > 1 ? `${baseName} (${label})` : baseName;
         setSubmitting(true);
         try {
-            await api.watchlists.create({
-                name,
-                config: {
-                    kind: "linkedin",
-                    keywords: kw,
-                    location: loc || undefined,
-                    // companyName on a keyword search is semantically "the
-                    // source," not a specific employer — LinkedIn fills the
-                    // actual employer onto each posting.
-                    companyName: "LinkedIn search",
-                },
-                scheduleMinutes: scheduleHours * 60,
-                track: defaultTrack,
-            });
-            toastStore.push({ message: `Watching for: ${name}`, type: "info" });
+            const results = await Promise.allSettled(selected.map(src =>
+                api.watchlists.create({
+                    name: labelFor(src.label),
+                    config: {
+                        kind: src.id,
+                        keywords: kw,
+                        location: loc || undefined,
+                        companyName: sourceCompanyName[src.id],
+                    },
+                    scheduleMinutes: scheduleHours * 60,
+                    track: defaultTrack,
+                })
+            ));
+            const okIdx = results
+                .map((r, i) => r.status === "fulfilled" ? i : -1)
+                .filter(i => i >= 0);
+            const failedIdx = results
+                .map((r, i) => r.status === "rejected" ? i : -1)
+                .filter(i => i >= 0);
+            if (okIdx.length > 0) {
+                const names = okIdx.map(i => labelFor(selected[i].label));
+                toastStore.push({
+                    message: names.length === 1
+                        ? `Watching for: ${names[0]}`
+                        : `Watching ${names.length} sources for "${baseName}"`,
+                    type: "info",
+                });
+            }
+            if (failedIdx.length > 0) {
+                const failedLabels = failedIdx.map(i => selected[i].label);
+                toastStore.push({
+                    message: `Failed: ${failedLabels.join(", ")}`,
+                    type: "error",
+                });
+            }
             onCreated();
-            reset();
-            onClose();
+            if (failedIdx.length === 0) {
+                reset();
+                onClose();
+            }
         } catch (err) {
+            // Promise.allSettled doesn't throw — this catches only unexpected
+            // programmer errors (e.g. a sync throw inside the map callback).
             toastStore.push({ message: `Create failed: ${errMessage(err)}`, type: "error" });
         } finally {
             setSubmitting(false);
@@ -669,7 +743,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
         if (isSlugKind(advKind) && !advBoardSlug.trim()) return;
         if (advKind === "careers-page" && (!advRootUrl.trim() || !advLinkPattern.trim())) return;
         if (advKind === "workday" && (!advTenantHost.trim() || !advCareerSite.trim())) return;
-        if (advKind === "linkedin" && !advKeywords.trim()) return;
+        if ((advKind === "linkedin" || advKind === "indeed") && !advKeywords.trim()) return;
 
         setSubmitting(true);
         try {
@@ -686,6 +760,12 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 };
                 if (advKind === "linkedin") return {
                     kind: "linkedin" as const,
+                    keywords: advKeywords.trim(),
+                    location: advLocation.trim() || undefined,
+                    companyName: advCompanyName.trim(),
+                };
+                if (advKind === "indeed") return {
+                    kind: "indeed" as const,
                     keywords: advKeywords.trim(),
                     location: advLocation.trim() || undefined,
                     companyName: advCompanyName.trim(),
@@ -766,7 +846,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 {mode === "find" && (
                     <form onSubmit={submitFind} className="p-4 flex flex-col gap-3">
                         <p className="text-[11px] text-white/50">
-                            Describe the role you want. We&apos;ll scan LinkedIn for matches and surface them in your feed.
+                            Describe the role you want. We&apos;ll search the selected job boards and surface matches in your feed.
                         </p>
 
                         <label className="text-[11px] uppercase tracking-wide text-white/40">What kind of role?</label>
@@ -779,6 +859,43 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             autoFocus
                             className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
                         />
+
+                        <label className="text-[11px] uppercase tracking-wide text-white/40">Sources</label>
+                        <div className="flex flex-wrap gap-1.5">
+                            {FIND_SOURCES.map(src => {
+                                const active = findSources.has(src.id);
+                                return (
+                                    <button
+                                        key={src.id}
+                                        type="button"
+                                        onClick={() => toggleFindSource(src.id)}
+                                        disabled={submitting}
+                                        aria-pressed={active}
+                                        title={src.hint}
+                                        className={[
+                                            "inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-semibold transition-colors",
+                                            active
+                                                ? "bg-cyan-500/25 text-cyan-100 border border-cyan-400/40"
+                                                : "bg-black/40 text-white/50 border border-white/10 hover:text-white/80",
+                                        ].join(" ")}
+                                    >
+                                        <span
+                                            aria-hidden
+                                            className={[
+                                                "w-3 h-3 rounded border flex items-center justify-center",
+                                                active ? "bg-cyan-500/50 border-cyan-300" : "bg-black/40 border-white/20",
+                                            ].join(" ")}
+                                        >
+                                            {active && <Check className="w-2 h-2 text-cyan-50" />}
+                                        </span>
+                                        {src.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <p className="text-[10px] text-white/30 -mt-1 leading-tight">
+                            One watchlist per source — each runs on its own cadence. Cross-company search only works for these aggregators; other ATSes need a specific company slug (see &quot;Watch company&quot; or &quot;Advanced&quot;).
+                        </p>
 
                         <label className="text-[11px] uppercase tracking-wide text-white/40">Where? (optional)</label>
                         <input
@@ -793,8 +910,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                         <ScheduleField value={scheduleHours} onChange={setScheduleHours} disabled={submitting} />
 
                         <p className="text-[10px] text-white/30 leading-tight">
-                            Heads-up: LinkedIn aggressively bot-detects, so expect occasional 0-result days when their markup shifts.
-                            For a specific company, use the &quot;Watch company&quot; tab.
+                            Heads-up: both LinkedIn and Indeed bot-detect aggressively, so expect occasional 0-result days when their markup shifts. For a specific company, use the &quot;Watch company&quot; tab.
                         </p>
 
                         <div className="flex items-center justify-end gap-2 pt-2">
@@ -808,11 +924,16 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                             </button>
                             <button
                                 type="submit"
-                                disabled={submitting || !findKeywords.trim()}
+                                disabled={submitting || !findKeywords.trim() || findSources.size === 0}
                                 className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-cyan-500/30 hover:bg-cyan-500/40 border border-cyan-400/40 text-xs font-semibold text-cyan-100 disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
-                                {submitting ? "Adding…" : "Start watching"}
+                                {(() => {
+                                    if (submitting) return "Adding…";
+                                    if (findSources.size === 0) return "Pick a source";
+                                    if (findSources.size === 1) return "Start watching";
+                                    return `Start watching (${findSources.size} sources)`;
+                                })()}
                             </button>
                         </div>
                     </form>
@@ -1295,7 +1416,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
 
                         <label className="text-[11px] uppercase tracking-wide text-white/40">Source</label>
                         <div className="flex rounded-lg overflow-hidden border border-white/10 bg-black/40 flex-wrap" role="group">
-                            {(["greenhouse", "lever", "ashby", "workday", "smartrecruiters", "workable", "recruitee", "personio", "clearcompany", "linkedin", "careers-page"] as const).map(k => (
+                            {(["greenhouse", "lever", "ashby", "workday", "smartrecruiters", "workable", "recruitee", "personio", "clearcompany", "linkedin", "indeed", "careers-page"] as const).map(k => (
                                 <button
                                     key={k}
                                     type="button"
@@ -1390,7 +1511,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 />
                             </>
                         )}
-                        {advKind === "linkedin" && (
+                        {(advKind === "linkedin" || advKind === "indeed") && (
                             <>
                                 <label className="text-[11px] uppercase tracking-wide text-white/40">Keywords</label>
                                 <input

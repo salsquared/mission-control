@@ -25,11 +25,14 @@ import { z } from "zod";
 //     Aerospace and mid-market companies). siteId is a UUID, not a slug.
 //   - linkedin: scrapes the public guest jobs-search endpoint with cheerio.
 //     Fragile by design — LinkedIn aggressively bot-detects.
+//   - indeed: second cross-company aggregator (alongside LinkedIn). Scrapes
+//     www.indeed.com/jobs?q=…&l=… HTML cards with cheerio. Same fragility
+//     class as LinkedIn — both sites DOM-shift and bot-detect.
 export const WATCHLIST_KINDS = [
     "careers-page", "greenhouse", "lever", "ashby", "workday",
     "smartrecruiters", "workable", "recruitee", "personio",
     "clearcompany",
-    "linkedin",
+    "linkedin", "indeed",
 ] as const;
 export const WatchlistKindSchema = z.enum(WATCHLIST_KINDS);
 
@@ -141,6 +144,20 @@ export const LinkedinConfigSchema = z.object({
     companyName: z.string().min(1),
 });
 
+export const IndeedConfigSchema = z.object({
+    kind: z.literal("indeed"),
+    // Free-text keyword query — what the user would type into Indeed's "what"
+    // box. Maps to the `q` URL param.
+    keywords: z.string().min(1).max(200),
+    // Optional location filter — Indeed's "where" box. Maps to `l`.
+    location: z.string().max(100).optional(),
+    // Time window — Indeed accepts integer days-since-posted via `fromage`.
+    // Keep the same friendly enum as LinkedIn so the modal can reuse the
+    // wiring; fetcher translates per-source.
+    timeRange: z.enum(["24h", "week", "month", "any"]).optional(),
+    companyName: z.string().min(1),
+});
+
 export const WatchlistConfigSchema = z.discriminatedUnion("kind", [
     CareersPageConfigSchema,
     GreenhouseConfigSchema,
@@ -153,6 +170,7 @@ export const WatchlistConfigSchema = z.discriminatedUnion("kind", [
     PersonioConfigSchema,
     ClearCompanyConfigSchema,
     LinkedinConfigSchema,
+    IndeedConfigSchema,
 ]);
 
 export type WatchlistConfig = z.infer<typeof WatchlistConfigSchema>;

@@ -12,7 +12,7 @@
  * and we leave the row alone for the next tick.
  *
  * Per-kind heuristics live in PROBE_HANDLERS. The marker lists for the
- * HTML-scraping kinds (linkedin, ashby, workday) are initial guesses derived
+ * HTML-scraping kinds (linkedin, indeed, ashby, workday) are initial guesses derived
  * from a small sample of probed pages; they can grow over time without
  * re-architecting anything. Grep for `[liveness] kind=<x> unknown` in
  * production logs to spot recurring miss patterns.
@@ -56,6 +56,7 @@ export interface ProbeProfile {
  */
 export const PROBE_PROFILES: Record<WatchlistKind, ProbeProfile> = {
     linkedin:        { concurrency: 1, perHitDelayMs: 1500, maxPerTick:  30, timeoutMs: 8000 },
+    indeed:          { concurrency: 1, perHitDelayMs: 1500, maxPerTick:  30, timeoutMs: 8000 },
     workday:         { concurrency: 6, perHitDelayMs:    0, maxPerTick: 500, timeoutMs: 5000 },
     greenhouse:      { concurrency: 8, perHitDelayMs:    0, maxPerTick: 200, timeoutMs: 4000 },
     lever:           { concurrency: 6, perHitDelayMs:    0, maxPerTick: 100, timeoutMs: 4000 },
@@ -95,6 +96,19 @@ const ASHBY_CLOSED_MARKERS = [
 const WORKDAY_CLOSED_MARKERS = [
     "job is no longer",
     "position has been filled",
+];
+const INDEED_CLOSED_MARKERS = [
+    "this job has expired",
+    "no longer accepting applications",
+    "this job posting is no longer available",
+    "we couldn't find this job",
+    "this job is no longer available",
+];
+const INDEED_ALIVE_MARKERS = [
+    "jobsearch-jobinfoheader",
+    "jobsearch-bodyContainer",
+    "applybuttonwrapper",
+    "indeedapplybutton",
 ];
 
 /** Run `fn` with an AbortSignal that fires after `timeoutMs`. */
@@ -199,6 +213,23 @@ async function probeLinkedin(p: ProbeInput, timeoutMs: number, onRateLimit?: Rat
     }, onRateLimit);
 }
 
+async function probeIndeed(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
+    // Indeed UA-sniffs the same way LinkedIn / Workday do — Cloudflare flags
+    // anything that doesn't look like a real browser.
+    return probeViaHttpStatus(p.sourceUrl, timeoutMs, LINKEDIN_UA, ({ finalUrl, bodyLower }) => {
+        // Off /viewjob entirely → Indeed redirected us to search or homepage.
+        if (!finalUrl.includes("/viewjob")) return "closed";
+        for (const m of INDEED_CLOSED_MARKERS) {
+            if (bodyLower.includes(m)) return "closed";
+        }
+        // Same shape as LinkedIn — require an alive marker so a Cloudflare
+        // interstitial doesn't read as a live posting.
+        const hasAliveMarker = INDEED_ALIVE_MARKERS.some(m => bodyLower.includes(m));
+        if (!hasAliveMarker) return "unknown";
+        return null;
+    }, onRateLimit);
+}
+
 const GREENHOUSE_URL_RE = /^https?:\/\/[^/]+greenhouse\.io\/([^/]+)\/jobs\/(\d+)/i;
 async function probeGreenhouse(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
     const m = p.sourceUrl.match(GREENHOUSE_URL_RE);
@@ -262,6 +293,7 @@ async function probeGeneric(p: ProbeInput, timeoutMs: number, onRateLimit?: Rate
 type ProbeHandler = (p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback) => Promise<LivenessResult>;
 const PROBE_HANDLERS: Record<WatchlistKind, ProbeHandler> = {
     linkedin:        probeLinkedin,
+    indeed:          probeIndeed,
     workday:         probeWorkday,
     greenhouse:      probeGreenhouse,
     lever:           probeLever,

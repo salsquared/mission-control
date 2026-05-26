@@ -385,8 +385,9 @@ export function searchDirectory(
  * detect when a directory entry is already on the user's watchlist. Two configs
  * with the same key target the same job board.
  *
- * Returns `null` for kinds we don't dedup (`linkedin` keyword searches and
- * `careers-page` configs aren't in the directory and shouldn't be compared).
+ * Returns `null` for kinds we don't dedup (`linkedin` / `indeed` keyword
+ * searches and `careers-page` configs aren't in the directory and shouldn't
+ * be compared).
  */
 export function watchlistConfigKey(config: WatchlistConfig): string | null {
     switch (config.kind) {
@@ -408,6 +409,7 @@ export function watchlistConfigKey(config: WatchlistConfig): string | null {
         case "workday":
             return `workday:${config.tenantHost.toLowerCase()}:${config.careerSite}`;
         case "linkedin":
+        case "indeed":
         case "careers-page":
             return null;
     }

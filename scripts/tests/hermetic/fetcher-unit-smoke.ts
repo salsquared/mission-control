@@ -18,6 +18,7 @@ import { fetchRecruitee } from "@/lib/fetchers/recruitee-fetcher";
 import { fetchPersonio } from "@/lib/fetchers/personio-fetcher";
 import { fetchClearCompany } from "@/lib/fetchers/clearcompany-fetcher";
 import { fetchLinkedin } from "@/lib/fetchers/linkedin-fetcher";
+import { fetchIndeed } from "@/lib/fetchers/indeed-fetcher";
 
 let passes = 0;
 let fails = 0;
@@ -492,6 +493,116 @@ async function testLinkedin() {
     else pass("linkedin empty body → ok with 0");
 }
 
+// ─── Indeed ──────────────────────────────────────────────────────────────
+
+async function testIndeed() {
+    // Synthetic Indeed search-page chunk. The fetcher anchors on `data-jk`
+    // (stable since 2018) and `data-testid` attributes for within-card lookup.
+    const indeedHtml = `
+      <div class="cardOutline job_seen_beacon">
+        <a class="jcs-JobTitle" data-jk="abc123" href="/rc/clk?jk=abc123&fccid=xxx&vjs=3">
+          <h2 data-testid="jobTitle">Software Engineer</h2>
+        </a>
+        <span data-testid="company-name">Acme Inc</span>
+        <div data-testid="text-location">San Francisco, CA</div>
+        <span data-testid="myJobsStateDate">2 days ago</span>
+        <div data-testid="job-snippet">Build cool things in Rust.</div>
+      </div>
+      <div class="cardOutline job_seen_beacon">
+        <a class="jcs-JobTitle" data-jk="def456" href="/viewjob?jk=def456">
+          <h2 data-testid="jobTitle">Senior PM</h2>
+        </a>
+        <span data-testid="company-name">Other Co</span>
+        <div data-testid="text-location">Remote</div>
+      </div>
+      <div class="cardOutline job_seen_beacon">
+        <a class="jcs-JobTitle" data-jk="abc123" href="/viewjob?jk=abc123">
+          <h2 data-testid="jobTitle">Dup of first</h2>
+        </a>
+      </div>
+      <div class="not-a-card">
+        <p>Just some chrome — no data-jk here, fetcher should skip.</p>
+      </div>`;
+
+    // Happy path
+    mockSequence([
+        { kind: "text", body: indeedHtml },
+        { kind: "text", body: "" }, // empty 2nd page — fetcher should stop
+    ]);
+    const r = await fetchIndeed({ kind: "indeed", keywords: "software engineer", companyName: "Indeed search" });
+    if (!r.ok) { fail("indeed happy: not ok", r); }
+    else {
+        if (r.postings.length !== 2) fail(`indeed happy: expected 2 postings (dup data-jk should collapse), got ${r.postings.length}`);
+        else pass("indeed happy: 2 postings parsed, duplicate data-jk deduped");
+        if (r.postings[0].title !== "Software Engineer") fail(`indeed: title wrong (${r.postings[0].title})`);
+        else pass("indeed: title from data-testid=jobTitle");
+        if (r.postings[0].sourceUrl !== "https://www.indeed.com/viewjob?jk=abc123") fail(`indeed: sourceUrl should reconstruct to /viewjob?jk=… regardless of original href shape (got ${r.postings[0].sourceUrl})`);
+        else pass("indeed: sourceUrl canonical (/viewjob?jk=…, not /rc/clk)");
+        if (r.postings[0].company !== "Acme Inc") fail(`indeed: company should come from per-card data-testid (got ${r.postings[0].company})`);
+        else pass("indeed: company from per-card data-testid (not watchlist name)");
+        if (r.postings[0].location !== "San Francisco, CA") fail(`indeed: location wrong (${r.postings[0].location})`);
+        else pass("indeed: location from data-testid=text-location");
+        if (!r.postings[0].snippet || !r.postings[0].snippet.includes("2 days ago") || !r.postings[0].snippet.includes("Build cool things in Rust.")) fail(`indeed: snippet should fold date + text (${r.postings[0].snippet})`);
+        else pass("indeed: snippet folds date + text");
+        if (r.postings[1].location !== "Remote") fail("indeed: 2nd posting location wrong");
+        else pass("indeed: 2nd posting location extracted");
+    }
+
+    // URL contains the search params (sanity: we built the URL correctly)
+    if (lastRequestURL && lastRequestURL.includes("q=software+engineer") && lastRequestURL.includes("fromage=1") && lastRequestURL.includes("sort=date")) {
+        pass("indeed: search URL composed (q=, fromage=, sort=)");
+    } else {
+        fail(`indeed: last URL missing expected params (${lastRequestURL})`);
+    }
+
+    // 429 → rate-limit error
+    mockNext({ kind: "text", status: 429, body: "" });
+    const r2 = await fetchIndeed({ kind: "indeed", keywords: "x", companyName: "x" });
+    if (r2.ok) fail("indeed 429: should not be ok");
+    else if (!r2.error.toLowerCase().includes("rate")) fail("indeed 429: error should mention rate limit");
+    else pass("indeed 429 → rate-limit error");
+
+    // 403 → blocked error
+    mockNext({ kind: "text", status: 403, body: "" });
+    const r3 = await fetchIndeed({ kind: "indeed", keywords: "x", companyName: "x" });
+    if (r3.ok) fail("indeed 403: should not be ok");
+    else if (!/cloudflare|block/i.test(r3.error)) fail(`indeed 403: error should mention blocked / cloudflare (${r3.error})`);
+    else pass("indeed 403 → blocked error");
+
+    // Cloudflare challenge body → explicit error (200 OK but not real results)
+    mockNext({ kind: "text", body: "<html><body><h1>Just a moment...</h1><script>cf-challenge</script></body></html>" });
+    const r4 = await fetchIndeed({ kind: "indeed", keywords: "x", companyName: "x" });
+    if (r4.ok) fail("indeed cloudflare challenge: should detect challenge body and fail loudly, not silently return 0");
+    else if (!/cloudflare|challenge/i.test(r4.error)) fail(`indeed challenge: error should mention cloudflare/challenge (${r4.error})`);
+    else pass("indeed cloudflare challenge → explicit error (not silent 0)");
+
+    // Empty body — past the last page
+    mockNext({ kind: "text", body: "" });
+    const r5 = await fetchIndeed({ kind: "indeed", keywords: "nonexistent", companyName: "x" });
+    if (!r5.ok) fail("indeed empty: should be ok");
+    else if (r5.postings.length !== 0) fail(`indeed empty: expected 0, got ${r5.postings.length}`);
+    else pass("indeed empty body → ok with 0");
+
+    // Optional location → goes into the `l` URL param
+    mockSequence([
+        { kind: "text", body: indeedHtml },
+        { kind: "text", body: "" },
+    ]);
+    await fetchIndeed({ kind: "indeed", keywords: "engineer", location: "Remote, US", companyName: "x" });
+    if (lastRequestURL && /[?&]l=Remote%2C\+US/.test(lastRequestURL)) pass("indeed: location passed via l= param");
+    else fail(`indeed: location not in URL (${lastRequestURL})`);
+
+    // timeRange "any" → omits fromage entirely
+    resetMocks();
+    mockSequence([
+        { kind: "text", body: indeedHtml },
+        { kind: "text", body: "" },
+    ]);
+    await fetchIndeed({ kind: "indeed", keywords: "engineer", timeRange: "any", companyName: "x" });
+    if (lastRequestURL && !lastRequestURL.includes("fromage=")) pass("indeed: timeRange=any omits fromage");
+    else fail(`indeed: timeRange=any should omit fromage (${lastRequestURL})`);
+}
+
 // ─── SmartRecruiters ────────────────────────────────────────────────────
 
 async function testSmartRecruiters() {
@@ -754,6 +865,7 @@ async function main() {
         await testPersonio();
         await testClearCompany();
         await testLinkedin();
+        await testIndeed();
     } finally {
         globalThis.fetch = realFetch;
         console.log(`\n${passes}/${passes + fails} steps passed`);
