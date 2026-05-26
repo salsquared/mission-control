@@ -20,20 +20,16 @@ const RewriteResponseSchema = z.object({
     bullets: z.array(RewrittenBulletSchema),
 });
 
-// Story S9.5 — README excerpts per project sourceId. Caller-built; the rewriter
-// only renders what's handed in. ~2 KB cap per project so the combined prompt
-// stays in budget even with 4-5 portfolio projects in one resume.
+// README excerpts per project sourceId. Caller-built (from Project.readme
+// rows the scheduler populated); the rewriter only renders what's handed in.
+// 2 KB cap per project so the combined prompt stays in budget even with
+// 4–5 GitHub-hosted projects in one resume.
 export interface ProjectReadmeContext {
     readmesBySourceId: Record<string, string>;
 }
 
 export const PROJECT_README_PROMPT_LIMIT = 2_048;
 
-// Pre-template-cutover, this exported function returned the fully-assembled
-// user prompt. Post-LOP-6 it computes the {{var}} substitutions and renders
-// them through the disk snapshot — so existing hermetic smokes that call
-// `buildRewriteUserPrompt` keep observing realistic prompt strings without
-// hitting Lunary or Gemini.
 export function buildRewriteVars(
     selections: BulletSelection[],
     posting: ParsedPosting,

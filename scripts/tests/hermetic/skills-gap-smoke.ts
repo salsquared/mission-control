@@ -193,7 +193,6 @@ function main() {
                 id: "pr1", profileId: "p1", name: "X", description: null,
                 repoUrl: null, liveUrl: null,
                 bullets: [mkBullet("b1", "Server-side rendering with Next.js", [])],
-                metrics: null, githubRepo: null, portfolio: false, metricsUpdatedAt: null,
                 position: 0, createdAt: ISO, updatedAt: ISO,
             }],
             education: [{

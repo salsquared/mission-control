@@ -82,10 +82,6 @@ const profile: ProfileWire = {
             bullets: [
                 mkBullet("b5", "Designed a dash carousel architecture in Next.js + Zustand", ["nextjs", "zustand"]),
             ],
-            metrics: null,
-            githubRepo: null,
-            portfolio: false,
-            metricsUpdatedAt: null,
             position: 0,
             createdAt: now,
             updatedAt: now,

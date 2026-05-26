@@ -10,7 +10,6 @@ import { fetchGreenhouse } from "@/lib/fetchers/greenhouse-fetcher";
 import { fetchLever } from "@/lib/fetchers/lever-fetcher";
 import { fetchAshby } from "@/lib/fetchers/ashby-fetcher";
 import { fetchCareersPage } from "@/lib/fetchers/careers-page-fetcher";
-import { fetchGithubRepoMetrics } from "@/lib/fetchers/github-public-fetcher";
 import { fetchWorkday } from "@/lib/fetchers/workday-fetcher";
 import { fetchSmartRecruiters } from "@/lib/fetchers/smartrecruiters-fetcher";
 import { fetchWorkable } from "@/lib/fetchers/workable-fetcher";
@@ -262,88 +261,6 @@ async function testCareersPage() {
     if (r6.ok) fail("careers-page DNS-fail: should not be ok");
     else if (!r6.error.toLowerCase().includes("enotfound")) fail("careers-page DNS-fail: error not surfaced");
     else pass("careers-page DNS failure → error");
-}
-
-// ─── GitHub public-API ───────────────────────────────────────────────────
-
-async function testGithub() {
-    // Happy: 3 calls (repo, languages, commits) returning a complete metrics object
-    mockSequence([
-        { kind: "json", body: { stargazers_count: 142, language: "Go", created_at: "2023-01-01T00:00:00Z", pushed_at: "2026-05-10T12:00:00Z" } },
-        { kind: "json", body: { Go: 50000, TypeScript: 12000, Python: 3000 } },
-        {
-            kind: "json",
-            body: [{ commit: { author: { date: "2026-05-10T12:00:00Z" } } }],
-            // Synthetic link header that GitHub uses to indicate "page 2300 is the last"
-            headers: { link: '<https://api.github.com/repositories/1/commits?per_page=1&page=2300>; rel="last"' },
-        },
-    ]);
-    const r = await fetchGithubRepoMetrics("owner/repo");
-    if (!r.ok) { fail("github happy: not ok", r); }
-    else {
-        if (r.metrics.stars !== 142) fail(`stars=${r.metrics.stars}, expected 142`);
-        else pass("github: stars parsed");
-        if (r.metrics.primaryLanguage !== "Go") fail("primaryLanguage wrong");
-        else pass("github: primaryLanguage parsed");
-        if (Object.keys(r.metrics.languageMix).length !== 3) fail("languageMix size wrong");
-        else pass("github: languageMix parsed (3 languages)");
-        if (r.metrics.commitsTotal !== 2300) fail(`commitsTotal=${r.metrics.commitsTotal}, expected 2300 from link header`);
-        else pass("github: commitsTotal extracted from link rel=last");
-        if (r.metrics.lastCommitAt !== "2026-05-10T12:00:00Z") fail("lastCommitAt wrong");
-        else pass("github: lastCommitAt parsed");
-        if (typeof r.metrics.ageDays !== "number" || r.metrics.ageDays < 365) fail(`ageDays=${r.metrics.ageDays}, expected >365`);
-        else pass("github: ageDays computed from created_at");
-    }
-
-    // Invalid owner/repo format
-    resetMocks();
-    const r2 = await fetchGithubRepoMetrics("not-a-valid-repo");
-    if (r2.ok) fail("github invalid repo: should not be ok");
-    else if (!r2.error.includes("Invalid owner/repo")) fail("github invalid: wrong error", r2.error);
-    else pass("github: invalid owner/repo rejected");
-
-    // 404 on first call
-    mockNext({ kind: "json", status: 404, body: { message: "Not Found" } });
-    const r3 = await fetchGithubRepoMetrics("ghost/repo");
-    if (r3.ok) fail("github 404: should not be ok");
-    else if (!r3.error.includes("404")) fail("github 404: error missing status");
-    else pass("github: 404 → error");
-
-    // Malformed repo response
-    mockNext({ kind: "json", body: { not_what_we_expected: true } });
-    const r4 = await fetchGithubRepoMetrics("owner/repo");
-    if (r4.ok) fail("github malformed: should not be ok");
-    else pass("github: malformed repo shape → error");
-
-    // Repo OK, languages call 500s — fetcher bails out (matches current behavior)
-    mockSequence([
-        { kind: "json", body: { stargazers_count: 5, language: "Rust", created_at: "2025-01-01T00:00:00Z" } },
-        { kind: "json", status: 500, body: { message: "internal" } },
-    ]);
-    const r5 = await fetchGithubRepoMetrics("owner/repo");
-    if (r5.ok) fail("github languages-500: should not be ok");
-    else if (!r5.error.includes("500")) fail("github languages-500: error missing status");
-    else pass("github: languages 500 → surfaced as error");
-
-    // Repo + languages OK, commits call missing link header — commitsTotal=null but result still ok
-    mockSequence([
-        { kind: "json", body: { stargazers_count: 0, language: null, created_at: "2025-06-01T00:00:00Z" } },
-        { kind: "json", body: {} },
-        { kind: "json", body: [{ commit: { author: { date: "2025-06-15T00:00:00Z" } } }] }, // no link header
-    ]);
-    const r6 = await fetchGithubRepoMetrics("owner/repo");
-    if (!r6.ok) fail("github no-link-header: should still be ok", r6);
-    else {
-        if (r6.metrics.commitsTotal !== null) fail("commitsTotal should be null without link header");
-        else pass("github: missing link header → commitsTotal=null (not crash)");
-        if (r6.metrics.lastCommitAt !== "2025-06-15T00:00:00Z") fail("lastCommitAt should come from commits payload");
-        else pass("github: lastCommitAt extracted from commits payload");
-    }
-
-    // SSRF-style URL — fetcher rejects via the URL guard (no env override here)
-    delete process.env.MC_ALLOW_PRIVATE_FETCH;
-    // Note: the fetcher hard-codes api.github.com so this can't actually trigger;
-    // include for documentation only.
 }
 
 // ─── Workday ─────────────────────────────────────────────────────────────
@@ -857,7 +774,6 @@ async function main() {
         await testLever();
         await testAshby();
         await testCareersPage();
-        await testGithub();
         await testWorkday();
         await testSmartRecruiters();
         await testWorkable();

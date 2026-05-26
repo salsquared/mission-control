@@ -80,45 +80,44 @@ export const WorkRoleRow: React.FC<WorkRoleRowProps> = ({
     };
 
     return (
-        <div className="bg-white/5 border border-white/5 hover:border-purple-500/20 rounded-md p-3 transition-colors">
-            <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0 flex-1">
-                    <EditableField
-                        value={role.title}
-                        onSave={(v) => v && onUpdate({ title: v })}
-                        placeholder="Role title"
-                        readClassName="text-base font-semibold text-white"
-                    />
-                    <EditableField
-                        value={role.company}
-                        onSave={(v) => v && onUpdate({ company: v })}
-                        placeholder="Company"
-                        readClassName="text-sm text-purple-300"
-                    />
-                </div>
-                <div className="flex items-center gap-0.5 shrink-0">
-                    <button
-                        onClick={() => setShowScratchpad(true)}
-                        className={`p-1.5 rounded transition-colors ${
-                            hasScratchpad
-                                ? "text-purple-300 bg-purple-500/10 hover:bg-purple-500/20"
-                                : "text-white/25 hover:text-white/60 hover:bg-white/10"
-                        }`}
-                        title={hasScratchpad
-                            ? `${scratchpadLen.toLocaleString()} chars of notes — click to edit`
-                            : "No notes yet — click to add voice/experience grounding for the LLM"}
-                        aria-pressed={hasScratchpad}
-                    >
-                        <StickyNote className={`w-3.5 h-3.5 ${hasScratchpad ? "fill-current" : ""}`} />
-                    </button>
-                    {onMoveUp && (
-                        <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded text-white/30 hover:text-white/70 hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed" title="Move up"><ArrowUp className="w-3.5 h-3.5" /></button>
-                    )}
-                    {onMoveDown && (
-                        <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded text-white/30 hover:text-white/70 hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed" title="Move down"><ArrowDown className="w-3.5 h-3.5" /></button>
-                    )}
-                    <button onClick={onDelete} className="p-1.5 rounded text-rose-400/40 hover:text-rose-400 hover:bg-rose-500/10" title="Delete role"><Trash2 className="w-3.5 h-3.5" /></button>
-                </div>
+        <div className="relative bg-white/5 border border-white/5 hover:border-purple-500/20 rounded-md p-6 transition-colors">
+            <div className="absolute top-4 right-4 flex items-center gap-0.5">
+                <button
+                    onClick={() => setShowScratchpad(true)}
+                    className={`p-1.5 rounded transition-colors ${
+                        hasScratchpad
+                            ? "text-purple-300 bg-purple-500/10 hover:bg-purple-500/20"
+                            : "text-white/25 hover:text-white/60 hover:bg-white/10"
+                    }`}
+                    title={hasScratchpad
+                        ? `${scratchpadLen.toLocaleString()} chars of notes — click to edit`
+                        : "No notes yet — click to add voice/experience grounding for the LLM"}
+                    aria-pressed={hasScratchpad}
+                >
+                    <StickyNote className={`w-3.5 h-3.5 ${hasScratchpad ? "fill-current" : ""}`} />
+                </button>
+                {onMoveUp && (
+                    <button onClick={onMoveUp} disabled={!canMoveUp} className="p-1.5 rounded text-white/30 hover:text-white/70 hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed" title="Move up"><ArrowUp className="w-3.5 h-3.5" /></button>
+                )}
+                {onMoveDown && (
+                    <button onClick={onMoveDown} disabled={!canMoveDown} className="p-1.5 rounded text-white/30 hover:text-white/70 hover:bg-white/10 disabled:opacity-20 disabled:cursor-not-allowed" title="Move down"><ArrowDown className="w-3.5 h-3.5" /></button>
+                )}
+                <button onClick={onDelete} className="p-1.5 rounded text-rose-400/40 hover:text-rose-400 hover:bg-rose-500/10" title="Delete role"><Trash2 className="w-3.5 h-3.5" /></button>
+            </div>
+
+            <div className="pr-32">
+                <EditableField
+                    value={role.title}
+                    onSave={(v) => v && onUpdate({ title: v })}
+                    placeholder="Role title"
+                    readClassName="text-base font-semibold text-white"
+                />
+                <EditableField
+                    value={role.company}
+                    onSave={(v) => v && onUpdate({ company: v })}
+                    placeholder="Company"
+                    readClassName="text-sm text-purple-300"
+                />
             </div>
 
             <div className="mt-2 grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">

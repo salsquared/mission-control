@@ -318,15 +318,12 @@ model Project {
   repoUrl            String?
   liveUrl            String?
   bullets            String    @default("[]")
-  metrics            String?   // JSON: { stars, primaryLanguage, languageMix, lastCommitAt, commitsTotal, ageDays }
-  githubRepo         String?   // "owner/repo" — drives the M9 scheduler fetch
-  portfolio          Boolean   @default(false) // flag to fetch metrics for this project + surface on resumes
-  metricsUpdatedAt   DateTime?
-  // Story S9.5 — raw README markdown fetched from the GitHub default branch
-  // for portfolio repos. Capped at ~16 KB at write time so a runaway README
-  // (e.g. embedded changelogs) can't bloat the row. Consumed by the resume
-  // rewrite prompt as additional source material so portfolio-project
-  // bullets can reflect what the repo actually does, not just star counts.
+  // Raw README markdown fetched from the github.com default branch when
+  // `repoUrl` points at a GitHub repo. The scheduler parses owner/repo out
+  // of the URL — no separate field. Capped at ~16 KB at write time to
+  // bound row size, sliced to 2 KB inside the prompt builders. Consumed
+  // by the resume rewrite prompt and the bullet-assist prompt as factual
+  // grounding so generated bullets reflect what the repo actually does.
   readme             String?
   readmeUpdatedAt    DateTime?
   // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-project user-voice
@@ -339,7 +336,6 @@ model Project {
   profile            Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, position])
-  @@index([portfolio, metricsUpdatedAt])
 }
 
 model Education {

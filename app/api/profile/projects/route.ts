@@ -33,8 +33,6 @@ export async function POST(req: NextRequest) {
             repoUrl: parsed.data.repoUrl ?? null,
             liveUrl: parsed.data.liveUrl ?? null,
             bullets: parsed.data.bullets,
-            githubRepo: parsed.data.githubRepo ?? null,
-            portfolio: parsed.data.portfolio,
             scratchpad: parsed.data.scratchpad ?? null,
             position: parsed.data.position,
         });
@@ -64,8 +62,6 @@ export async function PATCH(req: NextRequest) {
             repoUrl: parsed.data.repoUrl,
             liveUrl: parsed.data.liveUrl,
             bullets: parsed.data.bullets,
-            githubRepo: parsed.data.githubRepo,
-            portfolio: parsed.data.portfolio,
             scratchpad: parsed.data.scratchpad,
             position: parsed.data.position,
         });

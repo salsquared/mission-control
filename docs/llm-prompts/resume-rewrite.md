@@ -75,5 +75,5 @@ Bullets to rewrite (preserve every `id` exactly):
 - Strict validation: the response's `bullets[].id` must match an id from the input; unknown or duplicate ids throw `AIError`. Missing ids fall back to the original text (logged warn, never silently dropped).
 - `matchedKeywords` in the response is metadata for the "Why these bullets?" trace UI — it tells the user which posting keywords each rewrite leaned on. Distinct from the input's `matchedKeywords` (deterministic scorer output).
 - The rewriter does NOT regenerate bullet tags — tags stay frozen from the input. (Contrast `bullet-assist-rewrite`, which IS allowed to change tags because the user manually reviews each one.)
-- README context is a 2-tier defense against hallucination: rule 2 prohibits invention, README provides additional grounding ("only emphasize what README confirms"). Shipped as part of M9 Phase 2 / Story S9.5.
-- See `buildRewriteUserPrompt()` in `lib/resumes/rewrite.ts` for the canonical assembly. Hermetic smoke `readme-prompt-smoke.ts` (13/13) covers the dedup + truncation cases.
+- README context is a 2-tier defense against hallucination: rule 2 prohibits invention, README provides additional grounding ("only emphasize what README confirms").
+- See `buildRewriteUserPrompt()` in `lib/resumes/rewrite.ts` for the canonical assembly. Hermetic smoke `readme-prompt-smoke.ts` covers the dedup + truncation cases.

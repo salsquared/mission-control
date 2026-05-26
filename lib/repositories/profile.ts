@@ -15,7 +15,7 @@ export { LANGUAGE_PROFICIENCIES };
 
 // Hydrated shapes: bullets parsed from JSON string into Bullet[].
 export type HydratedWorkRole = Omit<WorkRole, 'bullets'> & { bullets: Bullet[] };
-export type HydratedProject = Omit<Project, 'bullets' | 'metrics'> & { bullets: Bullet[]; metrics: unknown | null };
+export type HydratedProject = Omit<Project, 'bullets'> & { bullets: Bullet[] };
 export type HydratedEducation = Omit<Education, 'bullets'> & { bullets: Bullet[] };
 
 export type HydratedProfile = Omit<Profile, 'links' | 'skills' | 'hobbies' | 'languages'> & {
@@ -84,11 +84,7 @@ function hydrateWorkRole(row: WorkRole): HydratedWorkRole {
     return { ...row, bullets: parseBullets(row.bullets) };
 }
 function hydrateProject(row: Project): HydratedProject {
-    let metrics: unknown | null = null;
-    if (row.metrics) {
-        try { metrics = JSON.parse(row.metrics); } catch { metrics = null; }
-    }
-    return { ...row, bullets: parseBullets(row.bullets), metrics };
+    return { ...row, bullets: parseBullets(row.bullets) };
 }
 function hydrateEducation(row: Education): HydratedEducation {
     return { ...row, bullets: parseBullets(row.bullets) };
@@ -260,8 +256,6 @@ export interface ProjectCreateInput {
     repoUrl?: string | null;
     liveUrl?: string | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
-    githubRepo?: string | null;
-    portfolio?: boolean;
     scratchpad?: string | null;
     position?: number;
 }
@@ -278,8 +272,6 @@ export async function createProject(userId: string, input: ProjectCreateInput): 
             repoUrl: input.repoUrl ?? null,
             liveUrl: input.liveUrl ?? null,
             bullets: serializeBullets(bullets),
-            githubRepo: input.githubRepo ?? null,
-            portfolio: input.portfolio ?? false,
             scratchpad: input.scratchpad ?? null,
             position,
         },
@@ -293,8 +285,6 @@ export interface ProjectUpdateInput {
     repoUrl?: string | null;
     liveUrl?: string | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
-    githubRepo?: string | null;
-    portfolio?: boolean;
     scratchpad?: string | null;
     position?: number;
 }
@@ -310,8 +300,6 @@ export async function updateProject(userId: string, id: string, input: ProjectUp
     if (input.description !== undefined) payload.description = input.description;
     if (input.repoUrl !== undefined) payload.repoUrl = input.repoUrl;
     if (input.liveUrl !== undefined) payload.liveUrl = input.liveUrl;
-    if (input.githubRepo !== undefined) payload.githubRepo = input.githubRepo;
-    if (input.portfolio !== undefined) payload.portfolio = input.portfolio;
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
     if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;

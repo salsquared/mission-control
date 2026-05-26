@@ -58,7 +58,6 @@ SUITES=(
     "scripts/tests/hermetic/bulk-track-smoke.ts"
     "scripts/tests/hermetic/compensation-smoke.ts"
     "scripts/tests/hermetic/readme-prompt-smoke.ts"
-    "scripts/tests/hermetic/metric-deltas-smoke.ts"
     "scripts/tests/hermetic/quiet-hours-smoke.ts"
     "scripts/tests/hermetic/user-rate-limit-smoke.ts"
     "scripts/tests/hermetic/email-message-smoke.ts"

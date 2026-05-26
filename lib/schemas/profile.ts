@@ -123,14 +123,9 @@ export const ProjectSchema = z.object({
     repoUrl: z.string().nullable(),
     liveUrl: z.string().nullable(),
     bullets: z.array(BulletSchema),
-    metrics: z.unknown().nullable(),
-    githubRepo: z.string().nullable(),
-    portfolio: z.boolean(),
-    metricsUpdatedAt: z.string().datetime().nullable(),
-    // Story S9.5 — README markdown ingested for portfolio repos. Truncated at
-    // 16 KB at write time; the resume rewrite prompt slices an additional
-    // 2 KB excerpt per project. NULL when no README has been fetched yet
-    // (or the repo has no README).
+    // README markdown for a github.com repo derived from `repoUrl`. Optional
+    // on the wire so pre-migration snapshots + fixtures validate without
+    // spelling out a null; server reads always emit explicitly.
     readme: z.string().nullable().optional(),
     readmeUpdatedAt: z.string().datetime().nullable().optional(),
     scratchpad: z.string().nullable().optional(),
@@ -243,8 +238,6 @@ export const ProjectPostSchema = z.object({
     repoUrl: z.string().nullable().optional(),
     liveUrl: z.string().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
-    githubRepo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).nullable().optional(),
-    portfolio: z.boolean().optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });
@@ -256,8 +249,6 @@ export const ProjectPatchSchema = z.object({
     repoUrl: z.string().nullable().optional(),
     liveUrl: z.string().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
-    githubRepo: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/).nullable().optional(),
-    portfolio: z.boolean().optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     position: z.number().int().optional(),
 });

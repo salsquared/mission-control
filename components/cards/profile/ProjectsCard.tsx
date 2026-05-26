@@ -11,8 +11,6 @@ export type ProjectPatch = Partial<{
     description: string | null;
     repoUrl: string | null;
     liveUrl: string | null;
-    githubRepo: string | null;
-    portfolio: boolean;
     bullets: Bullet[];
     scratchpad: string | null;
     position: number;

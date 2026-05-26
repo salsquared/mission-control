@@ -42,40 +42,6 @@ export function composeResumeProps(
     };
 }
 
-/**
- * Renders the GitHub metrics line (M9) shown under a project name on the
- * resume — e.g. "★ 142 · 2,300 commits over 14 months · Go / TypeScript".
- * Returns null when there's nothing useful to display.
- */
-function formatMetricsLine(metrics: unknown): string | null {
-    if (!metrics || typeof metrics !== "object") return null;
-    const m = metrics as {
-        stars?: number;
-        primaryLanguage?: string | null;
-        languageMix?: Record<string, number>;
-        commitsTotal?: number | null;
-        ageDays?: number | null;
-    };
-    const parts: string[] = [];
-    if (typeof m.stars === "number" && m.stars >= 5) parts.push(`★ ${m.stars.toLocaleString()}`);
-    if (typeof m.commitsTotal === "number" && m.commitsTotal > 0) {
-        const months = typeof m.ageDays === "number" && m.ageDays >= 30
-            ? ` over ${Math.max(1, Math.round(m.ageDays / 30))} months`
-            : "";
-        parts.push(`${m.commitsTotal.toLocaleString()} commits${months}`);
-    }
-    if (m.languageMix && Object.keys(m.languageMix).length > 0) {
-        const top = Object.entries(m.languageMix)
-            .sort((a, b) => b[1] - a[1])
-            .slice(0, 3)
-            .map(([lang]) => lang);
-        if (top.length > 0) parts.push(top.join(" / "));
-    } else if (m.primaryLanguage) {
-        parts.push(m.primaryLanguage);
-    }
-    return parts.length > 0 ? parts.join(" · ") : null;
-}
-
 function fmtDate(d: string | null): string {
     if (!d) return "Present";
     const dt = new Date(d);
@@ -187,7 +153,6 @@ function ResumeDoc({ profile, sections }: ResumeProps) {
                         <section className="section">
                             <h2>Projects</h2>
                             {sections.projects.map(({ entity, bullets }) => {
-                                const metricsLine = formatMetricsLine(entity.metrics);
                                 return (
                                     <div key={entity.id} className="entity">
                                         <div className="entity-line">
@@ -195,7 +160,6 @@ function ResumeDoc({ profile, sections }: ResumeProps) {
                                             {entity.repoUrl ? <span className="right"><a href={entity.repoUrl}>{entity.repoUrl}</a></span> : null}
                                         </div>
                                         {entity.description ? <div className="entity-sub">{entity.description}</div> : null}
-                                        {metricsLine ? <div className="entity-sub">{metricsLine}</div> : null}
                                         {bullets.length > 0 && (
                                             <ul className="bullets">
                                                 {bullets.map(b => <li key={b.id}>{b.text}</li>)}
