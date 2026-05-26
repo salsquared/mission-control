@@ -9,7 +9,7 @@
  *
  * Hard invariants:
  *   1. No fabrication — the LLM only tags what the bullet text already
- *      supports. Enforced via the system prompt (`bullet-auto-tag.md` rule 1)
+ *      supports. Enforced via the system prompt (`bullet-tags-from-posting.md` rule 1)
  *      and again at the post-filter step in `mergeAutoTagProposals`.
  *   2. Per-bullet blocklist (Decision 6.1) — keywords in `bullet.removedTags`
  *      are never proposed. The system prompt enforces this; the merge step
@@ -255,17 +255,17 @@ export async function autoTagBullets(input: AutoTagInput): Promise<AutoTagResult
         return { tagsAdded: 0, bulletsAffected: 0, durationMs: Date.now() - start };
     }
 
-    const prompt = await loadPrompt('bullet-auto-tag', {
+    const prompt = await loadPrompt('bullet-tags-from-posting', {
         keywords: renderKeywordsBlock(keywords),
         bullets: renderBulletsBlock(flat),
     });
 
     if (!prompt.system) {
-        throw new Error('auto-tag: registry template bullet-auto-tag has no system message');
+        throw new Error('auto-tag: registry template bullet-tags-from-posting has no system message');
     }
 
     const response = await chatJSON({
-        name: 'bullet-auto-tag',
+        name: 'bullet-tags-from-posting',
         system: prompt.system,
         user: prompt.user,
         schema: AutoTagResponseSchema,
@@ -280,7 +280,7 @@ export async function autoTagBullets(input: AutoTagInput): Promise<AutoTagResult
     );
 
     console.info(
-        `[LLM] bullet-auto-tag:user=${input.userId}: ${tagsAdded} tag(s) across ${bulletsAffected} bullet(s) of ${flat.length} considered`,
+        `[LLM] bullet-tags-from-posting:user=${input.userId}: ${tagsAdded} tag(s) across ${bulletsAffected} bullet(s) of ${flat.length} considered`,
     );
 
     if (bulletsAffected === 0) {

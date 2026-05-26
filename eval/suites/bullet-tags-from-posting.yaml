@@ -1,4 +1,4 @@
-# Suite for `bullet-auto-tag` — auto-tagging bullets with posting keywords
+# Suite for `bullet-tags-from-posting` — auto-tagging bullets with posting keywords
 # during a tailored-resume generate. The provider takes a
 # AutoTagFixtureInput shape (mirrors a flattened {bullets, keywords} pair)
 # and dispatches through the auto-tag caller library's pure prompt path.
@@ -6,7 +6,7 @@
 # Positive — bullet's text already evidences "Python"; model should tag it.
 - description: "Positive — Python bullet earns Python tag"
   vars:
-    callsite: bullet-auto-tag
+    callsite: bullet-tags-from-posting
     input:
       keywords: ["Python", "Go", "Kubernetes"]
       bullets:
@@ -27,7 +27,7 @@
 # Negative — bullet says Go, not Python; model must NOT tag it with Python.
 - description: "Negative — Go bullet must NOT acquire Python tag"
   vars:
-    callsite: bullet-auto-tag
+    callsite: bullet-tags-from-posting
     input:
       keywords: ["Python", "Go", "Kubernetes"]
       bullets:
@@ -51,7 +51,7 @@
 # clearly evidences it. The user explicitly removed it; respect that.
 - description: "Blocklist — Python in removedTags blocks the proposal"
   vars:
-    callsite: bullet-auto-tag
+    callsite: bullet-tags-from-posting
     input:
       keywords: ["Python", "Kubernetes"]
       bullets:
@@ -73,7 +73,7 @@
 # post-filter would drop it anyway, but the model is instructed to skip too.
 - description: "Already-tagged — Python in tags blocks the proposal"
   vars:
-    callsite: bullet-auto-tag
+    callsite: bullet-tags-from-posting
     input:
       keywords: ["Python", "Kubernetes"]
       bullets:

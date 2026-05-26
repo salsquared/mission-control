@@ -4,9 +4,9 @@
  * The Tags icon on `BulletRow` (sibling to the wand) invokes this. Distinct
  * from:
  *   - `bullet-assist-rewrite` (M7.6) → text-only after M7.7.2; ignores tags.
- *   - `bullet-auto-tag` (M8.5) → bulk pass at resume-gen time across all
- *     bullets, posting-keyword-driven. This callsite is per-bullet, on-demand,
- *     and posting-agnostic.
+ *   - `bullet-tags-from-posting` (M8.5) → bulk pass at resume-gen time across
+ *     all bullets, posting-keyword-driven. This callsite is per-bullet,
+ *     on-demand, and posting-agnostic.
  *
  * Inputs: bullet text + current tags categorized as pinned / auto / user +
  * the bullet's `removedTags` blocklist + profile-wide tag vocabulary.
@@ -137,11 +137,27 @@ export function renderRemovedTags(bullet: Bullet): string {
  * in the per-tag state block, including them in vocabulary would be noise.
  *
  * Returns top-N tags by usage count, ties broken by alpha sort for determinism.
+ *
+ * Prefer `computeContextualTagVocabulary` for the live tag-suggest path — the
+ * sibling/other split is what protects against cross-domain stretches (e.g.
+ * tagging a bartending bullet "Infrastructure Management" because the user
+ * has tech experience elsewhere). This flat variant remains for callers /
+ * fixtures that don't have a parent context to split on.
  */
 export interface ProfileVocabularyInput {
-    workRoles: Array<{ bullets: Bullet[] }>;
-    projects: Array<{ bullets: Bullet[] }>;
-    education: Array<{ bullets: Bullet[] }>;
+    workRoles: Array<{ id: string; bullets: Bullet[] }>;
+    projects: Array<{ id: string; bullets: Bullet[] }>;
+    education: Array<{ id: string; bullets: Bullet[] }>;
+}
+
+function sortAndTrim(counts: Map<string, number>, cap: number): string[] {
+    return Array.from(counts.entries())
+        .sort((a, b) => {
+            if (b[1] !== a[1]) return b[1] - a[1]; // count desc
+            return a[0].localeCompare(b[0]);        // alpha asc on ties
+        })
+        .slice(0, cap)
+        .map(([tag]) => tag);
 }
 
 export function computeTagVocabulary(
@@ -162,18 +178,112 @@ export function computeTagVocabulary(
     for (const p of profile.projects) tally(p.bullets);
     for (const e of profile.education) tally(e.bullets);
 
-    return Array.from(counts.entries())
-        .sort((a, b) => {
-            if (b[1] !== a[1]) return b[1] - a[1]; // count desc
-            return a[0].localeCompare(b[0]);        // alpha asc on ties
-        })
-        .slice(0, topN)
-        .map(([tag]) => tag);
+    return sortAndTrim(counts, topN);
 }
 
-export function renderVocabulary(vocab: string[]): string {
-    if (vocab.length === 0) return '  (no other tags in the profile yet — invent appropriate ones)';
-    return vocab.map((t) => `"${t}"`).join(', ');
+export interface VocabularyContext {
+    parentKind: TagSuggestParentKind;
+    parentId: string;
+}
+
+export interface ContextualVocabulary {
+    /** Tags found on OTHER bullets in the same parent entity (work-role /
+     *  project / education) as the bullet being tag-suggested. Most likely to
+     *  share the current bullet's domain. */
+    siblingTags: string[];
+    /** Tags from every OTHER parent entity in the profile. Likely from a
+     *  different domain — only reuse when the bullet text genuinely fits. */
+    otherTags: string[];
+}
+
+/**
+ * Two-bucket variant of `computeTagVocabulary`. Sibling tags (same parent
+ * entity) get surfaced first because they almost always share the current
+ * bullet's domain; other-entity tags fill the remaining slots up to topN.
+ *
+ * Sibling tags are uncapped relative to others — we never trim sibling
+ * vocabulary to make room for cross-entity tags. The combined output is
+ * bounded by topN (default VOCABULARY_TOP_N = 50) so the prompt budget
+ * stays predictable regardless of profile size.
+ */
+export function computeContextualTagVocabulary(
+    profile: ProfileVocabularyInput,
+    excludeTags: ReadonlySet<string>,
+    ctx: VocabularyContext,
+    topN: number = VOCABULARY_TOP_N,
+): ContextualVocabulary {
+    const siblingCounts = new Map<string, number>();
+    const otherCounts = new Map<string, number>();
+
+    const tally = (into: Map<string, number>, bullets: Bullet[]): void => {
+        for (const b of bullets) {
+            for (const tag of b.tags) {
+                if (excludeTags.has(tag)) continue;
+                into.set(tag, (into.get(tag) ?? 0) + 1);
+            }
+        }
+    };
+
+    const dispatch = <T extends { id: string; bullets: Bullet[] }>(
+        list: readonly T[],
+        kind: TagSuggestParentKind,
+    ): void => {
+        for (const entity of list) {
+            const isSiblingScope = ctx.parentKind === kind && ctx.parentId === entity.id;
+            tally(isSiblingScope ? siblingCounts : otherCounts, entity.bullets);
+        }
+    };
+
+    dispatch(profile.workRoles, 'work-role');
+    dispatch(profile.projects, 'project');
+    dispatch(profile.education, 'education');
+
+    const siblingTags = sortAndTrim(siblingCounts, topN);
+    const remaining = Math.max(0, topN - siblingTags.length);
+    const otherTags = sortAndTrim(otherCounts, remaining);
+
+    return { siblingTags, otherTags };
+}
+
+/**
+ * Render the profile vocabulary block. Accepts either a flat string array
+ * (legacy / eval shape) or a `ContextualVocabulary` split. The contextual
+ * variant emits two clearly-labeled sub-sections so the LLM can see which
+ * entries are sibling-domain (most likely to fit) versus cross-entry tags
+ * that need to be evaluated against the bullet text more skeptically.
+ */
+export function renderVocabulary(
+    input: string[] | ContextualVocabulary,
+): string {
+    if (Array.isArray(input)) {
+        if (input.length === 0) return '  (no other tags in the profile yet — invent appropriate ones)';
+        return input.map((t) => `"${t}"`).join(', ');
+    }
+
+    const { siblingTags, otherTags } = input;
+    if (siblingTags.length === 0 && otherTags.length === 0) {
+        return '  (no other tags in the profile yet — invent appropriate ones)';
+    }
+
+    const parts: string[] = [];
+    if (siblingTags.length > 0) {
+        parts.push(
+            "From OTHER bullets in this same entry (most likely to share this bullet's domain):",
+            siblingTags.map((t) => `"${t}"`).join(', '),
+        );
+    } else {
+        parts.push(
+            "From OTHER bullets in this same entry: (none — this entry has no other tagged bullets yet)",
+        );
+    }
+    if (otherTags.length > 0) {
+        parts.push(
+            '',
+            "From OTHER profile entries (different role/project/education — only reuse if they genuinely fit THIS bullet's evidence):",
+            otherTags.map((t) => `"${t}"`).join(', '),
+        );
+    }
+    return parts.join('\n');
 }
 
 /**
@@ -285,11 +395,15 @@ export async function suggestTagsForBullet(input: SuggestTagsInput): Promise<Sug
 
     const tagState = renderTagState({ ...bullet, text: truncatedText });
     const removedTagsBlock = renderRemovedTags(bullet);
-    const vocab = computeTagVocabulary(profile, new Set(bullet.tags));
+    const vocab = computeContextualTagVocabulary(
+        profile,
+        new Set(bullet.tags),
+        { parentKind: input.parentKind, parentId: input.parentId },
+    );
     const vocabBlock = renderVocabulary(vocab);
     const spine = buildSpine(input.parentKind, entity);
 
-    const prompt = await loadPrompt('bullet-tag-suggest', {
+    const prompt = await loadPrompt('bullet-tags-from-profile', {
         spine,
         bulletText: truncatedText,
         tagState,
@@ -298,7 +412,7 @@ export async function suggestTagsForBullet(input: SuggestTagsInput): Promise<Sug
     });
 
     const response = await chatJSON({
-        name: 'bullet-tag-suggest',
+        name: 'bullet-tags-from-profile',
         system: prompt.system,
         user: prompt.user,
         schema: ResponseSchema,
@@ -311,7 +425,7 @@ export async function suggestTagsForBullet(input: SuggestTagsInput): Promise<Sug
 
     const durationMs = Date.now() - t0;
     console.info(
-        `[LLM] bullet-tag-suggest:${input.parentKind}:${input.parentId}:${input.bulletId} → ${tags.length} tags in ${durationMs}ms`,
+        `[LLM] bullet-tags-from-profile:${input.parentKind}:${input.parentId}:${input.bulletId} → ${tags.length} tags in ${durationMs}ms`,
     );
 
     return { tags, reason: response.reason, durationMs };

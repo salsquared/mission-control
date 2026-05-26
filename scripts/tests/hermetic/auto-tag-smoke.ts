@@ -110,8 +110,8 @@ async function main() {
             };
             const result = await autoTagBullets({ userId, postingKeywords: ["Python", "Go", "Kubernetes"] });
 
-            if (recordedChatCall.name !== "bullet-auto-tag") fail(`chatJSON called with wrong name: ${recordedChatCall.name}`);
-            else pass("chatJSON dispatched with name=bullet-auto-tag");
+            if (recordedChatCall.name !== "bullet-tags-from-posting") fail(`chatJSON called with wrong name: ${recordedChatCall.name}`);
+            else pass("chatJSON dispatched with name=bullet-tags-from-posting");
 
             if (result.tagsAdded !== 2) fail(`tagsAdded should be 2 (Python+Go; Kubernetes blocked), got ${result.tagsAdded}`, result);
             else pass("tagsAdded reflects post-filter against removedTags");

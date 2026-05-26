@@ -483,6 +483,21 @@ export const api = {
                     jsonBody('POST', { mode: 'tags', parentKind, parentId, bulletId }),
                 ),
         },
+        // M7.9.5 — Tagline AI-draft (story S7.14). Returns a proposal +
+        // dispatched mode ('draft' on empty current, 'enhance' otherwise).
+        // UI surfaces in a diff panel; Accept persists via the existing
+        // /api/profile PATCH with `{ tagline: '...' }`.
+        tagline: {
+            draft: () =>
+                jsonFetch(
+                    '/api/profile/tagline/draft',
+                    z.object({
+                        tagline: z.string(),
+                        mode: z.enum(['draft', 'enhance']),
+                    }),
+                    jsonBody('POST', {}),
+                ),
+        },
     },
 
     savedPapers: {

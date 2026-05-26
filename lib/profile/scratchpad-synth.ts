@@ -6,9 +6,9 @@
  *   - `bullet-assist-fill` (M7.6) → per-entity, no posting context, persists
  *     to the profile on Accept. Used from the Profile dash to bootstrap an
  *     empty entry.
- *   - `bullet-auto-tag` (M8.5) → bulk pass at resume-gen time, tags existing
- *     profile bullets with posting keywords they already evidence.
- *   - `bullet-tag-suggest` (M7.7) → per-bullet manual tag refresh.
+ *   - `bullet-tags-from-posting` (M8.5) → bulk pass at resume-gen time, tags
+ *     existing profile bullets with posting keywords they already evidence.
+ *   - `bullet-tags-from-profile` (M7.7) → per-bullet manual tag refresh.
  *
  * This callsite runs DURING resume-generation, AFTER selectBullets +
  * autoTagBullets but BEFORE rewriteBullets, for each entity whose:

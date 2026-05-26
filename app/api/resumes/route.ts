@@ -445,7 +445,7 @@ export async function POST(req: NextRequest) {
         // even when Gemini errors / rate-limits the auto-tag call.
         try {
             const autoTagResult = await autoTagBullets({ userId, postingKeywords: posting.keywords });
-            console.info(`[bullet-auto-tag] +${autoTagResult.tagsAdded} tags / ${autoTagResult.bulletsAffected} bullets / ${autoTagResult.durationMs}ms`);
+            console.info(`[bullet-tags-from-posting] +${autoTagResult.tagsAdded} tags / ${autoTagResult.bulletsAffected} bullets / ${autoTagResult.durationMs}ms`);
             // Re-hydrate the in-memory profile so the selection step below
             // sees the freshly-added tags.
             if (autoTagResult.tagsAdded > 0) {
@@ -454,7 +454,7 @@ export async function POST(req: NextRequest) {
             }
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            console.warn(`[bullet-auto-tag] skipped: ${msg}`);
+            console.warn(`[bullet-tags-from-posting] skipped: ${msg}`);
         }
 
         // 3. Select bullets

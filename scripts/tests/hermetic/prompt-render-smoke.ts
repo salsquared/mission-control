@@ -63,7 +63,7 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         requiredSystemPhrases: ['Do not invent specific quantitative claims', 'tense and voice'],
         requiredUserPhrases: ['Current bullet to rewrite', 'Output schema'],
     },
-    'bullet-auto-tag': {
+    'bullet-tags-from-posting': {
         expectSystem: true,
         expectModel: true,
         expectTemperature: true,
@@ -72,7 +72,7 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         requiredSystemPhrases: ['Never invent coverage', 'removedTags'],
         requiredUserPhrases: ['Posting keywords', 'Bullets to consider'],
     },
-    'bullet-tag-suggest': {
+    'bullet-tags-from-profile': {
         expectSystem: true,
         expectModel: true,
         expectTemperature: true,
@@ -93,6 +93,17 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         // keyword use + 3-7 tags per synthesized bullet.
         requiredSystemPhrases: ['NO FABRICATION', 'VOICE PRESERVATION', 'POSTING KEYWORD VERBATIM'],
         requiredUserPhrases: ['scratchpad notes', 'posting keywords', 'Uncovered', 'Output schema'],
+    },
+    'tagline-draft': {
+        expectSystem: true,
+        expectModel: true,
+        expectTemperature: true,
+        expectMaxTokens: true,
+        userByteBudget: 8_192,
+        // System enforces the four core invariants: no fabrication, one
+        // sentence ≤ 200 chars, no first-person, mode-specific behavior.
+        requiredSystemPhrases: ['NO FABRICATION', 'ONE SENTENCE', 'NO FIRST-PERSON', 'MODE-SPECIFIC'],
+        requiredUserPhrases: ['Current tagline', 'Profile (the ONLY evidence', 'Output schema'],
     },
     'discovery-suggest': {
         expectSystem: false,

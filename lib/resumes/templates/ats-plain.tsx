@@ -99,6 +99,7 @@ body {
 .page { padding: 0.5in 0.6in; }
 .header { text-align: center; margin-bottom: 0.18in; }
 .header h1 { font-size: 18pt; margin: 0 0 2px 0; font-weight: 700; letter-spacing: 0.02em; }
+.header .tagline { font-size: 10.5pt; color: #444; font-style: italic; margin: 0 0 4px 0; }
 .header .meta { font-size: 9.5pt; color: #333; }
 .header .meta a { color: #1b56b8; text-decoration: none; }
 .header .summary { margin-top: 0.06in; font-size: 10pt; }
@@ -142,6 +143,11 @@ function ResumeDoc({ profile, sections }: ResumeProps) {
                 <div className="page">
                     <header className="header">
                         <h1>{profile.headline ?? "Resume"}</h1>
+                        {/* M7.9.7 (story S7.14) — one-sentence professional
+                            tagline rendered as a subtitle directly under the
+                            H1 when set. Italic + slightly smaller than the
+                            name + above the meta contact line. */}
+                        {profile.tagline ? <p className="tagline">{profile.tagline}</p> : null}
                         <div className="meta">
                             {[profile.location, profile.email, profile.phone].filter(Boolean).join("  ·  ")}
                             {links.length > 0 && profile.location ? "  ·  " : ""}

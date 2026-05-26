@@ -1,0 +1,135 @@
+# Suite for `tagline-draft` — one-sentence profile tagline LLM drafter (M7.9.3).
+#
+# Provider handler in eval/provider.ts calls the real draftTagline function
+# with a fixture-supplied profileSummary + currentTagline + mode. Asserts
+# cover the four invariants the prompt enforces:
+#   1. No fabrication — output never claims experience the profile doesn't
+#      evidence.
+#   2. One sentence ending with a period.
+#   3. ≤ 200 chars.
+#   4. No first-person pronouns / possessives.
+# Plus mode-specific behavior: enhance mode preserves the user's angle.
+
+- description: "Draft from empty — Python+PostgreSQL backend profile"
+  vars:
+    callsite: tagline-draft
+    input:
+      mode: "draft"
+      currentTagline: ""
+      profileSummary: |
+        ## Identity
+        Name: Salvador Salcedo
+        Summary: Engineer focused on developer-facing systems and reliability.
+
+        ## Work history
+        Software Engineer at Acme Corp
+          • Built a Python service handling 50k req/day
+          • Migrated data pipeline to PostgreSQL with zero downtime
+          • Cut p99 latency 40% via async batch dispatch
+          notes: Two quarters on the payments backend. Mostly Python + Postgres.
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const t = r.tagline;
+        return typeof t === 'string' &&
+          t.length > 0 &&
+          t.length <= 200 &&
+          /[.!?]$/.test(t) &&
+          !/\b(I|I'm|I've|my|me|mine)\b/i.test(t) &&
+          !/\n/.test(t);
+
+- description: "Enhance preserves angle — backend-systems framing stays backend"
+  vars:
+    callsite: tagline-draft
+    input:
+      mode: "enhance"
+      currentTagline: "Backend engineer who likes systems work."
+      profileSummary: |
+        ## Identity
+        Name: Salvador Salcedo
+        Summary: Engineer focused on developer-facing systems and reliability.
+
+        ## Work history
+        Software Engineer at Acme Corp
+          • Built a Python service handling 50k req/day
+          • Cut p99 latency 40% via async batch dispatch
+          notes: Mostly backend work — APIs, databases, caching layers.
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const t = r.tagline.toLowerCase();
+        return typeof r.tagline === 'string' &&
+          r.tagline.length <= 200 &&
+          /[.!?]$/.test(r.tagline) &&
+          !/\b(I|I'm|I've|my|me|mine)\b/i.test(r.tagline) &&
+          (/\bbackend\b/.test(t) || /\bserver-?side\b/.test(t) || /\binfra(structure)?\b/.test(t) || /\bdistributed\b/.test(t) || /\bsystems?\b/.test(t));
+
+- description: "No-invention — profile is Go-only, prompt doesn't get to invent Rust"
+  vars:
+    callsite: tagline-draft
+    input:
+      mode: "draft"
+      currentTagline: ""
+      profileSummary: |
+        ## Identity
+        Name: Salvador Salcedo
+        Summary: Backend engineer with three years of Go production experience.
+
+        ## Work history
+        Backend Engineer at Beta Labs
+          • Built our payments backend in Go
+          • Focused on idempotency keys + exactly-once semantics
+          • Lots of testing around partial failures
+          notes: All Go. No Rust, no Python, no Node. Just Go on the payments path.
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const t = r.tagline;
+        return typeof t === 'string' &&
+          t.length <= 200 &&
+          !/\bRust\b/i.test(t) &&
+          !/\bPython\b/i.test(t) &&
+          !/\bNode(\.js)?\b/i.test(t) &&
+          !/\bJavaScript\b/i.test(t) &&
+          !/\bTypeScript\b/i.test(t);
+    - type: llm-rubric
+      value: |
+        The tagline should reflect Go + backend + payments evidence from the
+        profile. PASS iff:
+        1. The tagline mentions a real attribute from the profile (Go,
+           backend, payments, idempotency, reliability, or a clear synonym).
+        2. The tagline does NOT claim any technology, domain, or
+           quantitative achievement the profile doesn't already evidence.
+        3. The tagline reads as a professional one-liner, not sales-y.
+
+- description: "Length cap — verbose starting tagline still produces ≤ 200 chars output"
+  vars:
+    callsite: tagline-draft
+    input:
+      mode: "enhance"
+      currentTagline: "An extremely accomplished and dedicated software engineer with passion for distributed systems and a deep love of crafting beautiful APIs that delight developers and scale to billions of users worldwide."
+      profileSummary: |
+        ## Identity
+        Name: Salvador Salcedo
+        Summary: Engineer focused on developer-facing systems.
+
+        ## Work history
+        Software Engineer at Acme Corp
+          • Built developer-facing APIs
+          notes: Three years on developer tools.
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const t = r.tagline;
+        return typeof t === 'string' &&
+          t.length > 0 &&
+          t.length <= 200 &&
+          /[.!?]$/.test(t);

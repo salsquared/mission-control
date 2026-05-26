@@ -258,6 +258,13 @@ model Profile {
   id        String   @id @default(cuid())
   userId    String   @unique
   headline  String?
+  // M7.9.1 (story S7.14) — one-sentence professional tagline rendered as
+  // a subtitle under the H1 on every generated resume. Distinct from
+  // `headline` (which is the user's name, displayed as the resume H1
+  // per the M8.4 canonical-naming work). Capped at 200 chars at the
+  // zod schema layer; the column itself is unbounded TEXT. Optional —
+  // null means no subtitle line on the resume.
+  tagline   String?
   summary   String?
   location  String?
   email     String?

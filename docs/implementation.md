@@ -49,7 +49,7 @@ One row per `###` section below — this table is the doc's ToC.
 | C | M7.5 — Profile snapshots | ◐ | Capture shipped (33); rollback/restore UX deferred until needed |
 | C | M7.4 followups — Fuzzy dedup + extra formats | ◐ | Tag editing UI ✅; LLM fuzzy dedup, LinkedIn ZIP, legacy `.doc` 💤 |
 | C | M7.6 — LLM bullet assist + resume-upload archive | ✅ | Stories S7.7 (🟡 fill) + S7.8 (🔵 rewrite) + S7.9 (🟡 archive). Shipped 2026-05-23 (`7ffd5ba`, `fffa038`). `ResumeUpload` table + `data/resume-uploads/`; `lib/profile/bullet-assist.ts` + `lib/profile/upload-archive.ts`; `MODEL_LITE` (`gemini-3.1-flash-lite`) with 20/10min rate limit. Three hermetic smokes (`archive-spans-smoke`, `bullet-assist-smoke`, `resume-uploads-smoke`). |
-| C | M7.7 — Bullet tag/AI UX refactor | ⏳ | Stories S7.10 (🟡 split text rewrite from tag generation + 3-7 cap) + S7.11 (🟡 pin tags) + S7.12 (🔵 tag click no-op + bigger X). 8 tasks M7.7.1–M7.7.8. **Ships first** of the new C-track wave. New `bullet-tag-suggest` LLM callsite on `MODEL_LITE`; narrows `bullet-assist-rewrite` to text-only; `Bullet.pinnedTags` field added to JSON shape (no Prisma migration). BulletRow refactor: split wand into two icons + pin toggle + chip-body click removed + X bumped to `w-3.5`. |
+| C | M7.7 — Bullet tag/AI UX refactor | ⏳ | Stories S7.10 (🟡 split text rewrite from tag generation + 3-7 cap) + S7.11 (🟡 pin tags) + S7.12 (🔵 tag click no-op + bigger X). 8 tasks M7.7.1–M7.7.8. **Ships first** of the new C-track wave. New `bullet-tags-from-profile` LLM callsite on `MODEL_LITE`; narrows `bullet-assist-rewrite` to text-only; `Bullet.pinnedTags` field added to JSON shape (no Prisma migration). BulletRow refactor: split wand into two icons + pin toggle + chip-body click removed + X bumped to `w-3.5`. |
 | C | M7.8 — Per-entity scratchpad: profile half | ⏳ | Story S7.13 (🟡) — first of two milestones covering this story. 6 tasks M7.8.1–M7.8.6. **Ships second.** Migration `add_entity_scratchpads` adds `scratchpad: String?` to `WorkRole`, `Project`, `Education`. New `components/overlays/ScratchpadOverlay.tsx`; entity rows get a `StickyNote` trigger button with empty/populated visual state. Bullet-assist grounding gains scratchpad as 5th source. |
 | C | M8 Phase 1 — Tailored resume generation | ✅ | posting → keywords → selection → rewrite → PDF |
 | C | M8 — DOCX export | ✅ | html-to-docx renderer + PDF/DOCX toggle |
@@ -57,7 +57,7 @@ One row per `###` section below — this table is the doc's ToC.
 | C | M8 Phase 2-followup | ✅ | Lock/exclude UI prominence (36) |
 | C | M8 Phase 3 — Multi-template + cover letter + skills-gap | ✅ | Skills-gap (41) ✅; multi-template (37) ❌ killed; cover letter (40) ❌ killed |
 | C | M8.4 — Resume card v2: UX refactor | ✅ | Stories S8.11 + S8.12 + S8.13 (🟡). Shipped 2026-05-25 (`ea0fe7b` → `c69fcc6` + polish through `98e1daa`). Migration adds `GeneratedResume.postingTitle` + `postingCompany`; new `app/api/applications/pipeline-picker/route.ts`; `GenerateResumeCard.tsx` gains Pipeline/URL/Paste segmented control (Pipeline default) + `InterestedAppPicker` + `PreviousResumesDropdown` popover. Three hermetic smokes (`pipeline-picker-smoke`, `resume-from-application-smoke`, `resume-list-smoke`). |
-| C | M8.5 — Resume card v2: LLM keyword coverage | ✅ | Stories S8.9 + S8.10 (🟡). Shipped 2026-05-25 (same wave as M8.4: `ea0fe7b` → `87d81d0`). New `bullet-auto-tag` callsite on `MODEL_LITE`; `lib/profile/auto-tag.ts`; `docs/llm-prompts/bullet-auto-tag.md`; bullet JSON gains `autoTags` + `removedTags` (no Prisma migration). Fold-in rule 6a added to `resume-rewrite.md`. Four hermetic smokes (`auto-tag-smoke`, `auto-tag-merge-smoke`, `bullet-remove-tag-smoke`, `resume-rewrite-fold-in-smoke`) + Promptfoo green. |
+| C | M8.5 — Resume card v2: LLM keyword coverage | ✅ | Stories S8.9 + S8.10 (🟡). Shipped 2026-05-25 (same wave as M8.4: `ea0fe7b` → `87d81d0`). New `bullet-tags-from-posting` callsite on `MODEL_LITE`; `lib/profile/auto-tag.ts`; `docs/llm-prompts/bullet-tags-from-posting.md`; bullet JSON gains `autoTags` + `removedTags` (no Prisma migration). Fold-in rule 6a added to `resume-rewrite.md`. Four hermetic smokes (`auto-tag-smoke`, `auto-tag-merge-smoke`, `bullet-remove-tag-smoke`, `resume-rewrite-fold-in-smoke`) + Promptfoo green. |
 | C | M8.6 — Resume-gen scratchpad synthesis | ⏳ | Story S7.13 (🟡) — second of two milestones covering this story. 6 tasks M8.6.1–M8.6.6. **Ships third** (depends on M7.8's `scratchpad` columns). New `scratchpad-synth` LLM callsite on `MODEL_LITE`; `lib/profile/scratchpad-synth.ts`; `docs/llm-prompts/scratchpad-synth.md`; new synthesis pass in `app/api/resumes/route.ts` POST after select + auto-tag. TraceList in `GenerateResumeCard.tsx` renders new `kind: "scratchpad-synth"` distinctly; skills-gap counts synthesized coverage. |
 | C | M9 Phase 1 — GitHub-driven project metrics | ✅ | `scheduler/jobs/github-metrics.ts` refreshes `Project.metrics` for `portfolio=true` repos |
 | C | M9 Phase 2 — GitHub UX polish | ✅ | Portfolio toggle UI on `ProjectRow`, suggested rewrites (45), README ingestion (46) |
@@ -121,7 +121,7 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 | **S7.7** | 🟡 | ✅ | LLM bullet fill (empty entry → 3–5 starter bullets) | M7.6 | — |
 | **S7.8** | 🔵 | ✅ | LLM bullet rewrite (existing bullet → diff + Accept/Discard) | M7.6 | — |
 | **S7.9** | 🟡 | ✅ | Resume-upload archive (raw text + extracted JSON + bytes retained per import) | M7.6 | — |
-| **S7.10** | 🟡 | ⏳ | Split per-bullet AI: text-only rewrite + tag-only generator + 3–7 cap | M7.7 | **Build M7.7 split + cap.** Narrow `bullet-assist-rewrite` to text-only; new `bullet-tag-suggest` callsite on `MODEL_LITE` with `mode: 'tags'` API + 7-tag guard at the route layer. |
+| **S7.10** | 🟡 | ⏳ | Split per-bullet AI: text-only rewrite + tag-only generator + 3–7 cap | M7.7 | **Build M7.7 split + cap.** Narrow `bullet-assist-rewrite` to text-only; new `bullet-tags-from-profile` callsite on `MODEL_LITE` with `mode: 'tags'` API + 7-tag guard at the route layer. |
 | **S7.11** | 🟡 | ⏳ | Pin tags so AI regenerate doesn't overwrite | M7.7 | **Build M7.7 pin.** `Bullet.pinnedTags: string[]` added to bullet JSON shape (no Prisma migration). LLM prompt receives pinned vs unpinned categorization; server-side patch-back if LLM drops a pinned tag. Invariants enforced in PATCH validator. |
 | **S7.12** | 🔵 | ⏳ | Tag chip click is no-op; X-only delete; X ~1px bigger | M7.7 | **Build M7.7 click semantics.** Remove `onClick` from BulletRow tag chip body; X icon bumped from `w-3 h-3` to `w-3.5 h-3.5` + larger hit-target padding. `removeTag` semantics (clears tag + adds to `removedTags` blocklist per M8.5.6) unchanged. |
 | **S7.13** | 🟡 | ⏳ | Per-entity scratchpad + resume-gen synthesis from scratchpad | M7.8 + M8.6 | **Build M7.8 then M8.6.** M7.8 adds `scratchpad: String?` to `WorkRole`/`Project`/`Education` + `ScratchpadOverlay` modal + `StickyNote` trigger button per row + bullet-assist 5th-grounding-source. M8.6 adds `scratchpad-synth` LLM callsite + synthesis pass in `app/api/resumes/route.ts` POST after select + auto-tag + trace-surface for `kind: "scratchpad-synth"` rows. |
@@ -174,7 +174,7 @@ One row per user story from [`user-stories.md`](./user-stories.md). **Phase** po
 
 Story S8.4 (multi-template) and Story S8.7 (cover letter) are ⛔ user-declined; not in this list. Track D (MD-0 → MD-7) shipped 2026-05-23 in `893628a`. Story S7.6 (snapshots) ◐ shipped capture-side 2026-05-22; rollback/restore-from-snapshot is parked until the safety net proves useful.
 
-1. **M7.7 — Bullet tag/AI UX refactor** (S7.10 🟡 + S7.11 🟡 + S7.12 🔵, 8 tasks). Pure UI/UX surface plus one new `bullet-tag-suggest` LLM callsite; no schema migration (just Bullet JSON shape evolution). Ships first because it's small, self-contained, and fixes two real UX footguns shipped with M7.6/M8.5 (combined wand-button conflates text + tags; click-to-remove tag is mis-trigger prone). See §M7.7 for the full design.
+1. **M7.7 — Bullet tag/AI UX refactor** (S7.10 🟡 + S7.11 🟡 + S7.12 🔵, 8 tasks). Pure UI/UX surface plus one new `bullet-tags-from-profile` LLM callsite; no schema migration (just Bullet JSON shape evolution). Ships first because it's small, self-contained, and fixes two real UX footguns shipped with M7.6/M8.5 (combined wand-button conflates text + tags; click-to-remove tag is mis-trigger prone). See §M7.7 for the full design.
 2. **M7.8 — Per-entity scratchpad: profile half** (S7.13 🟡, 6 tasks). Migration adds `scratchpad: String?` to three entity tables; new modal overlay editor; bullet-assist gets scratchpad as 5th grounding source. Immediate value via M7.6 bullet-assist paths reading user voice. See §M7.8 for the full design.
 3. **M8.6 — Resume-gen scratchpad synthesis** (S7.13 🟡, 6 tasks). Ships third, depends on M7.8's schema. New `scratchpad-synth` LLM callsite + synthesis pass in resume-gen pipeline + trace-surface for synthesized bullets. The bigger payoff: synthesize fresh bullets from scratchpad text + posting keywords to close skills-gap. See §M8.6 for the full design.
 4. **Audit-found soft bugs (10 parked items).** Full table in `docs/next_steps.md` §Audit-found soft bugs. Recommended order: **quick wins** (#4 email-parser model constant, #9 cache pruner startup-skip, #10 call-time `lunaryEnabled()` wrapper) → **high-value** (#2 Notification retention prune job, #5 `bulkMoveApplicationsTrack` notIn limit) → **real product calls** (#1 `nextSteps` wipe semantics, #7 resume-gen orphan row recovery) → **bigger lifts** (#3 Gmail history pagination, #6 cross-process mutex, #8 paid Gemini backfill for 4659 null employmentType rows).
@@ -647,9 +647,9 @@ Stories: **S7.10** (🟡 split text rewrite from tag generation + 3-7 cap) + **S
 - `components/ui/BulletRow.tsx` — split wand into two icon buttons, add pin toggle per tag chip, remove chip-body onClick, bump X size.
 - `lib/profile/types.ts` + `lib/schemas/profile.ts` — Bullet JSON shape gains `pinnedTags: string[]`.
 - `lib/profile/bullet-assist.ts` — rewrite mode narrows to text-only.
-- New `lib/profile/bullet-tag-suggest.ts` — per-bullet tag generator.
+- New `lib/profile/bullet-tags-from-profile.ts` — per-bullet tag generator.
 - `app/api/profile/bullets/assist/route.ts` — new `mode: 'tags'` + 7-tag cap guard.
-- New `docs/llm-prompts/bullet-tag-suggest.md` + `eval/suites/bullet-tag-suggest.yaml`.
+- New `docs/llm-prompts/bullet-tags-from-profile.md` + `eval/suites/bullet-tags-from-profile.yaml`.
 
 **LLM model.** `MODEL_LITE` (same tier as M7.6 + M8.5 — per-bullet tag suggestion is bounded judgment, not free-form generation).
 
@@ -692,9 +692,9 @@ Edit `docs/llm-prompts/bullet-assist.md` rewrite-mode section to drop the tag-up
 
 Same prompt slug (`bullet-assist-rewrite`); behavior change only.
 
-##### M7.7.3 — New `bullet-tag-suggest` LLM callsite ⏳ (S7.10 + S7.11)
+##### M7.7.3 — New `bullet-tags-from-profile` LLM callsite ⏳ (S7.10 + S7.11)
 
-New file `lib/profile/bullet-tag-suggest.ts`:
+New file `lib/profile/bullet-tags-from-profile.ts`:
 
 ```typescript
 export async function suggestTagsForBullet(opts: {
@@ -713,11 +713,11 @@ Grounds on:
 
 Output: `{tags: string[]}` — the proposed final tag list. Must include all `pinned` tags verbatim, must respect the 3-7 cap, may swap out unpinned tags. Server post-filters defensively: any pinned tag missing from proposal gets re-added; any tag from `removedTags` gets stripped; if the result is still > 7 after re-adding pins, the unpinned tail is truncated; if the result is < 3, return what we have (soft floor).
 
-`chatJSON({name: 'bullet-tag-suggest', model: MODEL_LITE, maxOutputTokens: 1024, ...})`.
+`chatJSON({name: 'bullet-tags-from-profile', model: MODEL_LITE, maxOutputTokens: 1024, ...})`.
 
-##### M7.7.4 — Prompt + Promptfoo fixtures for `bullet-tag-suggest` ⏳ (S7.10 + S7.11)
+##### M7.7.4 — Prompt + Promptfoo fixtures for `bullet-tags-from-profile` ⏳ (S7.10 + S7.11)
 
-New `docs/llm-prompts/bullet-tag-suggest.md`. System prompt enumerates:
+New `docs/llm-prompts/bullet-tags-from-profile.md`. System prompt enumerates:
 - Output **3 to 7 tags total** (count includes pinned + unpinned).
 - Every tag in the input's `pinned` list MUST appear verbatim in the output.
 - Never propose a tag in the input's `removedTags` list.
@@ -725,13 +725,13 @@ New `docs/llm-prompts/bullet-tag-suggest.md`. System prompt enumerates:
 - Tags should be concrete skills, technologies, or methodologies — not generic adjectives.
 - Conservative over aggressive — if you can't defend 3, return what you can defend.
 
-New `eval/suites/bullet-tag-suggest.yaml` with fixtures:
+New `eval/suites/bullet-tags-from-profile.yaml` with fixtures:
 - **Pin preservation**: input `{text: "Built Python API", tags: [{label: "Python", state: "pinned"}, {label: "API", state: "user"}]}` → assert `Python` in output.
 - **Cap respected**: input with 0 existing tags + tag-rich text → assert 3–7 in output.
 - **Blocklist filtered**: input with `removedTags: ["JavaScript"]` and text mentioning JS → assert `JavaScript` not in output.
 - **Vocabulary reuse**: input with profile vocabulary `["TypeScript"]` + bullet text mentioning JS → assert proposal includes `TypeScript` rather than inventing a synonym.
 
-Provider handler: add `bullet-tag-suggest` case to `eval/provider.ts:HANDLERS`.
+Provider handler: add `bullet-tags-from-profile` case to `eval/provider.ts:HANDLERS`.
 
 ##### M7.7.5 — API route + 7-tag cap guard ⏳ (S7.10)
 
@@ -767,7 +767,7 @@ Error states surface as inline rose chip (same pattern as M7.6.9 rewrite UI). 40
 
 ##### M7.7.8 — Hermetic smokes ⏳
 
-- `bullet-tag-suggest-smoke.ts` — covers M7.7.3, M7.7.5 end-to-end. Mocks `chatJSON`. Asserts: proposal preserves pinned tags; LLM proposal that drops a pinned tag → server-side patched back in; respects 3–7 cap (server-side trims if LLM over-shoots); `removedTags` blocklist filtered; 7-tag bullet → 400 `tag-limit-reached` BEFORE LLM call (verify chatJSON was not invoked); locked bullet → 400; cross-user → 404; rate-limit 429.
+- `bullet-tags-from-profile-smoke.ts` — covers M7.7.3, M7.7.5 end-to-end. Mocks `chatJSON`. Asserts: proposal preserves pinned tags; LLM proposal that drops a pinned tag → server-side patched back in; respects 3–7 cap (server-side trims if LLM over-shoots); `removedTags` blocklist filtered; 7-tag bullet → 400 `tag-limit-reached` BEFORE LLM call (verify chatJSON was not invoked); locked bullet → 400; cross-user → 404; rate-limit 429.
 - `bullet-rewrite-text-only-smoke.ts` — covers M7.7.2. Mocks `chatJSON`. Asserts: rewrite proposal only contains `text`; persisted bullet keeps original `tags` / `autoTags` / `removedTags` / `pinnedTags` / `locked` / `excluded` unchanged.
 - `bullet-pin-tag-smoke.ts` — covers M7.7.1 invariants. Pure-function via PATCH schema. Asserts: PATCH with `pinnedTags` containing a tag not in `tags` → 400; PATCH with `pinnedTags ∩ removedTags ≠ ∅` → 400; removing a tag from `tags` via PATCH also strips it from `pinnedTags`; adding a tag to `removedTags` strips it from `pinnedTags`.
 
@@ -938,7 +938,7 @@ Pure caller — does NOT persist. Returns `{tagline, mode, durationMs}`. Client 
   - **Enhance preserves angle** — current tagline "Backend engineer who likes systems" → output keeps "backend systems" focus, doesn't pivot to "full-stack" or invent new domain.
   - **No-invention** — profile has no Rust experience → output never claims Rust even if "Rust" appears as a posting-keyword-style hint in the input.
   - **Length cap** — output ≤ 200 chars; assertions check both length and that the rewrite didn't truncate mid-sentence.
-- Provider handler in `eval/provider.ts:HANDLERS["tagline-draft"]`. Mirrors the bullet-tag-suggest handler shape: fixture supplies profile summary directly so the suite is DB-agnostic.
+- Provider handler in `eval/provider.ts:HANDLERS["tagline-draft"]`. Mirrors the bullet-tags-from-profile handler shape: fixture supplies profile summary directly so the suite is DB-agnostic.
 
 ##### M7.9.5 — API route + rate limit ⏳ (S7.14)
 
@@ -1225,17 +1225,17 @@ Read-time defaults: in the loader that hydrates `bulletsJson` (verify at impl-ti
 
 ##### M8.5.2 — Auto-tag prompt + callsite registration ✅ (S8.9)
 
-New LLM callsite, slug `bullet-auto-tag`. Steps per the LLM-observability invariants in CLAUDE.md:
+New LLM callsite, slug `bullet-tags-from-posting`. Steps per the LLM-observability invariants in CLAUDE.md:
 
-- **Prompt file**: `docs/llm-prompts/bullet-auto-tag.md`. System + user template. System enumerates the no-fabrication rule. User template interpolates posting keywords + flattened bullet list (`{id, text, tags, removedTags}` per bullet — `tags` shown so the LLM doesn't re-propose existing ones; `removedTags` shown so it doesn't propose blocked ones; `text` is the evidence the LLM judges against).
-- **Lunary registry upload**: extend `scripts/sync-lunary-templates.ts`'s slug list; re-run to push to Lunary. Disk fallback automatic via `lib/ai/prompts.ts:loadPrompt('bullet-auto-tag', vars)`.
+- **Prompt file**: `docs/llm-prompts/bullet-tags-from-posting.md`. System + user template. System enumerates the no-fabrication rule. User template interpolates posting keywords + flattened bullet list (`{id, text, tags, removedTags}` per bullet — `tags` shown so the LLM doesn't re-propose existing ones; `removedTags` shown so it doesn't propose blocked ones; `text` is the evidence the LLM judges against).
+- **Lunary registry upload**: extend `scripts/sync-lunary-templates.ts`'s slug list; re-run to push to Lunary. Disk fallback automatic via `lib/ai/prompts.ts:loadPrompt('bullet-tags-from-posting', vars)`.
 - **Inventory entry**: append to `docs/llm-calls.md` — caller `lib/profile/auto-tag.ts`, model `MODEL_LITE`, `maxOutputTokens` 2048, scope "Auto-tag bullets with posting keywords during resume gen (S8.9)".
-- **Promptfoo suite**: new `eval/suites/bullet-auto-tag.yaml`. Four starter fixtures:
+- **Promptfoo suite**: new `eval/suites/bullet-tags-from-posting.yaml`. Four starter fixtures:
   - **Positive**: bullet `"Built a Python API"`, keyword `"Python"` → expect `addedTags: ["Python"]`.
   - **Negative (no evidence)**: bullet `"Built a Go API"`, keyword `"Python"` → expect `addedTags: []`.
   - **Blocklist**: bullet `"Built a Python API"` with `removedTags: ["Python"]`, keyword `"Python"` → expect `addedTags: []`.
   - **Already tagged**: bullet `"Built a Python API"` with `tags: ["Python"]`, keyword `"Python"` → expect `addedTags: []` (don't re-propose).
-- **Provider handler**: add `bullet-auto-tag` case to `eval/provider.ts:HANDLERS`.
+- **Provider handler**: add `bullet-tags-from-posting` case to `eval/provider.ts:HANDLERS`.
 
 Output schema (single batched call):
 ```typescript
@@ -1261,8 +1261,8 @@ export async function autoTagBullets(opts: {
 Internals:
 1. Load full profile via `lib/repositories/profile.ts:loadProfile(userId)` — WorkRoles + Projects + Educations with bullets.
 2. Flatten bullets into `{ parentKind, parentId, bullet }` triples. Skip `excluded === true` bullets (no point tagging hidden ones).
-3. Build prompt via `loadPrompt('bullet-auto-tag', { keywords: postingKeywords, bullets: flattened })`.
-4. Call `chatJSON({ name: 'bullet-auto-tag', model: MODEL_LITE, maxOutputTokens: 2048, ...})`. Zod-validate the response shape.
+3. Build prompt via `loadPrompt('bullet-tags-from-posting', { keywords: postingKeywords, bullets: flattened })`.
+4. Call `chatJSON({ name: 'bullet-tags-from-posting', model: MODEL_LITE, maxOutputTokens: 2048, ...})`. Zod-validate the response shape.
 5. Post-filter each proposal defensively: `proposal.addedTags = proposal.addedTags.filter(t => !bullet.removedTags.includes(t) && !bullet.tags.includes(t))` — defense-in-depth even though the prompt is also instructed to filter.
 6. Drop proposals with empty `addedTags` after filter.
 7. Apply merge per affected bullet:
@@ -1289,9 +1289,9 @@ try {
         userId: session.user.id,
         postingKeywords: parsedPosting.keywords,
     });
-    console.info(`[bullet-auto-tag] +${autoTagResult.tagsAdded} tags / ${autoTagResult.bulletsAffected} bullets / ${autoTagResult.durationMs}ms`);
+    console.info(`[bullet-tags-from-posting] +${autoTagResult.tagsAdded} tags / ${autoTagResult.bulletsAffected} bullets / ${autoTagResult.durationMs}ms`);
 } catch (e) {
-    console.warn(`[bullet-auto-tag] skipped: ${errMessage(e)}`);
+    console.warn(`[bullet-tags-from-posting] skipped: ${errMessage(e)}`);
 }
 // Re-load profile so selection sees updated tags. (Or pass updated profile through directly.)
 ```
@@ -1344,7 +1344,7 @@ All four wired into `scripts/pre-push.sh`'s `SUITES` array.
 ##### M8.5.9 — Promptfoo eval pass ✅
 
 Run `npm run test:prompts` end-to-end after prompts + fixtures land. Expected:
-- Two new `bullet-auto-tag` fixtures pass against `MODEL_LITE`.
+- Two new `bullet-tags-from-posting` fixtures pass against `MODEL_LITE`.
 - Two new `resume-rewrite` fold-in fixtures pass against `MODEL_FLASH`.
 - Added Gemini spend ~$0.01 per full eval run.
 

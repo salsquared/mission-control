@@ -386,7 +386,7 @@ const FillResponseSchema = z.object({
 });
 
 // M7.7.2 (story S7.10): rewrite is now TEXT-ONLY. Tags are owned by the
-// tag-suggest flow (`bullet-tag-suggest` — separate LLM callsite). The
+// tag-suggest flow (`bullet-tags-from-profile` — separate LLM callsite). The
 // rewrite response schema drops the `tags` field; the proposal preserves
 // the input bullet's tags / autoTags / removedTags / pinnedTags verbatim.
 // This narrows S7.8 back to its original text-only intent (the M7.6
@@ -465,7 +465,7 @@ export async function callBulletAssist(
 
     // M7.7.2 (S7.10) — text-only rewrite. Every tag-related field passes
     // through unchanged from the input bullet. Tag churn for this bullet
-    // now lives in the separate `bullet-tag-suggest` callsite (the Tags
+    // now lives in the separate `bullet-tags-from-profile` callsite (the Tags
     // icon on BulletRow, sibling to the wand). A user who wants the
     // rewrite's wording AND a tag refresh runs both flows explicitly.
     const proposal: Bullet = {

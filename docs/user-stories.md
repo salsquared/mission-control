@@ -428,7 +428,7 @@ Stories: [[S8.11]] + [[S8.12]] + [[S8.13]]. Ships **first** of the two M8 v2 mil
 
 #### M8.5 — Resume card v2: LLM keyword coverage ⏳ queued
 
-Stories: [[S8.9]] + [[S8.10]]. Ships **after** M8.4 per Decision 6. New LLM callsite (slug TBD, e.g. `bullet-auto-tag`) on `MODEL_LITE`; new prompt under `docs/llm-prompts/`; new Promptfoo fixture suite under `eval/suites/`. Schema migration adds `removedTags: string[]` to the bullet JSON shape (per-bullet blocklist, Decision 6.1). Subtle "auto" badge on auto-added tags in the existing tag-edit UI (Decision 6.3). Fold-in mechanic ([[S8.10]]) modifies the existing `lib/resumes/rewrite.ts` prompt to inject matched keywords verbatim where natural. Implementation tasks land in `docs/implementation.md` Track C.
+Stories: [[S8.9]] + [[S8.10]]. Ships **after** M8.4 per Decision 6. New LLM callsite `bullet-tags-from-posting` (initially shipped as `bullet-auto-tag`, renamed 2026-05-25) on `MODEL_LITE`; new prompt under `docs/llm-prompts/`; new Promptfoo fixture suite under `eval/suites/`. Schema migration adds `removedTags: string[]` to the bullet JSON shape (per-bullet blocklist, Decision 6.1). Subtle "auto" badge on auto-added tags in the existing tag-edit UI (Decision 6.3). Fold-in mechanic ([[S8.10]]) modifies the existing `lib/resumes/rewrite.ts` prompt to inject matched keywords verbatim where natural. Implementation tasks land in `docs/implementation.md` Track C.
 
 #### M9 — GitHub-driven project metrics ✅ shipped
 

@@ -110,6 +110,9 @@ SUITES=(
     "scripts/tests/hermetic/bullet-assist-scratchpad-smoke.ts"
     # M8.6 — resume-gen scratchpad synthesis
     "scripts/tests/hermetic/scratchpad-synth-smoke.ts"
+    # M7.9 — profile tagline + LLM draft
+    "scripts/tests/hermetic/tagline-patch-smoke.ts"
+    "scripts/tests/hermetic/tagline-draft-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

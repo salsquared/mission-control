@@ -31,7 +31,7 @@
         // M7.7.2 (S7.10): rewrite is text-only. Tags MUST be preserved
         // verbatim from the input bullet — the proposal's tags array
         // must equal ["general"] (the input bullet's tags) exactly.
-        // Tag churn is now owned by the separate bullet-tag-suggest flow.
+        // Tag churn is now owned by the separate bullet-tags-from-profile flow.
         const r = JSON.parse(output);
         return r.mode === 'rewrite' &&
         typeof r.proposal === 'object' &&
@@ -52,4 +52,4 @@
         4. The text doesn't invent specific numbers (since the original had none).
         Note: tags are preserved verbatim post-M7.7.2 — the JS assertion above
         enforces that. Tag-related judgment is out of scope for the rewrite rubric;
-        the bullet-tag-suggest suite covers tag churn separately.
+        the bullet-tags-from-profile suite covers tag churn separately.

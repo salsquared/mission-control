@@ -13,9 +13,10 @@ import type { PromptVars } from "@/lib/ai/prompts";
 export const PROMPT_SLUGS = [
     "bullet-assist-fill",
     "bullet-assist-rewrite",
-    "bullet-auto-tag",
-    "bullet-tag-suggest",
+    "bullet-tags-from-posting",
+    "bullet-tags-from-profile",
     "scratchpad-synth",
+    "tagline-draft",
     "discovery-suggest",
     "email-parser",
     "employment-type-classifier",
@@ -40,11 +41,11 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         draftCount: "1",
         draftsJson: JSON.stringify([{ filename: "r.pdf", tree: { workRoles: [{ company: "Acme", title: "Senior Engineer", bullets: ["Built thing"] }] } }], null, 2),
     },
-    "bullet-auto-tag": {
+    "bullet-tags-from-posting": {
         keywords: "- Python\n- Kubernetes\n- distributed systems",
         bullets: "- id=b001 | tags=[] | removedTags=[]\n  text: \"Built a Python service handling 50k req/day on k8s\"\n- id=b002 | tags=[Go] | removedTags=[]\n  text: \"Cut latency in our Go API by 40%\"",
     },
-    "bullet-tag-suggest": {
+    "bullet-tags-from-profile": {
         spine: "Software Engineer at Acme Corp",
         bulletText: "Built a Python API serving 50k req/day",
         tagState: "  - \"Python\" [pinned — MUST remain in output verbatim]\n  - \"API\" [user — may keep / replace / remove]",
@@ -57,6 +58,11 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         postingKeywords: "  - PostgreSQL\n  - Go\n  - data pipeline\n  - schema migration",
         uncoveredKeywords: "  - PostgreSQL\n  - Go",
         maxBullets: "3",
+    },
+    "tagline-draft": {
+        mode: "Draft",
+        currentTagline: "(none — draft from scratch)",
+        profileSummary: "## Identity\nName: Salvador Salcedo\nSummary: Engineer focused on developer-facing systems.\n\n## Work history\nSoftware Engineer at Acme Corp\n  • Built a Python service handling 50k req/day\n  • Cut p99 latency 40% via async batch dispatch\n  notes: Mostly backend payments work.",
     },
     "discovery-suggest": {
         topic: "space",

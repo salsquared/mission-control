@@ -197,7 +197,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
     // stays profile-agnostic). Bypasses `mergeAutoTagProposals` too — the
     // assertion in the YAML grades the RAW model output, which is what
     // we actually want a Promptfoo run to defend.
-    "bullet-auto-tag": async (input) => {
+    "bullet-tags-from-posting": async (input) => {
         const args = input as {
             keywords: string[];
             bullets: Array<{ id: string; text: string; tags?: string[]; removedTags?: string[] }>;
@@ -217,7 +217,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
             },
         }));
 
-        const prompt = await loadPrompt("bullet-auto-tag", {
+        const prompt = await loadPrompt("bullet-tags-from-posting", {
             keywords: renderKeywordsBlock(args.keywords),
             bullets: renderBulletsBlock(flat),
         });
@@ -230,7 +230,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
         });
 
         return await chatJSON({
-            name: "bullet-auto-tag",
+            name: "bullet-tags-from-posting",
             system: prompt.system,
             user: prompt.user,
             schema,
@@ -250,7 +250,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
     // pre-categorized tag state + vocabulary directly so the suite is
     // profile-agnostic. POST-FILTER IS APPLIED so the contract invariants
     // (pin preservation, blocklist filter, 7-cap) get exercised end-to-end.
-    "bullet-tag-suggest": async (input) => {
+    "bullet-tags-from-profile": async (input) => {
         const args = input as {
             spine: string;
             bulletText: string;
@@ -258,13 +258,20 @@ const HANDLERS: Record<string, CallsiteHandler> = {
             autoTags?: string[];
             userTags?: string[];
             removedTags?: string[];
+            // Flat list — legacy fixture shape. Renders as a single ungrouped
+            // vocabulary block.
             vocabulary?: string[];
+            // Contextual shape — fixture explicitly splits sibling-entity vs
+            // other-entity tags so the regression suite can exercise the
+            // two-bucket render path. Takes precedence over `vocabulary` when
+            // either field is present.
+            siblingVocabulary?: string[];
+            otherVocabulary?: string[];
         };
         const pinnedTags = args.pinnedTags ?? [];
         const autoTags = args.autoTags ?? [];
         const userTags = args.userTags ?? [];
         const removedTags = args.removedTags ?? [];
-        const vocabulary = args.vocabulary ?? [];
 
         // Re-use the pure render helpers from the lib so the prompt block
         // format stays in lockstep with production.
@@ -279,12 +286,20 @@ const HANDLERS: Record<string, CallsiteHandler> = {
             excluded: false,
         };
 
-        const prompt = await loadPrompt("bullet-tag-suggest", {
+        const vocabularyBlock =
+            args.siblingVocabulary !== undefined || args.otherVocabulary !== undefined
+                ? renderVocabulary({
+                      siblingTags: args.siblingVocabulary ?? [],
+                      otherTags: args.otherVocabulary ?? [],
+                  })
+                : renderVocabulary(args.vocabulary ?? []);
+
+        const prompt = await loadPrompt("bullet-tags-from-profile", {
             spine: args.spine,
             bulletText: args.bulletText,
             tagState: renderTagState(fakeBullet),
             removedTags: renderRemovedTags(fakeBullet),
-            vocabulary: renderVocabulary(vocabulary),
+            vocabulary: vocabularyBlock,
         });
 
         const schema = z.object({
@@ -293,7 +308,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
         });
 
         const response = await chatJSON({
-            name: "bullet-tag-suggest",
+            name: "bullet-tags-from-profile",
             system: prompt.system,
             user: prompt.user,
             schema,
@@ -310,7 +325,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
     // Provider handler calls the real caller, which goes through chatJSON +
     // loadPrompt + the standard Bullet shape fill. Fixtures supply the
     // entity spine + scratchpad inline (no DB load needed) so the suite is
-    // profile-agnostic — matches the `bullet-tag-suggest` handler shape.
+    // profile-agnostic — matches the `bullet-tags-from-profile` handler shape.
     "scratchpad-synth": async (input) => {
         const args = input as {
             entityKind: ScratchpadSynthEntityKind;
@@ -343,6 +358,44 @@ const HANDLERS: Record<string, CallsiteHandler> = {
         // Return the bullets array directly. Promptfoo fixtures grade against
         // r.bullets[].text and r.bullets[].tags.
         return { bullets: result.bullets };
+    },
+
+    // M7.9.3 (story S7.14) — one-sentence profile tagline drafter.
+    // Bypasses the live DB load in `draftTagline`; the fixture supplies the
+    // profileSummary + currentTagline + mode directly so the suite is
+    // profile-agnostic (mirrors the bullet-tags-from-profile + scratchpad-synth
+    // handler shape). POST-FILTER IS APPLIED — the response goes through
+    // postFilterTagline so fixture assertions see the same cleaned output
+    // the route would return.
+    "tagline-draft": async (input) => {
+        const args = input as {
+            mode: "draft" | "enhance";
+            currentTagline: string;
+            profileSummary: string;
+        };
+
+        const prompt = await loadPrompt("tagline-draft", {
+            mode: args.mode === "draft" ? "Draft" : "Enhance",
+            currentTagline: args.currentTagline.trim() || "(none — draft from scratch)",
+            profileSummary: args.profileSummary,
+        });
+
+        const schema = z.object({
+            tagline: z.string().min(1).max(500),
+        });
+
+        const response = await chatJSON({
+            name: "tagline-draft",
+            system: prompt.system,
+            user: prompt.user,
+            schema,
+            model: MODEL_LITE,
+            temperature: 0.4,
+            maxOutputTokens: 256,
+        });
+
+        const { postFilterTagline } = await import("@/lib/profile/tagline-draft");
+        return { tagline: postFilterTagline(response.tagline) };
     },
 };
 

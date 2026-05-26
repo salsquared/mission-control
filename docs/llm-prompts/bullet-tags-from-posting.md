@@ -1,4 +1,4 @@
-# bullet-auto-tag
+# bullet-tags-from-posting
 
 **Callsite:** `lib/profile/auto-tag.ts:autoTagBullets`
 **Model:** `MODEL_LITE` (`gemini-3.1-flash-lite`)

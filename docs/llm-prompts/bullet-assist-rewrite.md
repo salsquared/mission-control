@@ -25,7 +25,7 @@ Hard rules — never violate:
 Same section assembly as `bullet-assist-fill` plus the `Current bullet` block before the output schema.
 
 ```
-Rewrite this one bullet. **Return ONLY the new text — do not return tags.** Tags on this bullet are owned by a separate flow (`bullet-tag-suggest`); this rewrite must not touch them. The user invokes you when they want sharper wording without losing their carefully chosen tag set.
+Rewrite this one bullet. **Return ONLY the new text — do not return tags.** Tags on this bullet are owned by a separate flow (`bullet-tags-from-profile`); this rewrite must not touch them. The user invokes you when they want sharper wording without losing their carefully chosen tag set.
 
 {{spine}}
 
@@ -55,7 +55,7 @@ Inherits all five from `bullet-assist-fill` (`spine`, `siblings`, `archive`, `sc
 
 ## Notes
 
-- M7.7.2 (S7.10) narrowed this to text-only. The `M7.6` enhancement that added tag-update is reverted. Tag churn now lives in the sibling `bullet-tag-suggest` callsite (Tags icon in `components/ui/BulletRow.tsx`, next to the wand).
+- M7.7.2 (S7.10) narrowed this to text-only. The `M7.6` enhancement that added tag-update is reverted. Tag churn now lives in the sibling `bullet-tags-from-profile` callsite (Tags icon in `components/ui/BulletRow.tsx`, next to the wand).
 - The `Current bullet to rewrite` block is **never trimmed** (along with spine + task statement + output schema). Overflow trim order is the same as fill: `archive` → `siblings` → `readme` → `scratchpad` (scratchpad drops last because it's the user's most-targeted grounding for this specific entity).
 - Output schema enforces text length 1–2000 chars. No `tags` field — server preserves all tag-related state (`tags`, `autoTags`, `removedTags`, `pinnedTags`) from the input bullet verbatim.
 - Server post-processing: response replaces only `text` on the existing bullet; `id` / tags / `autoTags` / `removedTags` / `pinnedTags` / `locked` / `excluded` all pass through. The schema instructs the model to not echo the id (server-side enforcement).

@@ -57,7 +57,7 @@ class AIError extends Error {
 injectCacheEntry('@/lib/ai/gemini', {
     chatJSON: async (opts: { name: string }) => {
         chatJSONCallCount += 1;
-        if (opts.name === 'bullet-tag-suggest') {
+        if (opts.name === 'bullet-tags-from-profile') {
             return { tags: cannedTags, reason: cannedReason };
         }
         throw new Error(`unexpected chatJSON name in this smoke: ${opts.name}`);

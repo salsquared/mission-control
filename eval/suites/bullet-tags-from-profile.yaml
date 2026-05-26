@@ -1,0 +1,244 @@
+# Suite for `bullet-tags-from-profile` — per-bullet AI tag generator (M7.7.3).
+#
+# Provider handler (eval/provider.ts) calls the lib function with a fixture
+# bullet + spine + vocabulary + blocklist, returns the post-filtered tag
+# list. Assertions check the four contract invariants:
+#   1. Pinned tags preserved verbatim.
+#   2. 3–7 cap respected.
+#   3. removedTags blocklist filtered.
+#   4. Vocabulary reuse preferred over invention.
+
+- description: "Pin preservation — pinned tag survives even when LLM would replace"
+  vars:
+    callsite: bullet-tags-from-profile
+    input:
+      spine: "Software Engineer at Acme Corp"
+      bulletText: "Built a Python API serving 50k req/day"
+      pinnedTags: ["Python"]
+      autoTags: []
+      userTags: ["API"]
+      removedTags: []
+      vocabulary: ["TypeScript", "Go", "Postgres", "REST", "distributed-systems"]
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        // Pin invariant — "Python" MUST be in output regardless of what the
+        // LLM proposed. The server-side post-filter enforces this; the assert
+        // verifies the contract end-to-end.
+        const r = JSON.parse(output);
+        return Array.isArray(r.tags) &&
+        r.tags.includes("Python") &&
+        r.tags.length >= 1 &&
+        r.tags.length <= 7;
+
+- description: "3–7 cap respected on a tag-rich bullet"
+  vars:
+    callsite: bullet-tags-from-profile
+    input:
+      spine: "Software Engineer at Acme Corp"
+      bulletText: "Built a distributed Python + PostgreSQL system with Kubernetes orchestration, Redis caching, gRPC microservices, and Prometheus metrics for a real-time payments pipeline"
+      pinnedTags: []
+      autoTags: []
+      userTags: []
+      removedTags: []
+      vocabulary: ["TypeScript", "Go"]
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        // Cap invariant — server truncates to MAX_TAGS=7 even if LLM
+        // proposes more. Soft floor of 3.
+        const r = JSON.parse(output);
+        return Array.isArray(r.tags) &&
+        r.tags.length >= 3 &&
+        r.tags.length <= 7;
+
+- description: "Blocklist filtered — removedTag never appears in output"
+  vars:
+    callsite: bullet-tags-from-profile
+    input:
+      spine: "Software Engineer at Acme Corp"
+      bulletText: "Built a Python API and a small JavaScript admin UI"
+      pinnedTags: []
+      autoTags: []
+      userTags: ["Python"]
+      removedTags: ["JavaScript"]
+      vocabulary: ["TypeScript", "Python", "React"]
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        // Blocklist invariant — "JavaScript" appears in the bullet text
+        // and would be a natural tag, but it's in removedTags. Output
+        // must not contain it.
+        const r = JSON.parse(output);
+        return Array.isArray(r.tags) &&
+        !r.tags.includes("JavaScript");
+
+- description: "Vocabulary reuse — prefer 'TypeScript' over inventing 'TS'"
+  vars:
+    callsite: bullet-tags-from-profile
+    input:
+      spine: "Software Engineer at Acme Corp"
+      bulletText: "Built a TypeScript backend with strict type-checking and shared TS types across services"
+      pinnedTags: []
+      autoTags: []
+      userTags: []
+      removedTags: []
+      vocabulary: ["TypeScript", "Node.js", "Postgres"]
+  assert:
+    - type: is-json
+    - type: llm-rubric
+      value: |
+        The proposal must prefer reusing vocabulary tags over inventing new
+        ones. PASS iff:
+        1. The output includes "TypeScript" (the vocabulary spelling).
+        2. The output does NOT include "TS" or "typescript" as a separate tag.
+        3. Tags are concrete (skills/technologies), not generic adjectives.
+        4. 3–7 tags total.
+
+# Regression — see conversation 2026-05-25. Model proposed "Infrastructure
+# Management" + "User Engagement" + "Safety Compliance" for a bartending
+# bullet because the user's profile vocabulary is tech-heavy and the old
+# Rule 4 ("prefer reusing vocabulary") outranked Rule 6 ("no fabrication").
+# The fix is two-fold: (a) reframe Rule 4 as a tiebreaker, (b) split the
+# vocabulary into sibling-entity vs other-entity buckets so the model can
+# see which tags share the bullet's domain. This fixture exercises both.
+- description: "Cross-domain stretch — bartending bullet must NOT inherit tech vocabulary"
+  vars:
+    callsite: bullet-tags-from-profile
+    input:
+      spine: "Barback and Server at Gather"
+      bulletText: "Optimized bar operations by managing prep and supply workflows, enabling bartenders to prioritize drink production and guest engagement."
+      pinnedTags: []
+      autoTags: []
+      userTags: []
+      removedTags: []
+      # Empty sibling bucket — this is the first tagged bullet on the role,
+      # mirroring the real-world scenario. Other bucket is tech-heavy.
+      siblingVocabulary: []
+      otherVocabulary:
+        - "Platform Development"
+        - "Aerospace"
+        - "Physical Security"
+        - "User Engagement"
+        - "Authentication"
+        - "Data Processing"
+        - "Domain Management"
+        - "Hackathon"
+        - "Postgres"
+        - "Redis"
+        - "Safety Compliance"
+        - "Supabase"
+        - "Visitor Management"
+        - "Web3"
+        - "Access Control"
+        - "Blockchain"
+        - "Distributed Systems"
+        - "Flask"
+        - "GeoPandas"
+        - "Infrastructure Management"
+        - "Node.js"
+        - "Patrol"
+        - "Python"
+        - "Remote Sensing"
+        - "Satellite Imagery"
+        - "scikit-learn"
+        - "Smart Contracts"
+        - "Solidity"
+        - "Surveillance"
+        - "Web Development"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        // Hard no-list: every one of these would be a cross-domain stretch
+        // for a bartending bullet. The model proposed all three of these
+        // before the fix. None must appear in the output.
+        const r = JSON.parse(output);
+        if (!Array.isArray(r.tags)) return false;
+        const banned = new Set([
+          "Infrastructure Management",
+          "User Engagement",
+          "Safety Compliance",
+          "Platform Development",
+          "Physical Security",
+          "Aerospace",
+          "Authentication",
+          "Postgres",
+          "Redis",
+          "Python",
+          "Web3",
+          "Blockchain",
+          "Smart Contracts",
+          "Solidity",
+          "Distributed Systems",
+          "Web Development",
+          "Surveillance",
+          "Visitor Management",
+          "Access Control",
+          "Patrol",
+          "Satellite Imagery",
+          "Remote Sensing",
+          "GeoPandas",
+          "scikit-learn",
+          "Flask",
+          "Node.js",
+          "Hackathon",
+          "Domain Management",
+          "Data Processing",
+          "Supabase",
+        ]);
+        return !r.tags.some(t => banned.has(t));
+    - type: llm-rubric
+      value: |
+        Context: the bullet is from a bartending / food-service role. The
+        Profile vocabulary in the prompt is entirely from the user's tech /
+        aerospace / security experience and does NOT overlap with bartending.
+
+        PASS iff ALL of:
+        1. 3 to 7 tags total.
+        2. Every tag is defensible from the bullet text alone — no tag
+           refers to software, infrastructure, security clearance, data
+           pipelines, or any other tech/aerospace concept absent from a
+           bartending bullet.
+        3. The tags describe hospitality / bar / customer-service concepts
+           grounded in the bullet's words (e.g. "Bar Operations",
+           "Inventory Management", "Workflow Optimization",
+           "Customer Service", "Drink Preparation"). New tags invented
+           outside the supplied vocabulary are EXPECTED and correct here.
+
+- description: "Sibling vocabulary preferred — same-entry tags fit the bullet's domain"
+  vars:
+    callsite: bullet-tags-from-profile
+    input:
+      spine: "Software Engineer at Acme Corp"
+      bulletText: "Refactored the payments service to share auth middleware with the rest of the backend"
+      pinnedTags: []
+      autoTags: []
+      userTags: []
+      removedTags: []
+      # Sibling tags directly relevant — same role, same kind of work. Other
+      # tags are from unrelated entries (a research project, a coursework
+      # entry). The model should reach for the sibling tags first.
+      siblingVocabulary: ["Authentication", "Payments", "TypeScript", "Postgres"]
+      otherVocabulary: ["Remote Sensing", "Satellite Imagery", "scikit-learn", "GeoPandas"]
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        // At least one sibling-vocab tag must appear in the output. Otherwise
+        // the contextual split isn't being used productively.
+        const r = JSON.parse(output);
+        if (!Array.isArray(r.tags)) return false;
+        const sibling = new Set(["Authentication", "Payments", "TypeScript", "Postgres"]);
+        const overlap = r.tags.filter(t => sibling.has(t));
+        return overlap.length >= 1 && r.tags.length >= 3 && r.tags.length <= 7;
+    - type: javascript
+      value: |
+        // No other-entry geospatial vocabulary should leak in — the bullet
+        // is about payments + auth, not satellite imagery.
+        const r = JSON.parse(output);
+        const banned = new Set(["Remote Sensing", "Satellite Imagery", "scikit-learn", "GeoPandas"]);
+        return !r.tags.some(t => banned.has(t));

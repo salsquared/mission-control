@@ -275,7 +275,7 @@ async function main(): Promise<void> {
         );
         // M7.7.2 — rewrite is text-only. Output schema must NOT include a
         // `tags` field; the task statement explicitly instructs the LLM not
-        // to return or modify tags. Tag churn moved to the bullet-tag-suggest
+        // to return or modify tags. Tag churn moved to the bullet-tags-from-profile
         // callsite.
         record(
             'rewrite: output schema is text-only (no "tags" field, no "bullets" field — M7.7.2)',

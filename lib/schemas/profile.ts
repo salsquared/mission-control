@@ -154,10 +154,19 @@ export const EducationSchema = z.object({
     updatedAt: z.string().datetime(),
 });
 
+// M7.9.2 (story S7.14) — tagline cap. 200 chars is the prompt's hard rule;
+// enforce server-side too. Direct text writes (user typing in the field)
+// and LLM-draft accepts both go through this cap.
+const TAGLINE_MAX_BYTES = 200;
+
 export const ProfileSchema = z.object({
     id: z.string(),
     userId: z.string(),
     headline: z.string().nullable(),
+    // M7.9.1 — one-sentence subtitle for the resume (story S7.14).
+    // Optional on the wire so pre-migration snapshots + fixtures don't need
+    // to spell out a null. Server always sets explicitly when serializing.
+    tagline: z.string().nullable().optional(),
     summary: z.string().nullable(),
     location: z.string().nullable(),
     email: z.string().nullable(),
@@ -186,6 +195,7 @@ export const ProfileDeleteResponseSchema = z.object({ success: z.literal(true), 
 // ─── Requests ──────────────────────────────────────────────────────────────
 export const ProfilePatchSchema = z.object({
     headline: z.string().nullable().optional(),
+    tagline: z.string().max(TAGLINE_MAX_BYTES).nullable().optional(),
     summary: z.string().nullable().optional(),
     location: z.string().nullable().optional(),
     email: z.string().nullable().optional(),

@@ -10,11 +10,13 @@ import {
     Sparkles,
     Heart,
     Languages as LanguagesIcon,
+    Loader2,
     X,
     type LucideIcon,
 } from "lucide-react";
 import { Card } from "../../ui/Card";
 import { EditableField } from "../../ui/EditableField";
+import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import {
     LANGUAGE_PROFICIENCIES,
@@ -40,10 +42,11 @@ const COMMON_LANGUAGES = [
 ] as const;
 
 // HeaderPatch is the union of every field this card writes — headline +
-// summary + contact + skills/hobbies/languages. Each setter on the parent
-// view dispatches through this single patch shape.
+// tagline + summary + contact + skills/hobbies/languages. Each setter on
+// the parent view dispatches through this single patch shape.
 export type PersonalInfoPatch = {
     headline?: string | null;
+    tagline?: string | null;
     summary?: string | null;
     location?: string | null;
     email?: string | null;
@@ -56,6 +59,7 @@ export type PersonalInfoPatch = {
 
 interface PersonalInfoCardProps {
     headline: string | null;
+    tagline: string | null;
     summary: string | null;
     location: string | null;
     email: string | null;
@@ -358,6 +362,149 @@ const HobbiesEditor: React.FC<{
     />
 );
 
+// ─── M7.9.6 — Tagline field + AI-draft button + inline diff panel ─────────
+// Plain text input for direct edits (via EditableField) + a Sparkles AI
+// button that calls `/api/profile/tagline/draft`. The endpoint returns
+// `{tagline, mode}`; mode tells the UI whether the LLM drafted from
+// scratch (empty current) or enhanced what was there. Diff panel sits
+// inline below the field with Accept / Discard.
+//
+// Cap-hint UX: a char-count badge that turns rose when within 20 of the
+// 200-char cap. Defense-in-depth — the zod schema enforces 200 server-side.
+const TAGLINE_HARD_CAP = 200;
+const TAGLINE_WARN_AT = 180;
+const TaglineRow: React.FC<{
+    tagline: string | null;
+    onSave: (next: string | null) => void;
+}> = ({ tagline, onSave }) => {
+    const [proposal, setProposal] = useState<string | null>(null);
+    const [proposalMode, setProposalMode] = useState<'draft' | 'enhance' | null>(null);
+    const [drafting, setDrafting] = useState(false);
+    const [draftError, setDraftError] = useState<string | null>(null);
+
+    const trimmedLen = (tagline ?? '').length;
+    const overCap = trimmedLen > TAGLINE_HARD_CAP;
+    const nearCap = trimmedLen >= TAGLINE_WARN_AT;
+
+    const handleDraft = async () => {
+        setDrafting(true);
+        setDraftError(null);
+        try {
+            const result = await api.profile.tagline.draft();
+            setProposal(result.tagline);
+            setProposalMode(result.mode);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : 'Tagline draft failed';
+            setDraftError(msg);
+        } finally {
+            setDrafting(false);
+        }
+    };
+
+    const acceptProposal = () => {
+        if (proposal === null) return;
+        onSave(proposal);
+        setProposal(null);
+        setProposalMode(null);
+    };
+
+    const discardProposal = () => {
+        setProposal(null);
+        setProposalMode(null);
+    };
+
+    return (
+        <div className="flex flex-col gap-1.5">
+            <div className="flex items-center gap-3">
+                <span className="text-[10px] uppercase tracking-wider text-white/30">Tagline</span>
+                <button
+                    type="button"
+                    onClick={handleDraft}
+                    disabled={drafting || proposal !== null}
+                    className={cn(
+                        "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider transition-colors",
+                        drafting
+                            ? "text-purple-300 opacity-100"
+                            : "text-white/40 hover:text-purple-300 hover:bg-purple-500/10 disabled:opacity-30 disabled:cursor-not-allowed",
+                    )}
+                    title={tagline ? "Enhance the current tagline with the LLM (grounded on your full profile)" : "Draft a one-sentence tagline from your profile with the LLM"}
+                >
+                    {drafting
+                        ? <Loader2 className="w-3 h-3 animate-spin" />
+                        : <Sparkles className="w-3 h-3" />
+                    }
+                    <span>{drafting ? "drafting…" : "AI draft"}</span>
+                </button>
+                {trimmedLen > 0 && (
+                    <span className={cn(
+                        "text-[10px] ml-auto",
+                        overCap ? "text-rose-400" : nearCap ? "text-amber-400" : "text-white/30",
+                    )}>
+                        {trimmedLen}/{TAGLINE_HARD_CAP}
+                    </span>
+                )}
+            </div>
+            <EditableField
+                value={tagline}
+                onSave={(v) => onSave(v)}
+                placeholder="One-sentence professional pitch — your subtitle under the name on every resume"
+                readClassName="text-sm text-white/80 italic"
+            />
+            {draftError && (
+                <div className="flex items-center justify-between gap-2 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded px-2 py-1">
+                    <span className="truncate">{draftError}</span>
+                    <button
+                        type="button"
+                        onClick={() => setDraftError(null)}
+                        className="text-rose-300/60 hover:text-rose-200 shrink-0"
+                        title="Dismiss"
+                    >
+                        <X className="w-3 h-3" />
+                    </button>
+                </div>
+            )}
+            {proposal !== null && (
+                <div className="mt-1 flex flex-col gap-2 rounded-md border border-purple-500/30 bg-purple-500/[0.04] p-2">
+                    <div className="flex items-center gap-2">
+                        <Sparkles className="w-3 h-3 text-purple-300" />
+                        <span className="text-[10px] uppercase tracking-wider text-purple-300">
+                            {proposalMode === 'draft' ? 'Drafted from your profile' : 'Enhanced from your current tagline'}
+                        </span>
+                    </div>
+                    {tagline && (
+                        <div>
+                            <span className="text-[10px] uppercase tracking-wider text-white/40">Current</span>
+                            <p className="text-sm text-white/40 line-through decoration-rose-400/50">{tagline}</p>
+                        </div>
+                    )}
+                    <div>
+                        <span className="text-[10px] uppercase tracking-wider text-white/40">Proposed</span>
+                        <p className="text-sm text-emerald-300 italic">{proposal}</p>
+                    </div>
+                    <div className="flex items-center gap-2 pt-0.5">
+                        <button
+                            type="button"
+                            onClick={acceptProposal}
+                            className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors"
+                            title="Replace tagline with the proposal"
+                        >
+                            Accept
+                        </button>
+                        <button
+                            type="button"
+                            onClick={discardProposal}
+                            className="px-2 py-1 text-xs font-medium rounded bg-white/5 hover:bg-white/10 text-white/60 border border-white/15 transition-colors"
+                            title="Keep the current tagline; discard the proposal"
+                        >
+                            Discard
+                        </button>
+                    </div>
+                </div>
+            )}
+        </div>
+    );
+};
+
 const LanguagesEditor: React.FC<{
     languages: LanguageEntry[] | null;
     onChange: (next: LanguageEntry[] | null) => void;
@@ -427,6 +574,7 @@ const LanguagesEditor: React.FC<{
 
 export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
     headline,
+    tagline,
     summary,
     location,
     email,
@@ -460,6 +608,10 @@ export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
                             readClassName="text-lg font-semibold text-white"
                         />
                     </div>
+                    {/* M7.9.6 (story S7.14) — one-sentence subtitle for the resume
+                        with AI-draft button. Sits directly under Name since it
+                        renders directly under the H1 on the generated resume. */}
+                    <TaglineRow tagline={tagline} onSave={(v) => onSave({ tagline: v })} />
                     <div>
                         <span className="text-[10px] uppercase tracking-wider text-white/30">Summary</span>
                         <EditableField

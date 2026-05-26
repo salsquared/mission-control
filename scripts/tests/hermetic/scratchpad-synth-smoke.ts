@@ -86,7 +86,7 @@ class AIError extends Error {
 injectCacheEntry("@/lib/ai/gemini", {
     chatJSON: async (opts: { name: string; system: string; user: string }) => {
         chatJSONCalls.push({ name: opts.name, system: opts.system, user: opts.user });
-        if (opts.name === "bullet-auto-tag") {
+        if (opts.name === "bullet-tags-from-posting") {
             return { proposals: [] };
         }
         if (opts.name === "scratchpad-synth") {

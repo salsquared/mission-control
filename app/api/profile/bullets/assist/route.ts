@@ -82,7 +82,7 @@ import { AIError } from "@/lib/ai/gemini";
 
 // M7.7.5 — cap guard for the tag-suggest mode. Bullets at the 7-tag ceiling
 // short-circuit BEFORE the LLM call: no token spend, no round-trip, UI gets
-// a clean "remove or unpin a tag first" status. Matches the bullet-tag-suggest
+// a clean "remove or unpin a tag first" status. Matches the bullet-tags-from-profile
 // caller's MAX_TAGS constant.
 const TAG_CAP = 7;
 
