@@ -83,6 +83,17 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         requiredSystemPhrases: ['MUST appear verbatim', 'No fabrication', '3 to 7 tags'],
         requiredUserPhrases: ['Current tags', 'Blocked tags', 'Profile vocabulary', 'Output schema'],
     },
+    'scratchpad-synth': {
+        expectSystem: true,
+        expectModel: true,
+        expectTemperature: true,
+        expectMaxTokens: true,
+        userByteBudget: 8_192,
+        // System enforces no-fabrication + voice preservation + verbatim
+        // keyword use + 3-7 tags per synthesized bullet.
+        requiredSystemPhrases: ['NO FABRICATION', 'VOICE PRESERVATION', 'POSTING KEYWORD VERBATIM'],
+        requiredUserPhrases: ['scratchpad notes', 'posting keywords', 'Uncovered', 'Output schema'],
+    },
     'discovery-suggest': {
         expectSystem: false,
         expectModel: true,

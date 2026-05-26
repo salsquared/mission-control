@@ -1,0 +1,100 @@
+# Suite for `scratchpad-synth` — per-entity bullet synthesis from scratchpad
+# notes at resume-gen time. Provider handler in eval/provider.ts calls the
+# real synthesizeBulletsForEntity function so the Promptfoo run grades both
+# the prompt template and the caller's post-processing.
+
+- description: "Positive coverage — scratchpad mentions PostgreSQL, posting needs PostgreSQL"
+  vars:
+    callsite: scratchpad-synth
+    input:
+      entityKind: "work-role"
+      entityId: "wr_eval_1"
+      entitySpine:
+        company: "Acme Corp"
+        title: "Software Engineer"
+      scratchpad: "Spent the first two quarters migrating our data pipeline off MySQL onto PostgreSQL — handled the schema reshape, the dual-write window, and the cutover. Also rewrote the query layer in Go to use proper prepared statements."
+      postingKeywords:
+        - "PostgreSQL"
+        - "Go"
+        - "data pipeline"
+        - "schema migration"
+      uncoveredKeywords:
+        - "PostgreSQL"
+        - "Go"
+      maxBullets: 3
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        return Array.isArray(r.bullets) &&
+        r.bullets.length >= 1 &&
+        r.bullets.length <= 3 &&
+        // At least one synthesized bullet should mention PostgreSQL verbatim
+        // (the scratchpad evidence supports it + it's uncovered).
+        r.bullets.some(b => /PostgreSQL/.test(b.text)) &&
+        // Each bullet has 3-7 concrete tags.
+        r.bullets.every(b => Array.isArray(b.tags) && b.tags.length >= 3 && b.tags.length <= 7);
+
+- description: "No-invention — scratchpad mentions Go, posting needs Rust"
+  vars:
+    callsite: scratchpad-synth
+    input:
+      entityKind: "work-role"
+      entityId: "wr_eval_2"
+      entitySpine:
+        company: "Beta Labs"
+        title: "Backend Engineer"
+      scratchpad: "Built our payments backend in Go — focused on idempotency keys and exactly-once semantics for the webhook handler. Lots of testing around partial failures."
+      postingKeywords:
+        - "Rust"
+        - "Tokio"
+        - "async"
+      uncoveredKeywords:
+        - "Rust"
+        - "Tokio"
+      maxBullets: 3
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        // The scratchpad mentions Go work only. The posting wants Rust/Tokio.
+        // The no-fab rule says: do NOT invent Rust experience. Empty bullets
+        // is the safe answer; if the model DOES return bullets, none should
+        // claim Rust/Tokio expertise.
+        const r = JSON.parse(output);
+        if (!Array.isArray(r.bullets)) return false;
+        // No bullet may claim Rust or Tokio.
+        return r.bullets.every(b =>
+            !/\b(Rust|Tokio)\b/i.test(b.text) &&
+            !b.tags.some(t => /^(Rust|Tokio)$/i.test(t))
+        );
+
+- description: "Voice preservation — colloquial scratchpad → professional but recognizable"
+  vars:
+    callsite: scratchpad-synth
+    input:
+      entityKind: "project"
+      entityId: "pr_eval_1"
+      entitySpine:
+        name: "scrappy-cache"
+      scratchpad: "Built a tiny in-process cache because Redis felt like overkill for what we needed. Just a LRU with a TTL, written in TypeScript. Like 200 lines. Held up to about 50k ops/sec on a single core before we cared about anything else."
+      postingKeywords:
+        - "TypeScript"
+        - "caching"
+        - "performance"
+      uncoveredKeywords:
+        - "TypeScript"
+        - "caching"
+      maxBullets: 2
+  assert:
+    - type: is-json
+    - type: llm-rubric
+      value: |
+        Bullet synthesis from the colloquial scratchpad should pass voice-preservation. PASS iff:
+        1. At least one bullet exists.
+        2. Bullets start with strong action verbs (Built, Wrote, Shipped, etc.).
+        3. No first-person pronouns ("I", "my").
+        4. The bullets read as professional resume content but reflect the SCRATCHPAD'S specific details (LRU, TTL, in-process, ~50k ops/sec, ~200 lines). Generic resume-speak that drops the user's specifics is a FAIL.
+        5. No invented metrics — the only number the scratchpad supports is "~50k ops/sec" and "~200 lines"; the model may use those (or omit them), but must not invent others.
+        6. "TypeScript" appears verbatim (it's a posting keyword + scratchpad-supported).

@@ -84,9 +84,29 @@ const flatSelections = [{
     matchedKeywords: ["typescript"],
     locked: false,
 }];
+// EntitySelection shape — the real selectBullets returns `entity` + `bullets`
+// per group. The runScratchpadSynth pass (M8.6) reads `wr.entity.scratchpad`,
+// so the mock's group MUST carry a real-ish entity object (not just an id +
+// label). Empty scratchpad means the synth pass short-circuits for this
+// entity — exactly what this smoke wants (we're testing the M8.4.5 path,
+// not the M8.6 synthesis).
+const mockEntity = {
+    id: "wr-mock",
+    profileId: "p-mock",
+    company: "Mock Co",
+    title: "Engineer",
+    location: null,
+    startDate: "2024-01-01T00:00:00.000Z",
+    endDate: null,
+    bullets: [],
+    scratchpad: null,
+    position: 0,
+    createdAt: "2024-01-01T00:00:00.000Z",
+    updatedAt: "2024-01-01T00:00:00.000Z",
+};
 injectCacheEntry("@/lib/resumes/select", {
     selectBullets: () => ({
-        workRoles: [{ kind: "workRole", id: "wr-mock", label: "Mock Co", bullets: flatSelections }],
+        workRoles: [{ entity: mockEntity, bullets: flatSelections }],
         projects: [],
         education: [],
     }),

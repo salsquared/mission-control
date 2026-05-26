@@ -37,6 +37,10 @@ import {
     renderRemovedTags,
     renderVocabulary,
 } from "@/lib/profile/bullet-tag-suggest";
+import {
+    synthesizeBulletsForEntity,
+    type ScratchpadSynthEntityKind,
+} from "@/lib/profile/scratchpad-synth";
 import { chatJSON, MODEL_LITE } from "@/lib/ai/gemini";
 import { loadPrompt } from "@/lib/ai/prompts";
 import { z } from "zod";
@@ -300,6 +304,45 @@ const HANDLERS: Record<string, CallsiteHandler> = {
 
         const tags = applyTagSuggestPostFilter(response.tags, pinnedTags, removedTags);
         return { tags, reason: response.reason };
+    },
+
+    // M8.6.1 — Per-entity bullet synthesis from scratchpad + posting keywords.
+    // Provider handler calls the real caller, which goes through chatJSON +
+    // loadPrompt + the standard Bullet shape fill. Fixtures supply the
+    // entity spine + scratchpad inline (no DB load needed) so the suite is
+    // profile-agnostic — matches the `bullet-tag-suggest` handler shape.
+    "scratchpad-synth": async (input) => {
+        const args = input as {
+            entityKind: ScratchpadSynthEntityKind;
+            entityId: string;
+            entitySpine: {
+                company?: string | null;
+                title?: string | null;
+                name?: string | null;
+                institution?: string | null;
+                degree?: string | null;
+                field?: string | null;
+                location?: string | null;
+                startDate?: string | null;
+                endDate?: string | null;
+            };
+            scratchpad: string;
+            postingKeywords: string[];
+            uncoveredKeywords: string[];
+            maxBullets?: number;
+        };
+        const result = await synthesizeBulletsForEntity({
+            entityKind: args.entityKind,
+            entityId: args.entityId,
+            entitySpine: args.entitySpine,
+            scratchpad: args.scratchpad,
+            postingKeywords: args.postingKeywords,
+            uncoveredKeywords: args.uncoveredKeywords,
+            maxBullets: args.maxBullets,
+        });
+        // Return the bullets array directly. Promptfoo fixtures grade against
+        // r.bullets[].text and r.bullets[].tags.
+        return { bullets: result.bullets };
     },
 };
 

@@ -44,6 +44,11 @@ interface SelectionRow {
     matchedTags: string[];
     matchedKeywords: string[];
     locked: boolean;
+    /** M8.6.4 (story S7.13 resume-gen half) — when "scratchpad", this row was
+     *  synthesized at resume-gen time from the parent entity's scratchpad
+     *  notes (not a real bullet in the user's profile). Trace UI renders
+     *  these with a distinct amber chip. */
+    synthSource?: "scratchpad";
 }
 
 const FORMAT_STORAGE_KEY = "mc-resume-format";
@@ -712,10 +717,21 @@ const TraceList: React.FC<{ selections: SelectionRow[] }> = ({ selections }) => 
         <ul className="space-y-2.5">
             {selections.map(s => {
                 const changed = s.rewrittenText !== s.originalText;
+                const isSynth = s.synthSource === "scratchpad";
                 return (
                     <li key={s.bulletId} className="text-[11px]">
                         <div className="flex items-center gap-2 mb-1">
-                            <span className="uppercase tracking-wide text-purple-300/80 text-[10px]">{s.kind}</span>
+                            <span className={`uppercase tracking-wide text-[10px] ${isSynth ? "text-amber-300/80" : "text-purple-300/80"}`}>
+                                {s.kind}
+                            </span>
+                            {isSynth && (
+                                <span
+                                    className="text-[10px] text-amber-300 bg-amber-500/15 border border-amber-500/40 px-1.5 py-0 rounded uppercase tracking-wide"
+                                    title="Synthesized from this entry's scratchpad notes at resume-gen time — not a bullet in your stored profile"
+                                >
+                                    scratchpad-synth
+                                </span>
+                            )}
                             <span className="text-white/70 truncate">{s.sourceLabel}</span>
                             {s.locked && (
                                 <span className="text-[10px] text-amber-300/80 bg-amber-500/10 border border-amber-500/20 px-1 rounded">locked</span>

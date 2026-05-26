@@ -5,8 +5,9 @@ import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting } from "@/lib/resumes/posting";
-import { selectBullets, flattenSelections } from "@/lib/resumes/select";
+import { selectBullets, flattenSelections, type BulletSelection } from "@/lib/resumes/select";
 import { autoTagBullets } from "@/lib/profile/auto-tag";
+import { synthesizeBulletsForEntity, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
 import { broadcastEvent } from "@/lib/events";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
 import { computeSkillsGap } from "@/lib/resumes/skills-gap";
@@ -54,6 +55,183 @@ const FORMAT_CONTENT_TYPES = {
     pdf: "application/pdf",
     docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 } as const;
+
+/**
+ * M8.6.3 — Scratchpad-synth pass. Iterates the entities in this resume's
+ * selection and, for each one with a non-empty scratchpad + at least one
+ * mentioned-in-scratchpad uncovered keyword, calls `synthesizeBulletsForEntity`
+ * and appends the result back into the entity's bullet group in `selection`.
+ *
+ * Mutates `selection` in place (the bullets[] array on each entity group)
+ * and APPENDS to `flat` directly (the caller re-flattens after).
+ *
+ * Best-effort posture: any per-entity throw is logged + swallowed. One
+ * entity's synthesis failure does not block the others. Total failure (every
+ * entity throws) also returns cleanly — the resume still generates from the
+ * select+rewrite path.
+ *
+ * Cross-entity isolation: this function only ever passes ONE entity's
+ * scratchpad to `synthesizeBulletsForEntity` per call. A sibling entity's
+ * notes never leak into another entity's synthesis prompt.
+ */
+async function runScratchpadSynth(
+    selection: import("@/lib/resumes/select").ResumeSelection,
+    flat: BulletSelection[],
+    postingKeywords: readonly string[],
+): Promise<void> {
+    const t0 = Date.now();
+
+    // Compute uncovered keywords from the existing selection (pre-synth).
+    // A keyword is "covered" when at least one selected bullet's matchedTags
+    // or matchedKeywords includes it (case-insensitive).
+    const coveredSet = new Set<string>();
+    for (const sel of flat) {
+        for (const t of sel.matchedTags) coveredSet.add(t.toLowerCase());
+        for (const k of sel.matchedKeywords) coveredSet.add(k.toLowerCase());
+    }
+    const uncovered = postingKeywords.filter(k => !coveredSet.has(k.toLowerCase()));
+
+    if (uncovered.length === 0) {
+        // Every posting keyword is already covered by selected bullets —
+        // nothing for the LLM to fill.
+        return;
+    }
+
+    interface Target {
+        kind: ScratchpadSynthEntityKind;
+        flatKind: "workRole" | "project" | "education";
+        entityId: string;
+        scratchpad: string;
+        spine: import("@/lib/profile/scratchpad-synth").ScratchpadSynthEntitySpine;
+        sourceLabel: string;
+        relevant: string[]; // uncovered keywords actually mentioned in scratchpad
+    }
+
+    const targets: Target[] = [];
+
+    function pushTarget(t: Target): void {
+        if (t.relevant.length > 0) targets.push(t);
+    }
+
+    for (const wr of selection.workRoles) {
+        const sp = (wr.entity as unknown as { scratchpad?: string | null }).scratchpad;
+        if (!sp || sp.trim().length === 0) continue;
+        const spLower = sp.toLowerCase();
+        const relevant = uncovered.filter(k => spLower.includes(k.toLowerCase()));
+        pushTarget({
+            kind: "work-role",
+            flatKind: "workRole",
+            entityId: wr.entity.id,
+            scratchpad: sp,
+            spine: {
+                company: wr.entity.company,
+                title: wr.entity.title,
+                location: wr.entity.location ?? null,
+                startDate: typeof wr.entity.startDate === "string" ? wr.entity.startDate : null,
+                endDate: typeof wr.entity.endDate === "string" ? wr.entity.endDate : null,
+            },
+            sourceLabel: `${wr.entity.title} at ${wr.entity.company}`,
+            relevant,
+        });
+    }
+    for (const pr of selection.projects) {
+        const sp = (pr.entity as unknown as { scratchpad?: string | null }).scratchpad;
+        if (!sp || sp.trim().length === 0) continue;
+        const spLower = sp.toLowerCase();
+        const relevant = uncovered.filter(k => spLower.includes(k.toLowerCase()));
+        pushTarget({
+            kind: "project",
+            flatKind: "project",
+            entityId: pr.entity.id,
+            scratchpad: sp,
+            spine: { name: pr.entity.name },
+            sourceLabel: pr.entity.name,
+            relevant,
+        });
+    }
+    for (const ed of selection.education) {
+        const sp = (ed.entity as unknown as { scratchpad?: string | null }).scratchpad;
+        if (!sp || sp.trim().length === 0) continue;
+        const spLower = sp.toLowerCase();
+        const relevant = uncovered.filter(k => spLower.includes(k.toLowerCase()));
+        pushTarget({
+            kind: "education",
+            flatKind: "education",
+            entityId: ed.entity.id,
+            scratchpad: sp,
+            spine: {
+                institution: ed.entity.institution,
+                degree: ed.entity.degree ?? null,
+                field: ed.entity.field ?? null,
+            },
+            sourceLabel: `${ed.entity.degree ?? "Education"} at ${ed.entity.institution}`,
+            relevant,
+        });
+    }
+
+    if (targets.length === 0) {
+        console.info(`[scratchpad-synth] no targets (uncovered=${uncovered.length}, entities-with-scratchpad=0)`);
+        return;
+    }
+
+    // Run synthesis in parallel — one entity's call can't depend on another's.
+    const results = await Promise.allSettled(targets.map(t =>
+        synthesizeBulletsForEntity({
+            entityKind: t.kind,
+            entityId: t.entityId,
+            entitySpine: t.spine,
+            scratchpad: t.scratchpad,
+            postingKeywords,
+            uncoveredKeywords: t.relevant,
+        }).then(r => ({ target: t, bullets: r.bullets })),
+    ));
+
+    let totalSynth = 0;
+    for (const r of results) {
+        if (r.status !== "fulfilled") {
+            const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+            console.warn(`[scratchpad-synth] entity synthesis failed: ${msg}`);
+            continue;
+        }
+        const { target, bullets } = r.value;
+        if (bullets.length === 0) continue;
+
+        // Locate the entity group in `selection` and append synthesized
+        // bullets to its bullets[] array. Mutating in place — composeResumeProps
+        // iterates the same selection object.
+        const group =
+            target.flatKind === "workRole"
+                ? selection.workRoles.find(g => g.entity.id === target.entityId)
+                : target.flatKind === "project"
+                    ? selection.projects.find(g => g.entity.id === target.entityId)
+                    : selection.education.find(g => g.entity.id === target.entityId);
+        if (!group) continue;
+
+        for (const b of bullets) {
+            const matchedKeywords = target.relevant.filter(k =>
+                b.text.toLowerCase().includes(k.toLowerCase()),
+            );
+            const sel: BulletSelection = {
+                kind: target.flatKind,
+                sourceId: target.entityId,
+                sourceLabel: target.sourceLabel,
+                bulletId: b.id,
+                originalText: b.text,
+                score: 0, // synthesized rows aren't ranked; appended after select
+                matchedTags: b.tags,
+                matchedKeywords,
+                locked: false,
+                synthSource: "scratchpad",
+            };
+            group.bullets.push(sel);
+            flat.push(sel);
+            totalSynth += 1;
+        }
+    }
+
+    const durationMs = Date.now() - t0;
+    console.info(`[scratchpad-synth] +${totalSynth} bullets across ${targets.length} entities (uncovered=${uncovered.length}, ${durationMs}ms)`);
+}
 
 function userIdFromGuard(guard: { session: { user?: unknown } }): string | null {
     const user = guard.session.user as { id?: string } | undefined;
@@ -282,7 +460,7 @@ export async function POST(req: NextRequest) {
         // 3. Select bullets
         stage = "select";
         const selection = selectBullets(profile, posting.keywords);
-        const flat = flattenSelections(selection);
+        let flat = flattenSelections(selection);
         if (flat.length === 0) {
             return NextResponse.json(
                 { error: "No bullets matched the posting and none are locked/recent — add tags or bullets to your profile.", stage: "select" },
@@ -290,6 +468,23 @@ export async function POST(req: NextRequest) {
             );
         }
         console.info(`[resume] selected ${flat.length} bullets across ${selection.workRoles.length}+${selection.projects.length}+${selection.education.length} entities`);
+
+        // 3.5. Scratchpad-synth pass (M8.6 / story S7.13 resume-gen half) —
+        // for each entity with a non-empty scratchpad AND at least one
+        // posting keyword the existing bullets don't cover AND that the
+        // scratchpad mentions, synthesize fresh bullet candidates grounded
+        // on `scratchpad + posting + entity spine`. Synthesized bullets
+        // append to the entity's group in `selection` (so composeResumeProps
+        // renders them) and to `flat` (so rewrite + trace see them).
+        //
+        // Best-effort posture: any per-entity throw is logged + swallowed.
+        // Total synthesis failure across all entities still lets the resume
+        // generate.
+        stage = "select";
+        await runScratchpadSynth(selection, flat, posting.keywords);
+        // Re-flatten so synthesized rows show up in the post-synth flat list
+        // (rewrite + skills-gap + trace surface all consume flat).
+        flat = flattenSelections(selection);
 
         // 4. Rewrite via LLM
         stage = "rewrite";
@@ -318,7 +513,27 @@ export async function POST(req: NextRequest) {
         // 4b. Skills gap (story S8.8) — pure, no LLM. Compute against the
         // FULL profile, not just the selected bullets: even an unselected
         // bullet counts as coverage for the keyword it mentions.
-        const skillsGap = computeSkillsGap(profile, posting.keywords);
+        const rawSkillsGap = computeSkillsGap(profile, posting.keywords);
+
+        // M8.6.4 — scratchpad-synth bullets aren't on the profile (they live
+        // only in this resume's selection), so the pure computeSkillsGap
+        // won't see them. Post-filter: any posting keyword evidenced by a
+        // synthesized bullet's `matchedKeywords` drops out of the gap list.
+        const synthCoveredKeywords = new Set<string>();
+        for (const s of flat) {
+            if (s.synthSource !== "scratchpad") continue;
+            for (const kw of s.matchedKeywords) synthCoveredKeywords.add(kw.toLowerCase());
+        }
+        const skillsGap = synthCoveredKeywords.size === 0
+            ? rawSkillsGap
+            : {
+                  ...rawSkillsGap,
+                  missing: rawSkillsGap.missing.filter(k => !synthCoveredKeywords.has(k.toLowerCase())),
+                  covered: [
+                      ...rawSkillsGap.covered,
+                      ...rawSkillsGap.missing.filter(k => synthCoveredKeywords.has(k.toLowerCase())),
+                  ],
+              };
 
         // 5. Render
         stage = "render";
@@ -398,6 +613,12 @@ export async function POST(req: NextRequest) {
                         matchedTags: s.matchedTags,
                         matchedKeywords: s.matchedKeywords,
                         locked: s.locked,
+                        // M8.6.4 — preserve synth-source marker so the trace
+                        // UI (and any downstream readers) can render
+                        // scratchpad-synthesized rows distinctly. Omitted
+                        // entirely on regular selected rows so the existing
+                        // archives parse unchanged.
+                        ...(s.synthSource ? { synthSource: s.synthSource } : {}),
                     }))),
                     skillsGap: JSON.stringify(skillsGap.missing),
                     templateKey: parsed.data.options?.template ?? "ats-plain",

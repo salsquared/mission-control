@@ -108,6 +108,8 @@ SUITES=(
     # M7.8 — per-entity scratchpad (profile half)
     "scripts/tests/hermetic/scratchpad-patch-smoke.ts"
     "scripts/tests/hermetic/bullet-assist-scratchpad-smoke.ts"
+    # M8.6 — resume-gen scratchpad synthesis
+    "scripts/tests/hermetic/scratchpad-synth-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

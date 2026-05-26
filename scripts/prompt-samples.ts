@@ -15,6 +15,7 @@ export const PROMPT_SLUGS = [
     "bullet-assist-rewrite",
     "bullet-auto-tag",
     "bullet-tag-suggest",
+    "scratchpad-synth",
     "discovery-suggest",
     "email-parser",
     "employment-type-classifier",
@@ -49,6 +50,13 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         tagState: "  - \"Python\" [pinned — MUST remain in output verbatim]\n  - \"API\" [user — may keep / replace / remove]",
         removedTags: "  (none)",
         vocabulary: "\"TypeScript\", \"Go\", \"Postgres\", \"REST\", \"distributed-systems\"",
+    },
+    "scratchpad-synth": {
+        spine: "Software Engineer at Acme Corp",
+        scratchpad: "Migrated our data pipeline from MySQL to PostgreSQL — handled the schema reshape and the cutover. Rewrote the query layer in Go.",
+        postingKeywords: "  - PostgreSQL\n  - Go\n  - data pipeline\n  - schema migration",
+        uncoveredKeywords: "  - PostgreSQL\n  - Go",
+        maxBullets: "3",
     },
     "discovery-suggest": {
         topic: "space",

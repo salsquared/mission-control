@@ -17,6 +17,14 @@ export interface BulletSelection {
     matchedTags: string[];
     matchedKeywords: string[];
     locked: boolean;
+    /**
+     * M8.6 (story S7.13 resume-gen half) — when set to "scratchpad", this
+     * bullet was synthesized at resume-gen time from the parent entity's
+     * scratchpad text (NOT a real bullet in the user's profile). Used by
+     * the trace UI to render a distinct chip + by skills-gap to count
+     * synthesized coverage as gap-closing.
+     */
+    synthSource?: "scratchpad";
 }
 
 export interface EntitySelection<E> {
