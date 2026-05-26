@@ -82,9 +82,9 @@ async function main() {
         // Seed a WorkRole with three bullets — two candidates + one with
         // a blocklist entry to verify the post-filter.
         const seedBullets = [
-            { id: "b001", text: "Built a Python service handling 50k req/day", tags: [], autoTags: [], removedTags: [], locked: false, excluded: false },
-            { id: "b002", text: "Cut latency 40% in our Go API by sharding writes", tags: [], autoTags: [], removedTags: [], locked: false, excluded: false },
-            { id: "b003", text: "Migrated production payments to Kubernetes", tags: [], autoTags: [], removedTags: ["Kubernetes"], locked: false, excluded: false },
+            { id: "b001", text: "Built a Python service handling 50k req/day", tags: [], autoTags: [], removedTags: [], pinnedTags: [], locked: false, excluded: false },
+            { id: "b002", text: "Cut latency 40% in our Go API by sharding writes", tags: [], autoTags: [], removedTags: [], pinnedTags: [], locked: false, excluded: false },
+            { id: "b003", text: "Migrated production payments to Kubernetes", tags: [], autoTags: [], removedTags: ["Kubernetes"], pinnedTags: [], locked: false, excluded: false },
         ];
         const wr = await prisma.workRole.create({
             data: {

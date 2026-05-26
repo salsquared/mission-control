@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Lock, LockOpen, EyeOff, Eye, Trash2, Plus, X, Sparkles } from "lucide-react";
+import { Lock, LockOpen, EyeOff, Eye, Trash2, Plus, X, Sparkles, Pin, Tags } from "lucide-react";
 import type { Bullet } from "@/lib/profile/types";
 import { api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -9,8 +9,9 @@ interface BulletRowProps {
     onChange: (next: Bullet) => void;
     onDelete: () => void;
     /** Set when the bullet lives inside a Profile entry. When null, the
-     *  rewrite affordance is hidden (no parent context = nowhere to call the
-     *  LLM from). Locked bullets ALSO hide the wand regardless. */
+     *  rewrite + tag-suggest affordances are hidden (no parent context = no
+     *  way to call the LLM). Locked bullets ALSO hide the wand + tags icon
+     *  regardless. */
     rewriteContext?: {
         parentKind: 'work-role' | 'project' | 'education';
         parentId: string;
@@ -18,17 +19,28 @@ interface BulletRowProps {
 }
 
 const TAG_MAX_LENGTH = 30;
+// M7.7.5 — hard cap on tags per bullet. UI hides the tag-suggest icon at the
+// cap so the user gets an immediate visual signal rather than a 400 after
+// clicking. Server enforces the same cap as defense-in-depth.
+const TAG_CAP = 7;
 
 export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete, rewriteContext = null }) => {
     const [editing, setEditing] = useState(false);
     const [draft, setDraft] = useState(bullet.text);
     const [addingTag, setAddingTag] = useState(false);
     const [tagDraft, setTagDraft] = useState("");
-    // M7.6.9 — rewrite/diff state. proposal is the LLM-suggested replacement
-    // shown in the diff panel; cleared on Accept or Discard.
+    // M7.6.9 — rewrite/diff state. proposal is the LLM-suggested text shown
+    // in the diff panel; cleared on Accept or Discard. M7.7.2 narrowed this
+    // to text-only — proposal.tags === bullet.tags always (server preserves).
     const [proposal, setProposal] = useState<Bullet | null>(null);
     const [rewriting, setRewriting] = useState(false);
     const [rewriteError, setRewriteError] = useState<string | null>(null);
+    // M7.7.7 — tag-suggest diff state. Separate from rewrite so a user can
+    // (theoretically) have both panels open — though the UI hides both
+    // trigger buttons when either is pending to prevent stacking.
+    const [tagProposal, setTagProposal] = useState<{ tags: string[]; reason?: string } | null>(null);
+    const [suggestingTags, setSuggestingTags] = useState(false);
+    const [tagSuggestError, setTagSuggestError] = useState<string | null>(null);
 
     const commit = () => {
         const trimmed = draft.trim();
@@ -45,16 +57,31 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
         setEditing(true);
     };
 
-    // M8.5.6 Decision 6.1 — removal is a blocklist gesture. Whether the tag
-    // was user-set or LLM-auto-added, removing it adds the tag to
-    // `removedTags`, so the next auto-tag pass never proposes it again. The
-    // user can override the blocklist by re-adding the tag (see commitTag).
+    // M8.5.6 Decision 6.1 + M7.7.1 invariant — removing a tag also clears its
+    // pin (a pinned tag's deletion implicitly unpins) and adds the tag to
+    // `removedTags` (blocklist). Same semantic regardless of whether the tag
+    // was user-set, auto-added, or pinned.
     const removeTag = (t: string) => {
         onChange({
             ...bullet,
             tags: bullet.tags.filter(x => x !== t),
             autoTags: bullet.autoTags.filter(x => x !== t),
+            pinnedTags: bullet.pinnedTags.filter(x => x !== t),
             removedTags: Array.from(new Set([...bullet.removedTags, t])),
+        });
+    };
+
+    // M7.7.6 — pin toggle. Pinned tags survive the per-bullet AI tag
+    // generator (M7.7.3) and the bulk auto-tag pass (M8.5). Pin is per-tag,
+    // toggleable. Pinning a tag that's also in autoTags is fine (auto +
+    // pinned = "auto-suggested but locked in").
+    const togglePin = (t: string) => {
+        const isPinned = bullet.pinnedTags.includes(t);
+        onChange({
+            ...bullet,
+            pinnedTags: isPinned
+                ? bullet.pinnedTags.filter(x => x !== t)
+                : Array.from(new Set([...bullet.pinnedTags, t])),
         });
     };
 
@@ -78,11 +105,15 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
     const lockBtnAlwaysVisible = bullet.locked;
     const excludeBtnAlwaysVisible = bullet.excluded;
 
-    // M7.6.9 — wand visibility. Locked bullets can't be rewritten (server
-    // returns 400). Missing rewriteContext means we don't know which parent
-    // to call the LLM under. While a proposal is pending, hide the wand to
-    // prevent stacking rewrites.
-    const wandVisible = !bullet.locked && rewriteContext != null && proposal == null;
+    // M7.6.9 + M7.7.6 — affordance visibility.
+    //   * Wand (rewrite, text-only post-M7.7.2): hidden when locked, when
+    //     no parent context, or while either proposal is pending.
+    //   * Tags icon (M7.7.3 tag-suggest): same gates PLUS hidden when the
+    //     bullet is already at the TAG_CAP (M7.7.5 — server would 400).
+    const anyProposalPending = proposal != null || tagProposal != null;
+    const llmGated = bullet.locked || rewriteContext == null || anyProposalPending;
+    const wandVisible = !llmGated;
+    const tagsButtonVisible = !llmGated && bullet.tags.length < TAG_CAP;
 
     const handleRewrite = async () => {
         if (!rewriteContext) return;
@@ -103,17 +134,71 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
         }
     };
 
+    const handleSuggestTags = async () => {
+        if (!rewriteContext) return;
+        setSuggestingTags(true);
+        setTagSuggestError(null);
+        try {
+            const result = await api.profile.bullets.assistTags(
+                rewriteContext.parentKind,
+                rewriteContext.parentId,
+                bullet.id,
+            );
+            if (result.mode !== 'tags') throw new Error('unexpected response shape');
+            setTagProposal(result.proposal);
+        } catch (err) {
+            // M7.7.5 — surface the cap-reached case with a hint about the
+            // remedy. Other errors get raw passthrough.
+            const msg = err instanceof Error ? err.message : 'Tag suggestion failed';
+            if (msg.includes('tag-limit-reached')) {
+                setTagSuggestError('Tag limit reached — remove or unpin a tag first.');
+            } else {
+                setTagSuggestError(msg);
+            }
+        } finally {
+            setSuggestingTags(false);
+        }
+    };
+
     const acceptProposal = () => {
         if (!proposal) return;
-        // Apply BOTH text and tags — the rewrite often shifts emphasis, so the
-        // LLM's proposed tags follow the new wording. User can hand-edit tags
-        // afterward if a specific tag matters and was dropped.
-        onChange({ ...bullet, text: proposal.text, tags: proposal.tags });
+        // M7.7.2 — text-only acceptance. Tags / autoTags / removedTags /
+        // pinnedTags pass through unchanged (the server already preserved them
+        // in the proposal, but apply the original bullet's state defensively
+        // in case the response was tampered with). `locked`/`excluded`
+        // similarly preserved.
+        onChange({ ...bullet, text: proposal.text });
         setProposal(null);
     };
 
     const discardProposal = () => {
         setProposal(null);
+    };
+
+    const acceptTagProposal = () => {
+        if (!tagProposal) return;
+        // M7.7.7 — apply the proposed tag list. Tags newly introduced by the
+        // proposal (in proposal.tags but not in current bullet.tags) get
+        // marked into autoTags so the UI badges them as pending user
+        // confirmation (Decision 6.3 — same semantic as M8.5.6).
+        // Pinned tags ride along unchanged — the server post-filter
+        // guarantees they're in proposal.tags, so they stay applied.
+        // Dropped tags do NOT add to removedTags — the user is implicitly
+        // accepting the LLM's slimmer list, not blocking the dropped tags
+        // from ever returning. Explicit chip-X click is still the only path
+        // into the blocklist.
+        const originalSet = new Set(bullet.tags);
+        const newlyAdded = tagProposal.tags.filter(t => !originalSet.has(t));
+        onChange({
+            ...bullet,
+            tags: tagProposal.tags,
+            autoTags: Array.from(new Set([...bullet.autoTags, ...newlyAdded])),
+        });
+        setTagProposal(null);
+    };
+
+    const discardTagProposal = () => {
+        setTagProposal(null);
     };
 
     return (
@@ -160,26 +245,59 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
 
                     <div className="mt-1 flex flex-wrap gap-1 items-center">
                         {bullet.tags.map((tag) => {
-                            // M8.5.6 Decision 6.3 — tags the LLM auto-added during a
-                            // resume generation get a Sparkles icon + cyan border
-                            // until the next save folds them in as regular tags.
+                            // M8.5.6 Decision 6.3 — auto-added tags get a
+                            // Sparkles icon + cyan border until next save folds
+                            // them in. M7.7.6 — pinned tags get a Pin icon +
+                            // amber border. A tag can be both auto AND pinned
+                            // ("auto-suggested but locked in") — both glyphs
+                            // render. M7.7.6 — chip body is non-interactive
+                            // (rendered as <span>, no onClick); only the
+                            // explicit X-icon button removes the tag, and only
+                            // the Pin-icon button toggles the pin. The pin
+                            // border takes precedence over the auto border
+                            // since pin is the stronger commitment.
                             const isAuto = bullet.autoTags.includes(tag);
+                            const isPinned = bullet.pinnedTags.includes(tag);
                             return (
-                                <button
+                                <span
                                     key={tag}
-                                    onClick={() => removeTag(tag)}
                                     className={cn(
-                                        "group/tag flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-white/50 bg-white/5 border rounded px-1.5 py-0.5 transition-colors hover:border-rose-400/40 hover:text-white/80",
-                                        isAuto ? "border-cyan-500/30" : "border-white/10",
+                                        "group/tag inline-flex items-center gap-0.5 text-[10px] uppercase tracking-wider text-white/60 bg-white/5 border rounded pl-1 pr-1 py-0.5 transition-colors",
+                                        isPinned ? "border-amber-500/40 bg-amber-500/[0.06]" :
+                                        isAuto ? "border-cyan-500/30" :
+                                        "border-white/10",
                                     )}
-                                    title={isAuto
-                                        ? "Auto-added — saves as a regular tag when you next save this bullet."
-                                        : `Remove tag: ${tag}`}
                                 >
-                                    {isAuto && <Sparkles className="w-2 h-2 text-cyan-400/80" />}
-                                    <span>{tag}</span>
-                                    <X className="w-2 h-2 opacity-0 group-hover/tag:opacity-100 transition-opacity" />
-                                </button>
+                                    <button
+                                        onClick={() => togglePin(tag)}
+                                        className={cn(
+                                            "p-0.5 rounded transition-colors",
+                                            isPinned
+                                                ? "text-amber-400 hover:text-amber-300"
+                                                : "text-white/20 opacity-0 group-hover/tag:opacity-100 hover:text-amber-400/80",
+                                        )}
+                                        title={isPinned
+                                            ? `Unpin "${tag}" — AI tag-suggest may replace it`
+                                            : `Pin "${tag}" — AI tag-suggest will keep this tag`}
+                                        aria-pressed={isPinned}
+                                    >
+                                        <Pin className={cn("w-2.5 h-2.5", isPinned && "fill-current")} />
+                                    </button>
+                                    {isAuto && (
+                                        <Sparkles
+                                            className="w-2 h-2 text-cyan-400/80"
+                                            aria-label="Auto-added"
+                                        />
+                                    )}
+                                    <span className="px-0.5">{tag}</span>
+                                    <button
+                                        onClick={() => removeTag(tag)}
+                                        className="p-0.5 rounded text-white/30 hover:text-rose-300 hover:bg-rose-500/10 opacity-0 group-hover/tag:opacity-100 transition-opacity"
+                                        title={`Remove tag "${tag}" — adds to this bullet's blocklist`}
+                                    >
+                                        <X className="w-2.5 h-2.5" />
+                                    </button>
+                                </span>
                             );
                         })}
                         {addingTag ? (
@@ -212,7 +330,7 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
 
                 <div className={cn(
                     "flex items-center gap-0.5 transition-opacity",
-                    lockBtnAlwaysVisible || excludeBtnAlwaysVisible || rewriting
+                    lockBtnAlwaysVisible || excludeBtnAlwaysVisible || rewriting || suggestingTags
                         ? "opacity-100"
                         : "opacity-0 group-hover:opacity-100",
                 )}>
@@ -226,9 +344,24 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
                                     ? "text-purple-400 opacity-100"
                                     : "text-white/30 hover:text-purple-400",
                             )}
-                            title={rewriting ? "Rewriting…" : "Rewrite this bullet with LLM assist"}
+                            title={rewriting ? "Rewriting…" : "Rewrite this bullet's text with AI (tags unchanged)"}
                         >
                             <Sparkles className={cn("w-3 h-3", rewriting && "animate-pulse")} />
+                        </button>
+                    )}
+                    {tagsButtonVisible && (
+                        <button
+                            onClick={handleSuggestTags}
+                            disabled={suggestingTags}
+                            className={cn(
+                                "p-1 rounded hover:bg-white/10 disabled:cursor-not-allowed",
+                                suggestingTags
+                                    ? "text-cyan-400 opacity-100"
+                                    : "text-white/30 hover:text-cyan-400",
+                            )}
+                            title={suggestingTags ? "Suggesting tags…" : "Suggest tags with AI (text unchanged, pinned tags preserved)"}
+                        >
+                            <Tags className={cn("w-3 h-3", suggestingTags && "animate-pulse")} />
                         </button>
                     )}
                     <button
@@ -273,84 +406,140 @@ export const BulletRow: React.FC<BulletRowProps> = ({ bullet, onChange, onDelete
                 </div>
             )}
 
-            {proposal && (() => {
-                // Tag diff: classify each tag as removed (was in original, not in
-                // proposal), kept (in both), or added (in proposal, not in original).
-                // Lower-cased for set membership; preserves display casing from source.
+            {tagSuggestError && (
+                <div className="ml-5 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded px-2 py-1">
+                    {tagSuggestError}
+                </div>
+            )}
+
+            {/* M7.7.2 — rewrite diff panel is now TEXT-ONLY. Tag diff section
+                removed; tags pass through unchanged on Accept. */}
+            {proposal && (
+                <div className="ml-5 mt-1 flex flex-col gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/[0.04] p-2">
+                    <div>
+                        <span className="text-[10px] uppercase tracking-wider text-white/40">Original</span>
+                        <p className="text-sm text-white/40 line-through decoration-rose-400/50 whitespace-pre-wrap">
+                            {bullet.text}
+                        </p>
+                    </div>
+                    <div>
+                        <span className="text-[10px] uppercase tracking-wider text-white/40">Proposed</span>
+                        <p className="text-sm text-emerald-300 whitespace-pre-wrap">
+                            {proposal.text}
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-2 pt-0.5">
+                        <button
+                            onClick={acceptProposal}
+                            className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors"
+                            title="Replace the bullet's text (tags unchanged)"
+                        >
+                            Accept
+                        </button>
+                        <button
+                            onClick={discardProposal}
+                            className="px-2 py-1 text-xs font-medium rounded bg-white/5 hover:bg-white/10 text-white/60 border border-white/15 transition-colors"
+                            title="Keep the original; discard the proposal"
+                        >
+                            Discard
+                        </button>
+                    </div>
+                </div>
+            )}
+
+            {/* M7.7.7 — tag-suggest diff panel. Renders side-by-side current
+                tags (with pin/auto annotations) and proposed tags (added in
+                emerald, removed in rose line-through). Pins are visually
+                distinct in both columns so the user can verify they
+                survived the proposal. */}
+            {tagProposal && (() => {
                 const origTags = bullet.tags;
-                const propTags = proposal.tags;
+                const propTags = tagProposal.tags;
                 const origSet = new Set(origTags.map(t => t.toLowerCase()));
                 const propSet = new Set(propTags.map(t => t.toLowerCase()));
-                const removed = origTags.filter(t => !propSet.has(t.toLowerCase()));
+                const dropped = origTags.filter(t => !propSet.has(t.toLowerCase()));
                 const added = propTags.filter(t => !origSet.has(t.toLowerCase()));
                 const kept = propTags.filter(t => origSet.has(t.toLowerCase()));
-                const tagsChanged = removed.length > 0 || added.length > 0;
                 return (
-                    <div className="ml-5 mt-1 flex flex-col gap-1.5 rounded-md border border-purple-500/30 bg-purple-500/[0.04] p-2">
+                    <div className="ml-5 mt-1 flex flex-col gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/[0.04] p-2">
                         <div>
-                            <span className="text-[10px] uppercase tracking-wider text-white/40">Original</span>
-                            <p className="text-sm text-white/40 line-through decoration-rose-400/50 whitespace-pre-wrap">
-                                {bullet.text}
-                            </p>
-                            {origTags.length > 0 && (
+                            <span className="text-[10px] uppercase tracking-wider text-white/40">Current tags</span>
+                            {origTags.length === 0 ? (
+                                <p className="text-xs text-white/40 italic">(none)</p>
+                            ) : (
                                 <div className="mt-1 flex flex-wrap gap-1">
-                                    {origTags.map(t => (
-                                        <span
-                                            key={`orig-${t}`}
-                                            className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                                                propSet.has(t.toLowerCase())
-                                                    ? 'text-white/30 border-white/10'
-                                                    : 'text-rose-300/70 border-rose-500/30 line-through decoration-rose-400/50'
-                                            }`}
-                                        >
-                                            {t}
-                                        </span>
-                                    ))}
+                                    {origTags.map(t => {
+                                        const stillThere = propSet.has(t.toLowerCase());
+                                        const isPinned = bullet.pinnedTags.includes(t);
+                                        const isAuto = bullet.autoTags.includes(t);
+                                        return (
+                                            <span
+                                                key={`orig-${t}`}
+                                                className={cn(
+                                                    "inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border",
+                                                    stillThere
+                                                        ? "text-white/60 border-white/15"
+                                                        : "text-rose-300/70 border-rose-500/30 line-through decoration-rose-400/50",
+                                                    isPinned && "border-amber-500/40",
+                                                )}
+                                                title={isPinned ? "Pinned — preserved in proposal" : undefined}
+                                            >
+                                                {isPinned && <Pin className="w-2.5 h-2.5 fill-current text-amber-400" />}
+                                                {isAuto && !isPinned && <Sparkles className="w-2 h-2 text-cyan-400/80" />}
+                                                <span>{t}</span>
+                                            </span>
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>
                         <div>
-                            <span className="text-[10px] uppercase tracking-wider text-white/40">Proposed</span>
-                            <p className="text-sm text-emerald-300 whitespace-pre-wrap">
-                                {proposal.text}
-                            </p>
-                            {propTags.length > 0 && (
-                                <div className="mt-1 flex flex-wrap gap-1">
-                                    {propTags.map(t => (
+                            <span className="text-[10px] uppercase tracking-wider text-white/40">Proposed tags</span>
+                            <div className="mt-1 flex flex-wrap gap-1">
+                                {propTags.map(t => {
+                                    const isNew = !origSet.has(t.toLowerCase());
+                                    const isPinned = bullet.pinnedTags.includes(t);
+                                    return (
                                         <span
                                             key={`prop-${t}`}
-                                            className={`text-[10px] px-1.5 py-0.5 rounded border ${
-                                                origSet.has(t.toLowerCase())
-                                                    ? 'text-white/40 border-white/15'
-                                                    : 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10'
-                                            }`}
+                                            className={cn(
+                                                "inline-flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded border",
+                                                isNew
+                                                    ? "text-emerald-300 border-emerald-500/40 bg-emerald-500/10"
+                                                    : "text-white/60 border-white/15",
+                                                isPinned && "border-amber-500/40",
+                                            )}
+                                            title={isPinned ? "Pinned — server preserved" : (isNew ? "Newly proposed" : "Kept from current tags")}
                                         >
-                                            {t}
+                                            {isPinned && <Pin className="w-2.5 h-2.5 fill-current text-amber-400" />}
+                                            <span>{t}</span>
                                         </span>
-                                    ))}
-                                </div>
-                            )}
-                            {tagsChanged && (
-                                <p className="mt-1 text-[10px] text-white/40 italic">
-                                    {removed.length > 0 && `Drops ${removed.length}`}
-                                    {removed.length > 0 && added.length > 0 && ' · '}
-                                    {added.length > 0 && `Adds ${added.length}`}
-                                    {kept.length > 0 && ` · keeps ${kept.length}`}
-                                </p>
-                            )}
+                                    );
+                                })}
+                            </div>
+                            <p className="mt-1 text-[10px] text-white/40 italic">
+                                {kept.length} kept · {added.length > 0 && `${added.length} added`}
+                                {added.length > 0 && dropped.length > 0 && ' · '}
+                                {dropped.length > 0 && `${dropped.length} dropped`}
+                            </p>
                         </div>
+                        {tagProposal.reason && (
+                            <p className="text-[11px] text-white/50 italic border-l-2 border-cyan-500/40 pl-2">
+                                {tagProposal.reason}
+                            </p>
+                        )}
                         <div className="flex items-center gap-2 pt-0.5">
                             <button
-                                onClick={acceptProposal}
+                                onClick={acceptTagProposal}
                                 className="px-2 py-1 text-xs font-medium rounded bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 transition-colors"
-                                title="Replace the bullet with the proposed text + tags"
+                                title="Apply the proposed tag list (text unchanged)"
                             >
                                 Accept
                             </button>
                             <button
-                                onClick={discardProposal}
+                                onClick={discardTagProposal}
                                 className="px-2 py-1 text-xs font-medium rounded bg-white/5 hover:bg-white/10 text-white/60 border border-white/15 transition-colors"
-                                title="Keep the original; discard the proposal"
+                                title="Keep current tags; discard the proposal"
                             >
                                 Discard
                             </button>

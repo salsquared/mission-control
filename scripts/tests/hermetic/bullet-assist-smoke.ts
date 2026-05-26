@@ -273,13 +273,20 @@ async function main(): Promise<void> {
             'rewrite: user includes "Current bullet to rewrite" header + bullet text',
             user.includes('## Current bullet to rewrite') && user.includes('Worked on stuff'),
         );
+        // M7.7.2 — rewrite is text-only. Output schema must NOT include a
+        // `tags` field; the task statement explicitly instructs the LLM not
+        // to return or modify tags. Tag churn moved to the bullet-tag-suggest
+        // callsite.
         record(
-            'rewrite: output schema includes "text" AND "tags" (not "bullets")',
-            user.includes('"text"') && user.includes('"tags"') && !/3.{0,5}5\s+bullets/i.test(user),
+            'rewrite: output schema is text-only (no "tags" field, no "bullets" field — M7.7.2)',
+            user.includes('"text"') &&
+                !user.includes('"tags": ["') &&
+                !/"tags"\s*:/.test(user.split('Output schema').pop() ?? '') &&
+                !/3.{0,5}5\s+bullets/i.test(user),
         );
         record(
-            'rewrite: task statement instructs the LLM to return updated tags',
-            /updated tags|tags.*reflect/i.test(user),
+            'rewrite: task statement forbids the LLM from returning tags (M7.7.2)',
+            /do not (return|touch|modify).{0,40}tags|return only the new text|tags.*owned by.*separate|context only/i.test(user),
         );
 
         // Section ordering for rewrite: Entry → Siblings → Archive → Current bullet → Output schema

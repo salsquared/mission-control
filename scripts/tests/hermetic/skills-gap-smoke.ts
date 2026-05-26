@@ -17,7 +17,7 @@ function pass(msg: string) { console.log(`[PASS] ${msg}`); passes++; }
 function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, detail ?? ""); fails++; }
 
 function mkBullet(id: string, text: string, tags: string[] = [], extra: Partial<{ locked: boolean; excluded: boolean }> = {}) {
-    return { id, text, tags, autoTags: [], removedTags: [], locked: extra.locked ?? false, excluded: extra.excluded ?? false };
+    return { id, text, tags, autoTags: [], removedTags: [], pinnedTags: [], locked: extra.locked ?? false, excluded: extra.excluded ?? false };
 }
 
 const ISO = "2026-01-01T00:00:00.000Z";
@@ -27,6 +27,7 @@ function mkProfile(overrides: Partial<ProfileWire> = {}): ProfileWire {
         id: "p1", userId: "u1",
         headline: null, summary: null, location: null, email: null, phone: null,
         links: null,
+        skills: null, hobbies: null, languages: null,
         workRoles: [],
         projects: [],
         education: [],

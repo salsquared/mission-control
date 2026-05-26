@@ -16,7 +16,7 @@ import { renderResumePDF, shutdownPDFBrowser } from "@/lib/resumes/render-pdf";
 const now = new Date().toISOString();
 
 function mkBullet(id: string, text: string, tags: string[] = []) {
-    return { id, text, tags, autoTags: [], removedTags: [], locked: false, excluded: false };
+    return { id, text, tags, autoTags: [], removedTags: [], pinnedTags: [], locked: false, excluded: false };
 }
 
 const profile: ProfileWire = {
@@ -31,6 +31,9 @@ const profile: ProfileWire = {
         { label: "GitHub", url: "https://github.com/salsquared" },
         { label: "Portfolio", url: "https://example.com" },
     ],
+    skills: null,
+    hobbies: null,
+    languages: null,
     workRoles: [
         {
             id: "wr1",

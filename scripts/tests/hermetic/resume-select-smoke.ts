@@ -14,7 +14,7 @@ function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, de
 const now = new Date().toISOString();
 
 function mkBullet(id: string, text: string, tags: string[] = [], flags: { locked?: boolean; excluded?: boolean } = {}) {
-    return { id, text, tags, autoTags: [], removedTags: [], locked: flags.locked ?? false, excluded: flags.excluded ?? false };
+    return { id, text, tags, autoTags: [], removedTags: [], pinnedTags: [], locked: flags.locked ?? false, excluded: flags.excluded ?? false };
 }
 
 const profile: ProfileWire = {
@@ -26,6 +26,9 @@ const profile: ProfileWire = {
     email: null,
     phone: null,
     links: null,
+    skills: null,
+    hobbies: null,
+    languages: null,
     workRoles: [
         {
             id: "wr1",

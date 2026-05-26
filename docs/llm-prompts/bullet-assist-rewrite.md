@@ -25,7 +25,7 @@ Hard rules — never violate:
 Same section assembly as `bullet-assist-fill` plus the `Current bullet` block before the output schema.
 
 ```
-Rewrite this one bullet. Return both the new text AND updated tags reflecting the new wording — when the rewrite changes which skills / technologies / themes the bullet emphasizes, the tags should change with it.
+Rewrite this one bullet. **Return ONLY the new text — do not return tags.** Tags on this bullet are owned by a separate flow (`bullet-tag-suggest`); this rewrite must not touch them. The user invokes you when they want sharper wording without losing their carefully chosen tag set.
 
 {{spine}}
 
@@ -37,11 +37,11 @@ Rewrite this one bullet. Return both the new text AND updated tags reflecting th
 
 ## Current bullet to rewrite
 {{currentBulletText}}
-tags: [{{currentBulletTags}}]
+tags (for context only — do not return or modify): [{{currentBulletTags}}]
 
 ## Output schema
-{ "text": "<rewritten bullet text>", "tags": ["<tag1>", "<tag2>"] }
-Return the new text plus 1–3 lowercase keyword tags reflecting the rewritten wording (typically skills, technologies, or themes the rewrite emphasizes). Keep the text length range close to the original (±20%). Tags MAY repeat the originals when the rewrite preserves the same concepts; tags MUST change when the rewrite shifts emphasis. Do not echo the id — that is preserved by the server.
+{ "text": "<rewritten bullet text>" }
+Return the new text only. Keep the text length range close to the original (±20%). Do not echo the id — that is preserved by the server. Do not return a `tags` field.
 ```
 
 ## Variables
@@ -49,12 +49,13 @@ Return the new text plus 1–3 lowercase keyword tags reflecting the rewritten w
 Inherits all four from `bullet-assist-fill` (`spine`, `siblings`, `archive`, `readme`) plus:
 
 - `currentBulletText` — the original bullet's text, unmodified.
-- `currentBulletTags` — JSON-stringified comma-separated list of the original bullet's tags, e.g. `"typescript", "performance"`. Produced by `current.tags.map(t => JSON.stringify(t)).join(', ')`.
+- `currentBulletTags` — JSON-stringified comma-separated list of the original bullet's tags, e.g. `"typescript", "performance"`. Produced by `current.tags.map(t => JSON.stringify(t)).join(', ')`. Sent as **context only** — the LLM uses tags to understand bullet emphasis but must not output a `tags` field.
 
 ## Notes
 
+- M7.7.2 (S7.10) narrowed this to text-only. The `M7.6` enhancement that added tag-update is reverted. Tag churn now lives in the sibling `bullet-tag-suggest` callsite (Tags icon in `components/ui/BulletRow.tsx`, next to the wand).
 - The `Current bullet to rewrite` block is **never trimmed** (along with spine + task statement + output schema). Overflow trim order is the same as fill: `archive` → `siblings` → `readme`.
-- Output schema enforces text length 1–2000 chars; tags array defaults to `[]` when the model omits them (lenient — UI lets the user re-tag manually after Accept).
-- Server post-processing: response replaces `text` + `tags` on the existing bullet; `id` / `locked` / `excluded` are preserved from the original `currentBullet` passed in. The schema instructs the model to not echo the id (server-side enforcement).
+- Output schema enforces text length 1–2000 chars. No `tags` field — server preserves all tag-related state (`tags`, `autoTags`, `removedTags`, `pinnedTags`) from the input bullet verbatim.
+- Server post-processing: response replaces only `text` on the existing bullet; `id` / tags / `autoTags` / `removedTags` / `pinnedTags` / `locked` / `excluded` all pass through. The schema instructs the model to not echo the id (server-side enforcement).
 - Lower token cap than fill (2048 vs 4096) because rewrite is single-bullet output.
 - Wand icon in `components/ui/BulletRow.tsx` triggers this; hidden when `bullet.locked === true` (defense-in-depth — server also rejects locked rewrites with 400).

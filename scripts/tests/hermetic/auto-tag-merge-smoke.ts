@@ -44,6 +44,7 @@ function mkBullet(id: string, text: string, partial: Partial<Bullet> = {}): Bull
         tags: partial.tags ?? [],
         autoTags: partial.autoTags ?? [],
         removedTags: partial.removedTags ?? [],
+        pinnedTags: partial.pinnedTags ?? [],
         locked: partial.locked ?? false,
         excluded: partial.excluded ?? false,
     };

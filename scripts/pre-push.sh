@@ -101,6 +101,10 @@ SUITES=(
     "scripts/tests/hermetic/resume-labels-smoke.ts"
     # Find Roles edit (group-by-search)
     "scripts/tests/hermetic/find-roles-grouping-smoke.ts"
+    # M7.7 — bullet tag/AI UX refactor
+    "scripts/tests/hermetic/bullet-pin-tag-smoke.ts"
+    "scripts/tests/hermetic/bullet-rewrite-text-only-smoke.ts"
+    "scripts/tests/hermetic/bullet-tag-suggest-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

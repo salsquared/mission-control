@@ -14,6 +14,7 @@ export const PROMPT_SLUGS = [
     "bullet-assist-fill",
     "bullet-assist-rewrite",
     "bullet-auto-tag",
+    "bullet-tag-suggest",
     "discovery-suggest",
     "email-parser",
     "employment-type-classifier",
@@ -41,6 +42,13 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
     "bullet-auto-tag": {
         keywords: "- Python\n- Kubernetes\n- distributed systems",
         bullets: "- id=b001 | tags=[] | removedTags=[]\n  text: \"Built a Python service handling 50k req/day on k8s\"\n- id=b002 | tags=[Go] | removedTags=[]\n  text: \"Cut latency in our Go API by 40%\"",
+    },
+    "bullet-tag-suggest": {
+        spine: "Software Engineer at Acme Corp",
+        bulletText: "Built a Python API serving 50k req/day",
+        tagState: "  - \"Python\" [pinned — MUST remain in output verbatim]\n  - \"API\" [user — may keep / replace / remove]",
+        removedTags: "  (none)",
+        vocabulary: "\"TypeScript\", \"Go\", \"Postgres\", \"REST\", \"distributed-systems\"",
     },
     "discovery-suggest": {
         topic: "space",

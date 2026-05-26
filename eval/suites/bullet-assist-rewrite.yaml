@@ -1,7 +1,8 @@
 # Suite for `bullet-assist-rewrite` — single bullet → diff proposal.
 # Same input shape as bullet-assist-fill PLUS a `currentBullet` field.
+# M7.7.2 (S7.10): rewrite is text-only. Tags pass through verbatim.
 
-- description: "Vague bullet → concrete rewrite with shifted tags"
+- description: "Vague bullet → concrete rewrite, tags preserved (M7.7.2 text-only)"
   vars:
     callsite: bullet-assist-rewrite
     input:
@@ -27,12 +28,18 @@
     - type: is-json
     - type: javascript
       value: |
+        // M7.7.2 (S7.10): rewrite is text-only. Tags MUST be preserved
+        // verbatim from the input bullet — the proposal's tags array
+        // must equal ["general"] (the input bullet's tags) exactly.
+        // Tag churn is now owned by the separate bullet-tag-suggest flow.
         const r = JSON.parse(output);
         return r.mode === 'rewrite' &&
         typeof r.proposal === 'object' &&
         typeof r.proposal.text === 'string' &&
         r.proposal.text.length > 0 &&
         Array.isArray(r.proposal.tags) &&
+        r.proposal.tags.length === 1 &&
+        r.proposal.tags[0] === 'general' &&
         r.proposal.text !== 'Worked on backend stuff and helped the team';
     - type: llm-rubric
       value: |
@@ -43,6 +50,6 @@
         2. The new text starts with an action verb.
         3. No first-person pronouns.
         4. The text doesn't invent specific numbers (since the original had none).
-        5. The new tags are not just ["general"] — they should reflect any new
-           emphasis (which could be empty array if no specific shift, but bonus
-           if they pull from the sibling tags like nodejs/performance).
+        Note: tags are preserved verbatim post-M7.7.2 — the JS assertion above
+        enforces that. Tag-related judgment is out of scope for the rewrite rubric;
+        the bullet-tag-suggest suite covers tag churn separately.

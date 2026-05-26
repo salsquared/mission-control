@@ -76,8 +76,15 @@ import {
     findArchiveSpansFor,
     type ArchiveSpan,
 } from "@/lib/profile/upload-archive";
+import { suggestTagsForBullet } from "@/lib/profile/bullet-tag-suggest";
 import { BulletAssistBodySchema } from "@/lib/schemas/profile";
 import { AIError } from "@/lib/ai/gemini";
+
+// M7.7.5 — cap guard for the tag-suggest mode. Bullets at the 7-tag ceiling
+// short-circuit BEFORE the LLM call: no token spend, no round-trip, UI gets
+// a clean "remove or unpin a tag first" status. Matches the bullet-tag-suggest
+// caller's MAX_TAGS constant.
+const TAG_CAP = 7;
 
 export const runtime = "nodejs";
 // Gemini call + DB load + sibling collection can run ~5s end-to-end on slow
@@ -290,14 +297,16 @@ export async function POST(req: NextRequest) {
         //    DB row.
         const bullets: Bullet[] = parseBullets(parentRow.bullets);
 
-        // 3. Rewrite mode: find the target bullet + reject locked.
+        // 3. Rewrite + tags modes: find the target bullet + reject locked.
+        // Tags mode additionally rejects when the bullet is already at the
+        // 7-tag cap (M7.7.5 — no LLM round-trip in that case).
         let currentBullet: Bullet | null = null;
-        if (parsed.data.mode === "rewrite") {
+        if (parsed.data.mode === "rewrite" || parsed.data.mode === "tags") {
             // Alias to a local const so TS preserves the discriminated-union
             // narrowing inside the .find callback (the closure would otherwise
             // re-widen `parsed.data` back to the union).
-            const rewriteBody = parsed.data;
-            const found = bullets.find(b => b.id === rewriteBody.bulletId);
+            const targetBody = parsed.data;
+            const found = bullets.find(b => b.id === targetBody.bulletId);
             if (!found) {
                 return NextResponse.json(
                     { error: "bullet-not-found", stage: "load" },
@@ -305,12 +314,60 @@ export async function POST(req: NextRequest) {
                 );
             }
             if (found.locked) {
+                const errCode = parsed.data.mode === "rewrite"
+                    ? "cannot-rewrite-locked"
+                    : "cannot-suggest-tags-locked";
                 return NextResponse.json(
-                    { error: "cannot-rewrite-locked", stage: "load" },
+                    { error: errCode, stage: "load" },
+                    { status: 400 },
+                );
+            }
+            // M7.7.5 cap guard — short-circuit BEFORE building the prompt or
+            // calling Gemini. Saves token spend and surfaces the constraint
+            // cleanly. The UI catches this status and tells the user to remove
+            // or unpin a tag before the AI can help.
+            if (parsed.data.mode === "tags" && found.tags.length >= TAG_CAP) {
+                return NextResponse.json(
+                    {
+                        error: "tag-limit-reached",
+                        detail: `Bullet already has ${found.tags.length}/${TAG_CAP} tags — remove or unpin one first.`,
+                        stage: "load",
+                    },
                     { status: 400 },
                 );
             }
             currentBullet = found;
+        }
+
+        // M7.7.5 — tags mode is a fully separate pipeline from fill/rewrite.
+        // It doesn't need the assist prompt builder, sibling collection,
+        // archive spans, or README context — `suggestTagsForBullet` loads its
+        // own profile and computes its own vocabulary. Dispatch early so we
+        // don't pay for the unrelated work.
+        if (parsed.data.mode === "tags") {
+            stage = "call";
+            const result = await suggestTagsForBullet({
+                userId,
+                parentKind: parsed.data.parentKind,
+                parentId: parsed.data.parentId,
+                bulletId: parsed.data.bulletId,
+            });
+            if (!result) {
+                // findBullet inside the caller returned null — the bullet was
+                // deleted between our load + the caller's re-load. Treat as
+                // 404 (same posture as the cross-user check).
+                return NextResponse.json(
+                    { error: "bullet-not-found", stage: "load" },
+                    { status: 404 },
+                );
+            }
+            return NextResponse.json(
+                {
+                    mode: "tags",
+                    proposal: { tags: result.tags, reason: result.reason },
+                },
+                { status: 200 },
+            );
         }
 
         stage = "build";

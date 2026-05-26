@@ -164,7 +164,7 @@ async function main() {
                 company: "Mock Co",
                 title: "Engineer",
                 startDate: new Date("2024-01-01"),
-                bullets: JSON.stringify([{ id: "b-mock", text: "Did something with TypeScript", tags: ["typescript"], autoTags: [], removedTags: [], locked: false, excluded: false }]),
+                bullets: JSON.stringify([{ id: "b-mock", text: "Did something with TypeScript", tags: ["typescript"], autoTags: [], removedTags: [], pinnedTags: [], locked: false, excluded: false }]),
             },
         });
 

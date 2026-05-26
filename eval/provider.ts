@@ -31,6 +31,12 @@ import {
     renderKeywordsBlock,
     type FlatBullet,
 } from "@/lib/profile/auto-tag";
+import {
+    applyTagSuggestPostFilter,
+    renderTagState,
+    renderRemovedTags,
+    renderVocabulary,
+} from "@/lib/profile/bullet-tag-suggest";
 import { chatJSON, MODEL_LITE } from "@/lib/ai/gemini";
 import { loadPrompt } from "@/lib/ai/prompts";
 import { z } from "zod";
@@ -86,6 +92,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
                 tags: Array.isArray(o.tags) ? o.tags as string[] : [],
                 autoTags: Array.isArray(o.autoTags) ? o.autoTags as string[] : [],
                 removedTags: Array.isArray(o.removedTags) ? o.removedTags as string[] : [],
+                pinnedTags: Array.isArray(o.pinnedTags) ? o.pinnedTags as string[] : [],
                 locked: o.locked === true,
                 excluded: o.excluded === true,
             };
@@ -172,6 +179,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
                 tags: currentBullet.tags,
                 autoTags: [],
                 removedTags: [],
+                pinnedTags: [],
                 locked: false,
                 excluded: false,
             },
@@ -199,6 +207,7 @@ const HANDLERS: Record<string, CallsiteHandler> = {
                 tags: b.tags ?? [],
                 autoTags: [],
                 removedTags: b.removedTags ?? [],
+                pinnedTags: [],
                 locked: false,
                 excluded: false,
             },
@@ -230,6 +239,67 @@ const HANDLERS: Record<string, CallsiteHandler> = {
         // merge function is exercised by the hermetic
         // `auto-tag-merge-smoke.ts` instead, which can hold the model
         // constant via canned proposals.
+    },
+
+    // M7.7.3 — per-bullet AI tag generator (story S7.10 + S7.11).
+    // Bypasses the live DB load in `suggestTagsForBullet`; the fixture supplies
+    // pre-categorized tag state + vocabulary directly so the suite is
+    // profile-agnostic. POST-FILTER IS APPLIED so the contract invariants
+    // (pin preservation, blocklist filter, 7-cap) get exercised end-to-end.
+    "bullet-tag-suggest": async (input) => {
+        const args = input as {
+            spine: string;
+            bulletText: string;
+            pinnedTags?: string[];
+            autoTags?: string[];
+            userTags?: string[];
+            removedTags?: string[];
+            vocabulary?: string[];
+        };
+        const pinnedTags = args.pinnedTags ?? [];
+        const autoTags = args.autoTags ?? [];
+        const userTags = args.userTags ?? [];
+        const removedTags = args.removedTags ?? [];
+        const vocabulary = args.vocabulary ?? [];
+
+        // Re-use the pure render helpers from the lib so the prompt block
+        // format stays in lockstep with production.
+        const fakeBullet = {
+            id: "blt_eval_fixture",
+            text: args.bulletText,
+            tags: [...pinnedTags, ...autoTags, ...userTags],
+            autoTags,
+            removedTags,
+            pinnedTags,
+            locked: false,
+            excluded: false,
+        };
+
+        const prompt = await loadPrompt("bullet-tag-suggest", {
+            spine: args.spine,
+            bulletText: args.bulletText,
+            tagState: renderTagState(fakeBullet),
+            removedTags: renderRemovedTags(fakeBullet),
+            vocabulary: renderVocabulary(vocabulary),
+        });
+
+        const schema = z.object({
+            tags: z.array(z.string().min(1).max(60)).max(20),
+            reason: z.string().max(500).optional(),
+        });
+
+        const response = await chatJSON({
+            name: "bullet-tag-suggest",
+            system: prompt.system,
+            user: prompt.user,
+            schema,
+            model: MODEL_LITE,
+            temperature: 0.3,
+            maxOutputTokens: 1024,
+        });
+
+        const tags = applyTagSuggestPostFilter(response.tags, pinnedTags, removedTags);
+        return { tags, reason: response.reason };
     },
 };
 

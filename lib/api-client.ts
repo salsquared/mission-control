@@ -468,6 +468,20 @@ export const api = {
                     BulletAssistResponseSchema,
                     jsonBody('POST', { mode: 'rewrite', parentKind, parentId, bulletId }),
                 ),
+            // M7.7.5 — per-bullet AI tag generator (story S7.10 + S7.11). Server
+            // 400s with `tag-limit-reached` when bullet already has >= 7 tags;
+            // jsonFetch surfaces non-2xx as an Error whose message includes the
+            // error code, so the caller can switch on it for the cap-hint UX.
+            assistTags: (
+                parentKind: 'work-role' | 'project' | 'education',
+                parentId: string,
+                bulletId: string,
+            ) =>
+                jsonFetch(
+                    '/api/profile/bullets/assist',
+                    BulletAssistResponseSchema,
+                    jsonBody('POST', { mode: 'tags', parentKind, parentId, bulletId }),
+                ),
         },
     },
 

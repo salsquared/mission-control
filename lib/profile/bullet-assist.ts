@@ -334,12 +334,14 @@ const FillResponseSchema = z.object({
         .max(8),
 });
 
+// M7.7.2 (story S7.10): rewrite is now TEXT-ONLY. Tags are owned by the
+// tag-suggest flow (`bullet-tag-suggest` — separate LLM callsite). The
+// rewrite response schema drops the `tags` field; the proposal preserves
+// the input bullet's tags / autoTags / removedTags / pinnedTags verbatim.
+// This narrows S7.8 back to its original text-only intent (the M7.6
+// `fffa038` enhancement that added tag churn is reverted).
 const RewriteResponseSchema = z.object({
     text: z.string().min(1).max(2_000),
-    // Tags default to [] when the LLM omits them — keeps a malformed response
-    // from blocking the rewrite. The route still applies whatever the LLM
-    // returned (possibly empty); the user can hand-edit tags after Accept.
-    tags: z.array(z.string()).default([]),
 });
 
 // The "3.1" SKU the user asked for. `gemini-3.1-flash` (non-lite) does NOT
@@ -385,6 +387,7 @@ export async function callBulletAssist(
             tags: b.tags,
             autoTags: [],
             removedTags: [],
+            pinnedTags: [],
             locked: false,
             excluded: false,
         }));
@@ -409,21 +412,18 @@ export async function callBulletAssist(
         temperature: TEMPERATURE,
     });
 
+    // M7.7.2 (S7.10) — text-only rewrite. Every tag-related field passes
+    // through unchanged from the input bullet. Tag churn for this bullet
+    // now lives in the separate `bullet-tag-suggest` callsite (the Tags
+    // icon on BulletRow, sibling to the wand). A user who wants the
+    // rewrite's wording AND a tag refresh runs both flows explicitly.
     const proposal: Bullet = {
         id: input.currentBullet.id,
         text: response.text,
-        // LLM-supplied tags reflecting the new wording. Empty LLM response →
-        // empty tags (the user can re-tag manually after Accept). This is a
-        // deliberate change from the original M7.6 design which preserved the
-        // original bullet's tags verbatim — the rewrite often shifts emphasis,
-        // and the tags should follow.
-        tags: response.tags,
-        // autoTags / removedTags pass through unchanged — they're provenance
-        // metadata about the bullet's tagging history (Decision 6.1 + 6.3),
-        // not content the rewrite reshapes. The accept-on-save logic in
-        // M8.5.6 still clears autoTags on the next PATCH.
+        tags: input.currentBullet.tags,
         autoTags: input.currentBullet.autoTags,
         removedTags: input.currentBullet.removedTags,
+        pinnedTags: input.currentBullet.pinnedTags,
         locked: input.currentBullet.locked,
         excluded: input.currentBullet.excluded,
     };

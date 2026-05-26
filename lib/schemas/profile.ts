@@ -1,4 +1,8 @@
 import { z } from 'zod';
+import { LANGUAGE_PROFICIENCIES } from '@/lib/profile/types';
+// Re-export so existing importers (api-client, etc.) keep working without
+// pulling in the rest of lib/profile/types.
+export { LANGUAGE_PROFICIENCIES };
 
 // ─── Bullet ────────────────────────────────────────────────────────────────
 // Mirrors lib/profile/types.ts:Bullet. When *writing*, id is optional so a
@@ -7,16 +11,17 @@ import { z } from 'zod';
 //
 // M8.5.1 added `autoTags` (subset of `tags` pending user review — Decision 6.3)
 // and `removedTags` (per-bullet blocklist for the auto-tag pass — Decision 6.1).
-// Both .default([]) on the canonical schema so bullets parsed from JSON written
-// before this migration still validate. On BulletWriteSchema they're .optional()
-// because most writes only touch a subset of fields; M8.5.6 will add the
-// autoTags-clearing .transform() once the BulletRow UI lands.
+// M7.7.1 added `pinnedTags` (story S7.11): user-anchored tags that survive
+// both the per-bullet AI-tag generator (S7.10) and the bulk auto-tag pass.
+// All three .default([]) on the canonical schema so bullets parsed from JSON
+// written before this migration still validate.
 export const BulletSchema = z.object({
     id: z.string(),
     text: z.string(),
     tags: z.array(z.string()),
     autoTags: z.array(z.string()).default([]),
     removedTags: z.array(z.string()).default([]),
+    pinnedTags: z.array(z.string()).default([]),
     locked: z.boolean(),
     excluded: z.boolean(),
 });
@@ -27,6 +32,7 @@ export const BulletWriteSchema = z.object({
     tags: z.array(z.string()).optional(),
     autoTags: z.array(z.string()).optional(),
     removedTags: z.array(z.string()).optional(),
+    pinnedTags: z.array(z.string()).optional(),
     locked: z.boolean().optional(),
     excluded: z.boolean().optional(),
 }).refine(
@@ -39,6 +45,27 @@ export const BulletWriteSchema = z.object({
         return !b.removedTags.some((t) => tagSet.has(t));
     },
     { message: 'A tag cannot appear in both `tags` and `removedTags`' }
+).refine(
+    (b) => {
+        // M7.7.1 invariant: every pinned tag must currently be applied.
+        // Vacuously true when either side is omitted. The UI clears the pin
+        // when the user removes a tag (M7.7.6), so this only trips on
+        // hand-rolled / out-of-date payloads.
+        if (!b.pinnedTags || !b.tags) return true;
+        const tagSet = new Set(b.tags);
+        return b.pinnedTags.every((t) => tagSet.has(t));
+    },
+    { message: 'Every entry in `pinnedTags` must also appear in `tags`' }
+).refine(
+    (b) => {
+        // M7.7.1 invariant: blocklist wins — a tag in `removedTags` cannot
+        // also be pinned. Pinning a blocked tag is rejected so the user
+        // can't accidentally re-introduce a tag they've explicitly removed.
+        if (!b.pinnedTags || !b.removedTags) return true;
+        const removedSet = new Set(b.removedTags);
+        return !b.pinnedTags.some((t) => removedSet.has(t));
+    },
+    { message: 'A tag cannot appear in both `pinnedTags` and `removedTags`' }
 ).transform((b) => ({
     // M8.5.6 Decision 6.3 implicit-accept-on-save: every successful PATCH
     // through this schema zeros out `autoTags`. The LLM-suggested keywords
@@ -55,6 +82,18 @@ export const BulletWriteSchema = z.object({
 export const ProfileLinkSchema = z.object({
     label: z.string(),
     url: z.string().url(),
+});
+
+// Profile.skills: user-defined groups, each a category label + flat string items.
+export const SkillGroupSchema = z.object({
+    category: z.string().min(1),
+    items: z.array(z.string().min(1)),
+});
+
+export const LanguageProficiencySchema = z.enum(LANGUAGE_PROFICIENCIES);
+export const LanguageEntrySchema = z.object({
+    name: z.string().min(1),
+    proficiency: LanguageProficiencySchema,
 });
 
 // ─── Entity shapes (responses include parsed bullets, not the JSON string) ──
@@ -118,6 +157,12 @@ export const ProfileSchema = z.object({
     email: z.string().nullable(),
     phone: z.string().nullable(),
     links: z.array(ProfileLinkSchema).nullable(),
+    // Optional on the wire so fixtures and pre-migration snapshots don't need
+    // to spell out a null. Server always sets these explicitly when serializing
+    // a live profile, so production reads still arrive populated.
+    skills: z.array(SkillGroupSchema).nullable().optional(),
+    hobbies: z.array(z.string()).nullable().optional(),
+    languages: z.array(LanguageEntrySchema).nullable().optional(),
     workRoles: z.array(WorkRoleSchema),
     projects: z.array(ProjectSchema),
     education: z.array(EducationSchema),
@@ -140,6 +185,9 @@ export const ProfilePatchSchema = z.object({
     email: z.string().nullable().optional(),
     phone: z.string().nullable().optional(),
     links: z.array(ProfileLinkSchema).nullable().optional(),
+    skills: z.array(SkillGroupSchema).nullable().optional(),
+    hobbies: z.array(z.string()).nullable().optional(),
+    languages: z.array(LanguageEntrySchema).nullable().optional(),
 }).refine(
     (d) => Object.keys(d).length > 0,
     { message: 'At least one mutable field must be provided' }
@@ -251,10 +299,13 @@ export type ProfileSnapshotSummaryWire = z.infer<typeof ProfileSnapshotSummarySc
 export type ProfileSnapshotWire = z.infer<typeof ProfileSnapshotSchema>;
 
 // ─── Bullet-assist (M7.6.7 — story S7.7 fill + S7.8 rewrite) ────────────────
-// Discriminated by `mode`. `bulletId` required only in rewrite mode; using
+// Discriminated by `mode`. `bulletId` required for rewrite + tags modes; using
 // a literal-tagged discriminator means the type narrows automatically on the
 // route side and the UI can't accidentally pass bulletId to fill (or omit it
-// from rewrite). `parentKind` enum mirrors lib/profile/bullet-assist.ts:ParentKind.
+// from rewrite/tags). `parentKind` enum mirrors lib/profile/bullet-assist.ts:ParentKind.
+//
+// M7.7.5 added the `'tags'` mode (story S7.10 + S7.11) — per-bullet AI tag
+// generator. Same parent + bullet identification as rewrite mode.
 export const BulletAssistFillSchema = z.object({
     mode: z.literal('fill'),
     parentKind: z.enum(['work-role', 'project', 'education']),
@@ -268,14 +319,23 @@ export const BulletAssistRewriteSchema = z.object({
     bulletId: z.string().min(1),
 });
 
+export const BulletAssistTagsSchema = z.object({
+    mode: z.literal('tags'),
+    parentKind: z.enum(['work-role', 'project', 'education']),
+    parentId: z.string().min(1),
+    bulletId: z.string().min(1),
+});
+
 export const BulletAssistBodySchema = z.discriminatedUnion('mode', [
     BulletAssistFillSchema,
     BulletAssistRewriteSchema,
+    BulletAssistTagsSchema,
 ]);
 
 // Fill returns 1–5 starter bullets; rewrite returns one proposal preserving
-// id / tags / locked / excluded. Both share the canonical BulletSchema shape
-// so the UI can drop suggestions straight into the existing bullets array.
+// id / tags / locked / excluded. Tags returns the proposed final tag list
+// + optional reason string — the client diffs against the bullet's current
+// tags and on Accept patches the bullet with `tags = proposal.tags`.
 export const BulletAssistFillResponseSchema = z.object({
     mode: z.literal('fill'),
     suggestions: z.array(BulletSchema).min(1).max(5),
@@ -286,9 +346,18 @@ export const BulletAssistRewriteResponseSchema = z.object({
     proposal: BulletSchema,
 });
 
+export const BulletAssistTagsResponseSchema = z.object({
+    mode: z.literal('tags'),
+    proposal: z.object({
+        tags: z.array(z.string()).min(0).max(7),
+        reason: z.string().optional(),
+    }),
+});
+
 export const BulletAssistResponseSchema = z.discriminatedUnion('mode', [
     BulletAssistFillResponseSchema,
     BulletAssistRewriteResponseSchema,
+    BulletAssistTagsResponseSchema,
 ]);
 
 export type BulletAssistBody = z.infer<typeof BulletAssistBodySchema>;

@@ -72,6 +72,17 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         requiredSystemPhrases: ['Never invent coverage', 'removedTags'],
         requiredUserPhrases: ['Posting keywords', 'Bullets to consider'],
     },
+    'bullet-tag-suggest': {
+        expectSystem: true,
+        expectModel: true,
+        expectTemperature: true,
+        expectMaxTokens: true,
+        userByteBudget: 8_192,
+        // System enforces the four core invariants: pin preservation,
+        // blocklist filter, 3–7 cap, vocabulary reuse.
+        requiredSystemPhrases: ['MUST appear verbatim', 'No fabrication', '3 to 7 tags'],
+        requiredUserPhrases: ['Current tags', 'Blocked tags', 'Profile vocabulary', 'Output schema'],
+    },
     'discovery-suggest': {
         expectSystem: false,
         expectModel: true,

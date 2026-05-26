@@ -13,7 +13,7 @@
 
 ## Last session
 
-- **Date:** 2026-05-25 (design wave: four new §7 stories S7.10–S7.13 added to `docs/user-stories.md` covering bullet-AI UX refactor + per-entity scratchpad. Three new milestone phases designed in `docs/implementation.md` — **M7.7** (S7.10 split text/tag affordances + S7.11 pin tags + S7.12 tag click no-op), **M7.8** (S7.13 schema + overlay UI + bullet-assist grounding), **M8.6** (S7.13 resume-gen synthesis pass). Pure doc work — no code shipped yet.) Earlier same day: doc reconciliation flipped M7.6 + M8.4 + M8.5 + LOP-1..11 from ⏳ to ✅. Earlier same day: M8.4 + M8.5 GenerateResumeCard upgrade. Earlier same day: close-detection probe gate. All prior pushed to `origin/main`; today's doc wave still uncommitted.
+- **Date:** 2026-05-25 / 2026-05-26 (M7.7 — bullet tag/AI UX refactor implementation: full 8-task build covering S7.10 split text/tag affordances + S7.11 pin tags + S7.12 tag click no-op + bigger X. 63/63 pre-push hermetic green in ~53s. Three local commits ahead of `origin/main`: `dee0121` (prior doc reconciliation), `87d2bbb` (M7.7/M7.8/M8.6 design docs), plus the M7.7 implementation commit landing now.) Earlier same day: design wave added S7.10–S7.13 to `docs/user-stories.md` + M7.7/M7.8/M8.6 sections to `docs/implementation.md`. Earlier same day: doc reconciliation flipped M7.6 + M8.4 + M8.5 + LOP-1..11 from ⏳ to ✅. Earlier same day: M8.4 + M8.5 GenerateResumeCard upgrade. Earlier same day: close-detection probe gate.
 - **Branch:** `main`, **up to date with `origin/main`** (final HEAD: `c69fcc6`). Working tree clean.
 - **What landed this session (M8.4 / M8.5, in chronological order):**
   - **`ea0fe7b` `feat(resume): M8.4/M8.5 design + Wave 0 schema foundation (S8.9–S8.13)`** — `docs/user-stories.md` gains S8.9–S8.13 + Decision 6.1–6.5 + M8.4/M8.5 milestone placeholders. `docs/implementation.md` gets full §M8.4 (10 tasks) + §M8.5 (9 tasks). Prisma migration `20260525091102_add_generated_resume_posting_metadata` adds `postingTitle` + `postingCompany` to `GeneratedResume` (applied to both dev.db + prod.db; PM2 stopped/started for each). `Bullet` interface in `lib/profile/types.ts` gains `autoTags: string[]` + `removedTags: string[]`; `lib/profile/bullets.ts:hydrateBulletDefaults` back-compats legacy JSON. `BulletWriteSchema` `.refine().transform()` enforces no-overlap invariant + Decision 6.3 implicit-accept on save.
@@ -103,7 +103,40 @@ Recommended fix order if working through the list:
 
 ## In-progress work
 
-**Uncommitted (2026-05-25):** selector threshold bump + Freckle bullet text edit, addressing the "Freckle.tv leaking onto security-officer resumes" leak. Three pieces:
+**Uncommitted (2026-05-25, end of day):** Skills + Hobbies + Languages added to `ProfileIdentityCard`, wired end-to-end. **Iteration 2** reworked the UX after first cut:
+- Skills + Hobbies + Languages now share a single 3-column row (was: Skills + Hobbies nested in Personal info, Languages as own section — wasted vertical space).
+- Hobbies render as removable badges with inline `BadgeList` input (was: comma-separated text field).
+- Languages use a draft-form combobox grounded on a `COMMON_LANGUAGES` suggestion list (~60 spoken languages, free-form still allowed) + explicit Add button + horizontal `ProficiencyRadio` (vertical dot+label per option, low → high left → right).
+- `LANGUAGE_PROFICIENCIES` reordered to low-to-high in `lib/profile/types.ts` to match the radio render order; the duplicate const in `lib/schemas/profile.ts` was deleted and replaced with an import + re-export of the types-file source-of-truth.
+- Wire schema fields for the three sections were relaxed to `.nullable().optional()` so fixtures and pre-migration JSON snapshots don't have to enumerate them (server still always sets them explicitly when serializing).
+
+**Files touched:**
+- `prisma/schema.prisma` + new migration `20260526013329_add_profile_skills_hobbies_languages` (three nullable TEXT columns: `skills`, `hobbies`, `languages`). Applied to `dev.db` (prod.db still needs `npx prisma migrate deploy` against `DATABASE_URL=file:./prod.db`).
+- `lib/profile/types.ts` — new `ProfileLink`, `SkillGroup`, `LanguageEntry`, `LanguageProficiency` types + `LANGUAGE_PROFICIENCIES` const (low-to-high: Basic / Conversational / Professional / Fluent / Native). Moved here from `lib/repositories/profile.ts` so client components can import without dragging Prisma into the browser bundle (caught at first render — Turbopack runtime error).
+- `lib/repositories/profile.ts` — re-exports the types for legacy callers; `parseSkills` / `parseHobbies` / `parseLanguages` JSON guards mirroring `parseLinks`; `HydratedProfile` + `ProfileHeaderUpdate` + `updateProfileHeader` extended.
+- `lib/schemas/profile.ts` — `SkillGroupSchema`, `LanguageEntrySchema`, `LanguageProficiencySchema`; `ProfileSchema` + `ProfilePatchSchema` extended (`.nullable().optional()` on the wire shape).
+- `components/cards/ProfileIdentityCard.tsx` — new primitives: `BadgeList` (pill UI with × + inline input), `ProficiencyRadio` (5 dots+labels, vertical-per-item, left→right low-to-high), `LanguageDraft` (combobox + radio + Add/Cancel). Three editor subcomponents (`SkillsEditor`, `HobbiesEditor`, `LanguagesEditor`) all use the shared primitives. Layout: Personal info row → 3-column Skills/Hobbies/Languages row → Work history / Projects / Education.
+- `components/views/ProfileView.tsx` — props threaded.
+- `scripts/tests/hermetic/{skills-gap,resume-render}-smoke.ts` — extended with `skills: null, hobbies: null, languages: null` (user reverted the equivalent line on `resume-select-smoke.ts`; the schema's `.nullable().optional()` relaxation is what made that revert possible).
+
+`tsc --noEmit` clean. `npm run test:hermetic` 60/60 green. Dev PM2 restarted.
+
+**Also uncommitted (2026-05-25, design wave):**
+- `docs/user-stories.md` — four new §7 stories S7.10–S7.13 added after S7.9 (bullet-AI split + pin tags + tag click no-op + per-entity scratchpad).
+- `docs/implementation.md` — three new milestone sections added (M7.7 after M7.6; M7.8 after M7.7; M8.6 after M8.5) with full task lists, acceptance criteria, out-of-scope. Status snapshot TL;DR + per-track table + story implementation map + "Actionable items" + "Open work, by leverage" all updated for the new ⏳ milestones.
+- This file — Last session / Umbrella goal / Immediate next actions all reflect the new design wave.
+
+No code in this design wave — purely roadmap state. M7.7 implementation is the next concrete build step once the user gives the go-ahead. The Skills/Hobbies/Languages uncommitted code above is orthogonal and can ship in the same commit or a separate one.
+
+**Open follow-ups for this feature:**
+- **`prisma/prod.db` migration not yet applied** — when ready to ship to prod: `pm2 stop mission-control mission-control-scheduler-prod; DATABASE_URL="file:./prod.db" npx prisma migrate deploy; pm2 restart mission-control mission-control-scheduler-prod`.
+- **Resume template (`lib/resumes/templates/ats-plain.tsx`) does not yet render the new fields.** Card collects them but the generated PDF/DOCX ignores them. Add a Skills section (grouped) + Languages section (with proficiency) + optional Hobbies line when wiring is desired.
+- **No LLM auto-fill / synthesize for these fields** — `lib/profile/synthesize.ts` and `lib/profile/import-llm.ts` don't extract skills/hobbies/languages from raw resumes yet. The structured profile import will miss them on M7.4 round-trips until prompt + schema extended.
+- **No Promptfoo coverage** — N/A until the synth/import prompts learn about the new fields.
+
+---
+
+**Earlier uncommitted (2026-05-25):** selector threshold bump + Freckle bullet text edit, addressing the "Freckle.tv leaking onto security-officer resumes" leak. Three pieces:
 - **`lib/resumes/select.ts`** — new named constant `MIN_KEEP_SCORE = TAG_WEIGHT` (= 2); the `dropZeroScoreEntities` guard at the entity-keep check now drops entities whose top bullet scores below `MIN_KEEP_SCORE` instead of strictly `=== 0`. Meaning: a single coincidental substring match (score 1) is no longer enough to keep an off-topic entity; the entity needs either a tag match (worth 2) or multiple keyword matches. Docstring + inline comment updated to explain the threshold + reference the Freckle regression.
 - **`scripts/tests/hermetic/resume-select-smoke.ts`** — new Test 8b pins the new threshold: a synthesized off-topic work role with a substring-only "security" hit is asserted dropped. Existing Test 8 comment updated from "zero score" to "below MIN_KEEP_SCORE".
 - **`prisma/dev.db`** (data edit, not a migration) — Freckle.tv Magiclink bullet text changed from "…to improve data integrity and security" → "…to improve data integrity and reliability" so the literal substring "security" no longer hits posting keywords. Prod.db left untouched.
