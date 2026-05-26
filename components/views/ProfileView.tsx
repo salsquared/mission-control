@@ -275,6 +275,9 @@ export const ProfileView: React.FC = () => {
                     email={profile.email}
                     phone={profile.phone}
                     links={profile.links ?? null}
+                    skills={profile.skills ?? null}
+                    hobbies={profile.hobbies ?? null}
+                    languages={profile.languages ?? null}
                     onHeaderSave={handleHeaderSave}
                     workRoles={profile.workRoles}
                     onWorkRoleUpdate={handleWorkRoleUpdate}

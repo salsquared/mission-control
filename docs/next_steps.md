@@ -103,23 +103,22 @@ Recommended fix order if working through the list:
 
 ## In-progress work
 
-**Uncommitted (2026-05-25, end of day):** Skills + Hobbies + Languages added to `ProfileIdentityCard`, wired end-to-end. **Iteration 2** reworked the UX after first cut:
-- Skills + Hobbies + Languages now share a single 3-column row (was: Skills + Hobbies nested in Personal info, Languages as own section — wasted vertical space).
-- Hobbies render as removable badges with inline `BadgeList` input (was: comma-separated text field).
-- Languages use a draft-form combobox grounded on a `COMMON_LANGUAGES` suggestion list (~60 spoken languages, free-form still allowed) + explicit Add button + horizontal `ProficiencyRadio` (vertical dot+label per option, low → high left → right).
-- `LANGUAGE_PROFICIENCIES` reordered to low-to-high in `lib/profile/types.ts` to match the radio render order; the duplicate const in `lib/schemas/profile.ts` was deleted and replaced with an import + re-export of the types-file source-of-truth.
-- Wire schema fields for the three sections were relaxed to `.nullable().optional()` so fixtures and pre-migration JSON snapshots don't have to enumerate them (server still always sets them explicitly when serializing).
+**Uncommitted (2026-05-26):** Profile Skills + Hobbies + Languages — UI half. The schema/types/repo/migration plumbing already landed in HEAD bundled with M7.7 (`ab8e060`) + M7.8 (`22e6674`); the `ProfileIdentityCard` + `ProfileView` UI changes were held back as a separate feature commit per the M7.7 commit-message note. About to land now.
 
-**Files touched:**
-- `prisma/schema.prisma` + new migration `20260526013329_add_profile_skills_hobbies_languages` (three nullable TEXT columns: `skills`, `hobbies`, `languages`). Applied to `dev.db` (prod.db still needs `npx prisma migrate deploy` against `DATABASE_URL=file:./prod.db`).
-- `lib/profile/types.ts` — new `ProfileLink`, `SkillGroup`, `LanguageEntry`, `LanguageProficiency` types + `LANGUAGE_PROFICIENCIES` const (low-to-high: Basic / Conversational / Professional / Fluent / Native). Moved here from `lib/repositories/profile.ts` so client components can import without dragging Prisma into the browser bundle (caught at first render — Turbopack runtime error).
-- `lib/repositories/profile.ts` — re-exports the types for legacy callers; `parseSkills` / `parseHobbies` / `parseLanguages` JSON guards mirroring `parseLinks`; `HydratedProfile` + `ProfileHeaderUpdate` + `updateProfileHeader` extended.
-- `lib/schemas/profile.ts` — `SkillGroupSchema`, `LanguageEntrySchema`, `LanguageProficiencySchema`; `ProfileSchema` + `ProfilePatchSchema` extended (`.nullable().optional()` on the wire shape).
-- `components/cards/ProfileIdentityCard.tsx` — new primitives: `BadgeList` (pill UI with × + inline input), `ProficiencyRadio` (5 dots+labels, vertical-per-item, left→right low-to-high), `LanguageDraft` (combobox + radio + Add/Cancel). Three editor subcomponents (`SkillsEditor`, `HobbiesEditor`, `LanguagesEditor`) all use the shared primitives. Layout: Personal info row → 3-column Skills/Hobbies/Languages row → Work history / Projects / Education.
-- `components/views/ProfileView.tsx` — props threaded.
-- `scripts/tests/hermetic/{skills-gap,resume-render}-smoke.ts` — extended with `skills: null, hobbies: null, languages: null` (user reverted the equivalent line on `resume-select-smoke.ts`; the schema's `.nullable().optional()` relaxation is what made that revert possible).
+**What the UI ships (three iterations bundled):**
+- **Iter 1** — three new editor subcomponents (`SkillsEditor`, `HobbiesEditor`, `LanguagesEditor`) with full CRUD against `onHeaderSave` patches. Initial layout had Skills + Hobbies nested in Personal info and Languages as its own top-level section.
+- **Iter 2 (layout + UX rework)** — pulled the three editors into a single 3-column row to reclaim vertical space. Hobbies converted from a comma-separated text field to a true `BadgeList` (pill UI with × delete + inline input). Languages got a draft-form combobox grounded on a `COMMON_LANGUAGES` suggestion list (~60 spoken languages, free-form still allowed) + explicit Add/Cancel buttons + horizontal `ProficiencyRadio` (5 dots+labels, vertical-per-item, low → high left → right). Existing language entries keep an editable proficiency radio inline.
+- **Iter 3 (polish)** — `BadgeList` restructured: input is now an anchored row at the top, badges flow in a wrap row below it (was: input drifted to the end of the wrap as items were added). Badge colors swapped from low-opacity translucent to **solid saturated** `bg-{color}-500/600 text-white` so chips actually stand off the black card background.
 
-`tsc --noEmit` clean. `npm run test:hermetic` 60/60 green. Dev PM2 restarted.
+**Files about to commit:**
+- `components/cards/ProfileIdentityCard.tsx` — +418 lines: new primitives (`BadgeList`, `ProficiencyRadio`, `LanguageDraft`) + three editor subcomponents + 3-column row layout below Personal info.
+- `components/views/ProfileView.tsx` — three new props (`skills` / `hobbies` / `languages`) threaded into the card.
+
+**Open follow-ups for this feature:**
+- **`prisma/prod.db` migration not yet applied** — when ready to ship to prod: `pm2 stop mission-control mission-control-scheduler-prod; DATABASE_URL="file:./prod.db" npx prisma migrate deploy; pm2 restart mission-control mission-control-scheduler-prod`. (Same applies to M7.8's `add_entity_scratchpads`.)
+- **Resume template (`lib/resumes/templates/ats-plain.tsx`) does not yet render the new fields.** Card collects them but the generated PDF/DOCX ignores them. Add a Skills section (grouped) + Languages section (with proficiency) + optional Hobbies line when wiring is desired.
+- **No LLM auto-fill / synthesize for these fields** — `lib/profile/synthesize.ts` and `lib/profile/import-llm.ts` don't extract skills/hobbies/languages from raw resumes yet. The structured profile import will miss them on M7.4 round-trips until prompt + schema extended.
+- **No Promptfoo coverage** — N/A until the synth/import prompts learn about the new fields.
 
 **Also uncommitted (2026-05-25, design wave):**
 - `docs/user-stories.md` — four new §7 stories S7.10–S7.13 added after S7.9 (bullet-AI split + pin tags + tag click no-op + per-entity scratchpad).
