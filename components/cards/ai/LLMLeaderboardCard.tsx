@@ -2,8 +2,8 @@
 
 import React, { useState, useMemo } from "react";
 import { Trophy, ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
-import { ReloadButton } from "../ui/ReloadButton";
-import { Card } from "../ui/Card";
+import { ReloadButton } from "../../ui/ReloadButton";
+import { Card } from "../../ui/Card";
 
 export interface LLMModelInfo {
     id: string;

@@ -37,8 +37,8 @@ interface ScratchpadOverlayProps {
 }
 
 // Theme-color picker for the per-kind accent on the header + Save button.
-// Matches the same convention used elsewhere on ProfileIdentityCard
-// (purple = WorkRole, cyan = Project, emerald = Education).
+// Matches the same convention used by the per-entity cards on the Profile
+// dash (purple = WorkRole, cyan = Project, emerald = Education).
 const KIND_ACCENT: Record<ScratchpadEntityKind, { text: string; bg: string; border: string; ring: string }> = {
     "work-role": {
         text: "text-purple-300",

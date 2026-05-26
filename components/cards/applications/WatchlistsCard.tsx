@@ -5,11 +5,11 @@ import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
-import { useAppStore } from "../providers/state";
-import { AddWatchlistModal } from "../overlays/AddWatchlistModal";
-import { EditFindRolesModal } from "../overlays/EditFindRolesModal";
-import { Card } from "../ui/Card";
-import { FilterButton } from "../ui/FilterButton";
+import { useAppStore } from "../../providers/state";
+import { AddWatchlistModal } from "../../overlays/AddWatchlistModal";
+import { EditFindRolesModal } from "../../overlays/EditFindRolesModal";
+import { Card } from "../../ui/Card";
+import { FilterButton } from "../../ui/FilterButton";
 import type { WatchlistWire } from "@/lib/schemas/watchlists";
 import { normalizeNegativeFilterForDedup } from "@/lib/postings/negative-filters";
 import {

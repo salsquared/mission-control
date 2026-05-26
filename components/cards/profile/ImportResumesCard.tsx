@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Upload, FileText, FilePlus, X } from "lucide-react";
 import { toastStore } from "@/lib/toast-store";
 import { queryKeys } from "@/lib/api-client";
-import { Card } from "../ui/Card";
+import { Card } from "../../ui/Card";
 
 interface PerFileCounts {
     workRolesAdded: number;

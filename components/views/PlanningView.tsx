@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KanbanColumnDef } from "../widgets/KanbanWidget";
 import { TaskItem } from "../ui/TaskItem";
 import { Section } from "../Section";
-import { GoalCard, LifeGoal } from "../cards/GoalCard";
+import { GoalCard, LifeGoal } from "../cards/planning/GoalCard";
 import { ToDoCard } from "../cards/ToDoCard";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useServerEvents } from "@/hooks/useServerEvents";

@@ -12,9 +12,9 @@ import { api, queryKeys } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
 import { AddApplicationModal } from "../overlays/AddApplicationModal";
 import { ApplicationDetailOverlay } from "../overlays/ApplicationDetailOverlay";
-import { WatchlistsCard } from "../cards/WatchlistsCard";
-import { NewPostingsCard } from "../cards/NewPostingsCard";
-import { ApplicationsKanbanCard, AppRecord } from "../cards/ApplicationsKanbanCard";
+import { WatchlistsCard } from "../cards/applications/WatchlistsCard";
+import { NewPostingsCard } from "../cards/applications/NewPostingsCard";
+import { ApplicationsKanbanCard, AppRecord } from "../cards/applications/ApplicationsKanbanCard";
 
 export const ApplicationsView: React.FC = () => {
     const { data: session, status } = useSession();

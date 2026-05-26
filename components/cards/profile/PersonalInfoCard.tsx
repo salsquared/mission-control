@@ -1,9 +1,7 @@
+"use client";
 import React, { useState, useRef, useEffect, useMemo } from "react";
 import {
     User as UserIcon,
-    Briefcase,
-    FolderGit,
-    GraduationCap,
     Mail,
     Phone,
     MapPin,
@@ -15,21 +13,16 @@ import {
     X,
     type LucideIcon,
 } from "lucide-react";
-import { Card } from "../ui/Card";
-import { EditableField } from "../ui/EditableField";
-import { WorkRoleRow } from "../ui/WorkRoleRow";
-import { ProjectRow } from "../ui/ProjectRow";
-import { EducationRow } from "../ui/EducationRow";
+import { Card } from "../../ui/Card";
+import { EditableField } from "../../ui/EditableField";
 import { cn } from "@/lib/utils";
 import {
     LANGUAGE_PROFICIENCIES,
-    type Bullet,
     type ProfileLink,
     type SkillGroup,
     type LanguageEntry,
     type LanguageProficiency,
 } from "@/lib/profile/types";
-import type { WorkRoleWire, ProjectWire, EducationWire } from "@/lib/schemas/profile";
 
 // Suggestion list for the language combobox. Not exhaustive — input accepts
 // any free-form value so less-common languages aren't blocked.
@@ -46,7 +39,10 @@ const COMMON_LANGUAGES = [
     'Haitian Creole', 'Serbian', 'Croatian', 'Slovak', 'Slovenian', 'Bulgarian',
 ] as const;
 
-type HeaderPatch = {
+// HeaderPatch is the union of every field this card writes — headline +
+// summary + contact + skills/hobbies/languages. Each setter on the parent
+// view dispatches through this single patch shape.
+export type PersonalInfoPatch = {
     headline?: string | null;
     summary?: string | null;
     location?: string | null;
@@ -58,66 +54,16 @@ type HeaderPatch = {
     languages?: LanguageEntry[] | null;
 };
 
-type WorkRolePatch = Partial<{
-    company: string;
-    title: string;
-    location: string | null;
-    startDate: string;
-    endDate: string | null;
-    bullets: Bullet[];
-    position: number;
-}>;
-
-type ProjectPatch = Partial<{
-    name: string;
-    description: string | null;
-    repoUrl: string | null;
-    liveUrl: string | null;
-    githubRepo: string | null;
-    portfolio: boolean;
-    bullets: Bullet[];
-    position: number;
-}>;
-
-type EducationPatch = Partial<{
-    institution: string;
-    degree: string | null;
-    field: string | null;
-    startDate: string | null;
-    endDate: string | null;
-    bullets: Bullet[];
-    position: number;
-}>;
-
-interface ProfileIdentityCardProps {
+interface PersonalInfoCardProps {
     headline: string | null;
     summary: string | null;
     location: string | null;
     email: string | null;
     phone: string | null;
-    links: ProfileLink[] | null;
     skills: SkillGroup[] | null;
     hobbies: string[] | null;
     languages: LanguageEntry[] | null;
-    onHeaderSave: (patch: HeaderPatch) => void;
-
-    workRoles: WorkRoleWire[];
-    onWorkRoleUpdate: (id: string, patch: WorkRolePatch) => void;
-    onWorkRoleDelete: (id: string) => void;
-    onWorkRoleSwap: (idx: number, delta: -1 | 1) => void;
-    onAddWorkRole: () => void;
-
-    projects: ProjectWire[];
-    onProjectUpdate: (id: string, patch: ProjectPatch) => void;
-    onProjectDelete: (id: string) => void;
-    onProjectSwap: (idx: number, delta: -1 | 1) => void;
-    onAddProject: () => void;
-
-    education: EducationWire[];
-    onEducationUpdate: (id: string, patch: EducationPatch) => void;
-    onEducationDelete: (id: string) => void;
-    onEducationSwap: (idx: number, delta: -1 | 1) => void;
-    onAddEducation: () => void;
+    onSave: (patch: PersonalInfoPatch) => void;
 }
 
 const SubsectionHeader: React.FC<{ icon: LucideIcon; title: string; colorClass: string }> = ({
@@ -131,13 +77,10 @@ const SubsectionHeader: React.FC<{ icon: LucideIcon; title: string; colorClass: 
     </div>
 );
 
-// Per-theme color classes for the badge + radio + button primitives below.
-// Keyed off a small string union so each section can pick its accent without
-// the primitives knowing about specific colors.
+// Per-theme color classes for the badge + radio primitives below. Keyed off
+// a small string union so each editor can pick its accent without the
+// primitive knowing about specific colors.
 type ThemeColor = 'purple' | 'pink' | 'amber';
-// Solid saturated chips so they clearly stand off the dark card. Each accent
-// uses its mid-tone (-500/-600) shade at full opacity with white text; the ×
-// button rides on top with a subtle hover backdrop.
 const THEME_BADGE: Record<ThemeColor, string> = {
     purple: 'bg-purple-600 text-white',
     pink: 'bg-pink-500 text-white',
@@ -482,7 +425,7 @@ const LanguagesEditor: React.FC<{
     );
 };
 
-export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
+export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
     headline,
     summary,
     location,
@@ -491,34 +434,22 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
     skills,
     hobbies,
     languages,
-    onHeaderSave,
-    workRoles,
-    onWorkRoleUpdate,
-    onWorkRoleDelete,
-    onWorkRoleSwap,
-    onAddWorkRole,
-    projects,
-    onProjectUpdate,
-    onProjectDelete,
-    onProjectSwap,
-    onAddProject,
-    education,
-    onEducationUpdate,
-    onEducationDelete,
-    onEducationSwap,
-    onAddEducation,
+    onSave,
 }) => {
     return (
-        <Card>
+        <Card
+            title="Personal info"
+            icon={UserIcon}
+            iconColorClass="text-purple-300"
+        >
             <div className="flex flex-col gap-8">
-                {/* Personal info */}
+                {/* Identity essentials — headline / summary / contact */}
                 <section className="flex flex-col gap-3">
-                    <SubsectionHeader icon={UserIcon} title="Personal info" colorClass="text-purple-400" />
                     <div>
                         <span className="text-[10px] uppercase tracking-wider text-white/30">Headline</span>
                         <EditableField
                             value={headline}
-                            onSave={(v) => onHeaderSave({ headline: v })}
+                            onSave={(v) => onSave({ headline: v })}
                             placeholder="Click to add a headline (e.g. 'Senior Engineer · Distributed Systems')"
                             readClassName="text-lg font-semibold text-white"
                         />
@@ -527,7 +458,7 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                         <span className="text-[10px] uppercase tracking-wider text-white/30">Summary</span>
                         <EditableField
                             value={summary}
-                            onSave={(v) => onHeaderSave({ summary: v })}
+                            onSave={(v) => onSave({ summary: v })}
                             placeholder="One-paragraph elevator pitch"
                             multiline
                             readClassName="text-sm text-white/70 whitespace-pre-wrap"
@@ -538,7 +469,7 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                             <MapPin className="w-3.5 h-3.5 text-white/40 shrink-0" />
                             <EditableField
                                 value={location}
-                                onSave={(v) => onHeaderSave({ location: v })}
+                                onSave={(v) => onSave({ location: v })}
                                 placeholder="Location"
                                 readClassName="text-sm text-white/80"
                             />
@@ -547,7 +478,7 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                             <Mail className="w-3.5 h-3.5 text-white/40 shrink-0" />
                             <EditableField
                                 value={email}
-                                onSave={(v) => onHeaderSave({ email: v })}
+                                onSave={(v) => onSave({ email: v })}
                                 placeholder="Email"
                                 type="email"
                                 readClassName="text-sm text-white/80"
@@ -557,7 +488,7 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                             <Phone className="w-3.5 h-3.5 text-white/40 shrink-0" />
                             <EditableField
                                 value={phone}
-                                onSave={(v) => onHeaderSave({ phone: v })}
+                                onSave={(v) => onSave({ phone: v })}
                                 placeholder="Phone"
                                 type="tel"
                                 readClassName="text-sm text-white/80"
@@ -572,104 +503,23 @@ export const ProfileIdentityCard: React.FC<ProfileIdentityCardProps> = ({
                         <SubsectionHeader icon={Sparkles} title="Skills" colorClass="text-purple-400" />
                         <SkillsEditor
                             skills={skills}
-                            onChange={(next) => onHeaderSave({ skills: next })}
+                            onChange={(next) => onSave({ skills: next })}
                         />
                     </div>
                     <div className="flex flex-col gap-3 min-w-0">
                         <SubsectionHeader icon={Heart} title="Hobbies" colorClass="text-pink-400" />
                         <HobbiesEditor
                             hobbies={hobbies}
-                            onChange={(next) => onHeaderSave({ hobbies: next })}
+                            onChange={(next) => onSave({ hobbies: next })}
                         />
                     </div>
                     <div className="flex flex-col gap-3 min-w-0">
                         <SubsectionHeader icon={LanguagesIcon} title="Languages" colorClass="text-amber-400" />
                         <LanguagesEditor
                             languages={languages}
-                            onChange={(next) => onHeaderSave({ languages: next })}
+                            onChange={(next) => onSave({ languages: next })}
                         />
                     </div>
-                </section>
-
-                {/* Work history */}
-                <section className="flex flex-col gap-3">
-                    <SubsectionHeader icon={Briefcase} title="Work history" colorClass="text-purple-400" />
-                    {workRoles.length === 0 ? (
-                        <p className="text-sm text-white/40 italic">No roles yet. Click &quot;Add role&quot; below.</p>
-                    ) : (
-                        workRoles.map((role, idx) => (
-                            <WorkRoleRow
-                                key={role.id}
-                                role={role}
-                                onUpdate={(patch) => onWorkRoleUpdate(role.id, patch)}
-                                onDelete={() => onWorkRoleDelete(role.id)}
-                                onMoveUp={() => onWorkRoleSwap(idx, -1)}
-                                onMoveDown={() => onWorkRoleSwap(idx, 1)}
-                                canMoveUp={idx > 0}
-                                canMoveDown={idx < workRoles.length - 1}
-                            />
-                        ))
-                    )}
-                    <button
-                        onClick={onAddWorkRole}
-                        className="self-start flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/20 rounded-lg text-xs font-semibold text-purple-300 transition-colors"
-                    >
-                        <Briefcase className="w-3.5 h-3.5" /> <Plus className="w-3.5 h-3.5" /> Add role
-                    </button>
-                </section>
-
-                {/* Projects */}
-                <section className="flex flex-col gap-3">
-                    <SubsectionHeader icon={FolderGit} title="Projects" colorClass="text-cyan-400" />
-                    {projects.length === 0 ? (
-                        <p className="text-sm text-white/40 italic">No projects yet.</p>
-                    ) : (
-                        projects.map((pr, idx) => (
-                            <ProjectRow
-                                key={pr.id}
-                                project={pr}
-                                onUpdate={(patch) => onProjectUpdate(pr.id, patch)}
-                                onDelete={() => onProjectDelete(pr.id)}
-                                onMoveUp={() => onProjectSwap(idx, -1)}
-                                onMoveDown={() => onProjectSwap(idx, 1)}
-                                canMoveUp={idx > 0}
-                                canMoveDown={idx < projects.length - 1}
-                            />
-                        ))
-                    )}
-                    <button
-                        onClick={onAddProject}
-                        className="self-start flex items-center gap-2 px-4 py-2 bg-cyan-500/10 hover:bg-cyan-500/20 border border-cyan-500/20 rounded-lg text-xs font-semibold text-cyan-300 transition-colors"
-                    >
-                        <FolderGit className="w-3.5 h-3.5" /> <Plus className="w-3.5 h-3.5" /> Add project
-                    </button>
-                </section>
-
-                {/* Education */}
-                <section className="flex flex-col gap-3">
-                    <SubsectionHeader icon={GraduationCap} title="Education" colorClass="text-emerald-400" />
-                    {education.length === 0 ? (
-                        <p className="text-sm text-white/40 italic">No education yet.</p>
-                    ) : (
-                        education.map((ed, idx) => (
-                            <EducationRow
-                                key={ed.id}
-                                education={ed}
-                                onUpdate={(patch) => onEducationUpdate(ed.id, patch)}
-                                onDelete={() => onEducationDelete(ed.id)}
-                                onMoveUp={() => onEducationSwap(idx, -1)}
-                                onMoveDown={() => onEducationSwap(idx, 1)}
-                                canMoveUp={idx > 0}
-                                canMoveDown={idx < education.length - 1}
-                            />
-                        ))
-                    )}
-                    <button
-                        onClick={onAddEducation}
-                        className="self-start flex items-center gap-2 px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/20 rounded-lg text-xs font-semibold text-emerald-300 transition-colors"
-                    >
-                        <GraduationCap className="w-3.5 h-3.5" /> <Plus className="w-3.5 h-3.5" /> Add education
-                    </button>
                 </section>
             </div>
         </Card>

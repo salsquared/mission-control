@@ -6,7 +6,7 @@ import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { ResearchPaperCard } from "../cards/ResearchPaperCard";
-import { LLMLeaderboardCard, LLMModelInfo } from "../cards/LLMLeaderboardCard";
+import { LLMLeaderboardCard, LLMModelInfo } from "../cards/ai/LLMLeaderboardCard";
 import { COMPANIES as COMPANY_REGISTRY } from "../../lib/companies/manifest";
 import { fetcher } from "@/lib/fetcher-client";
 

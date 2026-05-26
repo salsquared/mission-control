@@ -5,10 +5,13 @@ import { Loader2, User as UserIcon } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { CardGrid, type CardItem } from "../grids/CardGrid";
-import { ProfileIdentityCard } from "../cards/ProfileIdentityCard";
-import { GenerateResumeCard } from "../cards/GenerateResumeCard";
-import { ImportResumesCard } from "../cards/ImportResumesCard";
-import { ProfileSnapshotsCard } from "../cards/ProfileSnapshotsCard";
+import { PersonalInfoCard } from "../cards/profile/PersonalInfoCard";
+import { WorkHistoryCard } from "../cards/profile/WorkHistoryCard";
+import { ProjectsCard } from "../cards/profile/ProjectsCard";
+import { EducationCard } from "../cards/profile/EducationCard";
+import { GenerateResumeCard } from "../cards/profile/GenerateResumeCard";
+import { ImportResumesCard } from "../cards/profile/ImportResumesCard";
+import { SnapshotsCard } from "../cards/profile/SnapshotsCard";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { api, queryKeys } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
@@ -259,41 +262,72 @@ export const ProfileView: React.FC = () => {
     ];
 
     const historyCards: CardItem[] = [
-        { id: "profile-snapshots", colSpan: 1, hFit: true, content: <ProfileSnapshotsCard /> },
+        { id: "profile-snapshots", colSpan: 1, hFit: true, content: <SnapshotsCard /> },
     ];
 
+    // M-followup (post-split) — the monolithic ProfileIdentityCard split into
+    // four focused cards. Each is full-width (colSpan=3) so the per-card
+    // chrome from CardGrid doesn't collapse two side-by-side; ProfileView
+    // grew its CardGrid items inline rather than thread props through one
+    // big card.
     const identityCards: CardItem[] = [
         {
-            id: "profile-identity",
+            id: "personal-info",
             colSpan: 3,
             hFit: true,
             content: (
-                <ProfileIdentityCard
+                <PersonalInfoCard
                     headline={profile.headline}
                     summary={profile.summary}
                     location={profile.location}
                     email={profile.email}
                     phone={profile.phone}
-                    links={profile.links ?? null}
                     skills={profile.skills ?? null}
                     hobbies={profile.hobbies ?? null}
                     languages={profile.languages ?? null}
-                    onHeaderSave={handleHeaderSave}
+                    onSave={handleHeaderSave}
+                />
+            ),
+        },
+        {
+            id: "work-history",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <WorkHistoryCard
                     workRoles={profile.workRoles}
-                    onWorkRoleUpdate={handleWorkRoleUpdate}
-                    onWorkRoleDelete={handleWorkRoleDelete}
-                    onWorkRoleSwap={swapWorkRoles}
-                    onAddWorkRole={handleAddWorkRole}
+                    onUpdate={handleWorkRoleUpdate}
+                    onDelete={handleWorkRoleDelete}
+                    onSwap={swapWorkRoles}
+                    onAdd={handleAddWorkRole}
+                />
+            ),
+        },
+        {
+            id: "projects",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <ProjectsCard
                     projects={profile.projects}
-                    onProjectUpdate={handleProjectUpdate}
-                    onProjectDelete={handleProjectDelete}
-                    onProjectSwap={swapProjects}
-                    onAddProject={handleAddProject}
+                    onUpdate={handleProjectUpdate}
+                    onDelete={handleProjectDelete}
+                    onSwap={swapProjects}
+                    onAdd={handleAddProject}
+                />
+            ),
+        },
+        {
+            id: "education",
+            colSpan: 3,
+            hFit: true,
+            content: (
+                <EducationCard
                     education={profile.education}
-                    onEducationUpdate={handleEducationUpdate}
-                    onEducationDelete={handleEducationDelete}
-                    onEducationSwap={swapEducation}
-                    onAddEducation={handleAddEducation}
+                    onUpdate={handleEducationUpdate}
+                    onDelete={handleEducationDelete}
+                    onSwap={swapEducation}
+                    onAdd={handleAddEducation}
                 />
             ),
         },

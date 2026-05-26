@@ -6,7 +6,7 @@ import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
 import { ReloadButton } from "../ui/ReloadButton";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
-import { NextLaunchCard } from "../cards/NextLaunchCard";
+import { NextLaunchCard } from "../cards/space/NextLaunchCard";
 import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
 import { Calendar } from "lucide-react";
 import { Section } from "../Section";

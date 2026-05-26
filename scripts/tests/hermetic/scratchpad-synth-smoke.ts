@@ -336,7 +336,10 @@ async function main(): Promise<void> {
             if (resumeId3) {
                 resumeIds.push(resumeId3);
                 const row = await prisma.generatedResume.findUnique({ where: { id: resumeId3 } });
-                if (row) {
+                // `skillsGap` is `String?` on GeneratedResume — defensively
+                // handle the null case (shouldn't fire on a successful gen
+                // but keeps tsc + the smoke happy under either schema).
+                if (row && row.skillsGap) {
                     const missing = JSON.parse(row.skillsGap) as string[];
                     const missingLower = missing.map(s => s.toLowerCase());
                     if (missingLower.includes("postgresql")) {
@@ -344,6 +347,8 @@ async function main(): Promise<void> {
                     } else {
                         pass("Test 5: PostgreSQL removed from skills-gap.missing after synthesis covered it");
                     }
+                } else if (row) {
+                    fail("Test 5: skillsGap column was null on a successful resume gen");
                 }
             }
         }

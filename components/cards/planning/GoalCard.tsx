@@ -1,7 +1,7 @@
 import React from "react";
 import { Target, Plus, Check, Loader2, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Card } from "../ui/Card";
+import { Card } from "../../ui/Card";
 
 export interface LifeGoal {
     id: string;

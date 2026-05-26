@@ -1,8 +1,8 @@
 "use client";
 import React, { useState, useCallback, useMemo } from "react";
 import { Mail, Briefcase, Plus, CheckSquare, X, ArrowRightLeft, Loader2 } from "lucide-react";
-import { Card } from "../ui/Card";
-import { KanbanWidget, KanbanColumnDef } from "../widgets/KanbanWidget";
+import { Card } from "../../ui/Card";
+import { KanbanWidget, KanbanColumnDef } from "../../widgets/KanbanWidget";
 import { api } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
 

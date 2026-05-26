@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Rocket } from "lucide-react";
-import { ReloadButton } from "../ui/ReloadButton";
-import { Launch } from "../views/SpaceView";
-import { Card } from "../ui/Card";
+import { ReloadButton } from "../../ui/ReloadButton";
+import { Launch } from "../../views/SpaceView";
+import { Card } from "../../ui/Card";
 
 const NextLaunchTimer: React.FC<{ launch: Launch | null; onExpire: () => void }> = ({ launch, onExpire }) => {
     const [timeUntilLaunch, setTimeUntilLaunch] = useState<string>("Calculating...");

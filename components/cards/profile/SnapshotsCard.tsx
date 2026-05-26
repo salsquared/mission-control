@@ -2,7 +2,7 @@
 import React, { useCallback, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Camera, Trash2, Loader2, History } from "lucide-react";
-import { Card } from "../ui/Card";
+import { Card } from "../../ui/Card";
 import { api, queryKeys } from "@/lib/api-client";
 import { toastStore } from "@/lib/toast-store";
 import { useServerEvents } from "@/hooks/useServerEvents";
@@ -20,7 +20,7 @@ function formatTakenAt(iso: string): string {
     });
 }
 
-export function ProfileSnapshotsCard() {
+export function SnapshotsCard() {
     const queryClient = useQueryClient();
     const [label, setLabel] = useState("");
 

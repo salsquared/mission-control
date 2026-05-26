@@ -18,7 +18,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
-import { Card } from "../ui/Card";
+import { Card } from "../../ui/Card";
 import { buildResumeDisplayLabel } from "@/lib/resumes/labels";
 
 type Format = "pdf" | "docx";

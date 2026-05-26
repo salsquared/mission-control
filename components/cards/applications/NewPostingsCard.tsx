@@ -6,8 +6,8 @@ import { api, queryKeys, type PostingsListFilter } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
 import { useAppStore, type PostingEmploymentType, type PostingFilters } from "@/components/providers/state";
-import { Card } from "../ui/Card";
-import { FilterButton } from "../ui/FilterButton";
+import { Card } from "../../ui/Card";
+import { FilterButton } from "../../ui/FilterButton";
 
 // Story S5.9 — format parsed comp as "$120k–$150k / yr" style chip text.
 // Returns null when no comp was parsed for this row so the caller can skip
