@@ -34,7 +34,7 @@ async function main() {
         const stale = await prisma.application.create({
             data: {
                 userId: user.id, company: "Stale Co", role: "Engineer",
-                status: "APPLIED", kind: "job",
+                status: "APPLIED", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(20), // > 14 day threshold
             },
         });
@@ -44,7 +44,7 @@ async function main() {
         const rejected = await prisma.application.create({
             data: {
                 userId: user.id, company: "Rejected Co", role: "Engineer",
-                status: "REJECTED", kind: "job",
+                status: "REJECTED", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(30),
             },
         });
@@ -54,7 +54,7 @@ async function main() {
         const offered = await prisma.application.create({
             data: {
                 userId: user.id, company: "Offer Co", role: "Engineer",
-                status: "OFFER", kind: "job",
+                status: "OFFER", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(30),
             },
         });
@@ -64,7 +64,7 @@ async function main() {
         const recent = await prisma.application.create({
             data: {
                 userId: user.id, company: "Recent Co", role: "Engineer",
-                status: "INTERVIEW", kind: "job",
+                status: "INTERVIEW", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(3),
             },
         });
@@ -74,7 +74,7 @@ async function main() {
         const cooledDown = await prisma.application.create({
             data: {
                 userId: user.id, company: "Cooled Co", role: "Engineer",
-                status: "APPLIED", kind: "job",
+                status: "APPLIED", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(20),
             },
         });

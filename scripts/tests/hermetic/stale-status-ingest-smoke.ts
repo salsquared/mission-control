@@ -90,6 +90,7 @@ async function main() {
             company: normalizeCompanyName(`StaleTest-NoAnchor-${tag}`),
             role: "Engineer",
             status: "APPLIED",
+            track: "career",
         });
         createdAppIds.push(appNoAnchor.id);
         const anchor1 = await findLatestStatusAnchor(appNoAnchor.id);
@@ -101,6 +102,7 @@ async function main() {
             company: normalizeCompanyName(`StaleTest-AppliedOnly-${tag}`),
             role: "Engineer",
             status: "APPLIED",
+            track: "career",
         });
         createdAppIds.push(appAppliedOnly.id);
         await prisma.applicationEvent.create({
@@ -136,6 +138,7 @@ async function main() {
             company: normalizeCompanyName(`StaleTest-Multi-${tag}`),
             role: "Engineer",
             status: "ACCEPTED",
+            track: "career",
         });
         createdAppIds.push(appMulti.id);
         await prisma.applicationEvent.create({
@@ -189,6 +192,7 @@ async function main() {
             role: "Computer Science BS",
             status: "ACCEPTED",   // already-manual user state
             kind: "college",
+            track: "career",
             senderDomain: "csulb.edu",
         });
         createdAppIds.push(csulb.id);

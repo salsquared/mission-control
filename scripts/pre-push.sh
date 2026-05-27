@@ -76,6 +76,7 @@ SUITES=(
     "scripts/tests/hermetic/ingest-retry-smoke.ts"
     "scripts/tests/hermetic/normalize-company-smoke.ts"
     "scripts/tests/hermetic/sender-domain-smoke.ts"
+    "scripts/tests/hermetic/ingest-cross-track-dedup-smoke.ts"
     "scripts/tests/hermetic/stale-status-ingest-smoke.ts"
     "scripts/tests/hermetic/notification-dedup-smoke.ts"
     "scripts/tests/hermetic/gcal-idempotency-smoke.ts"

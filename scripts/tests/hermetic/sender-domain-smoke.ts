@@ -117,6 +117,7 @@ async function main() {
             role: "Computer Science BS",
             status: "APPLIED",
             kind: "college",
+            track: "career",
             senderDomain: csulbDomain,
         });
         createdIds.push(app1.id);
@@ -181,6 +182,7 @@ async function main() {
             role: "Computer Science MS",
             status: "APPLIED",
             kind: "college",
+            track: "career",
             senderDomain: "stanford.edu",
         });
         createdIds.push(otherApp.id);

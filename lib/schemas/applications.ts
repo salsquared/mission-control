@@ -24,10 +24,15 @@ export const ApplicationKindSchema = z.enum(APPLICATION_KINDS);
 
 // MB Phase 4 — orthogonal to kind. "career" = long-term professional pursuit
 // (the main kanban); "side" = gig / blue-collar / pay-the-bills work shown in
-// the segregated Side Pipeline. Defaults to "career" on every code path
-// (cold-email ingest, manual add, posting-track) so existing flows keep
-// landing in the career kanban. Users flip a row's track via the inline
-// editor in ApplicationDetailOverlay.
+// the segregated Side Pipeline.
+//
+// 2026-05-27: dropped the schema-level `.default('career')` on POST/entity
+// shapes. Track is now explicit on every create site — see
+// ApplicationCreate.track in lib/repositories/applications.ts for the
+// rationale (a silent fallback masked the cross-track dedup bug). The
+// AddApplicationModal always sends track from its `defaultTrack` prop
+// (career vs side, picked by which kanban opened it), so removing the Zod
+// default just turns the UI invariant into a 400 if it ever regresses.
 export const APPLICATION_TRACKS = ['career', 'side'] as const;
 export const ApplicationTrackSchema = z.enum(APPLICATION_TRACKS);
 
@@ -40,7 +45,7 @@ export const ApplicationSchema = z.object({
     role: z.string().nullable(),
     status: z.string(),
     kind: z.string().nullable(),
-    track: ApplicationTrackSchema.default('career'),
+    track: ApplicationTrackSchema,
     nextSteps: z.string().nullable(),
     dateApplied: z.string().datetime().nullable(),
     decisionDeadline: z.string().datetime().nullable(),
@@ -96,7 +101,7 @@ export const ApplicationPostSchema = z.object({
     role: z.string().min(1).nullable().optional(),
     status: ApplicationStatusSchema.default('APPLIED'),
     kind: ApplicationKindSchema.nullable().optional(),
-    track: ApplicationTrackSchema.default('career'),
+    track: ApplicationTrackSchema,
     nextSteps: z.string().nullable().optional(),
     dateApplied: z.string().datetime().nullable().optional(),
     decisionDeadline: z.string().datetime().nullable().optional(),

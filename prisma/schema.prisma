@@ -167,9 +167,11 @@ model Application {
 
   // MB Phase 4 — "career" | "side". Career is the long-term professional
   // pipeline; side is gig / blue-collar / pay-the-bills work tracked separately
-  // so the two kanbans don't pollute each other. New rows default to career;
-  // legacy rows pre-migration also default to career.
-  track           String    @default("career")
+  // so the two kanbans don't pollute each other. No schema default: every
+  // create site must pass track explicitly so a silent fallback can never
+  // miscategorize a row (the previous @default("career") let ingest write
+  // career rows without making the decision visible in code).
+  track           String
 
   @@index([userId, status])
   @@index([userId, kind])

@@ -40,6 +40,7 @@ async function main() {
             company: `${baseName}, Inc.`,
             role: "Engineer",
             status: "applied",
+            track: "career",
         });
         created.push(a.id);
         check("first create succeeds + sets normalizedCompany", a.normalizedCompany === baseName);
@@ -51,6 +52,7 @@ async function main() {
                 company: `${baseName} Corporation`, // same after normalize
                 role: "Engineer",
                 status: "applied",
+                track: "career",
             });
         } catch (err: any) {
             if (err?.code === "P2002") secondThrew = true;
@@ -61,8 +63,8 @@ async function main() {
         // 2. Concurrent creates.
         const raceName = `${baseName}-race`;
         const [r1, r2] = await Promise.allSettled([
-            createApplication({ userId: user.id, company: `${raceName} Inc`, role: "X", status: "applied" }),
-            createApplication({ userId: user.id, company: `${raceName} Limited`, role: "X", status: "applied" }),
+            createApplication({ userId: user.id, company: `${raceName} Inc`, role: "X", status: "applied", track: "career" }),
+            createApplication({ userId: user.id, company: `${raceName} Limited`, role: "X", status: "applied", track: "career" }),
         ]);
         const fulfilled = [r1, r2].filter(r => r.status === "fulfilled") as PromiseFulfilledResult<{ id: string }>[];
         const rejected = [r1, r2].filter(r => r.status === "rejected") as PromiseRejectedResult[];

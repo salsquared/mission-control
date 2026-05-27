@@ -35,16 +35,16 @@ async function main() {
         await prisma.user.create({ data: { id: otherUserId, email: `find-app-smoke-other-${tag}@example.invalid` } });
 
         const acme = await prisma.application.create({
-            data: { userId, company: "Acme", role: "Engineer", status: "APPLIED", kind: "job" },
+            data: { userId, company: "Acme", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         const acmeCorp = await prisma.application.create({
-            data: { userId, company: "Acme Corp", role: "Engineer", status: "APPLIED", kind: "job" },
+            data: { userId, company: "Acme Corp", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         const sailAI = await prisma.application.create({
-            data: { userId, company: "Sail-AI", role: "Engineer", status: "APPLIED", kind: "job" },
+            data: { userId, company: "Sail-AI", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         const otherUserAcme = await prisma.application.create({
-            data: { userId: otherUserId, company: "Acme", role: "Engineer", status: "APPLIED", kind: "job" },
+            data: { userId: otherUserId, company: "Acme", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         appIds.push(acme.id, acmeCorp.id, sailAI.id, otherUserAcme.id);
 

@@ -8,8 +8,15 @@ export interface ApplicationCreate {
     role: string;
     status: string;
     kind?: string | null;
-    /** MB Phase 4: "career" | "side". Defaults to "career" when omitted. */
-    track?: string;
+    /**
+     * MB Phase 4: "career" | "side". REQUIRED — no fallback. The previous
+     * `?? "career"` default let ingest write career rows without making the
+     * track decision visible at the call site, which masked the cross-track
+     * dedup bug (a side-track row already existed for the same company; ingest
+     * was scoped to "career" and never saw it). Every create site now states
+     * its track explicitly so a future audit is `grep "createApplication("`.
+     */
+    track: string;
     nextSteps?: string | null;
     dateApplied?: Date;
     decisionDeadline?: Date;
@@ -94,18 +101,22 @@ export function findInterestedWithPostingForUser(
  * (extractSenderDomain returns null for those, so this never gets called
  * with `greenhouse.io` / `commonapp.org` / etc.).
  *
- * MB Phase 4: scoped by track. Gmail ingest always passes "career" — the
- * companion track-as-application route passes the parent watchlist's track.
- * Two tracks for the same domain coexist (e.g. "starbucks.com" career vs
- * side); the dedup hit stays within the caller's pipeline.
+ * MB Phase 4 (2026-05-27): `track` is optional. When omitted, lookup is
+ * track-agnostic — used by Gmail ingest's cross-track dedup so a manually-
+ * created side-track row is found and updated instead of duplicated on
+ * career. When supplied, scopes to a single track (used by the track-as-
+ * application path, which knows the watchlist's track upfront).
+ *
+ * Returns the most recently updated match; the caller is responsible for any
+ * cross-track tie-breaker logic (e.g. preferring a senderDomain-stamped row).
  */
 export function findApplicationBySenderDomain(
     userId: string,
     senderDomain: string,
-    track: string,
+    track?: string,
 ): Promise<Application | null> {
     return prisma.application.findFirst({
-        where: { userId, senderDomain, track },
+        where: track ? { userId, senderDomain, track } : { userId, senderDomain },
         orderBy: { lastUpdateAt: "desc" },
     });
 }
@@ -113,36 +124,50 @@ export function findApplicationBySenderDomain(
 export async function findApplicationByCompany(
     userId: string,
     company: string,
-    track: string,
+    track?: string,
 ): Promise<Application | null> {
     // PA-3: prefer the indexed `normalizedCompany` lookup when present, falling
     // back to the legacy LOWER(company) raw query for rows that haven't been
     // backfilled yet (and as a safety net if normalization itself drifts).
-    // MB Phase 4: both paths scope by track so e.g. Starbucks-barista (side)
-    // and Starbucks-corporate (career) coexist without false dedup hits.
+    // MB Phase 4 (2026-05-27): `track` is optional. When omitted, both halves
+    // of the lookup are track-agnostic so ingest finds a manual side-track row
+    // before defaulting a new email to career.
     const key = normalizeCompanyName(company);
     if (key) {
         const row = await prisma.application.findFirst({
-            where: { userId, normalizedCompany: key, track },
+            where: track
+                ? { userId, normalizedCompany: key, track }
+                : { userId, normalizedCompany: key },
+            orderBy: { lastUpdateAt: "desc" },
         });
         if (row) return row;
     }
     // Fallback for legacy rows where normalizedCompany is still null. PB-7
     // (was RAH-8): case-insensitive exact match — Prisma's `mode:"insensitive"`
     // is PostgreSQL/MongoDB-only, so we use $queryRaw with LOWER() for SQLite.
-    const rows = await prisma.$queryRaw<Application[]>`
-        SELECT * FROM "Application"
-        WHERE "userId" = ${userId}
-          AND LOWER("company") = LOWER(${company})
-          AND "track" = ${track}
-        LIMIT 1
-    `;
+    const rows = track
+        ? await prisma.$queryRaw<Application[]>`
+            SELECT * FROM "Application"
+            WHERE "userId" = ${userId}
+              AND LOWER("company") = LOWER(${company})
+              AND "track" = ${track}
+            ORDER BY "lastUpdateAt" DESC
+            LIMIT 1
+        `
+        : await prisma.$queryRaw<Application[]>`
+            SELECT * FROM "Application"
+            WHERE "userId" = ${userId}
+              AND LOWER("company") = LOWER(${company})
+            ORDER BY "lastUpdateAt" DESC
+            LIMIT 1
+        `;
     return rows[0] ?? null;
 }
 
 export function createApplication(data: ApplicationCreate): Promise<Application> {
     // PA-3: persist the normalized key alongside the raw company so future
-    // lookups hit the @@unique([userId, normalizedCompany]) index.
+    // lookups hit the @@unique([userId, normalizedCompany, track]) index.
+    // `track` is required on the input type — no default. See ApplicationCreate.
     return prisma.application.create({
         data: {
             ...data,

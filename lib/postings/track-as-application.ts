@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { broadcastEvent } from "@/lib/events";
+import { normalizeCompanyName } from "@/lib/applications/normalize-company";
 
 // Story S5.5: convert a tracked posting into a draft Application.
 //
@@ -58,6 +59,13 @@ export async function trackAsApplication(
                 data: {
                     userId,
                     company: posting.company,
+                    // PA-3 leak (2026-05-27): this path bypasses
+                    // `createApplication` (the helper would yank the insert
+                    // out of the transaction), so we normalize inline. Without
+                    // this, every "Track this posting" promotion landed with
+                    // normalizedCompany=null, which let Gmail ingest spawn a
+                    // duplicate row instead of updating the tracked one.
+                    normalizedCompany: normalizeCompanyName(posting.company),
                     role: posting.title,
                     status: "INTERESTED",
                     kind: "job",

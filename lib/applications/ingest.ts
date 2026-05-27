@@ -116,28 +116,52 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         return { action: "skipped", reason: "low_confidence" };
     }
 
-    // Layered dedup (CSULB drift, 2026-05-20). Try the LLM's company name
-    // first; if that misses, fall back to the sender's registrable domain.
-    // `extractSenderDomain` returns null for multi-tenant ATS / admissions
-    // platforms — those can't identify a single employer, so we don't fall
-    // back to them.
+    // Layered dedup (CSULB drift, 2026-05-20; cross-track 2026-05-27).
     //
-    // MB Phase 4: cold Gmail ingest always operates within the "career" track.
-    // Side-track applications enter only through the track-as-application
-    // route (which inherits track from the parent watchlist) or via a user
-    // PATCH on an existing row. This keeps the classifier-free ingest path
-    // simple and predictable — the user reclassifies any miscategorized side
-    // employer with one click in ApplicationDetailOverlay.
-    const ingestTrack = "career";
+    // Lookup is track-agnostic: a manual side-track row for "Mattel" should
+    // absorb an incoming Mattel email rather than spawn a duplicate career
+    // row. (Pre-2026-05-27 this was scoped to "career" and the side row was
+    // invisible to ingest — that's the bug this rewrite fixes.) The
+    // classifier still doesn't emit a track field, so the rule is:
+    //   1. If ANY existing row matches by normalized company (any track) →
+    //      update that row, keep its track.
+    //   2. Tie-breaker when both tracks have the same company: prefer the row
+    //      whose stored senderDomain matches the incoming email. Else the
+    //      most-recently-updated wins (returned by findApplicationByCompany).
+    //   3. No company match anywhere → fall back to senderDomain (CSULB-style
+    //      LLM-name drift), still cross-track.
+    //   4. No match at all → create a NEW row on the "career" track. This is
+    //      written as an explicit literal at the create call site below, NOT
+    //      a schema default — see ApplicationCreate.track for why.
     const senderDomain = extractSenderDomain(from);
-    let existingApp = await findApplicationByCompany(userId, parsed.company, ingestTrack);
+    let existingApp = await findApplicationByCompany(userId, parsed.company);
+    if (existingApp && senderDomain && existingApp.senderDomain !== senderDomain) {
+        // Tie-breaker for cross-track collision: if a same-company row on the
+        // OTHER track has senderDomain == incoming, prefer it. The
+        // `normalizeCompanyName` check guards the CSULB case (domain points to
+        // an unrelated employer with a different name) — we don't switch in
+        // that case, the company-match remains authoritative.
+        const byDomain = await findApplicationBySenderDomain(userId, senderDomain);
+        if (
+            byDomain
+            && byDomain.id !== existingApp.id
+            && normalizeCompanyName(byDomain.company) === normalizeCompanyName(existingApp.company)
+        ) {
+            console.info(
+                `[ingest] cross-track tie-breaker msg=${msgId} ` +
+                `domain=${senderDomain} → app=${byDomain.id} (track=${byDomain.track}) ` +
+                `over app=${existingApp.id} (track=${existingApp.track})`,
+            );
+            existingApp = byDomain;
+        }
+    }
     if (!existingApp && senderDomain) {
-        const byDomain = await findApplicationBySenderDomain(userId, senderDomain, ingestTrack);
+        const byDomain = await findApplicationBySenderDomain(userId, senderDomain);
         if (byDomain) {
             existingApp = byDomain;
             console.info(
                 `[ingest] sender-domain fallback matched msg=${msgId} ` +
-                `domain=${senderDomain} → app=${byDomain.id} ` +
+                `domain=${senderDomain} → app=${byDomain.id} (track=${byDomain.track}) ` +
                 `(LLM=${JSON.stringify(parsed.company)} vs stored=${JSON.stringify(byDomain.company)})`,
             );
         }
@@ -216,8 +240,8 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     } else {
         // PA-3: concurrent webhook + manual scan can both find no existing
         // row and both try createApplication. The @@unique([userId,
-        // normalizedCompany]) makes one of them throw P2002 — catch and
-        // recover by re-reading + updating, just as if `existingApp` had
+        // normalizedCompany, track]) makes one of them throw P2002 — catch
+        // and recover by re-reading + updating, just as if `existingApp` had
         // been found on the first pass.
         try {
             const newApp = await createApplication({
@@ -226,6 +250,13 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 role: parsed.role || "Unknown",
                 status: parsed.status,
                 kind: parsed.kind,
+                // No track signal from the classifier — explicit literal at
+                // the call site (not a schema default, not a nullish-coalesce
+                // fallback). User reclassifies miscategorized side employers
+                // in ApplicationDetailOverlay; future emails from the same
+                // company then hit the cross-track lookup above and update
+                // the existing row instead of creating a new one.
+                track: "career",
                 nextSteps: parsed.nextSteps ?? null,
                 dateApplied: sentAt,
                 lastEmailMsgId: msgId,
@@ -240,7 +271,10 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             action = "created";
         } catch (err: any) {
             if (err?.code !== "P2002") throw err;
-            const raced = await findApplicationByCompany(userId, parsed.company, ingestTrack);
+            // Cross-track lookup so a race against the track-as-application
+            // path (which writes to whatever track the watchlist declares)
+            // resolves correctly — the winning insert may be on `side`.
+            const raced = await findApplicationByCompany(userId, parsed.company);
             if (!raced) {
                 // The conflict came from somewhere else (different unique
                 // constraint, transient state). Surface so we don't silently
