@@ -199,7 +199,17 @@ const tracedGenerate = LUNARY_ENABLED
  * `docs/implementation.md` §LLM observability.
  */
 export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
-    const model = opts.model ?? DEFAULT_MODEL;
+    // Eval-only model override. When `MC_EVAL_DOWNGRADE_CALLSITES` lists this
+    // call's `name` and `MC_EVAL_DOWNGRADE_MODEL` is set, swap the model — lets
+    // the downgrade probe (`scripts/tests/probes/eval-downgrade-probe.ts`) A/B
+    // candidate callsites against MODEL_LITE_CHEAP without touching handlers.
+    // Both env vars are eval-only; prod never sets them.
+    const downgradeCallsites = (process.env.MC_EVAL_DOWNGRADE_CALLSITES ?? "")
+        .split(",").map(s => s.trim()).filter(Boolean);
+    const downgradeModel = process.env.MC_EVAL_DOWNGRADE_MODEL;
+    const model = (downgradeModel && downgradeCallsites.includes(opts.name))
+        ? downgradeModel
+        : (opts.model ?? DEFAULT_MODEL);
 
     if (captureFixturesEnabled()) {
         console.info("[FIXTURE]", JSON.stringify({

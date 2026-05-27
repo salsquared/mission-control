@@ -65,6 +65,39 @@ The seed fixtures in `suites/*.yaml` are synthetic-but-realistic. To capture act
 4. `pm2 logs mission-control-dev | grep '^\[FIXTURE\]'` to grep the captures.
 5. Paste into the relevant `suites/<callsite>.yaml`, adapt the input shape to match the function signature (the provider dispatcher in `provider.ts` shows what shape each callsite expects).
 
+## Downgrade probe — can a callsite move down a tier?
+
+`scripts/tests/probes/eval-downgrade-probe.ts` runs the suite twice (baseline + downgrade) and diffs pass-rates per callsite. Use it when considering moving a `MODEL_LITE` callsite down to `MODEL_LITE_CHEAP` (or `MODEL_FLASH` down to `MODEL_LITE`).
+
+```sh
+npx tsx scripts/tests/probes/eval-downgrade-probe.ts
+# or override the candidate list:
+PROBE_CALLSITES=posting-parse,bullet-tags-from-profile \
+  npx tsx scripts/tests/probes/eval-downgrade-probe.ts
+```
+
+Mechanism: `chatJSON` honors `MC_EVAL_DOWNGRADE_CALLSITES` (comma-separated callsite names) + `MC_EVAL_DOWNGRADE_MODEL` (gemini model id). The override only fires for the named callsites, so other callsites in the suite still run on their hardcoded models — keeps the cost of the probe scoped and the signal clean.
+
+Default candidates: `bullet-tags-from-posting`, `bullet-tags-from-profile`, `discovery-suggest` (the picker/enum-shaped MODEL_LITE callsites flagged in the 2026-05-26 conversation as plausible downgrade targets). Pass-rates only reflect what the suite covers — eyeball Lunary samples before flipping a callsite for real.
+
+### 2026-05-26 probe run — findings
+
+Ran the probe twice (initial pass on the seed fixtures, then a second pass after expanding `bullet-tags-from-posting` 4→9 and `discovery-suggest` 1→3):
+
+| callsite | initial | expanded | call |
+|---|---|---|---|
+| `bullet-tags-from-posting` | 4/4 → 4/4 | **9/9 → 8/9** | **keep MODEL_LITE** — cheap model tagged a "React SPA with Next.js" bullet as `React Native` (close-but-not-match false positive). MODEL_LITE correctly returned `{"proposals":[]}`. |
+| `bullet-tags-from-profile` | 6/6 → 5/6 | (no fixture changes) | keep MODEL_LITE — bartending cross-domain rubric is noisy between runs but the regression is real enough not to flip. |
+| `discovery-suggest` | 1/1 → 1/1 | 3/3 → 3/3 | **don't flip yet — coverage too thin.** The current 3 assertions are all hard-rule checks (response shape + excludes-respected + internal-uniqueness) and would survive the soft quality drop most likely on a cheaper model. |
+
+**Coverage gap for `discovery-suggest`** (before considering a flip):
+
+- Add 2–4 more fixtures across **ambiguous topics** (e.g. "shell" — oil major vs unix shell), **broad topics** (e.g. "fintech"), **niche topics** (e.g. "fusion energy"), and an **empty-excludes diversity test**.
+- Add an `llm-rubric` assertion per fixture grading **suggestion plausibility** — "Are at least 3 of these recognizable real companies that fit the topic?" That's the soft-quality signal the hard-rule checks miss.
+- Eyeball Lunary samples from both models on a few real user queries before flipping.
+
+Decision after this exploration: **no model changes**. The probe + override hook are now durable infra — re-run when a Gemini generation bump (or new fixture coverage) shifts the calculus.
+
 ## Why not in pre-push?
 
 Real Gemini tokens + ~30 s wall time + flake potential from upstream model variance. Pre-push stays hermetic (zero external calls); this harness runs manually before / after prompt edits and on demand.

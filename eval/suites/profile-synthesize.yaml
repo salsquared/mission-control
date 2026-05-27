@@ -28,7 +28,7 @@
           tree:
             header:
               headline: null
-                    location: "SF Bay Area"
+              location: "SF Bay Area"
               email: "jane@example.com"
               phone: null
               links: []
@@ -55,7 +55,7 @@
           tree:
             header:
               headline: null
-                    location: null
+              location: null
               email: null
               phone: null
               links: []

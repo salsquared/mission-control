@@ -38,3 +38,82 @@
         const all = [...r.verified, ...r.unverified].map(x => x.name.toLowerCase());
         const excluded = ['spacex', 'blue origin', 'rocket lab', 'anduril'];
         return excluded.every(e => !all.includes(e));
+
+# Different topic — developer tools. Anti-repetition is the load-bearing test;
+# the excluded names are the canonical few that the model will reach for first
+# if it ignores the exclude list. Smaller count + concurrency to keep the
+# HTTP probe cost bounded.
+- description: "Dev tools topic — must avoid the canonical few"
+  vars:
+    callsite: discovery-suggest
+    input:
+      topic: "developer tools"
+      exclude:
+        - "Linear"
+        - "Vercel"
+        - "Notion"
+        - "Figma"
+        - "GitHub"
+      count: 5
+      companyConcurrency: 2
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        return r.topic === 'developer tools' &&
+          Array.isArray(r.verified) && Array.isArray(r.unverified) &&
+          typeof r.totalSuggested === 'number' &&
+          r.totalSuggested === r.verified.length + r.unverified.length + r.excludedCount;
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const all = [...r.verified, ...r.unverified].map(x => x.name.toLowerCase());
+        const banned = ['linear', 'vercel', 'notion', 'figma', 'github'];
+        return banned.every(e => !all.includes(e));
+    - type: javascript
+      value: |
+        // Internal uniqueness — the model shouldn't suggest the same company
+        // twice in one response. (Provider dedups by normalized name into
+        // excludedCount, but a model that returns 5 duplicates of one name
+        // would still pass the exclude-list test while being useless.)
+        const r = JSON.parse(output);
+        const names = [...r.verified, ...r.unverified].map(x => x.name.toLowerCase());
+        const unique = new Set(names);
+        return names.length === unique.size;
+
+# Niche-ish topic — climate tech. Same anti-repetition contract, but the
+# canonical names are less obvious so this is more about whether the model
+# can populate the topic at all without falling back to the same names every
+# call. The hard assertion is just response shape + exclude-list respect;
+# the existence-of-suggestions is a soft bar.
+- description: "Climate-tech topic — respects exclude list and returns shape"
+  vars:
+    callsite: discovery-suggest
+    input:
+      topic: "climate tech"
+      exclude:
+        - "Stripe Climate"
+        - "Watershed"
+        - "Patch"
+        - "Pachama"
+      count: 5
+      companyConcurrency: 2
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        return r.topic === 'climate tech' &&
+          Array.isArray(r.verified) && Array.isArray(r.unverified) &&
+          typeof r.totalSuggested === 'number' &&
+          r.totalSuggested === r.verified.length + r.unverified.length + r.excludedCount &&
+          // Soft floor — the model should return SOMETHING, even if not all
+          // 5 resolve to a board. Total proposed (pre-resolve) > 0.
+          r.totalSuggested >= 1;
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const all = [...r.verified, ...r.unverified].map(x => x.name.toLowerCase());
+        const banned = ['stripe climate', 'watershed', 'patch', 'pachama'];
+        return banned.every(e => !all.includes(e));

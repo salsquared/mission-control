@@ -92,3 +92,152 @@
         // post-filter, any Python entry would be dropped anyway; this
         // assertion observes the model's pre-filter behavior.
         return !entry || !entry.addedTags.some(t => /python/i.test(t));
+
+# Multi-bullet batch — three bullets, three distinct languages, single call.
+# Tests per-bullet independence: each bullet earns ONLY the keyword its text
+# evidences, and the wrong-language bullets don't pick up cross-talk.
+- description: "Multi-bullet batch — each bullet tagged independently"
+  vars:
+    callsite: bullet-tags-from-posting
+    input:
+      keywords: ["Python", "TypeScript", "Rust"]
+      bullets:
+        - id: "blt_at_005"
+          text: "Migrated the data ingestion service to Python with pandas"
+          tags: []
+          removedTags: []
+        - id: "blt_at_006"
+          text: "Rewrote the React admin dashboard end-to-end in TypeScript"
+          tags: []
+          removedTags: []
+        - id: "blt_at_007"
+          text: "Built a Rust CLI for parsing large CSV exports in parallel"
+          tags: []
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const by = id => proposals.find(p => p.bulletId === id);
+        const has = (id, tag) => {
+          const e = by(id);
+          return e && e.addedTags.some(t => t.toLowerCase() === tag.toLowerCase());
+        };
+        const lacks = (id, tag) => {
+          const e = by(id);
+          return !e || !e.addedTags.some(t => t.toLowerCase() === tag.toLowerCase());
+        };
+        // 005 = Python only; 006 = TypeScript only; 007 = Rust only.
+        return has('blt_at_005', 'Python') && lacks('blt_at_005', 'TypeScript') && lacks('blt_at_005', 'Rust') &&
+               has('blt_at_006', 'TypeScript') && lacks('blt_at_006', 'Python') && lacks('blt_at_006', 'Rust') &&
+               has('blt_at_007', 'Rust') && lacks('blt_at_007', 'Python') && lacks('blt_at_007', 'TypeScript');
+
+# Synonym/abbreviation match — keyword is "PostgreSQL", bullet says "Postgres".
+# Real-world job postings name technologies formally; bullets often use the
+# colloquial form. The model should recognize them as the same thing and
+# propose the keyword's exact spelling (which is what the posting cares about).
+- description: "Synonym match — Postgres bullet earns PostgreSQL tag"
+  vars:
+    callsite: bullet-tags-from-posting
+    input:
+      keywords: ["PostgreSQL", "Redis", "Docker"]
+      bullets:
+        - id: "blt_at_008"
+          text: "Tuned slow Postgres queries by adding partial indexes on the events table"
+          tags: []
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const entry = proposals.find(p => p.bulletId === 'blt_at_008');
+        // Must tag PostgreSQL (the keyword spelling). Acceptable variants:
+        // "PostgreSQL" exactly or "postgresql" case-insensitive. "Postgres"
+        // alone is a partial credit at best — the keyword the posting wants
+        // is "PostgreSQL", so the tag should adopt that form.
+        return entry && entry.addedTags.some(t => /^postgresql$/i.test(t));
+
+# Close-but-not-match — keyword "React Native" should NOT be triggered by a
+# bullet that only mentions "React". They're different frameworks; the
+# substring/embedding-style false positive is the realistic failure mode
+# for a cheaper model.
+- description: "Close-but-not-match — React bullet must NOT earn React Native"
+  vars:
+    callsite: bullet-tags-from-posting
+    input:
+      keywords: ["React Native", "Swift", "Kotlin"]
+      bullets:
+        - id: "blt_at_009"
+          text: "Built the public-facing marketing site as a React SPA with Next.js"
+          tags: []
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const entry = proposals.find(p => p.bulletId === 'blt_at_009');
+        // React Native is a mobile framework; a web React app is unrelated.
+        // Tagging the bullet "React Native" is the false-positive failure mode.
+        return !entry || !entry.addedTags.some(t => /react\s*native/i.test(t));
+
+# Multi-keyword coverage — a single bullet that legitimately covers multiple
+# posting keywords. All applicable keywords must be proposed; partial credit
+# (the model "saw" one and stopped) is a failure.
+- description: "Multi-keyword bullet — all evidenced keywords proposed"
+  vars:
+    callsite: bullet-tags-from-posting
+    input:
+      keywords: ["Kubernetes", "Terraform", "AWS", "PagerDuty"]
+      bullets:
+        - id: "blt_at_010"
+          text: "Wrote Terraform to provision an EKS cluster on AWS with autoscaling node groups"
+          tags: []
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const entry = proposals.find(p => p.bulletId === 'blt_at_010');
+        if (!entry) return false;
+        const tags = entry.addedTags.map(t => t.toLowerCase());
+        // EKS is Kubernetes-on-AWS; both Terraform and AWS are explicit; all
+        // three should land. PagerDuty must NOT (not mentioned).
+        const hasK8s = tags.some(t => /kubernetes/.test(t));
+        const hasTerraform = tags.some(t => /terraform/.test(t));
+        const hasAws = tags.some(t => /^aws$/i.test(t));
+        const hasPd = tags.some(t => /pagerduty/.test(t));
+        return hasK8s && hasTerraform && hasAws && !hasPd;
+
+# No-match — bullet has no evidence for ANY of the posting's keywords.
+# The model should propose nothing for it (no entry in proposals, or an
+# entry with empty addedTags). Real generates often mix these in — the
+# prefilter in lib/profile/auto-tag.ts drops them server-side anyway, but
+# the model should still know to skip.
+- description: "No-match bullet — no proposals when no keyword evidence"
+  vars:
+    callsite: bullet-tags-from-posting
+    input:
+      keywords: ["Python", "Kubernetes", "PostgreSQL"]
+      bullets:
+        - id: "blt_at_011"
+          text: "Mentored two junior engineers through their first quarter, including weekly 1:1s and code reviews"
+          tags: []
+          removedTags: []
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        const proposals = Array.isArray(r.proposals) ? r.proposals : [];
+        const entry = proposals.find(p => p.bulletId === 'blt_at_011');
+        // Bullet is about mentorship — no Python / K8s / Postgres evidence.
+        // Two acceptable shapes: no entry, or entry with empty addedTags.
+        return !entry || !Array.isArray(entry.addedTags) || entry.addedTags.length === 0;
