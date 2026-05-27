@@ -258,15 +258,25 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // classify via Gemini Flash. Backfills `raw.employmentType` in place so
     // the create branch below picks it up. Strictly degrades — any failure
     // logs and falls through to ingest as Unspecified.
-    const classifyInputs = postingsWithIds
-        .filter(p => !existingByExternalId.has(p.externalId) && p.raw.employmentType == null)
-        .map(p => ({
-            id: p.externalId,
-            company: p.raw.company,
-            title: p.raw.title,
-            snippet: p.raw.snippet,
-            location: p.raw.location,
-        }));
+    //
+    // Inline classification is gated to first-run crawls only — a brand-new
+    // watchlist's first 50-2000 postings get classified inline so the user
+    // sees employment types immediately after adding it. Subsequent crawls
+    // leave new rows with employmentType=null; the lockstep scheduler job
+    // `classify-pending-employment-types` (every 4h) batches every null row
+    // across all watchlists in one consolidated LLM call. Saves the cost of
+    // N small scattered batches when watchlists' cadence clocks drift apart.
+    const classifyInputs = isFirstRun
+        ? postingsWithIds
+            .filter(p => !existingByExternalId.has(p.externalId) && p.raw.employmentType == null)
+            .map(p => ({
+                id: p.externalId,
+                company: p.raw.company,
+                title: p.raw.title,
+                snippet: p.raw.snippet,
+                location: p.raw.location,
+            }))
+        : [];
     if (classifyInputs.length > 0) {
         try {
             const classified = await classifyEmploymentTypes(classifyInputs);

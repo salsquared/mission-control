@@ -18,6 +18,7 @@ import { runStaleApplicationNudges } from './jobs/stale-applications';
 import { runDeadlineNudges } from './jobs/deadline-nudges';
 import { runPostingDigest } from './jobs/posting-digest';
 import { runWebhookDeliveryPrune } from './jobs/webhook-delivery-prune';
+import { runClassifyPendingEmploymentTypes } from './jobs/classify-pending-employment-types';
 
 interface IntervalJob {
     name: string;
@@ -83,6 +84,21 @@ const JOBS: IntervalJob[] = [
             const r = await runWebhookDeliveryPrune();
             if (r.deleted > 0) {
                 console.info(`[webhook-delivery-prune] deleted ${r.deleted} rows older than ${r.cutoff.toISOString()}`);
+            }
+        },
+    },
+    {
+        name: 'classify-pending-employment-types',
+        // Lockstep sweep — job-watcher only classifies inline on first-run
+        // crawls; everything else waits for this consolidated pass. 4h
+        // matches the careers-page default scheduleMinutes so the worst-case
+        // wait for a newly-discovered posting to get a type is ~one fetch
+        // cycle plus this sweep.
+        intervalMs: 4 * 60 * 60 * 1000,
+        run: async () => {
+            const r = await runClassifyPendingEmploymentTypes();
+            if (r.distinct > 0) {
+                console.info(`[classify-pending-employment-types] swept ${r.distinct} distinct externalIds — ${r.classified} classified, ${r.rowsUpdated} rows updated`);
             }
         },
     },
