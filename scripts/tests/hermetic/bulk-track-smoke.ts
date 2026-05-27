@@ -29,6 +29,11 @@ async function mkApp(userId: string, company: string, track: 'career' | 'side', 
             company,
             normalizedCompany: normalizeCompanyName(company),
             role: 'Smoke role',
+            // 2026-05-27: unique key includes normalizedRole now. Populate
+            // directly here since we're bypassing createApplication's
+            // auto-derive (this fixture writes via prisma.create to control
+            // the row shape precisely).
+            normalizedRole: 'smoke role',
             status: extra.status ?? 'APPLIED',
             lastUpdateAt: new Date(),
             track,

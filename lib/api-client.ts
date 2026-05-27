@@ -573,6 +573,7 @@ export const api = {
                     application: z.object({ id: z.string(), status: z.string(), company: z.string(), role: z.string().nullable() }).passthrough(),
                     posting: z.object({ id: z.string(), status: z.string() }),
                     created: z.boolean(),
+                    merged: z.boolean().optional(),
                 }),
                 { method: 'POST' },
             ),

@@ -36,6 +36,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
             application,
             posting: { id, status: result.postingStatus },
             created: result.created,
+            merged: result.merged,
         }, { status: 200 });
     } catch (e) {
         console.error(`[postings/${id}/track-as-application] error:`, e);

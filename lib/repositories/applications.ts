@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import type { Application, JobPosting } from '@prisma/client';
 import { normalizeCompanyName } from '@/lib/applications/normalize-company';
+import { normalizeRoleName } from '@/lib/applications/normalize-role';
 
 export interface ApplicationCreate {
     userId: string;
@@ -25,6 +26,10 @@ export interface ApplicationCreate {
     lastUpdateAt?: Date;
     /** PA-3: optional explicit normalized key. When omitted, derived from `company`. */
     normalizedCompany?: string;
+    /** 2026-05-27: optional explicit normalized role key. When omitted, derived from `role`. */
+    normalizedRole?: string;
+    /** 2026-05-27: ATS-stable job identifier (posting.externalId) for track-as-application dedup. */
+    sourceJobId?: string | null;
     /** Layered-dedup fallback (2026-05-20). See Application.senderDomain. */
     senderDomain?: string | null;
 }
@@ -41,6 +46,7 @@ export interface ApplicationUpdate {
     lastEmailMsgId?: string | null;
     lastUpdateAt?: Date;
     senderDomain?: string | null;
+    sourceJobId?: string | null;
 }
 
 /**
@@ -165,24 +171,89 @@ export async function findApplicationByCompany(
 }
 
 export function createApplication(data: ApplicationCreate): Promise<Application> {
-    // PA-3: persist the normalized key alongside the raw company so future
-    // lookups hit the @@unique([userId, normalizedCompany, track]) index.
+    // PA-3 + 2026-05-27: persist BOTH normalized keys alongside the raw
+    // company/role so future lookups hit the
+    // @@unique([userId, normalizedCompany, normalizedRole, track]) index.
     // `track` is required on the input type — no default. See ApplicationCreate.
     return prisma.application.create({
         data: {
             ...data,
             normalizedCompany: data.normalizedCompany ?? normalizeCompanyName(data.company),
+            normalizedRole: data.normalizedRole ?? normalizeRoleName(data.role),
         },
     });
 }
 
 export function updateApplication(id: string, data: ApplicationUpdate): Promise<Application> {
-    // PA-3: if the caller is renaming `company`, keep `normalizedCompany` in
-    // sync so the @@unique index doesn't get out of step with the displayed
-    // name. Other updates pass through unchanged.
-    const sync: Partial<Pick<Application, "normalizedCompany">> = {};
+    // PA-3 + 2026-05-27: if the caller is renaming `company` or `role`, keep
+    // the matching normalized columns in sync so the @@unique index doesn't
+    // get out of step with the displayed name. Other updates pass through
+    // unchanged. role is nullable on the model (legacy "Unknown" defaults),
+    // so a null role normalizes to "" — leave the existing normalizedRole
+    // alone in that case instead of poisoning the key.
+    const sync: Partial<Pick<Application, "normalizedCompany" | "normalizedRole">> = {};
     if (data.company !== undefined) sync.normalizedCompany = normalizeCompanyName(data.company);
+    if (data.role !== undefined && data.role !== null) {
+        const key = normalizeRoleName(data.role);
+        if (key) sync.normalizedRole = key;
+    }
     return prisma.application.update({ where: { id }, data: { ...data, ...sync } });
+}
+
+/**
+ * 2026-05-27 multi-role-per-company. Layered-dedup primary lookup. Returns
+ * the most-recently-updated row whose (normalizedCompany, normalizedRole)
+ * matches the given (company, role) — optionally scoped to a track. When
+ * track is omitted, the lookup spans both kanbans (used by Gmail ingest
+ * cross-track dedup so a manually-created side-track row gets found and
+ * updated instead of duplicated on career).
+ *
+ * Falls back to LOWER(company) LIKE-style match only when normalizedRole
+ * yields no result — that path is intentionally not present here because
+ * the previous PB-7 legacy LOWER() fallback covered NULL-normalizedCompany
+ * rows and we want the new role key to be strict: a NULL normalizedRole
+ * means "this row hasn't been backfilled yet" — let it fall through to
+ * the senderDomain fallback rather than guess.
+ */
+export async function findApplicationByCompanyAndRole(
+    userId: string,
+    company: string,
+    role: string,
+    track?: string,
+): Promise<Application | null> {
+    const companyKey = normalizeCompanyName(company);
+    const roleKey = normalizeRoleName(role);
+    if (!companyKey || !roleKey) return null;
+    return prisma.application.findFirst({
+        where: track
+            ? { userId, normalizedCompany: companyKey, normalizedRole: roleKey, track }
+            : { userId, normalizedCompany: companyKey, normalizedRole: roleKey },
+        orderBy: { lastUpdateAt: "desc" },
+    });
+}
+
+/**
+ * 2026-05-27 multi-role-per-company. ATS-stable job-id lookup used by
+ * track-as-application BEFORE company+role match — if a user clicked Track
+ * on the same LinkedIn job from two different watchlists, the second click
+ * should merge into the first row instead of either creating a new app or
+ * 500ing on the unique-key collision.
+ *
+ * sourceJobId alone isn't globally unique (Greenhouse req `12345` and
+ * LinkedIn job `12345` could collide across employers), so the lookup is
+ * always scoped to userId — and the operator-visible expectation is that
+ * the caller has already verified company match via posting.externalId
+ * provenance.
+ */
+export async function findApplicationBySourceJobId(
+    userId: string,
+    sourceJobId: string,
+): Promise<Application | null> {
+    if (!sourceJobId) return null;
+    return prisma.application.findFirst({
+        where: { userId, sourceJobId },
+        orderBy: { lastUpdateAt: "desc" },
+    });
 }
 
 export function deleteApplication(id: string): Promise<Application> {
@@ -190,14 +261,20 @@ export function deleteApplication(id: string): Promise<Application> {
 }
 
 // Story S13.8 — bulk track move. The schema's
-// @@unique([userId, normalizedCompany, track]) means moving a row to a track
-// where the same normalizedCompany already exists throws P2002. We pre-check
-// in the same transaction so the response can carry the conflicting pairs
-// and the UI can ask the user to resolve them (delete one, edit the other,
-// or leave both) instead of seeing an opaque 500.
+// @@unique([userId, normalizedCompany, normalizedRole, track]) (2026-05-27)
+// means moving a row to a track where the same (company, role) pair already
+// exists throws P2002. We pre-check in the same transaction so the response
+// can carry the conflicting pairs and the UI can ask the user to resolve them
+// (delete one, edit the other, or leave both) instead of seeing an opaque 500.
+//
+// Compared to the pre-2026-05-27 company-only unique, the same-company /
+// different-role move now succeeds (e.g. moving "Allied Universal — Security
+// Officer Museum Rover" to a track that already has "Allied Universal —
+// Mall Patrol" is fine).
 export interface BulkTrackConflict {
     id: string;                       // the id being moved
-    normalizedCompany: string | null; // the key that would collide
+    normalizedCompany: string | null; // the key half that would collide
+    normalizedRole: string | null;    // the other key half that would collide
     company: string;                  // displayable
     existingId: string;               // the existing row already in target track
 }
@@ -218,7 +295,7 @@ export async function bulkMoveApplicationsTrack(
         //    so cross-user ids silently drop.
         const candidates = await tx.application.findMany({
             where: { id: { in: ids }, userId },
-            select: { id: true, normalizedCompany: true, company: true, track: true },
+            select: { id: true, normalizedCompany: true, normalizedRole: true, company: true, track: true },
         });
 
         // Rows already on the target track are no-ops (don't count toward updated,
@@ -228,37 +305,46 @@ export async function bulkMoveApplicationsTrack(
             return { updated: 0, ids: candidates.map(c => c.id), conflicts: [] };
         }
 
-        // 2. Find existing rows in the target track that would collide on
-        //    normalizedCompany. Rows with null normalizedCompany can't collide
-        //    (SQLite allows multiple NULLs in the compound unique).
-        const keys = toMove
+        // 2. Find existing rows in the target track that would collide on the
+        //    new (normalizedCompany, normalizedRole) pair. Rows with NULL on
+        //    either component can't collide (SQLite NULL-distinct in compound
+        //    unique). Pulling on company first then post-filtering by role
+        //    keeps the IN clause well under the 999-param ceiling for
+        //    realistic bulk-move sizes.
+        const companyKeys = toMove
             .map(c => c.normalizedCompany)
             .filter((k): k is string => typeof k === 'string' && k.length > 0);
         const conflicts: BulkTrackConflict[] = [];
-        if (keys.length > 0) {
+        if (companyKeys.length > 0) {
             const existing = await tx.application.findMany({
                 where: {
                     userId,
                     track: targetTrack,
-                    normalizedCompany: { in: keys },
+                    normalizedCompany: { in: companyKeys },
                     // Exclude self — if the user somehow ends up trying to "move" to
                     // its own track, we already filtered those out, but defense in
                     // depth in case toMove has overlap with target somehow.
                     NOT: { id: { in: ids } },
                 },
-                select: { id: true, normalizedCompany: true },
+                select: { id: true, normalizedCompany: true, normalizedRole: true },
             });
-            const existingByKey = new Map<string, string>();
+            const existingByPair = new Map<string, string>();
             for (const e of existing) {
-                if (e.normalizedCompany) existingByKey.set(e.normalizedCompany, e.id);
+                if (e.normalizedCompany && e.normalizedRole) {
+                    existingByPair.set(`${e.normalizedCompany} ${e.normalizedRole}`, e.id);
+                }
             }
             for (const m of toMove) {
-                if (m.normalizedCompany && existingByKey.has(m.normalizedCompany)) {
+                if (!m.normalizedCompany || !m.normalizedRole) continue;
+                const pair = `${m.normalizedCompany} ${m.normalizedRole}`;
+                const existingId = existingByPair.get(pair);
+                if (existingId) {
                     conflicts.push({
                         id: m.id,
                         normalizedCompany: m.normalizedCompany,
+                        normalizedRole: m.normalizedRole,
                         company: m.company,
-                        existingId: existingByKey.get(m.normalizedCompany)!,
+                        existingId,
                     });
                 }
             }

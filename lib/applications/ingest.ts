@@ -7,6 +7,7 @@ import { normalizeCompanyName } from "@/lib/applications/normalize-company";
 import { extractSenderDomain } from "@/lib/applications/sender-domain";
 import {
     findApplicationByCompany,
+    findApplicationByCompanyAndRole,
     findApplicationBySenderDomain,
     createApplication,
     updateApplication,
@@ -116,31 +117,29 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         return { action: "skipped", reason: "low_confidence" };
     }
 
-    // Layered dedup (CSULB drift, 2026-05-20; cross-track 2026-05-27).
+    // Layered dedup (CSULB drift 2026-05-20; cross-track 2026-05-27 AM;
+    //                  multi-role-per-company 2026-05-27 PM).
     //
-    // Lookup is track-agnostic: a manual side-track row for "Mattel" should
-    // absorb an incoming Mattel email rather than spawn a duplicate career
-    // row. (Pre-2026-05-27 this was scoped to "career" and the side row was
-    // invisible to ingest — that's the bug this rewrite fixes.) The
-    // classifier still doesn't emit a track field, so the rule is:
-    //   1. If ANY existing row matches by normalized company (any track) →
-    //      update that row, keep its track.
-    //   2. Tie-breaker when both tracks have the same company: prefer the row
-    //      whose stored senderDomain matches the incoming email. Else the
-    //      most-recently-updated wins (returned by findApplicationByCompany).
-    //   3. No company match anywhere → fall back to senderDomain (CSULB-style
-    //      LLM-name drift), still cross-track.
-    //   4. No match at all → create a NEW row on the "career" track. This is
-    //      written as an explicit literal at the create call site below, NOT
-    //      a schema default — see ApplicationCreate.track for why.
+    // Lookup is track-agnostic AND role-aware. The classifier emits
+    // company + role but never a track — so the rules are:
+    //   1. (company, role) match (any track) → update that row, keep its track.
+    //      Two different roles at the same employer get two different rows.
+    //      Tie-breaker on cross-track collision: prefer senderDomain match.
+    //   2. No (company, role) match → company-only fallback for legacy rows
+    //      that pre-date the role backfill (NULL normalizedRole). Avoids
+    //      spawning a phantom duplicate when role drift is the only difference.
+    //   3. No company match → senderDomain fallback (CSULB-style LLM-name
+    //      drift). Still role-blind because drift may flip role string too.
+    //   4. No match at all → create a NEW row on the "career" track. Written
+    //      as an explicit literal at the create call site (NOT a schema default).
     const senderDomain = extractSenderDomain(from);
-    let existingApp = await findApplicationByCompany(userId, parsed.company);
+    const incomingRole = parsed.role || "Unknown";
+    let existingApp = await findApplicationByCompanyAndRole(userId, parsed.company, incomingRole);
     if (existingApp && senderDomain && existingApp.senderDomain !== senderDomain) {
-        // Tie-breaker for cross-track collision: if a same-company row on the
-        // OTHER track has senderDomain == incoming, prefer it. The
-        // `normalizeCompanyName` check guards the CSULB case (domain points to
-        // an unrelated employer with a different name) — we don't switch in
-        // that case, the company-match remains authoritative.
+        // Tie-breaker for cross-track collision when (company, role) is the
+        // same on both kanbans: prefer the row whose stored senderDomain
+        // matches the incoming email. The normalizeCompanyName check guards
+        // the CSULB case (domain → unrelated employer with a different name).
         const byDomain = await findApplicationBySenderDomain(userId, senderDomain);
         if (
             byDomain
@@ -153,6 +152,20 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 `over app=${existingApp.id} (track=${existingApp.track})`,
             );
             existingApp = byDomain;
+        }
+    }
+    if (!existingApp) {
+        // Company-only fallback for legacy NULL-normalizedRole rows. Once
+        // every row has a populated normalizedRole this becomes dead code in
+        // practice — but harmless to keep as a transitional safety net.
+        const legacyByCompany = await findApplicationByCompany(userId, parsed.company);
+        if (legacyByCompany && !legacyByCompany.normalizedRole) {
+            console.info(
+                `[ingest] legacy company-only match msg=${msgId} ` +
+                `app=${legacyByCompany.id} (normalizedRole=null) ` +
+                `— consider running scripts/backfill-normalized-role.ts`,
+            );
+            existingApp = legacyByCompany;
         }
     }
     if (!existingApp && senderDomain) {
@@ -238,11 +251,11 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         appId = existingApp.id;
         action = "updated";
     } else {
-        // PA-3: concurrent webhook + manual scan can both find no existing
-        // row and both try createApplication. The @@unique([userId,
-        // normalizedCompany, track]) makes one of them throw P2002 — catch
-        // and recover by re-reading + updating, just as if `existingApp` had
-        // been found on the first pass.
+        // PA-3 + 2026-05-27: concurrent webhook + manual scan can both find
+        // no existing row and both try createApplication. The
+        // @@unique([userId, normalizedCompany, normalizedRole, track]) makes
+        // one of them throw P2002 — catch and recover by re-reading +
+        // updating, just as if `existingApp` had been found on the first pass.
         try {
             const newApp = await createApplication({
                 userId,
@@ -271,10 +284,14 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             action = "created";
         } catch (err: any) {
             if (err?.code !== "P2002") throw err;
-            // Cross-track lookup so a race against the track-as-application
-            // path (which writes to whatever track the watchlist declares)
-            // resolves correctly — the winning insert may be on `side`.
-            const raced = await findApplicationByCompany(userId, parsed.company);
+            // Cross-track AND role-aware lookup so a race against the
+            // track-as-application path (which writes to whatever track the
+            // watchlist declares) resolves correctly — the winning insert
+            // may be on `side`, AND must match on role since two roles at
+            // the same employer are now legitimately distinct rows.
+            const raced =
+                await findApplicationByCompanyAndRole(userId, parsed.company, incomingRole)
+                ?? await findApplicationByCompany(userId, parsed.company);
             if (!raced) {
                 // The conflict came from somewhere else (different unique
                 // constraint, transient state). Surface so we don't silently

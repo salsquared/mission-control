@@ -116,6 +116,10 @@ SUITES=(
     "scripts/tests/hermetic/resume-tagline-smoke.ts"
     # 1-page resume prune
     "scripts/tests/hermetic/resume-one-page-prune-smoke.ts"
+    # Multi-role per company (2026-05-27 fix for track-as-application 500)
+    "scripts/tests/hermetic/normalize-role-smoke.ts"
+    "scripts/tests/hermetic/track-as-application-multi-role-smoke.ts"
+    "scripts/tests/hermetic/ingest-multi-role-per-company-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do
