@@ -120,6 +120,8 @@ SUITES=(
     "scripts/tests/hermetic/normalize-role-smoke.ts"
     "scripts/tests/hermetic/track-as-application-multi-role-smoke.ts"
     "scripts/tests/hermetic/ingest-multi-role-per-company-smoke.ts"
+    # Profile extras filter (2026-05-27 Languages/Hobbies always show)
+    "scripts/tests/hermetic/profile-extras-filter-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

@@ -360,6 +360,15 @@ export function selectProfileExtras(
     profile: ProfileWire,
     keywords: string[],
 ): ExtrasSelection {
+    // 2026-05-27: filter SKILLS by posting keywords (skills lists can be
+    // long-and-bloaty, and tailoring to the posting keeps the resume tight),
+    // but show LANGUAGES + HOBBIES unfiltered. Languages (especially "Spanish:
+    // Fluent") read as a credential/personality signal that's relevant
+    // regardless of role keywords — same way you'd list a license. Hobbies are
+    // a personality signal too. Filtering both was the M8.7 default but in
+    // practice it drops the entire section for any off-domain posting (a
+    // security-guard posting has no keyword overlap with "Spanish" or
+    // "Creative Film Writing"), which isn't what users want.
     const lowerKeywords = keywords.map(normalize);
     const matchesAnyKeyword = (item: string): boolean => {
         const lowerItem = normalize(item);
@@ -374,14 +383,12 @@ export function selectProfileExtras(
         }
     }
 
-    const languages: ExtrasSelection["languages"] = [];
-    for (const lang of profile.languages ?? []) {
-        if (matchesAnyKeyword(lang.name)) {
-            languages.push({ name: lang.name, proficiency: lang.proficiency });
-        }
-    }
+    const languages: ExtrasSelection["languages"] = (profile.languages ?? []).map(l => ({
+        name: l.name,
+        proficiency: l.proficiency,
+    }));
 
-    const hobbies = (profile.hobbies ?? []).filter(matchesAnyKeyword);
+    const hobbies = profile.hobbies ?? [];
 
     return { skills, languages, hobbies };
 }

@@ -115,7 +115,63 @@ ul.bullets li { margin-bottom: 1px; }
 .extras-line { margin-bottom: 2px; }
 .extras-line .label { font-weight: 700; }
 .extras-inline { display: inline; }
+/* 2026-05-27: lay the three extras sections (Skills / Languages / Interests)
+   side-by-side as flex items so a 3-item Skills list + a 4-language list +
+   a 1-interest line don't eat 3 × (heading + content) of vertical space.
+   flex-wrap keeps anything that overflows on the next row. The 2in flex-
+   basis ensures each section is at least readable; a Letter page's 7.3in
+   content width fits 3 columns at ~2.4in each. */
+.extras-row { display: flex; flex-wrap: wrap; gap: 0 0.4in; align-items: flex-start; }
+.extras-row > .section { flex: 1 1 2in; min-width: 0; }
 `;
+
+// 2026-05-27: render the (up to) three "extras" sections — Skills, Languages,
+// Interests — as a single flex-row block so short lists pack side-by-side
+// instead of eating three separate (heading + content) rows of vertical
+// space. Section order within the row is whatever sectionOrder asked for.
+// Empty sections drop out individually; if all three are empty, the whole
+// row is null and the wrapper isn't rendered.
+function renderExtrasRow(keysInOrder: SectionKey[], extras: ExtrasSelection): React.ReactNode {
+    const cards: React.ReactNode[] = [];
+    for (const k of keysInOrder) {
+        if (k === "skills" && extras.skills.length > 0) {
+            cards.push(
+                <section key="skills" className="section">
+                    <h2>Skills</h2>
+                    {extras.skills.map(g => (
+                        <div key={g.category} className="extras-line">
+                            <span className="label">{g.category}: </span>
+                            <span className="extras-inline">{g.items.join(", ")}</span>
+                        </div>
+                    ))}
+                </section>,
+            );
+        } else if (k === "languages" && extras.languages.length > 0) {
+            cards.push(
+                <section key="languages" className="section">
+                    <h2>Languages</h2>
+                    <div className="extras-line">
+                        {extras.languages.map((l, i) => (
+                            <React.Fragment key={l.name}>
+                                {i > 0 ? ", " : null}
+                                <span>{l.name} ({l.proficiency})</span>
+                            </React.Fragment>
+                        ))}
+                    </div>
+                </section>,
+            );
+        } else if (k === "interests" && extras.hobbies.length > 0) {
+            cards.push(
+                <section key="interests" className="section">
+                    <h2>Interests</h2>
+                    <div className="extras-line">{extras.hobbies.join(", ")}</div>
+                </section>,
+            );
+        }
+    }
+    if (cards.length === 0) return null;
+    return <div key="extras-row" className="extras-row">{cards}</div>;
+}
 
 function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeProps) {
     // Defense in depth — even if legacy corrupt entries (e.g. {url:"Github"})
@@ -162,9 +218,26 @@ function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeP
                         no-op when its data is empty, so an empty section
                         listed first in the order just doesn't draw. The
                         order is supplied by resume-tagline's LLM output
-                        (or DEFAULT_SECTION_ORDER as fallback). */}
-                    {sectionOrder.map(key => {
-                        switch (key) {
+                        (or DEFAULT_SECTION_ORDER as fallback).
+
+                        2026-05-27: the three "extras" keys (skills /
+                        languages / interests) emit as a single flex-row
+                        block at the position of the first one in
+                        sectionOrder — short lists sit side-by-side instead
+                        of stacking three separate sections. Tracked via
+                        `extrasEmitted` so subsequent extras keys are
+                        no-op. */}
+                    {(() => {
+                        const EXTRA_KEYS = new Set<SectionKey>(["skills", "languages", "interests"]);
+                        const extrasInOrder = sectionOrder.filter(k => EXTRA_KEYS.has(k));
+                        let extrasEmitted = false;
+                        return sectionOrder.map(key => {
+                            if (EXTRA_KEYS.has(key)) {
+                                if (extrasEmitted) return null;
+                                extrasEmitted = true;
+                                return renderExtrasRow(extrasInOrder, extras);
+                            }
+                            switch (key) {
                             case "experience":
                                 return sections.workRoles.length === 0 ? null : (
                                     <section key="experience" className="section">
@@ -227,43 +300,14 @@ function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeP
                                         ))}
                                     </section>
                                 );
-                            case "skills":
-                                return extras.skills.length === 0 ? null : (
-                                    <section key="skills" className="section">
-                                        <h2>Skills</h2>
-                                        {extras.skills.map(g => (
-                                            <div key={g.category} className="extras-line">
-                                                <span className="label">{g.category}: </span>
-                                                <span className="extras-inline">{g.items.join(", ")}</span>
-                                            </div>
-                                        ))}
-                                    </section>
-                                );
-                            case "languages":
-                                return extras.languages.length === 0 ? null : (
-                                    <section key="languages" className="section">
-                                        <h2>Languages</h2>
-                                        <div className="extras-line">
-                                            {extras.languages.map((l, i) => (
-                                                <React.Fragment key={l.name}>
-                                                    {i > 0 ? ", " : null}
-                                                    <span>{l.name} ({l.proficiency})</span>
-                                                </React.Fragment>
-                                            ))}
-                                        </div>
-                                    </section>
-                                );
-                            case "interests":
-                                return extras.hobbies.length === 0 ? null : (
-                                    <section key="interests" className="section">
-                                        <h2>Interests</h2>
-                                        <div className="extras-line">{extras.hobbies.join(", ")}</div>
-                                    </section>
-                                );
+                            // skills / languages / interests fall through to
+                            // the EXTRA_KEYS branch above (renderExtrasRow);
+                            // they never reach this switch.
                             default:
                                 return null;
                         }
-                    })}
+                        });
+                    })()}
                 </div>
             </body>
         </html>
