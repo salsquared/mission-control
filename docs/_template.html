@@ -1,0 +1,261 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Doc Template &amp; Style Guide</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Doc Template</h1>
+  <p class="subtitle">Copy this file to start a new doc. It renders as the style guide — every component below is live, so this page IS the cheat-sheet. The <code>h4</code> kicker above the title is the project name; the <code>h1</code> is this doc's name. Delete the parts you don't need and replace the rest.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#headings">Headings</a></li>
+      <li><a href="#text-code">Text &amp; code</a></li>
+      <li><a href="#callouts">Callouts</a></li>
+      <li><a href="#quotes-tables">Quotes &amp; tables</a></li>
+      <li><a href="#lists">Lists</a></li>
+      <li><a href="#diagrams">Diagrams (Mermaid)</a></li>
+      <li><a href="#tasks">Tasks &amp; to-dos</a></li>
+    </ol>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="headings">Headings</h2></summary>
+    <div class="section-body">
+      <p>Each <code>&lt;h2&gt;</code> section is wrapped in <code>&lt;details class="section"&gt;</code> — collapsible, and auto-numbered to match the ToC (the number is a CSS counter, so reordering never desyncs it). Section content goes in a <code>&lt;div class="section-body"&gt;</code> grey box. Four heading levels, all Sora 800 / UPPERCASE — hierarchy is carried by color and size, not weight. This is an <code>h2</code> (blue).</p>
+      <h3>This is an h3 (green)</h3>
+      <h4>This is an h4 (teal)</h4>
+      <p>Mapping: <code>h1</code> white · <code>h2</code> blue · <code>h3</code> green · <code>h4</code> teal. The page <code>h1</code> + <code>&lt;p class="subtitle"&gt;</code> sit at the very top, once per doc, outside any section.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="text-code">Text &amp; code</h2></summary>
+    <div class="section-body">
+      <p>Body copy is monospace. Use <code>inline code</code> (blue) for identifiers, file paths, and flags mid-sentence. Use a fenced block for multi-line code — its text renders light-green:</p>
+      <pre><code>const BASE_DASHES: View[] = [
+  { id: "career", title: "Career", component: CareerView },
+];</code></pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="callouts">Callouts</h2></summary>
+    <div class="section-body">
+      <p>Four variants. Default is neutral (blue); add a modifier class for intent.</p>
+      <div class="callout"><strong>Note.</strong> Neutral — <code>&lt;div class="callout"&gt;</code>.</div>
+      <div class="callout tip"><strong>Tip.</strong> Green — <code>&lt;div class="callout tip"&gt;</code>.</div>
+      <div class="callout warn"><strong>Warning.</strong> Amber — <code>&lt;div class="callout warn"&gt;</code>.</div>
+      <div class="callout danger"><strong>Danger.</strong> Red — <code>&lt;div class="callout danger"&gt;</code>.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="quotes-tables">Quotes &amp; tables</h2></summary>
+    <div class="section-body">
+      <blockquote>A blockquote — for quoted source material or pulled-out emphasis.</blockquote>
+      <table>
+        <thead>
+          <tr><th>PM2 process</th><th>Port</th><th>DB</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>mission-control-dev</code></td><td>4101</td><td><code>prisma/dev.db</code></td></tr>
+          <tr><td><code>mission-control</code></td><td>3101</td><td><code>prisma/prod.db</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="lists">Lists</h2></summary>
+    <div class="section-body">
+      <p>List markers are indexable by nesting depth so any item can be referenced by id instead of counted (e.g. "see b.ii.2"):</p>
+      <ul>
+        <li>depth 1 → <code>a, b, c</code></li>
+        <li>nesting deeper
+          <ul>
+            <li>depth 2 → <code>i, ii, iii</code></li>
+            <li>and deeper still
+              <ul>
+                <li>depth 3 → <code>1, 2, 3</code></li>
+                <li>depth 4 → <code>A, B, C</code></li>
+              </ul>
+            </li>
+          </ul>
+        </li>
+        <li>back to depth 1</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="diagrams">Diagrams (Mermaid)</h2></summary>
+    <div class="section-body">
+      <p>Every node-based graph (architecture, flowchart, dependency graph, state machine, sequence, ER) is Mermaid — never ASCII art. Rules:</p>
+      <ul>
+        <li>Wrap in <code>&lt;pre class="mermaid"&gt;</code>. The init <code>&lt;script&gt;</code> at the bottom of this file themes it to the palette — copy it into every doc that has a diagram.</li>
+        <li>Line breaks in a label use <code>&lt;br/&gt;</code>, never <code>\n</code> (it renders literally).</li>
+        <li>Parens inside an edge label (pipe-delimited) must be quoted: <code>|"probe()"|</code>. Inside a quoted node label (<code>["text()"]</code>) they're fine.</li>
+        <li>Declare a direction first (<code>TB</code> for hierarchy/layers, <code>LR</code> for pipelines/flows) and keep it consistent.</li>
+        <li>Short stable lowerCamel node IDs + bracketed human labels; reuse the ID to draw more edges.</li>
+        <li>Don't hand-set node colors — let the shared theme own color.</li>
+      </ul>
+      <div class="callout danger"><strong>Never</strong> put a Mermaid edge arrow (or any <code>--</code> run) inside an HTML comment — it closes the <code>&lt;!-- --&gt;</code> early and dumps raw markup. Author diagrams only in real <code>&lt;pre class="mermaid"&gt;</code> blocks like the one below.</div>
+      <pre class="mermaid">
+flowchart TB
+  ingest["ingestGmailMessage()"] -->|"new event"| notify["dispatchNotification()"]
+  ingest -->|"calendar event"| gcal["gcalSync()"]
+  notify --> done(["done"])
+  gcal --> done
+      </pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks &amp; to-dos</h2></summary>
+    <div class="section-body">
+    <p>Use <code>&lt;details class="task"&gt;</code> for any to-do list. They're collapsible and carry a checkbox + id. Mark done by adding <code>checked</code> to the <code>&lt;input&gt;</code> — the title strikes through and the id dims. Nest sub-tasks by putting another <code>&lt;details class="task"&gt;</code> inside <code>.task-body</code>; the id + checkbox color shifts per depth (blue → green → teal → sky → lime).</p>
+    <p>Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;…</code> — one dot per level, no depth cap: <code>P1</code> → <code>P1.2</code> → <code>P1.2.3</code> → <code>P1.2.3.4.5</code>.</p>
+
+  <details class="task" open>
+    <summary>
+      <input type="checkbox">
+      <span class="task-id">P1</span>
+      <span class="task-title">Phase 1 — Project setup</span>
+    </summary>
+    <div class="task-body">
+      <p>Lay the groundwork: pick the stack, scaffold the repo, get a hello-world rendering.</p>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P1.1</span>
+          <span class="task-title">Pick the stack</span>
+        </summary>
+        <div class="task-body">
+          <p>Decide framework + core deps. Documented in <code>docs/architecture.html</code>.</p>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1.2</span>
+          <span class="task-title">Scaffold the app</span>
+        </summary>
+        <div class="task-body">
+          <p>Generate the initial directory layout and commit it.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P1.2.1</span>
+              <span class="task-title">Run the generator</span>
+            </summary>
+            <div class="task-body">
+              <p>Use the official CLI with the default template.</p>
+            </div>
+          </details>
+
+          <details class="task" open>
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.2.2</span>
+              <span class="task-title">Wire up linting + formatting</span>
+            </summary>
+            <div class="task-body">
+              <p>ESLint + Prettier with the team's shared config.</p>
+
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P1.2.2.1</span>
+                  <span class="task-title">Add pre-commit hook</span>
+                </summary>
+                <div class="task-body">
+                  <p>Runs Prettier + ESLint on staged files only.</p>
+
+                  <details class="task">
+                    <summary>
+                      <input type="checkbox" checked>
+                      <span class="task-id">P1.2.2.1.1</span>
+                      <span class="task-title">Verify on a noisy commit</span>
+                    </summary>
+                    <div class="task-body">
+                      <p>Stage a deliberately ugly file and confirm autofix.</p>
+                    </div>
+                  </details>
+                </div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1.3</span>
+          <span class="task-title">First deploy</span>
+        </summary>
+        <div class="task-body">
+          <p>Push a hello-world to staging and confirm CI green.</p>
+        </div>
+      </details>
+    </div>
+  </details>
+
+    </div><!-- /.section-body -->
+  </details><!-- /section: Tasks -->
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: false,   // sections start collapsed; render lazily on open (below)
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  // Mermaid can't measure a diagram inside a collapsed (display:none) <details>,
+  // so render each only once its section is visible. mermaid.run() tags nodes
+  // with data-processed, and the :not() guard prevents re-processing.
+  function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (nodes.length) mermaid.run({ nodes });
+  }
+  // Render any diagrams already visible at load (sections that start open).
+  renderVisibleMermaid(document);
+  // …and render on first expand of each collapsible section.
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  // Keep the copyright year current without editing every doc.
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

@@ -1,0 +1,399 @@
+/* docs/assets/style.css
+ * Shared stylesheet for HTML docs under docs/.
+ * Link with: <link rel="stylesheet" href="./assets/style.css">
+ *   (or "../assets/style.css" from a subdir).
+ *
+ * Heading font (Sora 800) loaded via Google Fonts in each doc's <head>:
+ *   <link rel="preconnect" href="https://fonts.googleapis.com">
+ *   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+ *   <link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+ */
+
+:root {
+  --bg: #141414;
+  --surface: #1e1e1e;
+  --surface-2: #262626;
+  --border: rgba(255, 255, 255, 0.09);
+  --text: #e5e5e5;
+  --text-muted: #a3a3a3;
+
+  /* Accent palette (Ocean — cool blues / greens, no purples) */
+  --white: #fafafa;     /* h1 title */
+  --blue:  #60a5fa;     /* h2, links, depth-1 task, default callout */
+  --blue-light: #93c5fd;/* inline <code> */
+  --green: #4ade80;     /* h3, link-hover, depth-2 task, tip callout */
+  --teal:  #2dd4bf;     /* h4, depth-3 task */
+  --sky:   #38bdf8;     /* depth-4 task */
+  --lime:  #a3e635;     /* depth-5+ task */
+  --code-block: #86efac;/* <pre><code> text — light green, distinct from h2 */
+  --amber: #f59e0b;     /* warn callout */
+  --red:   #ef4444;     /* danger callout */
+
+  /* Darkening scale — the section/ToC box is the lightest tier, then task
+     cards step ~5% darker per nesting depth (1 → 5+). */
+  --box:     #2e2e2e;   /* section-body + ToC box (one step above task d1) */
+  --task-d1: #282828;
+  --task-d2: #222222;
+  --task-d3: #1c1c1c;
+  --task-d4: #161616;
+  --task-d5: #101010;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", "Menlo", monospace;
+  font-size: 15px;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 3rem 1.75rem 5rem;
+  line-height: 1.65;
+}
+
+/* ── Headings — Sora 800, UPPERCASE, hierarchy by color + size ────── */
+
+h1, h2, h3, h4 {
+  font-family: "Sora", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+h1 { font-size: 2.3rem;  color: var(--white); letter-spacing: 0.01em; margin: 0 0 0.35rem; }
+h2 { font-size: 1.45rem; color: var(--blue);  letter-spacing: 0.02em; margin-top: 3rem; border-bottom: 1px solid var(--border); padding-bottom: 0.5rem; }
+h3 { font-size: 1.1rem;  color: var(--green); letter-spacing: 0.03em; margin-top: 2rem; }
+h4 { font-size: 1rem;    color: var(--teal);  letter-spacing: 0.04em; margin-top: 1.75rem; }
+
+/* ── Sections — numbered + collapsible <details class="section"> ────
+   Auto-numbered by a CSS counter (matches the ToC's auto-numbering, so
+   reordering or adding sections never desyncs the numbers). The <h2> lives
+   inside <summary>; section margin/border move up to the details wrapper. */
+
+body { counter-reset: section; }
+
+details.section { margin-top: 3rem; }
+details.section:first-of-type { margin-top: 0; }
+
+details.section > summary {
+  counter-increment: section;
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.5rem;
+  user-select: none;
+}
+details.section > summary::-webkit-details-marker { display: none; }
+
+details.section > summary::before {
+  content: "▸";
+  color: var(--text-muted);
+  font-size: 1.2em;
+  line-height: 1;
+  flex-shrink: 0;
+}
+details.section[open] > summary::before { content: "▾"; }
+
+/* Heading inside the summary (h2 for numbered sections, h3 for the ToC):
+   strip its own block chrome (summary owns it). The section number prefixes
+   the h2 only — no-count sections (ToC) use h3 and get no number. */
+details.section > summary :is(h2, h3) {
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+details.section > summary h2::before {
+  content: counter(section) ". ";
+}
+
+/* Section content sits in its own grey box, set off from the header underline. */
+details.section > .section-body {
+  background: var(--box);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem 1.25rem;
+  margin-top: 1rem;
+}
+details.section > .section-body > *:first-child { margin-top: 0; }
+details.section > .section-body > *:last-child { margin-bottom: 0; }
+
+/* Inner cards (code, diagrams) drop to the page bg so they recess inside the
+   lighter section-body box — borders keep their edges crisp. (Tasks shade by
+   depth instead — see the task section below.) */
+details.section > .section-body :is(pre, .mermaid) {
+  background: var(--bg);
+}
+
+/* .no-count variant — collapsible section with a header but NO number
+   (used by the table of contents). Skips the counter so it doesn't consume
+   a section number, and suppresses the numeric prefix. */
+details.section.no-count > summary { counter-increment: none; }
+details.section.no-count > summary h2::before { content: none; }
+
+/* .toc variant — "Contents" header + arrow sit plain; only the LIST is boxed. */
+details.section.toc { margin-bottom: 3rem; }
+details.section.toc > summary {
+  border-bottom: none;        /* no full-width divider above the box */
+  padding-bottom: 0.25rem;
+}
+
+/* Kicker / eyebrow — project name above the doc <h1> title. */
+h4.kicker {
+  margin: 0 0 0.25rem;
+  font-size: 0.85rem;
+}
+
+.subtitle {
+  color: var(--text-muted);
+  margin-bottom: 3.5rem;
+  font-size: 0.95rem;
+}
+
+p, li { color: var(--text); }
+
+/* ── Code ─────────────────────────────────────────────────────────── */
+
+code {
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", "Menlo", monospace;
+  background: rgba(255, 255, 255, 0.05);
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.9em;
+  color: var(--blue-light);
+}
+
+pre {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 1.25rem 0;
+  font-family: ui-monospace, "JetBrains Mono", "SF Mono", "Menlo", monospace;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+  color: var(--code-block);
+  font-size: 0.875rem;
+}
+
+/* ── Callouts — neutral (blue) by default; modifier classes override ─ */
+
+.callout {
+  background: rgba(96, 165, 250, 0.08);
+  border-left: 3px solid var(--blue);
+  padding: 0.85rem 1rem;
+  margin: 1.5rem 0;
+  border-radius: 0 6px 6px 0;
+  color: var(--text-muted);
+}
+.callout strong { color: var(--blue); }
+
+.callout.tip { background: rgba(74, 222, 128, 0.08); border-left-color: var(--green); }
+.callout.tip strong { color: var(--green); }
+
+.callout.warn { background: rgba(245, 158, 11, 0.08); border-left-color: var(--amber); }
+.callout.warn strong { color: var(--amber); }
+
+.callout.danger { background: rgba(239, 68, 68, 0.08); border-left-color: var(--red); }
+.callout.danger strong { color: var(--red); }
+
+blockquote {
+  border-left: 3px solid var(--border);
+  margin: 1.25rem 0;
+  padding: 0.5rem 1rem;
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* ── Tables ───────────────────────────────────────────────────────── */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1.5rem 0;
+  font-size: 0.95em;
+}
+
+th, td {
+  text-align: left;
+  padding: 0.55rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+}
+
+th {
+  color: var(--blue);
+  font-family: "Sora", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  font-size: 0.85em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Links ────────────────────────────────────────────────────────── */
+
+a {
+  color: var(--blue);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--blue);
+}
+
+a:hover {
+  color: var(--green);
+  border-bottom-color: var(--green);
+}
+
+/* ── Lists — indexable markers so items can be referenced without counting.
+   :is() (not :where()) so deeper selectors outrank the shallow ul/ol rule.
+   Depth 1: a, b, c   Depth 2: i, ii, iii   Depth 3: 1, 2, 3   Depth 4: A, B, C
+   Tasks use <details class="task"> and are unaffected. */
+
+ul, ol {
+  padding-left: 1.6rem;
+  list-style-type: lower-alpha;
+}
+:is(ul, ol) :is(ul, ol) { list-style-type: lower-roman; }
+:is(ul, ol) :is(ul, ol) :is(ul, ol) { list-style-type: decimal; }
+:is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) { list-style-type: upper-alpha; }
+li::marker { color: var(--blue); font-weight: 600; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2.5rem 0;
+}
+
+/* ── Footer — copyright, every doc ends with <footer class="doc-footer"> */
+
+footer.doc-footer {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+/* ── Table of contents — <ol class="toc-list"> inside a .no-count section.
+   Decimal numbering matches the section counter (1, 2, 3…). */
+
+ol.toc-list {
+  list-style-type: decimal;
+  background: var(--box);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.85rem 1.1rem 0.85rem 2.7rem;
+  margin: 0.4rem 0 0;
+}
+ol.toc-list ol { list-style-type: lower-alpha; margin: 0.2rem 0; padding-left: 1.2rem; }
+ol.toc-list li { margin: 0.15rem 0; }
+ol.toc-list li::marker { color: var(--text-muted); font-weight: 600; }
+ol.toc-list a { border-bottom: none; }
+ol.toc-list a:hover { border-bottom: 1px dotted var(--green); }
+
+/* Offset anchor jumps so headings aren't flush against the viewport top */
+:is(h2, h3, h4)[id] { scroll-margin-top: 1.5rem; }
+
+/* ── Mermaid diagram container ────────────────────────────────────── */
+
+.mermaid {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 1.25rem;
+  margin: 1.5rem 0;
+  text-align: center;
+}
+
+/* ── Tasks — collapsible <details>, id naming P<phase>.<task>.<sub> ─
+   Task-id + checkbox accent are colored by nesting depth via cascading
+   specificity. Depth N: blue → green → teal → sky → lime (5+ inherits). */
+
+details.task {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin: 0.5rem 0;
+  background: var(--task-d1);   /* depth 1; deeper levels darken (below) */
+}
+
+details.task > summary {
+  cursor: pointer;
+  padding: 0.55rem 0.85rem;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  user-select: none;
+}
+
+details.task > summary::-webkit-details-marker { display: none; }
+
+details.task > summary::before {
+  content: "▸";
+  color: var(--text-muted);
+  font-size: 0.85em;
+  width: 0.8em;
+  flex-shrink: 0;
+}
+details.task[open] > summary::before { content: "▾"; }
+
+details.task > summary input[type="checkbox"] {
+  margin: 0;
+  cursor: pointer;
+  accent-color: var(--blue);
+  flex-shrink: 0;
+}
+
+details.task > summary .task-id {
+  font-family: ui-monospace, "JetBrains Mono", monospace;
+  color: var(--blue);
+  font-size: 0.85em;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+details.task > summary .task-title {
+  color: var(--text);
+  font-weight: 700;
+}
+
+details.task > summary:has(input[type="checkbox"]:checked) .task-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+details.task > summary:has(input[type="checkbox"]:checked) .task-id {
+  opacity: 0.55;
+}
+
+/* Depth-coloured task-id + checkbox accent (specificity rises with nesting) */
+details.task .task-body details.task > summary .task-id { color: var(--green); }
+details.task .task-body details.task > summary input[type="checkbox"] { accent-color: var(--green); }
+details.task .task-body details.task .task-body details.task > summary .task-id { color: var(--teal); }
+details.task .task-body details.task .task-body details.task > summary input[type="checkbox"] { accent-color: var(--teal); }
+details.task .task-body details.task .task-body details.task .task-body details.task > summary .task-id { color: var(--sky); }
+details.task .task-body details.task .task-body details.task .task-body details.task > summary input[type="checkbox"] { accent-color: var(--sky); }
+details.task .task-body details.task .task-body details.task .task-body details.task .task-body details.task > summary .task-id { color: var(--lime); }
+details.task .task-body details.task .task-body details.task .task-body details.task .task-body details.task > summary input[type="checkbox"] { accent-color: var(--lime); }
+
+/* Depth-graded card background — darker each level (specificity rises with nesting) */
+details.task .task-body details.task { background: var(--task-d2); }
+details.task .task-body details.task .task-body details.task { background: var(--task-d3); }
+details.task .task-body details.task .task-body details.task .task-body details.task { background: var(--task-d4); }
+details.task .task-body details.task .task-body details.task .task-body details.task .task-body details.task { background: var(--task-d5); }
+
+details.task > .task-body {
+  padding: 0 0.85rem 0.85rem 2.4rem;
+  color: var(--text-muted);
+}
+
+details.task > .task-body > *:first-child { margin-top: 0; }
+details.task > .task-body > *:last-child { margin-bottom: 0; }
+
+/* Nested sub-tasks: align flush-left inside their parent's body */
+details.task .task-body details.task { margin-left: 0; }

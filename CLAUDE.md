@@ -148,6 +148,18 @@ Full rules + the touch list for adding a selection-affecting field live in [`doc
 - Node-based graphs (architecture diagrams, flowcharts, dependency graphs, etc.) must use Mermaid syntax — never ASCII art.
 - Inside Mermaid node/edge labels, use `<br/>` for line breaks — **not** `\n`. The renderer used to preview these docs does not interpret `\n` inside labels and will render them literally. Parens inside edge labels (`|...|`) must be quoted (`|"text()"|`); parens inside quoted node labels (`["text()"]`) are fine.
 
+### HTML over markdown (in-progress migration, 2026-05-28)
+
+`docs/` is migrating from `.md` to `.html` for richer layout, embedded diagrams, and consistent styling that markdown previewers can't deliver. **New docs are HTML; existing `.md` files convert when next touched** — no big-bang sweep.
+
+- **Template:** `docs/_template.html` — copy and rename when starting a new doc. It renders *as* a live style guide (every component shown rendered, with the markup to write it), so the template is itself the cheat-sheet. Convention: an `<h4 class="kicker">` project name above the `<h1>` doc title, then a `<p class="subtitle">`; each `<h2>` section is a numbered, collapsible `<details class="section">` whose body sits in a `<div class="section-body">`.
+- **Shared stylesheet:** `docs/assets/style.css` — every doc links to it. From `docs/foo.html` use `./assets/style.css`; from `docs/sub/foo.html` use `../assets/style.css`. **Don't inline `<style>` in individual docs** — drift between docs is exactly what the shared stylesheet exists to prevent. Edit `style.css` instead.
+- **Mermaid** still uses Mermaid syntax. The template embeds an ES-module CDN init for `mermaid@10`; diagrams render client-side, so first open needs network (browser caches the bundle thereafter).
+- **Stay markdown — don't convert:**
+  - `README.md` (anywhere) — GitHub renders markdown; HTML support there is poor and inconsistent.
+  - `docs/llm-prompts/*.md` — these are **machine-read prompt blobs** loaded by `lib/ai/prompts.ts:loadPrompt` as the Lunary disk fallback. Converting them would break the loader.
+- **Converting a doc:** rename `.md` → `.html`, port the content using the template + cheat-sheet, then grep for the old `.md` path and update inbound links — including from `CLAUDE.md` itself and any other doc that referenced the old path.
+
 ## Conventions and gotchas
 
 - `reactStrictMode: false` in `next.config.ts` — components are not double-mounted in dev. Don't rely on strict-mode side-effect detection.
