@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>Architecture</h1>
-  <p class="subtitle">A synthesis review of the Mission Control system as it exists in the repository today — its goals, layers, data flows, integration points, deployment model, observability, and the trade-offs and risks embedded in the current design. It complements the surface docs (<code>apis.md</code>, <code>frontend_terminology.md</code>, <code>hosting.md</code>); where they disagree, this reflects what the code actually does.</p>
+  <p class="subtitle">A synthesis review of the Mission Control system as it exists in the repository today — its goals, layers, data flows, integration points, deployment model, observability, and the trade-offs and risks embedded in the current design. It complements the surface docs (<code>apis.html</code>, <code>frontend_terminology.md</code>, <code>hosting.md</code>); where they disagree, this reflects what the code actually does.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -42,6 +42,7 @@
   <details class="section">
     <summary><h2 id="goals-and-operating-context">Goals and Operating Context</h2></summary>
     <div class="section-body">
+      <h3>Operating Context</h3>
       <p>Mission Control is a <strong>single-user, self-hosted dashboard</strong> that aggregates real-time and curated information across several life/work domains and exposes interactive control over a subset of them. It is not a SaaS product: it runs on the author's Mac mini at home, is reached locally (and intended to be reached from the LAN/PWA), and is consumed primarily through a Chrome "App Mode" window opened by <code>launch-ms.sh</code>.</p>
       <p>The intentional design constraints that shape every other decision below are:</p>
       <ol>
@@ -58,6 +59,7 @@
   <details class="section">
     <summary><h2 id="system-context">System Context</h2></summary>
     <div class="section-body">
+      <h3>Overview</h3>
       <pre class="mermaid">
 graph TB
     subgraph External["External APIs / Pages"]
@@ -84,6 +86,7 @@ graph TB
   <details class="section">
     <summary><h2 id="layered-architecture">Layered Architecture</h2></summary>
     <div class="section-body">
+      <h3>The Layers</h3>
       <p>The codebase is organized along the lines defined in <code>docs/frontend_terminology.md</code>. The full layering, including the server-side mirror, is:</p>
       <table>
         <thead>
@@ -114,7 +117,7 @@ graph TB
   <details class="section">
     <summary><h2 id="data-architecture">Data Architecture</h2></summary>
     <div class="section-body">
-      <h3>4.1 Storage choice</h3>
+      <h3>Storage choice</h3>
       <p>Persistence is <strong>SQLite via Prisma</strong>, with two separate database files swapped by environment:</p>
       <ul>
         <li><code>prisma/dev.db</code> — selected by <code>.env.development</code></li>
@@ -122,7 +125,7 @@ graph TB
       </ul>
       <p>This is appropriate for the single-host use case but means <strong>every restart of <code>next dev</code> and <code>next start</code> works on a different dataset</strong> unless the user is careful. There is no migration story across environments other than re-running <code>prisma migrate dev</code>.</p>
 
-      <h3>4.2 Schema overview</h3>
+      <h3>Schema overview</h3>
       <p>The Prisma schema groups into ten roughly orthogonal subdomains:</p>
       <table>
         <thead>
@@ -151,7 +154,7 @@ graph TB
       </ul>
       <p>Bullets inside <code>WorkRole.bullets</code> / <code>Project.bullets</code> / <code>Education.bullets</code> are stored as a JSON-stringified <code>Bullet[]</code> with the shape <code>{id, text, tags[], autoTags[], removedTags[], pinnedTags[], locked, excluded}</code> — see <code>lib/profile/types.ts</code>. The JSON shape evolves without migrations; <code>parseBullets</code> filters malformed entries and <code>hydrateBulletDefaults</code> back-fills new fields with <code>[]</code>.</p>
 
-      <h3>4.3 Data flow patterns</h3>
+      <h3>Data flow patterns</h3>
       <p>The codebase uses <strong>five distinct data-flow patterns</strong>, each appropriate to a different class of data:</p>
       <ol>
         <li><strong>External-API-only, fully cached</strong> — most space/AI/research/news endpoints. <code>withCache(handler, ttl)</code> is the only persistence; on error, last-good is served. Examples: <code>/api/space/launches</code>, <code>/api/research</code>, <code>/api/ai/llmleaderboard</code>, <code>/api/company-news</code>.</li>
@@ -167,8 +170,8 @@ graph TB
   <details class="section">
     <summary><h2 id="api-layer">API Layer</h2></summary>
     <div class="section-body">
-      <h3>5.1 Catalog (by feature area)</h3>
-      <p>A complete inventory is maintained in <code>docs/apis.md</code>. The brief by-feature breakdown:</p>
+      <h3>Catalog (by feature area)</h3>
+      <p>A complete inventory is maintained in <code>docs/apis.html</code> (auto-generated by <code>npm run gen:api-docs</code>). The brief by-feature breakdown:</p>
       <ul>
         <li><strong>Auth</strong> — <code>[...nextauth]</code> only. Google provider; offline access; Gmail r/o + Gmail send + Calendar events scopes.</li>
         <li><strong>System</strong> — <code>/api/system</code> (telemetry — CPU, RSS, uptime, DB ping, cache stats), <code>/api/system/logs</code> (SSE stream), <code>/api/system/logs/historical</code> (PM2 log tail), <code>/api/system/cache/invalidate</code> (operator-triggered <code>withCache</code> invalidation).</li>
@@ -186,7 +189,7 @@ graph TB
         <li><strong>Events</strong> — <code>/api/events</code> is the SSE channel for every model invalidation (<code>Task</code>, <code>Goal</code>, <code>SavedPaper</code>, <code>Application</code>, <code>CalendarEvent</code>, <code>Setting</code>, <code>FinanceTick</code>, <code>Cache</code>, <code>Profile</code>, <code>GeneratedResume</code>, <code>Notification</code>, <code>Watchlist</code>, <code>JobPosting</code>).</li>
       </ul>
 
-      <h3>5.2 Cross-cutting concerns</h3>
+      <h3>Cross-cutting concerns</h3>
       <ul>
         <li><strong>Middleware</strong> (<code>proxy.ts</code> — Next 16 renamed <code>middleware.ts</code>) — only logs <code>/api/*</code> requests via <code>console.info</code>. The matcher is narrow on purpose; broadening it sweeps assets and pages into the in-app log viewer.</li>
         <li><strong>Caching</strong> (<code>lib/cache.ts</code>) — two-tier: an L1 process-memory <code>Map&lt;string, {data, expiry}&gt;</code> and an L2 <code>CacheEntry</code> SQLite table (gated by <code>CACHE_BACKEND=sqlite</code>), both keyed by <code>pathname + sorted query</code> (the <code>?v=...</code> cache buster is stripped before keying and forces a refresh). In-flight dedup: a second concurrent miss for the same key awaits the existing promise. On handler error or non-2xx response, the last good entry is served and rewritten with a 60 s retry TTL. Operator-triggered invalidation via <code>invalidateCacheKey</code>/<code>invalidateCacheByPrefix</code> clears L1+L2 and broadcasts a <code>Cache</code> SSE event so connected clients refetch. <code>Cache-Control</code> is <code>no-store</code> in dev and <code>max-age + stale-while-revalidate</code> in prod. Stats survive HMR via <code>globalThis</code>.</li>
@@ -194,7 +197,7 @@ graph TB
         <li><strong>Logging</strong> — every route logs <code>[EXTERNAL API]</code>, <code>[DATABASE]</code>, <code>[CACHE HIT|MISS|FALLBACK]</code> lines through the patched <code>console</code>, which the SSE log stream re-broadcasts.</li>
       </ul>
 
-      <h3>5.3 Conventions worth preserving</h3>
+      <h3>Conventions worth preserving</h3>
       <ul>
         <li><code>?v=&lt;timestamp&gt;</code> is the standard "force refresh" idiom across the frontend, handled inside <code>withCache</code>.</li>
         <li>Routes that fetch external data should be wrapped in <code>withCache</code>; bare <code>fetch</code> per request is the exception.</li>
@@ -208,7 +211,7 @@ graph TB
     <div class="section-body">
       <p>Out of all the per-feature subsystems, the company-news pipeline is the most engineered and deserves its own section. It is the answer to "given ~55 companies that publish through wildly different channels, how do we surface a uniform <code>NewsArticle[]</code> for each?"</p>
 
-      <h3>6.1 Per-company adapter files</h3>
+      <h3>Per-company adapter files</h3>
       <p>Every company is one file at <code>lib/companies/&lt;id&gt;.ts</code> that default-exports a <code>CompanyAdapter</code> (<code>lib/companies/adapter.ts</code>):</p>
       <pre><code class="language-typescript">interface CompanyAdapter {
     id: string;
@@ -221,7 +224,7 @@ graph TB
 }</code></pre>
       <p><code>lib/companies/index.ts</code> is the barrel — explicit alphabetical imports of every per-company default export, assembled into <code>ADAPTERS: CompanyAdapter[]</code>. Compile-time discovery, not runtime glob: harder to mis-wire, easier to type-check.</p>
 
-      <h3>6.2 Strategy factories</h3>
+      <h3>Strategy factories</h3>
       <p>Adapter files don't write fetch logic — they call factories from <code>lib/companies/factories.ts</code> that wrap the strategy modules in <code>lib/fetchers/</code>:</p>
       <ul>
         <li><strong><code>rssAdapter({ rssUrl, ... })</code></strong> → <code>lib/fetchers/rss-fetcher.ts</code>. Parses an RSS/Atom feed; enriches each item with an OG image via <code>open-graph-scraper</code>. Used for NASA, ESA, Nvidia, Hugging Face, Microsoft Research, etc.</li>
@@ -239,10 +242,10 @@ graph TB
         </li>
       </ul>
 
-      <h3>6.3 TTL discipline</h3>
+      <h3>TTL discipline</h3>
       <p>Three tier presets (<code>TTL_STANDARD = 1h</code>, <code>TTL_LOW_VOLUME = 24h</code>, <code>TTL_VERY_LOW = 7d</code>) are assigned per adapter based on observed publishing cadence. Companies that post daily get the standard 1 h; small startups posting monthly get 7 d. The route's <code>withCache</code> wrapper currently uses a single per-route TTL — the per-adapter <code>ttlSeconds</code> is informational, ready for a future per-key cache layer.</p>
 
-      <h3>6.4 Operational implications</h3>
+      <h3>Operational implications</h3>
       <ul>
         <li><strong>Adding a new company is one new file</strong> under <code>lib/companies/&lt;id&gt;.ts</code> plus one alphabetical <code>import</code> line in <code>index.ts</code>. No edits to a central registry table.</li>
         <li><strong>Custom fetchers are deliberately <em>bespoke</em></strong> — they're so per-source that abstracting them would be premature; <code>customAdapter</code> just hands the fetch function through.</li>
@@ -256,7 +259,7 @@ graph TB
   <details class="section">
     <summary><h2 id="frontend-architecture">Frontend Architecture</h2></summary>
     <div class="section-body">
-      <h3>7.1 Shell: Dashboard as a slide carousel</h3>
+      <h3>Shell: Dashboard as a slide carousel</h3>
       <p><code>components/Dashboard.tsx</code> is the only top-level client component (<code>app/page.tsx</code> mounts it with <code>ssr: false</code>). It owns a <code>BASE_DASHES: DashConfig[]</code> array — currently seven entries: Space, Crypto/Finance, AI News, Internal Systems, Physics, Applications, Planning &amp; Strategy. At any moment one dash is rendered full-screen; navigation is <code>←/→</code> buttons or the <strong>Launchpad</strong> overlay.</p>
       <p>Three global overlays are owned by Dashboard:</p>
       <ul>
@@ -265,7 +268,7 @@ graph TB
         <li><strong>AICompanion</strong> — bottom-right floating Window receiving the current dash id as <code>activeContext</code>. <strong>Currently a stub</strong>: maintains local message state with a hardcoded delayed response (<code>AICompanion.tsx:36-42</code>). It does not call any API. This is the most prominent place where the UI's ambition exceeds the implementation; the surrounding work (auth scopes, Pub/Sub, Gemini integration in <code>email-parser.ts</code>) suggests the eventual implementation will use the same <code>@ai-sdk/google</code> plumbing.</li>
       </ul>
 
-      <h3>7.2 The Dash registration contract</h3>
+      <h3>The Dash registration contract</h3>
       <p>Adding a dash requires:</p>
       <ol>
         <li>An entry in <code>BASE_DASHES</code> (id, title, component).</li>
@@ -274,7 +277,7 @@ graph TB
       </ol>
       <p><code>syncAvailableDashes()</code> runs on every Dashboard mount and reconciles persisted state with current code: it purges stale ids, appends new ones, and force-pins <code>internal-systems</code> to the end of <code>dashOrder</code>. This means the store cannot accumulate dead state across code changes.</p>
 
-      <h3>7.3 Per-view data ownership</h3>
+      <h3>Per-view data ownership</h3>
       <p>Data fetching goes through <strong>TanStack Query</strong>, mounted via <code>components/providers/QueryProvider.tsx</code>. Typed routes go through <code>lib/api-client.ts</code> (<code>api.tasks.list()</code>, <code>api.goals.update(...)</code>, etc., each backed by a Zod response schema in <code>lib/schemas/</code>); read-only external-proxy routes without schemas (research, company-news, finance history, space data) use the loose <code>lib/fetcher-client.ts:fetcher</code> as the <code>queryFn</code>. Both paths surface stale-fallback toasts when <code>withCache</code> returns <code>X-Cache: STALE-FALLBACK</code>.</p>
       <p><code>hooks/useServerEvents.ts</code> opens one <code>EventSource('/api/events')</code> per consumer; on each event whose model matches the subscription, the callback calls <code>queryClient.invalidateQueries({ queryKey: [model] })</code> and TanStack refetches with built-in dedup. <code>components/providers/CacheInvalidationListener.tsx</code> (mounted inside <code>QueryProvider</code>) listens for <code>Cache</code> events and invalidates <strong>all</strong> queries — heavy-handed but simple, and TanStack dedupes the resulting refetches.</p>
       <p>A handful of views still set up intervals on top of the SSE-driven invalidation:</p>
@@ -292,7 +295,7 @@ graph TB
       </table>
       <p>Optimistic UI is used for state that the user mutates directly: <code>PlanningView</code> task status changes, <code>ResearchPaperCard</code> save toggles, <code>SavedPapersOverlay</code> deletes, <code>GoalCard</code> toggles. The pattern is <code>queryClient.setQueryData(...)</code> for the optimistic write and a captured <code>prev</code> snapshot to roll back on error before invalidating.</p>
 
-      <h3>7.4 State management</h3>
+      <h3>State management</h3>
       <p>A single unified Zustand store (<code>components/providers/state/index.ts:useAppStore</code>) with three slices distinguished by persistence policy:</p>
       <ul>
         <li><strong><code>theme</code> slice</strong> — <code>isDarkMode</code>, <code>viewHues</code> (per-view 0–360° hue), <code>viewHuesEnabled</code>, <code>dashOrder</code>, <code>dashTitles</code>, <code>defaultDashTitles</code>, <code>version</code>. <strong>Synced to <code>/api/settings</code></strong> (DB-backed) so customizations follow the user across LAN devices. <code>ThemeProvider</code> hydrates from the API on mount and pushes a debounced (500 ms) POST on each change, with optimistic-concurrency via the <code>version</code> field sent as <code>If-Match</code>; on 409 it refetches and toasts "Settings updated elsewhere — reloaded."</li>
@@ -303,7 +306,7 @@ graph TB
       <p>Backward-compat re-exports in <code>themeStore.ts</code> and <code>settingsStore.ts</code> point at <code>useAppStore</code> so older callsites keep working unchanged.</p>
       <p>The result: <strong>nothing about the UI requires global polling, websockets, or a Redux-like store</strong>. The most "live" view is InternalView via SSE; everything else is fetch-on-mount with cache discipline on the server.</p>
 
-      <h3>7.5 Theming</h3>
+      <h3>Theming</h3>
       <p><code>app/globals.css</code> defines the design system in <strong>OKLCH color space</strong> parameterized by a single CSS custom property <code>--theme-hue: &lt;angle&gt;</code>. <code>ThemeProvider</code> writes that variable on every active-view change (<code>viewHuesEnabled ? viewHues[activeViewId] : 250</code>), and the 1 s CSS transition on <code>--theme-hue</code> makes per-dash color shifts smooth. Dark/light is toggled by adding/removing the <code>light</code> class on <code>&lt;html&gt;</code> and setting <code>colorScheme</code>. Light mode has a long <code>!important</code> override block because the rest of the app uses Tailwind opacity-on-black/white shorthands that need explicit inverts.</p>
       <p>The PWA service worker (<code>app/sw.ts</code>, generated to <code>public/sw.js</code> via <code>@serwist/next</code>) is <strong>disabled in dev</strong> and unregistered defensively by an inline script in <code>app/layout.tsx</code> to prevent a stale dev SW from hijacking subsequent loads.</p>
     </div>
@@ -312,7 +315,7 @@ graph TB
   <details class="section">
     <summary><h2 id="cross-cutting-subsystems">Cross-Cutting Subsystems</h2></summary>
     <div class="section-body">
-      <h3>8.1 In-process logger</h3>
+      <h3>In-process logger</h3>
       <p><code>lib/logger.ts</code> + <code>instrumentation.ts</code> install a 500-entry ring buffer on <code>globalThis</code> and <strong>monkey-patch</strong> <code>console.{log,info,warn,error}</code> and <code>process.stdout/stderr.write</code> to push every line into it. <code>getLogs()</code> and <code>subscribeToLogs(listener)</code> expose synchronous access plus a fan-out for the SSE consumer. The <code>inConsoleCall</code> re-entrancy guard prevents double-logging when the patched <code>console.log</code> itself writes to stdout.</p>
       <p>This design has three notable consequences:</p>
       <ol>
@@ -321,7 +324,7 @@ graph TB
         <li><strong>The fact that it's a <code>globalThis</code> ring buffer means it survives HMR</strong>, so the Internal Systems view doesn't reset its history on every save in dev.</li>
       </ol>
 
-      <h3>8.2 In-process cache</h3>
+      <h3>In-process cache</h3>
       <p><code>lib/cache.ts</code> wraps HTTP responses in two tiers. <strong>L1</strong> is a <code>globalThis</code> <code>Map&lt;string, {data, expiry}&gt;</code>; <strong>L2</strong> is a SQLite <code>CacheEntry</code> table accessed via <code>lib/repositories/cache-entries.ts</code> (gated by <code>CACHE_BACKEND=sqlite</code>). <code>withCache(handler, { ttlSeconds, upstreamHost? })</code> wraps a route handler; the wrapper:</p>
       <ol>
         <li>Computes a cache key from <code>pathname + sorted query</code>, dropping the <code>v</code> param (and treating its presence as "force refresh").</li>
@@ -334,7 +337,7 @@ graph TB
       <p><code>upstreamHost</code> is tagged on every cache log line so the InternalView fetcher-health card can group activity by real upstream rather than by route path. <strong>Operator-triggered invalidation</strong> via <code>invalidateCacheKey(key)</code> or <code>invalidateCacheByPrefix(prefix)</code> clears L1+L2, broadcasts a <code>Cache</code> SSE event so connected TanStack clients invalidate their queries, and is wired to a per-row Refresh button on InternalView's cache analytics card.</p>
       <p>There's still no LRU eviction or size cap on L1 — for the single-user case those gaps are fine. The scheduler process owns periodic L2 pruning via <code>scheduler/jobs/cache-prune.ts</code>.</p>
 
-      <h3>8.3 Auth and Google integrations</h3>
+      <h3>Auth and Google integrations</h3>
       <p><code>lib/auth.ts</code> configures NextAuth with the Prisma adapter and a single Google provider. The provider asks for <code>access_type=offline</code> and the scopes <code>openid email profile https://www.googleapis.com/auth/gmail.readonly https://www.googleapis.com/auth/gmail.send https://www.googleapis.com/auth/calendar.events</code>. The long-lived <strong>refresh token is stored on the <code>Account</code> row</strong> by the Prisma adapter.</p>
       <p><code>lib/googleapis.ts:getGoogleAuthClient(userId)</code> rebuilds an OAuth2 client from that refresh token on demand. All server-side Gmail and Calendar code goes through this helper:</p>
       <ul>
@@ -343,7 +346,7 @@ graph TB
       </ul>
       <p>Adding a new Google scope requires bumping the <code>scope</code> string in <code>authOptions</code> and re-consenting — there's no incremental authorization flow.</p>
 
-      <h3>8.4 LLM subsystem</h3>
+      <h3>LLM subsystem</h3>
       <p>The system uses Google Gemini across <strong>14 distinct callsites</strong>, all routed through <code>lib/ai/gemini.ts:chatJSON</code> (which wraps <code>@google/genai</code> with retries, rate limiting, JSON-mode response, schema validation via Zod, and structured tracing) — with one exception, <code>lib/email-parser.ts:parseApplicationEmail</code> which uses the Vercel AI SDK (<code>generateObject</code> + <code>@ai-sdk/google</code>) and traces manually via <code>lunary.trackEvent</code>. The full inventory + per-callsite model + max-tokens lives in <a href="./llm-calls.md">docs/llm-calls.md</a>. At a glance:</p>
       <table>
         <thead>
@@ -364,7 +367,7 @@ graph TB
       <p><strong>Eval harness (Promptfoo).</strong> <code>eval/suites/&lt;slug&gt;.yaml</code> carries fixtures + assertions per callsite; <code>eval/provider.ts</code> dispatches each fixture to the real <code>chatJSON</code>-wrapped lib functions so the eval exercises the exact production code path. Run via <code>npm run test:prompts</code>. Burns real Gemini tokens (~$0.01–0.05 per full-run) so it's NOT in the pre-push gate — manual responsibility of the prompt author. Adding a new callsite requires: (a) inventory row in <code>docs/llm-calls.md</code>, (b) prompt blob in <code>docs/llm-prompts/</code>, (c) handler in <code>eval/provider.ts:HANDLERS</code>, (d) at least one fixture in <code>eval/suites/&lt;slug&gt;.yaml</code>.</p>
       <p><strong>Defensive parsing.</strong> <code>chatJSON</code> validates the response against the supplied Zod schema; on parse failure it surfaces <code>AIError</code> with the response text window (head + position context) so the caller can decide whether to retry or fall back. Callers that are best-effort (resume-tagline, scratchpad-synth, auto-tag) catch <code>AIError</code> and degrade gracefully — the resume still generates if the tagline call fails; the auto-tag pass writes zero tags rather than aborting.</p>
 
-      <h3>8.5 Resume-gen relevance pipeline</h3>
+      <h3>Resume-gen relevance pipeline</h3>
       <p><code>POST /api/resumes</code> runs a 5-stage relevance pipeline before rendering, all in one route handler. The pipeline lives at <code>app/api/resumes/route.ts</code> and pulls from <code>lib/resumes/*</code> + <code>lib/profile/*</code>. Stages:</p>
       <pre class="mermaid">
 flowchart TD
@@ -401,7 +404,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="deployment-and-operations">Deployment and Operations</h2></summary>
     <div class="section-body">
-      <h3>9.1 Process model</h3>
+      <h3>Process model</h3>
       <p>Production runs <strong>three</strong> related processes, each with a distinct scope:</p>
       <table>
         <thead>
@@ -430,17 +433,17 @@ flowchart TD
       </ul>
       <p>Because the scheduler and web tier both write to <code>prisma/prod.db</code>, <code>lib/prisma.ts</code> applies the SQLite write-concurrency pragmas (<code>journal_mode = WAL</code>, <code>busy_timeout = 5000</code>, <code>synchronous = NORMAL</code>) on every <code>PrismaClient</code> instantiation. WAL is persistent in the file header; the others are per-connection. Without WAL, the two writers would race on <code>SQLITE_BUSY</code>.</p>
 
-      <h3>9.2 Storage and configuration</h3>
+      <h3>Storage and configuration</h3>
       <ul>
         <li><strong>DB files</strong> in <code>prisma/</code> are gitignored. Dev and prod are <em>separate</em> files. There is no migration story between the two.</li>
         <li><strong><code>.env</code> files</strong> are gitignored. Two checked-in stubs (<code>.env.development</code>, <code>.env.production</code>) only contain <code>DATABASE_URL</code>. Real secrets (<code>GOOGLE_CLIENT_ID</code>, <code>GOOGLE_CLIENT_SECRET</code>, <code>NEXTAUTH_SECRET</code>, <code>GOOGLE_GENERATIVE_AI_API_KEY</code>, etc.) live in an untracked <code>.env</code>.</li>
         <li><strong>PM2 is not installed by <code>npm install</code></strong> — the <code>hosting.md</code> doc walks the user through <code>npm install -g pm2</code> and <code>pm2 startup</code> + <code>pm2 save</code>.</li>
       </ul>
 
-      <h3>9.3 LAN access (planned)</h3>
+      <h3>LAN access (planned)</h3>
       <p>There's an open task (in the <code>Task</code> DB) to "broadcast the server on the local network and make it mobile-compatible." Today the binding is <code>localhost</code>, which means LAN access requires either changing the bind address in <code>launch-ms.sh</code> or proxying. The PWA + service worker pieces are already in place for the install-as-app flow once the network bind is opened.</p>
 
-      <h3>9.4 Inbound webhook path</h3>
+      <h3>Inbound webhook path</h3>
       <p>The Gmail webhook is intended to be reached via <strong>Cloudflare Tunnels</strong> (<code>salsquared.xyz</code>) → Pub/Sub topic. This is the only way an external request gets to a Mac mini behind a residential NAT. Today the route works locally but the tunnel/Pub/Sub topic is an external prerequisite, not something the repo provisions.</p>
     </div>
   </details>
@@ -448,6 +451,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="observability">Observability</h2></summary>
     <div class="section-body">
+      <h3>Surfaces</h3>
       <p>The system has four observability surfaces:</p>
       <ol>
         <li><strong><code>console</code>-based ring buffer</strong> (in-process) → <code>/api/system/logs</code> SSE → InternalView's "Event Log" panel. Provides ~500 most recent log lines with method/status colorization (<code>InternalView.tsx:formatLogMessage</code>). Server logs include request lines from <code>proxy.ts</code> middleware, <code>[DATABASE]</code> lines from the Prisma <code>$extends</code> middleware (prod only by default; dev gated on <code>DEBUG_PRISMA=1</code> due to SSE fan-out cost), <code>[CACHE HIT|MISS|FALLBACK]</code> lines from <code>withCache</code> (same prod/dev gating), <code>[EXTERNAL API]</code> lines from fetchers, <code>[AI] &lt;slug&gt; tokens=...</code> lines from every Gemini call, <code>[LUNARY] tracing enabled</code> when the key is set.</li>
@@ -462,6 +466,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="security-and-threat-model">Security and Threat Model</h2></summary>
     <div class="section-body">
+      <h3>Posture</h3>
       <p>This is a <strong>personal, LAN-bound</strong> system, but several integration points still warrant attention:</p>
       <ul>
         <li><strong>Pub/Sub webhook is OIDC-verified.</strong> <code>/api/gmail/webhook</code> requires a Google-signed JWT (<code>lib/google-oidc.ts:verifyPubSubOIDC</code>) whose <code>iss</code> is <code>https://accounts.google.com</code>, whose audience matches <code>PUBSUB_AUDIENCE</code>, and whose RS256 signature validates against Google's JWKS. The webhook returns 500 if <code>PUBSUB_AUDIENCE</code> is unset (deliberate fail-loud) and 401 on any verification failure.</li>
@@ -479,6 +484,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="performance-considerations">Performance Considerations</h2></summary>
     <div class="section-body">
+      <h3>Considerations</h3>
       <ul>
         <li><strong>Memory budget is 1 GB in prod, 2 GB in dev.</strong> RSS usage is monitored continuously by InternalView; the budget is what package.json declares, parsed at request time and cached.</li>
         <li><strong>Prisma query logging is per-request.</strong> Every operation logs <code>[DATABASE] Executing &lt;op&gt; on &lt;model&gt;</code>. Cheap but not free; would be the first thing to disable if log volume becomes a problem.</li>
@@ -493,6 +499,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="trade-offs-and-notable-design-decisions">Trade-offs and Notable Design Decisions</h2></summary>
     <div class="section-body">
+      <h3>Decisions</h3>
       <table>
         <thead>
           <tr><th>Decision</th><th>Trade-off</th></tr>
@@ -519,6 +526,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="risks-and-tech-debt">Risks and Tech Debt</h2></summary>
     <div class="section-body">
+      <h3>Register</h3>
       <p>Roughly ordered by severity. Items closed by MVP1 + MVP2 are listed for context but no longer constitute risks.</p>
       <ol>
         <li><strong>No automated tests beyond a small Vitest suite.</strong> MVP1 6B introduced Vitest with parser + cache coverage; everything else (route handlers, repositories, schemas, the company-news adapters) is uncovered. <code>scripts/tests/*</code> are exploratory tsx scripts.</li>
@@ -544,6 +552,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="where-to-extend">Where to Extend</h2></summary>
     <div class="section-body">
+      <h3>Extension Points</h3>
       <p>Concrete extension points implied by the design — these are the seams the codebase currently exposes:</p>
       <ul>
         <li><strong>A new dash</strong> → <code>BASE_DASHES</code> entry + <code>getTopic()</code> mapping + a default title and hue in <code>useAppStore</code>'s <code>defaultDashTitles</code> / <code>viewHues</code>. <code>syncAvailableDashes</code> handles the rest.</li>
@@ -567,6 +576,7 @@ flowchart TD
   <details class="section">
     <summary><h2 id="summary">Summary</h2></summary>
     <div class="section-body">
+      <h3>Summary</h3>
       <p>Mission Control is a <strong>single-host application that wraps three classes of work</strong> for one user: (a) an aggregation layer over many noisy external APIs (finance, space, research, AI news, company news), (b) a job-application pipeline driven by Gmail webhook ingest + a posting discovery crawler, and (c) a resume-gen subsystem that uses a 14-callsite LLM pipeline + structured profile data to produce posting-tailored PDFs / DOCXs. It's presented through a single-page client carousel of "dashes" and persisted in SQLite.</p>
       <p>Its architecture is shaped by four forces: a tight RAM budget, the unreliability of upstream sources, the fact that it has exactly one user, and the dependence on LLM calls for the job-application + resume tracks.</p>
       <p>The key invariants that make it work:</p>
@@ -587,7 +597,7 @@ flowchart TD
     <div class="section-body">
       <p>This section documents the real-time event system and state lifecycle introduced during MVP1. It covers the server-side event bus, the SSE transport, the unified client state store, and the stale-data toast pipeline.</p>
 
-      <h3>17.1 Overview</h3>
+      <h3>Overview</h3>
       <p>The system has <strong>one event-driven pipeline</strong> that keeps the UI consistent without polling: mutations from any route (or an external Pub/Sub push) are broadcast on the in-process bus to all connected SSE clients, which call <code>queryClient.invalidateQueries({ queryKey: [model] })</code> to refetch from the server.</p>
       <pre class="mermaid">
 graph LR
@@ -602,7 +612,7 @@ graph LR
     end
       </pre>
 
-      <h3>17.2 Server event bus (<code>lib/events.ts</code>)</h3>
+      <h3>Server event bus (<code>lib/events.ts</code>)</h3>
       <p>The event bus is a <strong><code>globalThis</code>-backed <code>Set&lt;EventListener&gt;</code></strong>. Using <code>globalThis</code> is the same pattern as the logger ring buffer and in-process cache — it means the listener set survives Next.js HMR across hot reloads without losing connected SSE clients.</p>
       <pre><code class="language-typescript">// Shape of every event
 interface ServerEvent {
@@ -615,7 +625,7 @@ interface ServerEvent {
       <p><code>broadcastEvent(event)</code> iterates the set synchronously — it's fire-and-forget. Subscribers that throw will surface as uncaught exceptions; the set is not cleared on error. This is fine given a single-user load.</p>
       <p><code>subscribeToEvents(listener)</code> returns an unsubscribe function used by the SSE route to clean up when the client disconnects.</p>
 
-      <h3>17.3 SSE endpoint (<code>/api/events</code>)</h3>
+      <h3>SSE endpoint (<code>/api/events</code>)</h3>
       <p><code>app/api/events/route.ts</code> opens a <code>ReadableStream</code> and:</p>
       <ol>
         <li>Immediately enqueues a <code>: connected</code> SSE comment so the browser <code>EventSource</code> doesn't time out waiting for the first byte.</li>
@@ -643,7 +653,7 @@ sequenceDiagram
       </pre>
       <p>There is <strong>no reconnection logic on the server</strong> — <code>EventSource</code> reconnects automatically (browser default back-off). On reconnect, the <code>useServerEvents</code> hook re-opens <code>EventSource('/api/events')</code> and the server sends <code>: connected</code> again; any mutations that occurred during the gap are not replayed, but TanStack's <code>refetchOnWindowFocus</code> and the next mutation event will close the gap.</p>
 
-      <h3>17.4 Frontend hook (<code>hooks/useServerEvents.ts</code>)</h3>
+      <h3>Frontend hook (<code>hooks/useServerEvents.ts</code>)</h3>
       <pre><code class="language-typescript">useServerEvents(model: ServerEventModel, onInvalidate: () =&gt; void)</code></pre>
       <p>The hook opens one <code>EventSource('/api/events')</code> per mount, filtered by <code>model</code>. It uses a <code>ref</code> to hold the latest <code>onInvalidate</code> callback so the effect closure never goes stale — the <code>EventSource</code> is opened once and the callback can change freely without reopening the stream.</p>
       <pre class="mermaid">
@@ -672,7 +682,7 @@ flowchart TD
         </tbody>
       </table>
 
-      <h3>17.5 Broadcast sites</h3>
+      <h3>Broadcast sites</h3>
       <p>Every mutating route calls <code>broadcastEvent</code> after a successful DB write:</p>
       <table>
         <thead>
@@ -690,7 +700,7 @@ flowchart TD
       </table>
       <p><code>invalidate</code> means "something about this model changed — refetch everything." <code>upsert</code>/<code>delete</code> carry an <code>id</code> but the frontend currently treats all three the same way (calls <code>mutate()</code>).</p>
 
-      <h3>17.6 Task lifecycle (DB-native, no file sync)</h3>
+      <h3>Task lifecycle (DB-native, no file sync)</h3>
       <p>Tasks live entirely in the <code>Task</code> table. There is no longer a markdown file mirror: <code>docs/todo.md</code> is archived (<code>docs/todo.archive.md</code>) and the file watcher / parser / regenerator under <code>lib/tasks/</code> were removed in the DB-as-source-of-truth cutover.</p>
       <pre class="mermaid">
 sequenceDiagram
@@ -715,7 +725,7 @@ sequenceDiagram
         <li>Ordering is by <code>Task.position</code> (integer, backfilled from the old <code>lineNumber</code> in the cutover migration); <code>nextPosition(parentId)</code> computes the next slot for inserts.</li>
       </ul>
 
-      <h3>17.7 Unified client state store</h3>
+      <h3>Unified client state store</h3>
       <p>The consolidated <code>useAppStore</code> (at <code>components/providers/state/index.ts</code>) has <strong>three logical slices with different persistence policies</strong>:</p>
       <pre class="mermaid">
 graph TD
@@ -748,7 +758,7 @@ graph TD
       </table>
       <p>The two legacy files (<code>themeStore.ts</code>, <code>settingsStore.ts</code>) are now thin re-exports: <code>export { useThemeStore, useAppStore } from './state'</code>. They exist only for backward compatibility with existing consumers and will be removed once all callsites are updated to import from <code>@/components/providers/state</code>.</p>
 
-      <h3>17.8 Settings sync lifecycle (<code>ThemeProvider</code>)</h3>
+      <h3>Settings sync lifecycle (<code>ThemeProvider</code>)</h3>
       <p><code>ThemeProvider</code> owns the <strong>hydration and persistence</strong> of the <code>theme</code> slice. It mounts once at the app root (inside <code>app/layout.tsx</code>).</p>
       <pre class="mermaid">
 sequenceDiagram
@@ -788,7 +798,7 @@ sequenceDiagram
         <li><strong>Conflict policy</strong> is last-writer-wins via refetch — the losing tab's in-flight edit is dropped in favor of the winning state. Not a CRDT-style merge.</li>
       </ul>
 
-      <h3>17.9 Stale-data toast pipeline</h3>
+      <h3>Stale-data toast pipeline</h3>
       <p>When <code>withCache</code> serves a cached response after an upstream failure, it sets <code>X-Cache: STALE-FALLBACK</code> on the response. The <code>fetcher</code> wrapper in <code>lib/fetcher-client.ts</code> inspects this header and pushes a warning toast:</p>
       <pre class="mermaid">
 graph LR
@@ -804,7 +814,7 @@ graph LR
       </pre>
       <p><code>toastStore</code> is a plain class singleton (not Zustand) with a minimal pub/sub pattern. <code>ToastHost</code> is mounted once in <code>app/layout.tsx</code> and subscribes to it. Toasts auto-dismiss after 5 seconds and can be dismissed early via the × button.</p>
 
-      <h3>17.10 Complete event lifecycle: end-to-end example</h3>
+      <h3>Complete event lifecycle: end-to-end example</h3>
       <p>A user checks off a task in <code>PlanningView</code>:</p>
       <pre class="mermaid">
 sequenceDiagram
@@ -833,6 +843,7 @@ sequenceDiagram
   <details class="section">
     <summary><h2 id="glossary">Glossary</h2></summary>
     <div class="section-body">
+      <h3>Terms</h3>
       <p>Web-dev and systems terminology used throughout this document. Alphabetical.</p>
       <ul>
         <li><strong>AbortSignal</strong> — Standard <code>AbortController.signal</code> that fires when a request or operation is cancelled. The SSE endpoint listens on <code>req.signal</code> to clean up the heartbeat and unsubscribe when the browser closes the connection.</li>

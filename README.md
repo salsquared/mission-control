@@ -43,4 +43,4 @@ The production build runs on **port 3101** to avoid conflicts with active develo
 
 ## Documentation
 
-- [API Documentation](docs/apis.md) - keeps track of internal and external APIs consumed by this project.
+- [API Documentation](docs/apis.html) - internal + external API reference, auto-generated from the route code by `npm run gen:api-docs`.

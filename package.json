@@ -14,6 +14,7 @@
     "test:integration": "./scripts/test-integration.sh",
     "test:all": "./scripts/pre-push.sh && ./scripts/test-integration.sh",
     "test:prompts": "promptfoo eval -c eval/promptfooconfig.yaml --output eval/output/results.json",
+    "gen:api-docs": "tsx scripts/gen-api-docs.ts",
     "postinstall": "simple-git-hooks"
   },
   "simple-git-hooks": {

@@ -122,6 +122,8 @@ SUITES=(
     "scripts/tests/hermetic/ingest-multi-role-per-company-smoke.ts"
     # Profile extras filter (2026-05-27 Languages/Hobbies always show)
     "scripts/tests/hermetic/profile-extras-filter-smoke.ts"
+    # API reference stays in sync with route code (2026-05-28)
+    "scripts/tests/hermetic/api-docs-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

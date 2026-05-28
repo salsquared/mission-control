@@ -1,0 +1,3488 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>API Reference</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>API Reference</h1>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-05-28 · 61/61 routes documented.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#sec-Auth">Auth</a></li>
+      <li><a href="#sec-Realtime-Events">Realtime / Events</a></li>
+      <li><a href="#sec-Planning">Planning</a></li>
+      <li><a href="#sec-Job-Tracker">Job Tracker</a></li>
+      <li><a href="#sec-Profile-Resumes">Profile / Resumes</a></li>
+      <li><a href="#sec-Settings">Settings</a></li>
+      <li><a href="#sec-Gmail-Integration">Gmail Integration</a></li>
+      <li><a href="#sec-Notifications">Notifications</a></li>
+      <li><a href="#sec-AI-Dashboard">AI Dashboard</a></li>
+      <li><a href="#sec-News">News</a></li>
+      <li><a href="#sec-Finance-Dashboard">Finance Dashboard</a></li>
+      <li><a href="#sec-Space-Dashboard">Space Dashboard</a></li>
+      <li><a href="#sec-Internal-Systems">Internal Systems</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Auth">Auth</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/auth/{...nextauth}">
+  <div class="api-route-head"><code class="api-path">/api/auth/{...nextauth}</code></div>
+  <div class="api-chips"><span class="api-chip ext">Google OAuth 2.0</span></div>
+  <p class="api-purpose">Standard NextAuth.js handler; single Google provider with offline access plus the Gmail readonly/send and Calendar events scopes, storing the refresh token on the Account row.</p>
+  <p class="api-src"><code>app/api/auth/[...nextauth]/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Realtime-Events">Realtime / Events</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/events">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/events</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Server-Sent Events channel that streams DB-mutation events so connected clients (other tabs, phone, the Mac mini) can invalidate and refetch in real time.</p>
+  <p class="api-notes">Broadcasts { model, action, id, timestamp } frames with 30s heartbeats.</p>
+  <p class="api-src"><code>app/api/events/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Planning">Planning</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/calendar/event">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method delete">DELETE</span><code class="api-path">/api/calendar/event</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSessionOrService</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <p class="api-purpose">Read upcoming events, create/update an event, or delete an event on the user's primary Google Calendar; user id is derived from the session.</p>
+  <p class="api-notes">Mutations broadcast { model: 'CalendarEvent', action: 'upsert'|'delete' }. All times treated as UTC. When POST has an eventId the event is updated, otherwise inserted.</p>
+  <p class="api-schema-label">POST body — <code>CalendarEventPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "eventId": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "start": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "end": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    }
+  },
+  "required": [
+    "summary",
+    "start",
+    "end"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/calendar/event/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/goals">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/goals</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <p class="api-purpose">CRUD for LifeGoal rows.</p>
+  <p class="api-notes">Each mutation broadcasts { model: 'Goal', action: 'upsert'|'delete' }.</p>
+  <p class="api-schema-label">POST body — <code>GoalPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "estimatedTime": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "text"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>GoalPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "completed": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "id",
+    "completed"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>GoalDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/goals/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/tasks">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/tasks</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <p class="api-purpose">CRUD over the user's task list; the Task table is the sole source of truth.</p>
+  <p class="api-notes">Mutations broadcast { model: 'Task', action: 'upsert'|'delete' }. POST with isGoal auto-creates a child task.</p>
+  <p class="api-schema-label">POST body — <code>TaskPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parentId": {
+      "type": "string"
+    },
+    "isGoal": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "text"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>TaskPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "TODO",
+        "IN_PROGRESS",
+        "DONE"
+      ]
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1
+    },
+    "dueDate": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "priority": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "BLOCKER",
+            "HIGH",
+            "MEDIUM",
+            "LOW"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    },
+    "parentId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>TaskDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/tasks/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Job-Tracker">Job Tracker</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/applications">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/applications</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">The current user's job applications, ordered by most recently updated; rows are inserted/updated by the Gmail webhook when inbox mail classifies as application/interview correspondence.</p>
+  <p class="api-schema-label">GET body — <code>ApplicationTrackSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "career",
+    "side"
+  ]
+}</code></pre>
+  <p class="api-schema-label">POST body — <code>ApplicationPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "company": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "default": "APPLIED",
+      "type": "string",
+      "enum": [
+        "INTERESTED",
+        "APPLIED",
+        "UPDATED",
+        "ASSESSMENT",
+        "INTERVIEW_REQUESTED",
+        "INTERVIEW",
+        "OFFER",
+        "ACCEPTED",
+        "DECLINED",
+        "REJECTED"
+      ]
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "job",
+            "internship",
+            "college",
+            "other"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "track": {
+      "type": "string",
+      "enum": [
+        "career",
+        "side"
+      ]
+    },
+    "nextSteps": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dateApplied": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decisionDeadline": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "company",
+    "track"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>ApplicationPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "company": {
+      "type": "string",
+      "minLength": 1
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "INTERESTED",
+        "APPLIED",
+        "UPDATED",
+        "ASSESSMENT",
+        "INTERVIEW_REQUESTED",
+        "INTERVIEW",
+        "OFFER",
+        "ACCEPTED",
+        "DECLINED",
+        "REJECTED"
+      ]
+    },
+    "kind": {
+      "anyOf": [
+        {
+          "type": "string",
+          "enum": [
+            "job",
+            "internship",
+            "college",
+            "other"
+          ]
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "track": {
+      "type": "string",
+      "enum": [
+        "career",
+        "side"
+      ]
+    },
+    "nextSteps": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dateApplied": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "decisionDeadline": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>ApplicationDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/applications/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/backfill">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/applications/backfill</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gmail API v1</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">One-shot maintenance sweep that scans the user's inbox for application-likely emails over the last N days and runs each through the same ingest pipeline as the Gmail webhook, reporting created/updated/skipped counts.</p>
+  <p class="api-notes">Idempotent (ingest dedupes); broadcasts Application/CalendarEvent invalidate SSE events when any rows change.</p>
+  <p class="api-schema-label">POST body — <code>BackfillRequestSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "days": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1095
+    },
+    "max": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    }
+  }
+}</code></pre>
+  <p class="api-src"><code>app/api/applications/backfill/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/bulk-track">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/applications/bulk-track</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Moves multiple applications between kanban tracks in one atomic transaction, returning the count of rows that changed or 409 with conflicting pairs.</p>
+  <p class="api-notes">Broadcasts one Application upsert SSE event per moved row so per-track caches invalidate.</p>
+  <p class="api-schema-label">POST body — <code>ApplicationBulkTrackSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "ids": {
+      "minItems": 1,
+      "maxItems": 200,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "track": {
+      "type": "string",
+      "enum": [
+        "career",
+        "side"
+      ]
+    }
+  },
+  "required": [
+    "ids",
+    "track"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/applications/bulk-track/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/contacts">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/applications/contacts</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">CRUD for the recruiter/contact rows attached to a given application (list by applicationId, create, update, delete).</p>
+  <p class="api-notes">Mutations broadcast Contact upsert/delete SSE events.</p>
+  <p class="api-schema-label">POST body — <code>ContactPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "applicationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "email": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 320
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lastTouchedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "applicationId",
+    "name"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>ContactPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "email": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 320
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "role": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 4000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "lastTouchedAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>ContactDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/applications/contacts/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/events">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/applications/events</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <p class="api-purpose">Read and manage ApplicationEvent timeline entries (interviews/offers/etc.) for the signed-in user; create/update/delete mirror the change into Google Calendar.</p>
+  <p class="api-notes">Mutations sync to Gcal and broadcast CalendarEvent SSE events; `kind` is intentionally not patchable.</p>
+  <p class="api-schema-label">POST body — <code>ApplicationEventPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "applicationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "APPLIED",
+        "STATUS_CHANGED",
+        "EMAIL_RECEIVED",
+        "ASSESSMENT_REQUESTED",
+        "INTERVIEW_SCHEDULED",
+        "OFFER",
+        "REJECTION",
+        "NOTE"
+      ]
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "occurredAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "scheduledAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "endsAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "notes": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "applicationId",
+    "kind",
+    "title"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>ApplicationEventPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "scheduledAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "endsAt": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "notes": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "APPLIED",
+        "STATUS_CHANGED",
+        "EMAIL_RECEIVED",
+        "ASSESSMENT_REQUESTED",
+        "INTERVIEW_SCHEDULED",
+        "OFFER",
+        "REJECTION",
+        "NOTE"
+      ]
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/applications/events/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/events/adopt">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/applications/events/adopt</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <p class="api-purpose">Adopts an existing Google Calendar event into an application by creating a mirroring ApplicationEvent row and tagging the Gcal event with mission-control extendedProperties so future syncs recognize ownership.</p>
+  <p class="api-notes">Rejects re-adopting an already-linked event with 409; broadcasts a CalendarEvent upsert SSE event.</p>
+  <p class="api-schema-label">POST body — <code>ApplicationEventAdoptPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "applicationId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "gcalEventId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "APPLIED",
+        "STATUS_CHANGED",
+        "EMAIL_RECEIVED",
+        "ASSESSMENT_REQUESTED",
+        "INTERVIEW_SCHEDULED",
+        "OFFER",
+        "REJECTION",
+        "NOTE"
+      ]
+    },
+    "title": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "applicationId",
+    "gcalEventId",
+    "kind"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/applications/events/adopt/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/events/gcal-candidates">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/applications/events/gcal-candidates</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <p class="api-purpose">Lists upcoming Google Calendar events (next 90 days by default) that aren't already linked to a mission-control ApplicationEvent, for use by the adopt-existing-event flow.</p>
+  <p class="api-src"><code>app/api/applications/events/gcal-candidates/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/events/sync">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/applications/events/sync</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <p class="api-purpose">Manually pulls Google Calendar changes for the signed-in user into their ApplicationEvent rows via Google's syncToken.</p>
+  <p class="api-notes">Broadcasts a CalendarEvent invalidate SSE event when any rows are applied or deleted.</p>
+  <p class="api-src"><code>app/api/applications/events/sync/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/applications/pipeline-picker">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/applications/pipeline-picker</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Read-only list of the user's INTERESTED-status applications that carry a usable posting URL, used as the source list for the resume-generate auto-fill flow.</p>
+  <p class="api-src"><code>app/api/applications/pipeline-picker/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/blacklist">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/blacklist</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Lists and adds companies to the user's job-discovery blacklist so they're excluded from suggestions.</p>
+  <p class="api-schema-label">POST body — <code>PostSchema</code> <span class="api-muted">(schema unavailable)</span></p>
+  <p class="api-src"><code>app/api/blacklist/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/blacklist/{id}">
+  <div class="api-route-head"><span class="api-method delete">DELETE</span><code class="api-path">/api/blacklist/{id}</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Removes a single company from the user's job-discovery blacklist.</p>
+  <p class="api-src"><code>app/api/blacklist/[id]/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/discovery/suggest">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/discovery/suggest</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">Suggests new companies to watch for a given topic, excluding ones already in the directory, the user's watchlists, and their blacklist.</p>
+  <p class="api-notes">Results cached 6h keyed on topic + hashed exclude list; maps Gemini quota errors to a 429.</p>
+  <p class="api-schema-label">POST body — <code>RequestSchema</code> <span class="api-muted">(schema unavailable)</span></p>
+  <p class="api-src"><code>app/api/discovery/suggest/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/postings">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/postings</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Lists the user's tracked job postings with server-side status/track/company/location/employment-type filtering and negative-filter culling.</p>
+  <p class="api-schema-label">GET body — <code>WatchlistTrackSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "career",
+    "side"
+  ]
+}</code></pre>
+  <p class="api-schema-label">GET body — <code>JobPostingStatusSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "new",
+    "tracked",
+    "hidden",
+    "closed"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/postings/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/postings/{id}">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method patch">PATCH</span><code class="api-path">/api/postings/{id}</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Reads a single tracked job posting and updates its status (e.g. open/closed/dismissed).</p>
+  <p class="api-notes">PATCH broadcasts { model: 'Posting', action: 'upsert' } over SSE.</p>
+  <p class="api-schema-label">PATCH body — <code>JobPostingPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "new",
+        "tracked",
+        "hidden",
+        "closed"
+      ]
+    }
+  },
+  "required": [
+    "status"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/postings/[id]/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/postings/{id}/track-as-application">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/postings/{id}/track-as-application</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Promotes a tracked job posting into a draft Application on the user's job-tracker board.</p>
+  <p class="api-notes">Dedups via postingId → sourceJobId → (company+role+track); returns created/merged flags.</p>
+  <p class="api-src"><code>app/api/postings/[id]/track-as-application/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/watchlists">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/watchlists</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Job-board fetchers (varies)</span></div>
+  <p class="api-purpose">Lists and creates saved job-search watchlists; creation kicks off the first crawl in the background.</p>
+  <p class="api-notes">POST fire-and-forgets runWatchlist for the new row; mutations broadcast { model: 'Watchlist' }.</p>
+  <p class="api-schema-label">GET body — <code>WatchlistTrackSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "career",
+    "side"
+  ]
+}</code></pre>
+  <p class="api-schema-label">POST body — <code>WatchlistPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "careers-page"
+            },
+            "rootUrl": {
+              "type": "string",
+              "format": "uri"
+            },
+            "linkPattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "rootUrl",
+            "linkPattern",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "greenhouse"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "lever"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ashby"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "workday"
+            },
+            "tenantHost": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9-]+\\.wd\\d+\\.myworkdayjobs\\.com$"
+            },
+            "careerSite": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxPages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          "required": [
+            "kind",
+            "tenantHost",
+            "careerSite",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "smartrecruiters"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxPages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "workable"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "recruitee"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "personio"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "clearcompany"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "linkedin"
+            },
+            "keywords": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "timeRange": {
+              "type": "string",
+              "enum": [
+                "24h",
+                "week",
+                "month",
+                "any"
+              ]
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "keywords",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "indeed"
+            },
+            "keywords": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "timeRange": {
+              "type": "string",
+              "enum": [
+                "24h",
+                "week",
+                "month",
+                "any"
+              ]
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "keywords",
+            "companyName"
+          ]
+        }
+      ]
+    },
+    "scheduleMinutes": {
+      "default": 240,
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "notificationMode": {
+      "default": "each",
+      "type": "string",
+      "enum": [
+        "each",
+        "digest",
+        "silent"
+      ]
+    },
+    "directoryKey": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "track": {
+      "default": "career",
+      "type": "string",
+      "enum": [
+        "career",
+        "side"
+      ]
+    }
+  },
+  "required": [
+    "name",
+    "config"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/watchlists/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/watchlists/{id}">
+  <div class="api-route-head"><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/watchlists/{id}</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Updates (config, schedule, filters, track) or deletes a single saved job-search watchlist.</p>
+  <p class="api-notes">Mutations broadcast { model: 'Watchlist' }; a config PATCH clears directoryKey so user overrides stick.</p>
+  <p class="api-schema-label">PATCH body — <code>WatchlistPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "config": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "careers-page"
+            },
+            "rootUrl": {
+              "type": "string",
+              "format": "uri"
+            },
+            "linkPattern": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "location": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "rootUrl",
+            "linkPattern",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "greenhouse"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "lever"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "ashby"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "workday"
+            },
+            "tenantHost": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[a-z0-9-]+\\.wd\\d+\\.myworkdayjobs\\.com$"
+            },
+            "careerSite": {
+              "type": "string",
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxPages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 200
+            }
+          },
+          "required": [
+            "kind",
+            "tenantHost",
+            "careerSite",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "smartrecruiters"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxPages": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 50
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "workable"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "recruitee"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "personio"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "clearcompany"
+            },
+            "boardSlug": {
+              "type": "string",
+              "minLength": 20,
+              "maxLength": 100
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "boardSlug",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "linkedin"
+            },
+            "keywords": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "timeRange": {
+              "type": "string",
+              "enum": [
+                "24h",
+                "week",
+                "month",
+                "any"
+              ]
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "keywords",
+            "companyName"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "indeed"
+            },
+            "keywords": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 200
+            },
+            "location": {
+              "type": "string",
+              "maxLength": 100
+            },
+            "timeRange": {
+              "type": "string",
+              "enum": [
+                "24h",
+                "week",
+                "month",
+                "any"
+              ]
+            },
+            "companyName": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "keywords",
+            "companyName"
+          ]
+        }
+      ]
+    },
+    "negativeFilters": {
+      "maxItems": 20,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "notificationMode": {
+      "type": "string",
+      "enum": [
+        "each",
+        "digest",
+        "silent"
+      ]
+    },
+    "scheduleMinutes": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "track": {
+      "type": "string",
+      "enum": [
+        "career",
+        "side"
+      ]
+    }
+  }
+}</code></pre>
+  <p class="api-src"><code>app/api/watchlists/[id]/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/watchlists/{id}/run">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/watchlists/{id}/run</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Job-board fetchers (varies)</span></div>
+  <p class="api-purpose">Triggers an immediate crawl of a single watchlist, fetching fresh postings from its job-board source.</p>
+  <p class="api-notes">Runs the scheduler's runWatchlist job synchronously; broadcasts Watchlist + Posting SSE events.</p>
+  <p class="api-src"><code>app/api/watchlists/[id]/run/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Profile-Resumes">Profile / Resumes</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/profile">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method patch">PATCH</span><code class="api-path">/api/profile</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Reads the session user's full CV profile (creating an empty one if none exists) or patches its header fields (headline, location, contact, links, tagline).</p>
+  <p class="api-notes">PATCH broadcasts { model: 'Profile', action: 'upsert' }.</p>
+  <p class="api-schema-label">PATCH body — <code>ProfilePatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "headline": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "tagline": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 200
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "location": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "email": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "phone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "links": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string",
+                "format": "uri"
+              }
+            },
+            "required": [
+              "label",
+              "url"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "skills": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "category": {
+                "type": "string",
+                "minLength": 1
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
+            "required": [
+              "category",
+              "items"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "hobbies": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "languages": {
+      "anyOf": [
+        {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "proficiency": {
+                "type": "string",
+                "enum": [
+                  "Basic",
+                  "Conversational",
+                  "Professional",
+                  "Fluent",
+                  "Native"
+                ]
+              }
+            },
+            "required": [
+              "name",
+              "proficiency"
+            ]
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}</code></pre>
+  <p class="api-src"><code>app/api/profile/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/bullets/assist">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/profile/bullets/assist</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">Generates AI bullet suggestions for a profile entry — fill mode drafts starter bullets, rewrite mode revises one bullet, tags mode proposes skill tags — without persisting; the client accepts via the entity PATCH.</p>
+  <p class="api-notes">Grounds the LLM call on sibling bullets, prior-upload archive spans, and the entity scratchpad; per-user rate-limited at 20/10min.</p>
+  <p class="api-schema-label">POST body — <code>BulletAssistBodySchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "oneOf": [
+    {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "fill"
+        },
+        "parentKind": {
+          "type": "string",
+          "enum": [
+            "work-role",
+            "project",
+            "education"
+          ]
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mode",
+        "parentKind",
+        "parentId"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "rewrite"
+        },
+        "parentKind": {
+          "type": "string",
+          "enum": [
+            "work-role",
+            "project",
+            "education"
+          ]
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bulletId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mode",
+        "parentKind",
+        "parentId",
+        "bulletId"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "const": "tags"
+        },
+        "parentKind": {
+          "type": "string",
+          "enum": [
+            "work-role",
+            "project",
+            "education"
+          ]
+        },
+        "parentId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bulletId": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "mode",
+        "parentKind",
+        "parentId",
+        "bulletId"
+      ]
+    }
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/profile/bullets/assist/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/education">
+  <div class="api-route-head"><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/profile/education</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Creates, updates, or deletes an education entry on the session user's CV profile.</p>
+  <p class="api-notes">Mutations broadcast { model: 'Profile', action: 'upsert'|'delete' }.</p>
+  <p class="api-schema-label">POST body — <code>EducationPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "institution": {
+      "type": "string",
+      "minLength": 1
+    },
+    "degree": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "field": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "startDate": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "endDate": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "autoTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    "scratchpad": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pinKeywords": {
+      "anyOf": [
+        {
+          "maxItems": 15,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "institution"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>EducationPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "institution": {
+      "type": "string",
+      "minLength": 1
+    },
+    "degree": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "field": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "startDate": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "endDate": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "autoTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    "scratchpad": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pinKeywords": {
+      "anyOf": [
+        {
+          "maxItems": 15,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>ProfileChildDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/profile/education/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/import">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/profile/import</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">Parses one or more uploaded resume files into structured profile data and merges them into the session user's CV profile (append-never-overwrite), archiving each upload.</p>
+  <p class="api-notes">Per file: extract text → LLM-extract a tree → synthesize a master resume → deterministic merge; per-user rate-limited at 5/10min.</p>
+  <p class="api-src"><code>app/api/profile/import/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/projects">
+  <div class="api-route-head"><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/profile/projects</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Creates, updates, or deletes a project entry on the session user's CV profile.</p>
+  <p class="api-notes">Mutations broadcast { model: 'Profile', action: 'upsert'|'delete' }.</p>
+  <p class="api-schema-label">POST body — <code>ProjectPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repoUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "liveUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "autoTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    "scratchpad": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pinKeywords": {
+      "anyOf": [
+        {
+          "maxItems": 15,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "name"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>ProjectPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "repoUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "liveUrl": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "autoTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    "scratchpad": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pinKeywords": {
+      "anyOf": [
+        {
+          "maxItems": 15,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>ProfileChildDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/profile/projects/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/snapshots">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/profile/snapshots</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Lists the session user's profile snapshots (id, takenAt, label) or captures a new point-in-time snapshot of their current profile.</p>
+  <p class="api-notes">POST broadcasts { model: 'ProfileSnapshot', action: 'upsert' }.</p>
+  <p class="api-schema-label">POST body — <code>ProfileSnapshotPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "label": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 120
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}</code></pre>
+  <p class="api-src"><code>app/api/profile/snapshots/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/snapshots/{id}">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method delete">DELETE</span><code class="api-path">/api/profile/snapshots/{id}</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Reads the full hydrated payload of one profile snapshot or deletes it, owner-scoped by session.</p>
+  <p class="api-notes">DELETE broadcasts { model: 'ProfileSnapshot', action: 'delete' }.</p>
+  <p class="api-src"><code>app/api/profile/snapshots/[id]/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/tagline/draft">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/profile/tagline/draft</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">Drafts (or enhances an existing) profile tagline from the session user's profile via the LLM, returning a transient proposal the client persists on accept.</p>
+  <p class="api-notes">Does not persist; per-user rate-limited at 10/10min.</p>
+  <p class="api-src"><code>app/api/profile/tagline/draft/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/profile/work-roles">
+  <div class="api-route-head"><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/profile/work-roles</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Creates, updates, or deletes a work-role entry on the session user's CV profile.</p>
+  <p class="api-notes">Mutations broadcast { model: 'Profile', action: 'upsert'|'delete' }.</p>
+  <p class="api-schema-label">POST body — <code>WorkRolePostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "company": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "location": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "startDate": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "endDate": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "autoTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    "scratchpad": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pinKeywords": {
+      "anyOf": [
+        {
+          "maxItems": 15,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "company",
+    "title",
+    "startDate"
+  ]
+}</code></pre>
+  <p class="api-schema-label">PATCH body — <code>WorkRolePatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "company": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "location": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "startDate": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "endDate": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "bullets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string",
+            "minLength": 1
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "autoTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "removedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pinnedTags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "locked": {
+            "type": "boolean"
+          },
+          "excluded": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "text"
+        ]
+      }
+    },
+    "scratchpad": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 8192
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "pinKeywords": {
+      "anyOf": [
+        {
+          "maxItems": 15,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "position": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>ProfileChildDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "id"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/profile/work-roles/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/resumes">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/resumes</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">Lists the session user's previously generated resumes (GET) or runs the full resume-gen pipeline against a job posting and streams a tailored PDF/DOCX (POST).</p>
+  <p class="api-notes">POST is a multi-stage pipeline (parse posting → auto-tag → select → scratchpad-synth → rewrite → tailor tagline → render); fetches the posting URL, broadcasts GeneratedResume upsert, and is rate-limited at 5/10min.</p>
+  <p class="api-schema-label">GET body — <code>ResumeListLimitSchema</code> <span class="api-muted">(schema unavailable)</span></p>
+  <p class="api-schema-label">POST body — <code>ResumePostBodySchema</code> <span class="api-muted">(schema unavailable)</span></p>
+  <p class="api-src"><code>app/api/resumes/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/resumes/{id}">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/resumes/{id}</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Returns one generated resume row with its bullet selections, posting input, and skills gap for the traceability UI; the heavy profile snapshot is included only with ?includeSnapshot=1.</p>
+  <p class="api-src"><code>app/api/resumes/[id]/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/resumes/{id}/download">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/resumes/{id}/download</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Streams the archived PDF/DOCX artifact bytes for one generated resume, owner-scoped, with a derived download filename.</p>
+  <p class="api-src"><code>app/api/resumes/[id]/download/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/resumes/diff">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/resumes/diff</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Computes the diff between two of the session user's generated resumes (passed as ?a and ?b), comparing their bullet selections, keywords, and skills gaps.</p>
+  <p class="api-src"><code>app/api/resumes/diff/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Settings">Settings</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/settings">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/settings</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <p class="api-purpose">Reads and writes the single-row GlobalSetting table that backs cross-device prefs (dark mode, view hues, dash order/titles), with optimistic-concurrency versioning on writes.</p>
+  <p class="api-notes">POST requires an If-Match header carrying the last-seen version; a mismatch returns 409 with the current version.</p>
+  <p class="api-schema-label">POST body — <code>SettingsPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "isDarkMode": {
+      "type": "boolean"
+    },
+    "viewHuesEnabled": {
+      "type": "boolean"
+    },
+    "viewHues": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "number"
+      }
+    },
+    "dashOrder": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "dashTitles": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "negativeFilters": {
+      "maxItems": 40,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "maxLength": 200
+      }
+    }
+  }
+}</code></pre>
+  <p class="api-src"><code>app/api/settings/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Gmail-Integration">Gmail Integration</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/gmail/webhook">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/gmail/webhook</code></div>
+  <div class="api-chips"><span class="api-chip ext">Gmail API v1</span><span class="api-chip ext">Google Pub/Sub (OIDC)</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">OIDC-verified endpoint that Google Pub/Sub pushes Gmail history notifications to; new messages classifying as application/interview correspondence upsert an Application row.</p>
+  <p class="api-notes">First action on every envelope is INSERT OR IGNORE on WebhookDelivery(messageId) — P2002 → 200 deduped. Idempotent ingest via per-event notifiedAt/gcalSyncedAt checkpoints. Broadcasts { model: 'Application', action: 'upsert' }.</p>
+  <p class="api-schema-label">POST body — <code>PubSubEnvelopeSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "message": {
+      "type": "object",
+      "properties": {
+        "data": {
+          "type": "string"
+        },
+        "messageId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "publishTime": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "data",
+        "messageId"
+      ]
+    },
+    "subscription": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "message"
+  ]
+}</code></pre>
+  <p class="api-schema-label">POST body — <code>PubSubPayloadSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "emailAddress": {
+      "type": "string",
+      "format": "email",
+      "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+    },
+    "historyId": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        }
+      ]
+    }
+  },
+  "required": [
+    "emailAddress",
+    "historyId"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/gmail/webhook/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Notifications">Notifications</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/notifications">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method patch">PATCH</span><code class="api-path">/api/notifications</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Lists the user's in-app notifications (with unread count) and marks them read/dismissed.</p>
+  <p class="api-notes">PATCH broadcasts { model: 'Notification', action: 'upsert' } when any row changes.</p>
+  <p class="api-schema-label">PATCH body — <code>NotificationPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "readAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ids",
+        "readAt"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "ids": {
+          "minItems": 1,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "dismissedAt": {
+          "anyOf": [
+            {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "ids",
+        "dismissedAt"
+      ]
+    },
+    {
+      "type": "object",
+      "properties": {
+        "markAllRead": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "markAllRead"
+      ]
+    }
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/notifications/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/notifications/test">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/notifications/test</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gmail API v1</span></div>
+  <p class="api-purpose">Fires a self-addressed test notification through the in-app + Gmail send pipeline to verify the email side-channel works.</p>
+  <p class="api-notes">Per-user 30s rate limit; email only actually sends when EMAIL_ENABLED=1.</p>
+  <p class="api-src"><code>app/api/notifications/test/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-AI-Dashboard">AI Dashboard</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/ai">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/ai</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · hn.algolia.com</span><span class="api-chip ext">Hacker News Algolia API</span></div>
+  <p class="api-purpose">Fetches the latest stories related to "Artificial Intelligence" or "AI".</p>
+  <p class="api-src"><code>app/api/ai/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/ai/llmleaderboard">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/ai/llmleaderboard</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip ext">LM Arena</span></div>
+  <p class="api-purpose">Scrapes and parses the LM Arena leaderboard for a given category (default "text"), returning the top 50 models sorted by Elo score.</p>
+  <p class="api-notes">Dedupes repeated model rows in the scraped table, keeping the highest-Elo occurrence per id.</p>
+  <p class="api-src"><code>app/api/ai/llmleaderboard/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/research">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <p class="api-purpose">Fetches recent research papers for a topic (ai, crypto, space), using Hugging Face Daily Papers for the AI topic and arXiv otherwise, enriched with citation counts.</p>
+  <p class="api-src"><code>app/api/research/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/research/hf">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/hf</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span></div>
+  <p class="api-purpose">Fetches daily papers directly from Hugging Face without arXiv fallback or Semantic Scholar enrichment.</p>
+  <p class="api-src"><code>app/api/research/hf/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/research/historical">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/historical</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <p class="api-purpose">Selects and fetches one historical research paper (3–30 years old) per topic per week, avoiding duplicates and enriching with citation counts.</p>
+  <p class="api-notes">The weekly pick is locked in the SelectedHistoricalPaper table for persistence across requests.</p>
+  <p class="api-src"><code>app/api/research/historical/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/research/import">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/research/import</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Semantic Scholar API</span><span class="api-chip ext">arXiv API</span></div>
+  <p class="api-purpose">Imports a research paper by ArXiv ID, DOI, or URL, fetching metadata from Semantic Scholar first and falling back to arXiv.</p>
+  <p class="api-schema-label">POST body — <code>ResearchImportSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "input": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    }
+  },
+  "required": [
+    "input"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/research/import/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/research/review">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/review</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <p class="api-purpose">Picks and features one review or survey paper from the last 365 days per topic per week, enriching with citation counts.</p>
+  <p class="api-notes">The weekly pick is locked in the SelectedReviewPaper table for persistence across requests.</p>
+  <p class="api-src"><code>app/api/research/review/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/research/saved">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method delete">DELETE</span><code class="api-path">/api/research/saved</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <p class="api-purpose">Manages the user's saved research paper library — listing, upserting (with read status/topic), and deleting tracked papers.</p>
+  <p class="api-notes">Mutations broadcast { model: 'SavedPaper', action: 'upsert'|'delete' } over the SSE event stream.</p>
+  <p class="api-schema-label">GET body — <code>SavedPaperListQuerySchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "topic": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "status": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  }
+}</code></pre>
+  <p class="api-schema-label">POST body — <code>SavedPaperPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "paperId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "title": {
+      "type": "string"
+    },
+    "summary": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "authors": {
+      "type": "string"
+    },
+    "publishedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "topic": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "paperId",
+    "topic",
+    "status"
+  ]
+}</code></pre>
+  <p class="api-schema-label">DELETE body — <code>SavedPaperDeleteQuerySchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "paperId": {
+      "type": "string",
+      "minLength": 1
+    }
+  },
+  "required": [
+    "paperId"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/research/saved/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-News">News</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/company-news">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/company-news</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s</span><span class="api-chip ext">Company RSS feeds</span><span class="api-chip ext">Spaceflight News API</span><span class="api-chip ext">Google News RSS</span><span class="api-chip ext">vendor JSON APIs</span><span class="api-chip ext">Microlink</span></div>
+  <p class="api-purpose">Fetches the latest news articles for a registered company, dispatching to its declared fetch strategy (RSS, scrape, Spaceflight News API, Google News, vendor JSON API, or a custom inline fetcher), with a legacy generic-RSS path via ?rss=.</p>
+  <p class="api-notes">Upstream host is derived per-request from the ?company= (or ?rss=) value for Fetcher Health grouping.</p>
+  <p class="api-src"><code>app/api/company-news/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Finance-Dashboard">Finance Dashboard</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/finance">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/finance</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 300s</span><span class="api-chip ext">Pulsar (PULSAR_URL)</span></div>
+  <p class="api-purpose">Fetches latest crypto prices + the filtered top-100 list and current Bitcoin recommended fees, all sourced from the local Pulsar ingestion service.</p>
+  <p class="api-notes">Filters known spam/stable/RWA tokens via SPAM_COIN_IDS and BTC fee-tier ids via BTC_FEE_IDS. Cache upstreamHost is derived from PULSAR_URL at request time.</p>
+  <p class="api-src"><code>app/api/finance/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/finance/history">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/finance/history</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 300s</span><span class="api-chip ext">Pulsar (PULSAR_URL)</span></div>
+  <p class="api-purpose">Returns a historical price series for a coin — hourly OHLCV bars for short ranges (&lt;=30 days), pre-aggregated daily summaries downsampled to ~500 points for longer ranges or "max".</p>
+  <p class="api-src"><code>app/api/finance/history/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Space-Dashboard">Space Dashboard</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/space">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · api.spaceflightnewsapi.net</span><span class="api-chip ext">Spaceflight News API</span></div>
+  <p class="api-purpose">Retrieves the latest spaceflight and exploration news articles, capped per news site.</p>
+  <p class="api-src"><code>app/api/space/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/space/launches">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/launches</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 1800s · ll.thespacedevs.com</span><span class="api-chip ext">The Space Devs Launch Library 2</span></div>
+  <p class="api-purpose">Fetches the next upcoming rocket launches worldwide, or launches within a year/month window when those query params are supplied.</p>
+  <p class="api-src"><code>app/api/space/launches/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/space/moon">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/moon</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 86400s</span></div>
+  <p class="api-purpose">Provides a weekly calendar of the moon's cycles and highlights upcoming global lunar phenomena (supermoons, lunar eclipses).</p>
+  <p class="api-notes">Pure local computation — algorithmic phase calculation + a hardcoded LUNAR_PHENOMENA table. No upstreamHost, so intentionally absent from the Fetcher Health card.</p>
+  <p class="api-src"><code>app/api/space/moon/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/space/satellites">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/satellites</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 21600s · celestrak.org</span><span class="api-chip ext">Celestrak GP Data</span></div>
+  <p class="api-purpose">Active-satellite counts for Earth-centric orbits, categorized by orbit type (LEO, MEO, GEO, SSO) and notable constellations (Starlink, OneWeb).</p>
+  <p class="api-notes">Celestrak returns 403 ("GP data has not updated…") on unchanged re-requests; the route throws so withCache serves the stale entry instead of a 500.</p>
+  <p class="api-src"><code>app/api/space/satellites/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/space/solar">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/solar</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 300s · services.swpc.noaa.gov</span><span class="api-chip ext">NOAA SWPC</span></div>
+  <p class="api-purpose">Reports current solar activity (latest GOES primary X-ray flux) categorized into a status level (Normal/Moderate/High/Extreme).</p>
+  <p class="api-src"><code>app/api/space/solar/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Internal-Systems">Internal Systems</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/system">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <p class="api-purpose">Real-time process and system telemetry: CPU usage, RSS memory vs. the --max-old-space-size limit, uptime, DB connectivity, Pulsar reachability, and withCache hit/miss/key stats.</p>
+  <p class="api-notes">Pings ${PULSAR_URL}/api/prices/latest with a 2s timeout for liveness only.</p>
+  <p class="api-src"><code>app/api/system/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/system/cache/invalidate">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/system/cache/invalidate</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <p class="api-purpose">Invalidates entries in the in-memory withCache store by exact key or by key prefix, returning how many entries were evicted.</p>
+  <p class="api-schema-label">POST body — <code>CacheInvalidatePostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "key": {
+      "type": "string",
+      "minLength": 1
+    },
+    "prefix": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}</code></pre>
+  <p class="api-src"><code>app/api/system/cache/invalidate/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/system/fetcher-health">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system/fetcher-health</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip cache">cache 3600s</span></div>
+  <p class="api-purpose">Parses the PM2 log file for cache/external-API/scraper log lines and aggregates per-upstream-host ok/fallback/broken counts over 1h/6h/1d windows for the Fetcher Health card.</p>
+  <p class="api-notes">Reads the per-tier PM2 out.log (dev vs prod chosen by NODE_ENV; overridable via PM2_LOG_PATH).</p>
+  <p class="api-src"><code>app/api/system/fetcher-health/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/system/logs">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system/logs</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Streams server logs over Server-Sent Events — an initial snapshot frame on connect, then one frame per new log line.</p>
+  <p class="api-notes">Reads the in-memory log ring buffer (lib/logger.ts); 10s ping comments keep the connection alive.</p>
+  <p class="api-src"><code>app/api/system/logs/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/system/logs/historical">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system/logs/historical</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Reads the on-disk PM2 log file, parses its JSON-lines entries, applies optional time-range and level filters, and returns up to the most recent 1000 matches.</p>
+  <p class="api-notes">Reads ~/.pm2/logs/mission-control-out.log (overridable via PM2_LOG_PATH); non-JSON lines are skipped.</p>
+  <p class="api-src"><code>app/api/system/logs/historical/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  hljs.highlightAll();
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
