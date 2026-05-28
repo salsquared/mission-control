@@ -31,16 +31,17 @@
   <details class="section">
     <summary><h2 id="headings">Headings</h2></summary>
     <div class="section-body">
-      <p>Each <code>&lt;h2&gt;</code> section is wrapped in <code>&lt;details class="section"&gt;</code> — collapsible, and auto-numbered to match the ToC (the number is a CSS counter, so reordering never desyncs it). Section content goes in a <code>&lt;div class="section-body"&gt;</code> grey box. Four heading levels, all Sora 800 / UPPERCASE — hierarchy is carried by color and size, not weight. This is an <code>h2</code> (blue).</p>
-      <h3>This is an h3 (green)</h3>
+      <h3>Levels</h3>
+      <p>Each <code>&lt;h2&gt;</code> section is a collapsible <code>&lt;details class="section"&gt;</code>, auto-numbered to match the ToC (CSS counter — reordering never desyncs it), with content in a <code>&lt;div class="section-body"&gt;</code> grey box. <strong>Every section holds at least one named <code>&lt;h3&gt;</code> subsection</strong> — auto-numbered <code>X.Y</code> (you write only the name; CSS supplies the number), so even a one-part section is always referenceable (this one is <code>1.1</code>). Headings are Sora 800 / UPPERCASE; hierarchy is color + size, not weight. The <code>&lt;h3&gt;</code> above is green; below is an <code>&lt;h4&gt;</code> (teal).</p>
       <h4>This is an h4 (teal)</h4>
-      <p>Mapping: <code>h1</code> white · <code>h2</code> blue · <code>h3</code> green · <code>h4</code> teal. The page <code>h1</code> + <code>&lt;p class="subtitle"&gt;</code> sit at the very top, once per doc, outside any section.</p>
+      <p>Mapping: <code>h1</code> white · <code>h2</code> blue · <code>h3</code> green · <code>h4</code> teal. The page <code>h1</code> + <code>&lt;p class="subtitle"&gt;</code> sit at the very top, once per doc, outside any section. Only <code>&lt;h3&gt;</code> subsections are auto-numbered — <code>&lt;h4&gt;</code> is not.</p>
     </div>
   </details>
 
   <details class="section">
     <summary><h2 id="text-code">Text &amp; code</h2></summary>
     <div class="section-body">
+      <h3>Inline &amp; blocks</h3>
       <p>Body copy is monospace. Use <code>inline code</code> (blue) for identifiers, file paths, and flags mid-sentence. Multi-line code goes in a fenced block; it's syntax-highlighted (highlight.js, on-brand theme) — auto-detected, or add <code>class="language-json"</code> / <code>language-typescript</code> / etc. to the <code>&lt;code&gt;</code> to force a language:</p>
       <pre><code class="language-typescript">const BASE_DASHES: View[] = [
   { id: "career", title: "Career", component: CareerView },
@@ -63,6 +64,7 @@ async function syncAvailableDashes(dashes: View[]): Promise&lt;void&gt; {
   <details class="section">
     <summary><h2 id="callouts">Callouts</h2></summary>
     <div class="section-body">
+      <h3>Variants</h3>
       <p>Four variants. Default is neutral (blue); add a modifier class for intent.</p>
       <div class="callout"><strong>Note.</strong> Neutral — <code>&lt;div class="callout"&gt;</code>.</div>
       <div class="callout tip"><strong>Tip.</strong> Green — <code>&lt;div class="callout tip"&gt;</code>.</div>
@@ -74,7 +76,9 @@ async function syncAvailableDashes(dashes: View[]): Promise&lt;void&gt; {
   <details class="section">
     <summary><h2 id="quotes-tables">Quotes &amp; tables</h2></summary>
     <div class="section-body">
+      <h3>Blockquote</h3>
       <blockquote>A blockquote — for quoted source material or pulled-out emphasis.</blockquote>
+      <h3>Table</h3>
       <table>
         <thead>
           <tr><th>PM2 process</th><th>Port</th><th>DB</th></tr>
@@ -90,6 +94,7 @@ async function syncAvailableDashes(dashes: View[]): Promise&lt;void&gt; {
   <details class="section">
     <summary><h2 id="lists">Lists</h2></summary>
     <div class="section-body">
+      <h3>Indexable markers</h3>
       <p>List markers are indexable by nesting depth so any item can be referenced by id instead of counted (e.g. "see b.ii.2"):</p>
       <ul>
         <li>depth 1 → <code>a, b, c</code></li>
@@ -112,6 +117,7 @@ async function syncAvailableDashes(dashes: View[]): Promise&lt;void&gt; {
   <details class="section">
     <summary><h2 id="diagrams">Diagrams (Mermaid)</h2></summary>
     <div class="section-body">
+      <h3>Conventions</h3>
       <p>Every node-based graph (architecture, flowchart, dependency graph, state machine, sequence, ER) is Mermaid — never ASCII art. Rendered diagrams are <strong>pan + zoom</strong>-enabled (drag to pan, scroll or the on-diagram buttons to zoom; it opens fit-to-view). Rules:</p>
       <ul>
         <li>Wrap in <code>&lt;pre class="mermaid"&gt;</code>. The init <code>&lt;script&gt;</code> at the bottom of this file themes it to the palette — copy it into every doc that has a diagram.</li>
@@ -135,6 +141,7 @@ flowchart TB
   <details class="section">
     <summary><h2 id="tasks">Tasks &amp; to-dos</h2></summary>
     <div class="section-body">
+    <h3>Authoring</h3>
     <p>Use <code>&lt;details class="task"&gt;</code> for any to-do list. They're collapsible and carry a checkbox + id. Mark done by adding <code>checked</code> to the <code>&lt;input&gt;</code> — the title strikes through and the id dims. Nest sub-tasks by putting another <code>&lt;details class="task"&gt;</code> inside <code>.task-body</code>; the id + checkbox color shifts per depth (blue → green → teal → sky → lime).</p>
     <p>Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;…</code> — one dot per level, no depth cap: <code>P1</code> → <code>P1.2</code> → <code>P1.2.3</code> → <code>P1.2.3.4.5</code>.</p>
 
