@@ -41,10 +41,22 @@
   <details class="section">
     <summary><h2 id="text-code">Text &amp; code</h2></summary>
     <div class="section-body">
-      <p>Body copy is monospace. Use <code>inline code</code> (blue) for identifiers, file paths, and flags mid-sentence. Use a fenced block for multi-line code — its text renders light-green:</p>
-      <pre><code>const BASE_DASHES: View[] = [
+      <p>Body copy is monospace. Use <code>inline code</code> (blue) for identifiers, file paths, and flags mid-sentence. Multi-line code goes in a fenced block; it's syntax-highlighted (highlight.js, on-brand theme) — auto-detected, or add <code>class="language-json"</code> / <code>language-typescript</code> / etc. to the <code>&lt;code&gt;</code> to force a language:</p>
+      <pre><code class="language-typescript">const BASE_DASHES: View[] = [
   { id: "career", title: "Career", component: CareerView },
-];</code></pre>
+];
+
+// auto-detects, or label with class="language-xxx"
+async function syncAvailableDashes(dashes: View[]): Promise&lt;void&gt; {
+  const known = new Set(dashes.map((d) =&gt; d.id));
+  await fetch("/api/settings", { method: "POST" });
+}</code></pre>
+      <pre><code class="language-json">{
+  "id": "career",
+  "title": "Career",
+  "hue": 250,
+  "pinned": false
+}</code></pre>
     </div>
   </details>
 
@@ -100,7 +112,7 @@
   <details class="section">
     <summary><h2 id="diagrams">Diagrams (Mermaid)</h2></summary>
     <div class="section-body">
-      <p>Every node-based graph (architecture, flowchart, dependency graph, state machine, sequence, ER) is Mermaid — never ASCII art. Rules:</p>
+      <p>Every node-based graph (architecture, flowchart, dependency graph, state machine, sequence, ER) is Mermaid — never ASCII art. Rendered diagrams are <strong>pan + zoom</strong>-enabled (drag to pan, scroll or the on-diagram buttons to zoom; it opens fit-to-view). Rules:</p>
       <ul>
         <li>Wrap in <code>&lt;pre class="mermaid"&gt;</code>. The init <code>&lt;script&gt;</code> at the bottom of this file themes it to the palette — copy it into every doc that has a diagram.</li>
         <li>Line breaks in a label use <code>&lt;br/&gt;</code>, never <code>\n</code> (it renders literally).</li>
@@ -222,7 +234,15 @@ flowchart TB
   </footer>
 
 <script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  // Syntax-highlight every <pre><code> (auto-detects, or honors a
+  // class="language-xxx" hint). Mermaid blocks are <pre class="mermaid"> with
+  // no inner <code>, so hljs skips them. Highlighting needs no layout, so it's
+  // fine to run on load even for code inside collapsed sections.
+  hljs.highlightAll();
   mermaid.initialize({
     startOnLoad: false,   // sections start collapsed; render lazily on open (below)
     theme: 'base',
@@ -242,10 +262,26 @@ flowchart TB
   // Mermaid can't measure a diagram inside a collapsed (display:none) <details>,
   // so render each only once its section is visible. mermaid.run() tags nodes
   // with data-processed, and the :not() guard prevents re-processing.
-  function renderVisibleMermaid(root) {
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');     // bounded viewport (CSS) before measuring
+    svgPanZoom(svg, {
+      controlIcons: true,               // built-in zoom in / out / reset buttons
+      fit: true, center: true,          // show the whole diagram first
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
     const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
       .filter(n => n.offsetParent !== null);
-    if (nodes.length) mermaid.run({ nodes });
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });       // await so the SVG exists before pan/zoom
+    nodes.forEach(attachPanZoom);
   }
   // Render any diagrams already visible at load (sections that start open).
   renderVisibleMermaid(document);

@@ -31,7 +31,7 @@
 
   /* Darkening scale — the section/ToC box is the lightest tier, then task
      cards step ~5% darker per nesting depth (1 → 5+). */
-  --box:     #2e2e2e;   /* section-body + ToC box (one step above task d1) */
+  --box:     #282828;   /* section-body + ToC box — same tier as task d1 */
   --task-d1: #282828;
   --task-d2: #222222;
   --task-d3: #1c1c1c;
@@ -182,6 +182,20 @@ pre code {
   font-size: 0.875rem;
 }
 
+/* Syntax highlighting (highlight.js, loaded per-doc via the module script).
+   On-brand token theme keyed to the palette — no external theme CSS needed.
+   If hljs fails to load (offline), code falls back to the flat --code-block green. */
+pre code.hljs { color: var(--text); padding: 0; background: transparent; }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--text-muted); font-style: italic; }
+.hljs-keyword, .hljs-built_in, .hljs-literal, .hljs-name, .hljs-selector-tag { color: var(--blue); }
+.hljs-string, .hljs-regexp, .hljs-addition { color: var(--code-block); }
+.hljs-number, .hljs-symbol, .hljs-bullet { color: var(--amber); }
+.hljs-title, .hljs-title.function_, .hljs-title.class_, .hljs-section, .hljs-type { color: var(--teal); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-variable, .hljs-template-variable { color: var(--sky); }
+.hljs-punctuation, .hljs-operator { color: var(--text-muted); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
+
 /* ── Callouts — neutral (blue) by default; modifier classes override ─ */
 
 .callout {
@@ -308,7 +322,26 @@ ol.toc-list a:hover { border-bottom: 1px dotted var(--green); }
   padding: 1.25rem;
   margin: 1.5rem 0;
   text-align: center;
+  position: relative;          /* anchors the pan/zoom controls */
 }
+
+/* Once svg-pan-zoom is attached (JS adds .pannable), the diagram fills a
+   bounded, clipped viewport: drag to pan, scroll or the control buttons to
+   zoom. fit+center on init shows the whole diagram first. */
+.mermaid.pannable {
+  height: min(70vh, 540px);
+  padding: 0;
+  overflow: hidden;
+  cursor: grab;
+}
+.mermaid.pannable:active { cursor: grabbing; }
+.mermaid.pannable svg { max-width: none; width: 100%; height: 100%; }
+
+/* svg-pan-zoom built-in control icons, themed to the palette */
+.svg-pan-zoom-control { cursor: pointer; }
+.svg-pan-zoom-control-background { fill: var(--bg); opacity: 0.7; }
+.svg-pan-zoom-control-element { fill: var(--text-muted); }
+.svg-pan-zoom-control:hover .svg-pan-zoom-control-element { fill: var(--text); }
 
 /* ── Tasks — collapsible <details>, id naming P<phase>.<task>.<sub> ─
    Task-id + checkbox accent are colored by nesting depth via cascading
