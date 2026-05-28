@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { JobPostingStatusSchema, EMPLOYMENT_TYPE_VALUES, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { compileNegativeFilters, compileNegativeFiltersFromArray, matchesNegativeFilters } from "@/lib/postings/negative-filters";
 import { expandLocationFilters } from "@/lib/postings/location-expansion";
+import { postingDedupKey } from "@/lib/postings/dedup-key";
 import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 
 export const runtime = "nodejs";
@@ -178,8 +179,31 @@ export async function GET(req: NextRequest) {
                 return !matchesNegativeFilters(r, perWatchlist);
             });
 
+        // Cross-watchlist dedup. JobPosting's unique key is per-watchlist
+        // (@@unique([watchlistId, externalId])), so N overlapping watchlists
+        // each store their own row for the SAME underlying job. Subsets stack:
+        // a side-track "security officer — Downey, CA" ⊂ "— Los Angeles" ⊂
+        // "— California" all match one LA job → three rows. The scheduler can't
+        // dedup these: its existence check is scoped to one watchlist. Collapse
+        // here — a Set keep-first, so it's N-way, not pairwise — and the feed
+        // shows each job once. We key on postingDedupKey (normalizedCompany +
+        // normalizedRole), NOT externalId: externalId folds sourceUrl into the
+        // hash, so the same job reposted under a new URL would slip through as
+        // a fresh row. The normalized key is resistant to URL/title drift while
+        // staying narrow enough not to merge genuine multi-role postings. Rows
+        // arrive lastSeenAt-desc, so the first occurrence is the freshest; keep
+        // it.
+        const deduped: typeof filtered = [];
+        const seenKeys = new Set<string>();
+        for (const r of filtered) {
+            const key = postingDedupKey(r.company, r.title);
+            if (seenKeys.has(key)) continue;
+            seenKeys.add(key);
+            deduped.push(r);
+        }
+
         return NextResponse.json({
-            postings: filtered.slice(0, limit).map(serialize),
+            postings: deduped.slice(0, limit).map(serialize),
         }, { status: 200 });
     } catch (e) {
         console.error("[postings GET] error:", e);

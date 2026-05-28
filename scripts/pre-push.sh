@@ -120,6 +120,9 @@ SUITES=(
     "scripts/tests/hermetic/normalize-role-smoke.ts"
     "scripts/tests/hermetic/track-as-application-multi-role-smoke.ts"
     "scripts/tests/hermetic/ingest-multi-role-per-company-smoke.ts"
+    # Cross-watchlist posting dedup (2026-05-28): feed collapses + flip-siblings
+    # on track, both keyed on normalizedCompany+normalizedRole (URL/title drift)
+    "scripts/tests/hermetic/track-as-application-sibling-flip-smoke.ts"
     # Profile extras filter (2026-05-27 Languages/Hobbies always show)
     "scripts/tests/hermetic/profile-extras-filter-smoke.ts"
     # API reference stays in sync with route code (2026-05-28)

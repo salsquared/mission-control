@@ -1,7 +1,9 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { broadcastEvent } from "@/lib/events";
 import { normalizeCompanyName } from "@/lib/applications/normalize-company";
 import { normalizeRoleName } from "@/lib/applications/normalize-role";
+import { postingDedupKey } from "@/lib/postings/dedup-key";
 import {
     findApplicationByCompanyAndRole,
     findApplicationBySourceJobId,
@@ -166,6 +168,12 @@ export async function trackAsApplication(
                 data: { status: "tracked" },
                 select: { id: true, status: true },
             });
+            await flipSiblingPostings(tx, userId, {
+                id: posting.id,
+                company: posting.company,
+                title: posting.title,
+                track: posting.watchlist.track,
+            });
             return { application, updatedPosting };
         });
         application = txResult.application;
@@ -237,10 +245,9 @@ export async function trackAsApplication(
 
 async function mergeLinkExistingApplication(
     existing: { id: string; postingId: string | null },
-    posting: { id: string; company: string; sourceUrl: string | null; externalId: string | null },
+    posting: { id: string; company: string; title: string; sourceUrl: string | null; externalId: string | null; watchlist: { track: string } },
     userId: string,
 ): Promise<{ applicationId: string; postingId: string; postingStatus: string }> {
-    void userId; // reserved for future audit logging — ownership already verified upstream
     const now = new Date();
     const linkable = existing.postingId == null;
     const noteTitle = linkable
@@ -271,6 +278,12 @@ async function mergeLinkExistingApplication(
             data: { status: "tracked" },
             select: { id: true, status: true },
         });
+        await flipSiblingPostings(tx, userId, {
+            id: posting.id,
+            company: posting.company,
+            title: posting.title,
+            track: posting.watchlist.track,
+        });
         return { updatedPosting };
     });
 
@@ -279,4 +292,46 @@ async function mergeLinkExistingApplication(
         postingId: txResult.updatedPosting.id,
         postingStatus: txResult.updatedPosting.status,
     };
+}
+
+// Flip the siblings. JobPosting's unique key is per-watchlist
+// (@@unique([watchlistId, externalId])), so N overlapping watchlists store N
+// SEPARATE rows for the same underlying job. Example: "security officer —
+// Downey, CA" ⊂ "— Los Angeles" ⊂ "— California" → an LA job lands a row in all
+// three. Tracking the clicked row leaves the rest sitting in discovery as
+// status="new" — the "I already applied for this but it's still showing"
+// duplicate. This is deliberately a set operation, not a pairwise "twin" flip:
+// it flips EVERY sibling still in the feed, so the whole job leaves discovery
+// no matter how many watchlists surfaced it.
+//
+// Siblings are matched on postingDedupKey (normalizedCompany + normalizedRole),
+// the SAME key the feed collapses on — not externalId — so a job reposted under
+// a different sourceUrl (different externalId) is still pulled out of the feed.
+// Scoped to the same track + userId so it mirrors the per-track feed and the
+// per-track Application unique key. JobPosting stores raw company/title (the
+// normalized key isn't a column), so we can't express the match in SQL: fetch
+// the bounded "new" set for this track and filter in JS. The discovery feed is
+// capped, so this is at most a few hundred small rows.
+async function flipSiblingPostings(
+    tx: Prisma.TransactionClient,
+    userId: string,
+    posting: { id: string; company: string; title: string; track: string },
+): Promise<void> {
+    const key = postingDedupKey(posting.company, posting.title);
+    const candidates = await tx.jobPosting.findMany({
+        where: {
+            id: { not: posting.id },
+            status: "new",
+            watchlist: { userId, track: posting.track },
+        },
+        select: { id: true, company: true, title: true },
+    });
+    const siblingIds = candidates
+        .filter(c => postingDedupKey(c.company, c.title) === key)
+        .map(c => c.id);
+    if (siblingIds.length === 0) return;
+    await tx.jobPosting.updateMany({
+        where: { id: { in: siblingIds } },
+        data: { status: "tracked" },
+    });
 }
