@@ -155,17 +155,40 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         }
     }
     if (!existingApp) {
-        // Company-only fallback for legacy NULL-normalizedRole rows. Once
-        // every row has a populated normalizedRole this becomes dead code in
-        // practice — but harmless to keep as a transitional safety net.
-        const legacyByCompany = await findApplicationByCompany(userId, parsed.company);
-        if (legacyByCompany && !legacyByCompany.normalizedRole) {
+        // Company-only fallback (single cross-track query, two acceptance
+        // reasons). Returns the most-recently-updated app for this employer
+        // on ANY track.
+        const byCompany = await findApplicationByCompany(userId, parsed.company);
+        if (byCompany && !byCompany.normalizedRole) {
+            // (a) Legacy NULL-normalizedRole rows that pre-date the role
+            // backfill. Once every row has a populated normalizedRole this
+            // becomes dead code — harmless transitional safety net.
             console.info(
                 `[ingest] legacy company-only match msg=${msgId} ` +
-                `app=${legacyByCompany.id} (normalizedRole=null) ` +
+                `app=${byCompany.id} (normalizedRole=null) ` +
                 `— consider running scripts/backfill-normalized-role.ts`,
             );
-            existingApp = legacyByCompany;
+            existingApp = byCompany;
+        } else if (byCompany && !parsed.role) {
+            // (b) Roleless-email merge (2026-05-28). A generic ATS email
+            // ("Instructions for Completing Your Form Later", "finish your
+            // application") carries no role, so incomingRole defaulted to
+            // "Unknown" and the role-aware primary lookup above could never
+            // match a real row. parsed.company is already confirmed non-empty
+            // (guarded above), so the employer signal is trusted even with the
+            // role missing. Merge into the most-recent existing app for this
+            // employer — inheriting its track — instead of spawning a phantom
+            // "Unknown"-role row that hardcodes track="career". This is what
+            // put a generic Allied Universal "finish your form" email onto a
+            // new career row when the employer lived entirely on `side`.
+            console.info(
+                `[ingest] roleless company merge msg=${msgId} ` +
+                `app=${byCompany.id} (track=${byCompany.track}, ` +
+                `role=${JSON.stringify(byCompany.role)}) — email carried no ` +
+                `role; merged into most-recent ${JSON.stringify(parsed.company)} ` +
+                `app instead of creating a career row`,
+            );
+            existingApp = byCompany;
         }
     }
     if (!existingApp && senderDomain) {
