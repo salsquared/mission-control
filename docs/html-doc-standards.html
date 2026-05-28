@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HTML Documentation Standards · Mission Control Docs</title>
+  <meta name="description" content="The canonical dos and don'ts for authoring repository documentation as self-contained, browsable HTML." />
+  <link rel="stylesheet" href="assets/doc.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- ============================ SIDEBAR ============================ -->
+    <aside class="sidebar">
+      <div class="brand"><span class="dot"></span> Mission Control Docs</div>
+      <nav class="toc" aria-label="Table of contents">
+        <a href="#purpose">01 · Purpose &amp; scope</a>
+        <a href="#anatomy">02 · File anatomy (copy me)</a>
+        <a href="#naming">03 · Naming &amp; location</a>
+        <a href="#structure">04 · Structure &amp; headings</a>
+        <a href="#semantics">05 · Semantic HTML</a>
+        <a href="#diagrams">06 · Diagrams (Mermaid)</a>
+        <a href="#tables">07 · Tables</a>
+        <a href="#code">08 · Code &amp; references</a>
+        <a href="#callouts">09 · Callouts</a>
+        <a href="#links">10 · Links &amp; cross-refs</a>
+        <a href="#a11y">11 · Accessibility &amp; responsive</a>
+        <a href="#meta">12 · Metadata &amp; freshness</a>
+        <a href="#antipatterns">13 · Anti-patterns</a>
+        <a href="#checklist">14 · Pre-commit checklist</a>
+      </nav>
+    </aside>
+
+    <!-- ============================ CONTENT ============================ -->
+    <main class="content">
+      <header class="doc-header">
+        <p class="eyebrow">Documentation Standard</p>
+        <h1>HTML Documentation Standards</h1>
+        <p class="lede">
+          The canonical dos and don'ts for authoring repository documentation as
+          self-contained, browsable HTML. This file is both the <strong>rulebook</strong>
+          and the <strong>reference template</strong> &mdash; copy its structure when
+          converting an existing doc.
+        </p>
+        <div class="meta">
+          <span class="badge badge--accent">Living standard</span>
+          <span class="badge">Applies to: all repos</span>
+          <span>Last updated 2026-05-28</span>
+        </div>
+      </header>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="purpose">
+        <h2><span class="num">01</span>Purpose &amp; scope</h2>
+        <p>
+          Every active document under <code>docs/</code> is converging on one consistent,
+          navigable, diagram-friendly HTML format. This standard exists so that any reader
+          &mdash; or any agent &mdash; lands in a doc and immediately knows how to read it,
+          where the table of contents is, and how to deep-link a section.
+        </p>
+        <p>This document plays two roles at once:</p>
+        <ul>
+          <li><strong>Rulebook</strong> &mdash; the dos and don'ts below are binding for every HTML doc in the repo.</li>
+          <li><strong>Template</strong> &mdash; you asked for one file, not a separate skeleton: this file <em>is</em> the skeleton. <a href="#anatomy">&sect;02</a> reproduces its scaffold verbatim; "View Source" on this page is the fastest way to start a new doc.</li>
+        </ul>
+        <div class="callout note">
+          <span class="label">Companion</span>
+          This standard governs <em>format</em>. Its sibling,
+          <a href="./dev-phase-docs.html">Documentation Across Dev Phases</a>, governs
+          <em>content</em> &mdash; which kind of doc to write (plan &rarr; architecture &rarr;
+          implementation) and when. Read both before converting a doc.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="anatomy">
+        <h2><span class="num">02</span>File anatomy <span style="font-weight:400;color:var(--text-faint)">(copy me)</span></h2>
+        <p>
+          Every doc shares one scaffold. The shared look &amp; behavior live in
+          <code>docs/assets/doc.css</code> and <code>docs/assets/doc.js</code>; a doc links
+          them rather than embedding its own styles. Start a new doc by copying this:
+        </p>
+        <pre><code><span class="t-com">&lt;!doctype html&gt;</span>
+<span class="t-tag">&lt;html</span> <span class="t-attr">lang</span>=<span class="t-str">"en"</span><span class="t-tag">&gt;</span>
+<span class="t-tag">&lt;head&gt;</span>
+  <span class="t-tag">&lt;meta</span> <span class="t-attr">charset</span>=<span class="t-str">"utf-8"</span> <span class="t-tag">/&gt;</span>
+  <span class="t-tag">&lt;meta</span> <span class="t-attr">name</span>=<span class="t-str">"viewport"</span> <span class="t-attr">content</span>=<span class="t-str">"width=device-width, initial-scale=1"</span> <span class="t-tag">/&gt;</span>
+  <span class="t-tag">&lt;title&gt;</span>Doc Title · Mission Control Docs<span class="t-tag">&lt;/title&gt;</span>
+  <span class="t-tag">&lt;link</span> <span class="t-attr">rel</span>=<span class="t-str">"stylesheet"</span> <span class="t-attr">href</span>=<span class="t-str">"assets/doc.css"</span> <span class="t-tag">/&gt;</span>
+<span class="t-tag">&lt;/head&gt;</span>
+<span class="t-tag">&lt;body&gt;</span>
+  <span class="t-tag">&lt;div</span> <span class="t-attr">class</span>=<span class="t-str">"layout"</span><span class="t-tag">&gt;</span>
+    <span class="t-tag">&lt;aside</span> <span class="t-attr">class</span>=<span class="t-str">"sidebar"</span><span class="t-tag">&gt;</span>
+      <span class="t-tag">&lt;div</span> <span class="t-attr">class</span>=<span class="t-str">"brand"</span><span class="t-tag">&gt;&lt;span</span> <span class="t-attr">class</span>=<span class="t-str">"dot"</span><span class="t-tag">&gt;&lt;/span&gt;</span> Mission Control Docs<span class="t-tag">&lt;/div&gt;</span>
+      <span class="t-tag">&lt;nav</span> <span class="t-attr">class</span>=<span class="t-str">"toc"</span> <span class="t-attr">aria-label</span>=<span class="t-str">"Table of contents"</span><span class="t-tag">&gt;</span>
+        <span class="t-tag">&lt;a</span> <span class="t-attr">href</span>=<span class="t-str">"#intro"</span><span class="t-tag">&gt;</span>01 · Intro<span class="t-tag">&lt;/a&gt;</span>
+        <span class="t-com">&lt;!-- one link per &lt;h2&gt;; add class="sub" for nested &lt;h3&gt; --&gt;</span>
+      <span class="t-tag">&lt;/nav&gt;</span>
+    <span class="t-tag">&lt;/aside&gt;</span>
+    <span class="t-tag">&lt;main</span> <span class="t-attr">class</span>=<span class="t-str">"content"</span><span class="t-tag">&gt;</span>
+      <span class="t-tag">&lt;header</span> <span class="t-attr">class</span>=<span class="t-str">"doc-header"</span><span class="t-tag">&gt;</span>
+        <span class="t-tag">&lt;p</span> <span class="t-attr">class</span>=<span class="t-str">"eyebrow"</span><span class="t-tag">&gt;</span>Category<span class="t-tag">&lt;/p&gt;</span>
+        <span class="t-tag">&lt;h1&gt;</span>Doc Title<span class="t-tag">&lt;/h1&gt;</span>
+        <span class="t-tag">&lt;p</span> <span class="t-attr">class</span>=<span class="t-str">"lede"</span><span class="t-tag">&gt;</span>One-sentence summary.<span class="t-tag">&lt;/p&gt;</span>
+        <span class="t-tag">&lt;div</span> <span class="t-attr">class</span>=<span class="t-str">"meta"</span><span class="t-tag">&gt;</span>Last updated 2026-05-28<span class="t-tag">&lt;/div&gt;</span>
+      <span class="t-tag">&lt;/header&gt;</span>
+      <span class="t-tag">&lt;section</span> <span class="t-attr">id</span>=<span class="t-str">"intro"</span><span class="t-tag">&gt;</span>
+        <span class="t-tag">&lt;h2&gt;&lt;span</span> <span class="t-attr">class</span>=<span class="t-str">"num"</span><span class="t-tag">&gt;</span>01<span class="t-tag">&lt;/span&gt;</span>Intro<span class="t-tag">&lt;/h2&gt;</span>
+        <span class="t-tag">&lt;p&gt;</span>…<span class="t-tag">&lt;/p&gt;</span>
+      <span class="t-tag">&lt;/section&gt;</span>
+      <span class="t-tag">&lt;footer</span> <span class="t-attr">class</span>=<span class="t-str">"doc-footer"</span><span class="t-tag">&gt;</span>…<span class="t-tag">&lt;/footer&gt;</span>
+    <span class="t-tag">&lt;/main&gt;</span>
+  <span class="t-tag">&lt;/div&gt;</span>
+  <span class="t-tag">&lt;script</span> <span class="t-attr">type</span>=<span class="t-str">"module"</span> <span class="t-attr">src</span>=<span class="t-str">"assets/doc.js"</span><span class="t-tag">&gt;&lt;/script&gt;</span>
+<span class="t-tag">&lt;/body&gt;</span>
+<span class="t-tag">&lt;/html&gt;</span></code></pre>
+        <div class="ddgrid">
+          <div class="callout do">
+            <span class="label">Do</span>
+            Link the shared <code>assets/doc.css</code> + <code>assets/doc.js</code>. One edit
+            there restyles every doc &mdash; the whole point of converting the repo.
+          </div>
+          <div class="callout dont">
+            <span class="label">Don't</span>
+            Inline a full <code>&lt;style&gt;</code> block or per-doc <code>&lt;script&gt;</code>.
+            That re-duplicates the theme into every file and defeats single-source maintenance.
+          </div>
+        </div>
+        <div class="callout warn">
+          <span class="label">Path note</span>
+          Assets live in <code>docs/assets/</code> and docs live in <code>docs/</code>, so the
+          link is the relative <code>assets/doc.css</code>. Keep all converted docs in
+          <code>docs/</code> so this relative path holds. The <code>&lt;script&gt;</code> goes
+          last in <code>&lt;body&gt;</code> and <strong>must</strong> be
+          <code>type="module"</code> (it imports Mermaid).
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="naming">
+        <h2><span class="num">03</span>Naming &amp; location</h2>
+        <ul>
+          <li><strong>One doc = one file = one <code>&lt;h1&gt;</code>.</strong> Don't merge two topics into a file or split one topic across files.</li>
+          <li><strong>Filenames are kebab-case <code>.html</code></strong> named for the <em>topic</em>, not the phase: <code>architecture.html</code>, <code>resume-pipeline.html</code> &mdash; not <code>phase2.html</code>.</li>
+          <li><strong>Live in <code>docs/</code>;</strong> shared assets in <code>docs/assets/</code>. Nothing in the repo root.</li>
+          <li><strong>When converting</strong>, keep the same base name (<code>architecture.md</code> &rarr; <code>architecture.html</code>) so existing cross-references only need an extension bump.</li>
+        </ul>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="structure">
+        <h2><span class="num">04</span>Structure &amp; headings</h2>
+        <p>The heading tree and the table of contents are the same tree. Keep them in lockstep:</p>
+        <ul>
+          <li>Exactly <strong>one <code>&lt;h1&gt;</code></strong>, inside <code>.doc-header</code>.</li>
+          <li><strong>One <code>&lt;section id="…"&gt;</code> per <code>&lt;h2&gt;</code></strong>; the id is kebab-case and stable.</li>
+          <li><code>&lt;h3&gt;</code> for subsections (also id'd if you want them in the TOC as <code>class="sub"</code> links).</li>
+          <li>Don't skip levels (no <code>&lt;h2&gt;</code> &rarr; <code>&lt;h4&gt;</code>). <code>doc.js</code> scroll-spy + anchor generation rely on <code>id</code>s being present on <code>h2</code>/<code>h3</code>.</li>
+        </ul>
+        <div class="callout warn">
+          <span class="label">ids are a contract</span>
+          Other docs deep-link to <code>your-doc.html#section-id</code>. Renaming an id silently
+          breaks those links. Treat ids like public API &mdash; add freely, rename rarely.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="semantics">
+        <h2><span class="num">05</span>Semantic HTML</h2>
+        <div class="ddgrid">
+          <div class="callout do">
+            <span class="label">Do</span>
+            Use <code>&lt;header&gt;</code>, <code>&lt;nav&gt;</code>, <code>&lt;main&gt;</code>,
+            <code>&lt;section&gt;</code>, <code>&lt;figure&gt;</code>/<code>&lt;figcaption&gt;</code>,
+            <code>&lt;table&gt;</code>, <code>&lt;aside&gt;</code>. Use <code>&lt;strong&gt;</code>/<code>&lt;em&gt;</code>
+            for meaning and <code>&lt;ul&gt;</code>/<code>&lt;ol&gt;</code> for real lists.
+          </div>
+          <div class="callout dont">
+            <span class="label">Don't</span>
+            Build a <code>&lt;div&gt;</code> soup, use <code>&lt;b&gt;</code>/<code>&lt;i&gt;</code>
+            for emphasis, fake a list with <code>&lt;br/&gt;</code>-separated paragraphs, or
+            nest a second <code>&lt;main&gt;</code>.
+          </div>
+        </div>
+        <p>
+          The class names in <code>doc.css</code> (<code>.callout</code>, <code>.badge</code>,
+          <code>.table-wrap</code>, <code>.diagram</code>) are the vocabulary &mdash; reach for an
+          existing one before inventing a new class. If you genuinely need a new component,
+          add it to <code>doc.css</code> so the next doc can reuse it.
+        </p>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="diagrams">
+        <h2><span class="num">06</span>Diagrams (Mermaid)</h2>
+        <p>
+          <strong>Node-based graphs must be Mermaid, never ASCII art</strong> (the repo-wide rule
+          from <code>CLAUDE.md</code>). <code>doc.js</code> auto-renders any
+          <code>&lt;pre class="mermaid"&gt;</code>. Wrap it in a <code>&lt;figure class="diagram"&gt;</code>
+          with a caption:
+        </p>
+        <pre><code><span class="t-tag">&lt;figure</span> <span class="t-attr">class</span>=<span class="t-str">"diagram"</span><span class="t-tag">&gt;</span>
+  <span class="t-tag">&lt;pre</span> <span class="t-attr">class</span>=<span class="t-str">"mermaid"</span><span class="t-tag">&gt;</span>
+graph LR
+    A["Markdown doc"] --&gt;|"convert()"| B["HTML doc"]
+    B --&gt; C["assets/doc.css<br/>assets/doc.js"]
+  <span class="t-tag">&lt;/pre&gt;</span>
+  <span class="t-tag">&lt;figcaption&gt;</span>The conversion path.<span class="t-tag">&lt;/figcaption&gt;</span>
+<span class="t-tag">&lt;/figure&gt;</span></code></pre>
+        <p>Rendered live:</p>
+        <figure class="diagram">
+          <pre class="mermaid">
+graph LR
+    A["Markdown doc"] -->|"convert()"| B["HTML doc"]
+    B --> C["assets/doc.css<br/>assets/doc.js"]
+    C --> D["Consistent,<br/>browsable docs"]
+          </pre>
+          <figcaption>The conversion path &mdash; this diagram is editable text, not an image.</figcaption>
+        </figure>
+        <div class="ddgrid">
+          <div class="callout do">
+            <span class="label">Do</span>
+            Use <code>&lt;br/&gt;</code> for line breaks inside labels. Quote parens in edge
+            labels: <code>--&gt;|"fetch()"|</code>. Parens inside quoted node labels
+            (<code>["text()"]</code>) are fine.
+          </div>
+          <div class="callout dont">
+            <span class="label">Don't</span>
+            Use <code>\n</code> in labels (renders literally), leave parens unquoted in
+            <code>|…|</code> edge labels (parse error), or paste a screenshot of a diagram
+            instead of the Mermaid source.
+          </div>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="tables">
+        <h2><span class="num">07</span>Tables</h2>
+        <p>
+          This repo's docs lean heavily on tables (status matrices, decision logs, callsite
+          inventories). Use a real <code>&lt;table&gt;</code> with a <code>&lt;thead&gt;</code>,
+          wrapped in <code>.table-wrap</code> so it scrolls horizontally on narrow screens instead
+          of breaking the layout:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Element</th><th>Use it for</th><th>Don't</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><code>&lt;thead&gt;&lt;th&gt;</code></td><td>The header row of any data table</td><td>Styling a plain <code>&lt;td&gt;</code> to look like a header</td></tr>
+              <tr><td><code>.table-wrap</code></td><td>The scroll container around every table</td><td>Letting a wide table overflow the page grid</td></tr>
+              <tr><td><code>&lt;table&gt;</code></td><td>Tabular data &amp; comparisons</td><td>Page layout (use CSS grid in <code>doc.css</code>)</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="code">
+        <h2><span class="num">08</span>Code &amp; references</h2>
+        <ul>
+          <li><strong>Block code:</strong> <code>&lt;pre&gt;&lt;code&gt;…&lt;/code&gt;&lt;/pre&gt;</code>. Escape <code>&amp;lt;</code> / <code>&amp;gt;</code> inside it.</li>
+          <li><strong>Inline code:</strong> <code>&lt;code&gt;</code> for identifiers, paths, commands.</li>
+          <li><strong>File references</strong> use the repo's greppable <code>path:line</code> form &mdash; e.g. <code>lib/applications/ingest.ts:131</code> &mdash; so a reader can jump straight to source.</li>
+          <li><strong>Optional syntax tint:</strong> wrap tokens in <code>&lt;span class="t-tag|t-attr|t-str|t-com|t-kw"&gt;</code>. Purely decorative &mdash; skip it for short snippets.</li>
+        </ul>
+        <div class="callout dont">
+          <span class="label">Don't</span>
+          Paste a screenshot of code or a terminal. It isn't selectable, searchable, diffable,
+          or accessible. Always use real text in a <code>&lt;pre&gt;</code>.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="callouts">
+        <h2><span class="num">09</span>Callouts</h2>
+        <p>Four flavors, one markup shape: <code>&lt;div class="callout <em>flavor</em>"&gt;&lt;span class="label"&gt;…&lt;/span&gt; …&lt;/div&gt;</code>.</p>
+        <div class="callout do"><span class="label">Do</span> Affirmative guidance &mdash; the recommended path.</div>
+        <div class="callout dont"><span class="label">Don't</span> Anti-patterns &mdash; the thing to avoid.</div>
+        <div class="callout note"><span class="label">Note</span> Context, cross-references, asides.</div>
+        <div class="callout warn"><span class="label">Warning</span> Footguns, irreversibility, contracts that break if ignored.</div>
+        <p>Pair a Do with a Don't using <code>.ddgrid</code> (two-column on wide screens, stacked on mobile). Use callouts for genuinely load-bearing points &mdash; if every paragraph is a callout, none of them stand out.</p>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="links">
+        <h2><span class="num">10</span>Links &amp; cross-references</h2>
+        <div class="ddgrid">
+          <div class="callout do">
+            <span class="label">Do</span>
+            Link sibling docs relatively (<code>./architecture.html</code>), deep-link sections
+            (<code>./architecture.html#data-flow</code>), and add
+            <code>rel="noopener"</code> to any <code>target="_blank"</code> external link.
+          </div>
+          <div class="callout dont">
+            <span class="label">Don't</span>
+            Hardcode absolute filesystem paths (<code>/home/user/…</code>), <code>localhost</code>
+            URLs, or link to a <code>.md</code> file that has already been converted to
+            <code>.html</code>.
+          </div>
+        </div>
+        <p>During the migration, a not-yet-converted target may still be <code>.md</code> &mdash; that's fine; update the link to <code>.html</code> in the same PR that converts the target.</p>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="a11y">
+        <h2><span class="num">11</span>Accessibility &amp; responsiveness</h2>
+        <ul>
+          <li><code>lang="en"</code> on <code>&lt;html&gt;</code>; <code>charset</code> + <code>viewport</code> in <code>&lt;head&gt;</code>.</li>
+          <li>Every <code>&lt;img&gt;</code> has <code>alt</code> text; every <code>&lt;figure&gt;</code> has a <code>&lt;figcaption&gt;</code>.</li>
+          <li>Don't override the theme with low-contrast custom colors &mdash; <code>doc.css</code> already meets contrast on the dark palette.</li>
+          <li>Don't set fixed pixel widths; the grid in <code>doc.css</code> is responsive (sidebar collapses below 880px). Let it do its job.</li>
+          <li>Motion is gated by <code>prefers-reduced-motion</code> in <code>doc.css</code> &mdash; don't add JS animations that ignore it.</li>
+        </ul>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="meta">
+        <h2><span class="num">12</span>Metadata &amp; freshness</h2>
+        <p>The <code>.doc-header .meta</code> row carries the doc's status and freshness:</p>
+        <ul>
+          <li><strong>Status badge</strong> &mdash; <span class="badge badge--accent">Living standard</span>, <span class="badge badge--do">Stable</span>, or <span class="badge badge--warn">Draft</span>.</li>
+          <li><strong>Last updated</strong> uses an <strong>absolute ISO date</strong> (<code>2026-05-28</code>) &mdash; never "last week" or "recently" (repo-wide rule).</li>
+          <li>The <code>&lt;footer class="doc-footer"&gt;</code> links back to this standard and to the source doc it was converted from.</li>
+        </ul>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="antipatterns">
+        <h2><span class="num">13</span>Anti-patterns at a glance</h2>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Don't</th><th>Why it hurts</th><th>Do instead</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Inline a full <code>&lt;style&gt;</code> per doc</td><td>Theme drifts file-to-file; can't restyle the repo in one edit</td><td>Link <code>assets/doc.css</code></td></tr>
+              <tr><td>ASCII-art diagrams</td><td>Unmaintainable, breaks on resize, not accessible</td><td>Mermaid in a <code>.diagram</code> figure</td></tr>
+              <tr><td>Screenshots of code/diagrams</td><td>Not selectable, searchable, or diffable</td><td>Real <code>&lt;pre&gt;</code> / Mermaid text</td></tr>
+              <tr><td>Skipping heading levels</td><td>Breaks TOC scroll-spy &amp; anchors</td><td>Sequential <code>h2</code> &rarr; <code>h3</code></td></tr>
+              <tr><td>Renaming section <code>id</code>s casually</td><td>Silently breaks inbound deep links</td><td>Add ids freely, rename rarely</td></tr>
+              <tr><td>Relative date phrasing</td><td>Goes stale; lies on re-read</td><td>Absolute ISO date</td></tr>
+              <tr><td>Multiple topics in one file</td><td>Hard to find, hard to link</td><td>One topic = one file = one <code>h1</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="checklist">
+        <h2><span class="num">14</span>Pre-commit checklist</h2>
+        <p>Before committing a new or converted doc, confirm:</p>
+        <ul>
+          <li>Links <code>assets/doc.css</code> + <code>assets/doc.js</code>; no inline theme.</li>
+          <li>Exactly one <code>&lt;h1&gt;</code>; every <code>&lt;h2&gt;</code>/<code>&lt;h3&gt;</code> has a stable <code>id</code>.</li>
+          <li>The <code>.toc</code> has one link per <code>&lt;h2&gt;</code> (+ <code>.sub</code> links for key <code>&lt;h3&gt;</code>s).</li>
+          <li>Diagrams are Mermaid (<code>&lt;br/&gt;</code> not <code>\n</code>; parens quoted in edge labels); no ASCII art or screenshots.</li>
+          <li>Tables wrapped in <code>.table-wrap</code> with a real <code>&lt;thead&gt;</code>.</li>
+          <li>Code in <code>&lt;pre&gt;&lt;code&gt;</code> with <code>&lt;</code>/<code>&gt;</code> escaped; file refs in <code>path:line</code> form.</li>
+          <li><code>.meta</code> has a status badge + an absolute ISO last-updated date.</li>
+          <li>Opens cleanly in a browser; sidebar scroll-spy highlights the right section; diagrams render.</li>
+        </ul>
+      </section>
+
+      <footer class="doc-footer">
+        <p>
+          Format standard for Mission Control documentation · pairs with
+          <a href="./dev-phase-docs.html">Documentation Across Dev Phases</a>.
+          Shared theme: <code>docs/assets/doc.css</code> &amp; <code>docs/assets/doc.js</code>.
+        </p>
+      </footer>
+    </main>
+  </div>
+
+  <script type="module" src="assets/doc.js"></script>
+</body>
+</html>

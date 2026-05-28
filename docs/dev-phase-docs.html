@@ -1,0 +1,377 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Documentation Across Dev Phases · Mission Control Docs</title>
+  <meta name="description" content="Which kind of document to write at each phase of development — plan, architecture, implementation — and the living state layer that ties them together." />
+  <link rel="stylesheet" href="assets/doc.css" />
+</head>
+<body>
+  <div class="layout">
+    <!-- ============================ SIDEBAR ============================ -->
+    <aside class="sidebar">
+      <div class="brand"><span class="dot"></span> Mission Control Docs</div>
+      <nav class="toc" aria-label="Table of contents">
+        <a href="#purpose">01 · Purpose</a>
+        <a href="#flow">02 · The phase flow</a>
+        <a href="#plan">03 · Phase 1 — Plan</a>
+        <a href="#plan-general" class="sub">General / overview</a>
+        <a href="#plan-sketchpad" class="sub">Sketchpad</a>
+        <a href="#plan-stories" class="sub">User stories</a>
+        <a href="#architecture">04 · Phase 2 — Architecture</a>
+        <a href="#implementation">05 · Phase 3 — Implementation</a>
+        <a href="#living">06 · The living-state layer</a>
+        <a href="#which">07 · Which doc do I write?</a>
+        <a href="#lifecycle">08 · Lifecycle &amp; maturity</a>
+      </nav>
+    </aside>
+
+    <!-- ============================ CONTENT ============================ -->
+    <main class="content">
+      <header class="doc-header">
+        <p class="eyebrow">Documentation Standard</p>
+        <h1>Documentation Across Dev Phases</h1>
+        <p class="lede">
+          Which <strong>kind</strong> of document to write at each phase of development &mdash;
+          plan &rarr; architecture &rarr; implementation &mdash; and the living-state layer that
+          keeps them honest. Each phase answers a different question; the docs are the artifacts
+          of those answers.
+        </p>
+        <div class="meta">
+          <span class="badge badge--accent">Living standard</span>
+          <span class="badge">Applies to: all repos</span>
+          <span>Last updated 2026-05-28</span>
+        </div>
+      </header>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="purpose">
+        <h2><span class="num">01</span>Purpose</h2>
+        <p>
+          A document is only useful if it answers the question you actually have. The three
+          development phases each ask a different question, so each produces a different kind of
+          doc &mdash; with a different audience, level of detail, and shelf life. This standard
+          names those doc types so a new doc has an obvious home and a reader knows what to expect.
+        </p>
+        <p>The backbone, stated as a relay of questions:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Phase</th><th>Answers</th><th>This repo's example</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><strong>Plan</strong></td><td><em>What</em> are we building, and <em>why</em>?</td><td><code>docs/user-stories.md</code></td></tr>
+              <tr><td><strong>Architecture</strong></td><td><em>How</em> does the system fit together? What did we decide and trade off?</td><td><code>docs/architecture.md</code></td></tr>
+              <tr><td><strong>Implementation</strong></td><td><em>How</em>, concretely, and <em>in what order</em>?</td><td><code>docs/implementation.md</code></td></tr>
+              <tr><td><strong>Living state</strong></td><td>Where did we leave off, right now?</td><td><code>docs/next_steps.md</code></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout note">
+          <span class="label">Companion</span>
+          This doc governs <em>which doc to write</em>. Its sibling,
+          <a href="./html-doc-standards.html">HTML Documentation Standards</a>, governs
+          <em>how to format</em> whichever doc you land on.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="flow">
+        <h2><span class="num">02</span>The phase flow</h2>
+        <p>
+          Phases flow forward but loop back &mdash; implementation surfaces facts that revise the
+          architecture; real use revises the plan. The living-state doc sits beside all three,
+          recording where the loop currently is.
+        </p>
+        <figure class="diagram">
+          <pre class="mermaid">
+graph LR
+    subgraph Plan["① Plan — what / why"]
+        G["General<br/>overview"]
+        SK["Sketchpad<br/>(exploratory)"]
+        US["User stories<br/>(prioritized)"]
+    end
+    subgraph Arch["② Architecture — how it fits"]
+        AD["Design choices<br/>+ trade-offs"]
+        GR["Diagrams<br/>(context, layers, flow)"]
+    end
+    subgraph Impl["③ Implementation — how / in what order"]
+        MS["Milestones<br/>(granular steps)"]
+        AC["Acceptance<br/>criteria"]
+    end
+    SK --> US
+    G --> US
+    US -->|"feeds"| AD
+    AD --> GR
+    GR -->|"feeds"| MS
+    MS --> AC
+    AC -.->|"learnings revise"| AD
+    AD -.->|"learnings revise"| US
+    Live["Living state<br/>(next_steps)"]
+    US -.-> Live
+    GR -.-> Live
+    AC -.-> Live
+          </pre>
+          <figcaption>Solid = hand-off; dotted = feedback &amp; running-state. The living doc tracks the loop's current position.</figcaption>
+        </figure>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="plan">
+        <h2><span class="num">03</span>Phase 1 &mdash; Plan</h2>
+        <p>
+          The plan phase establishes <strong>what</strong> we're building and <strong>why</strong>,
+          before committing to <em>how</em>. It is deliberately implementation-free: a plan doc that
+          names a database table has leaked into the next phase. Three doc types live here, from
+          loosest to most structured.
+        </p>
+
+        <h3 id="plan-general">General / overview</h3>
+        <p>
+          The orienting document &mdash; vision, goals, operating constraints, non-goals. One page a
+          newcomer reads first. In this repo the role is filled by the opening of
+          <code>user-stories.md</code> and the "Goals and Operating Context" section of
+          <code>architecture.md</code> (single-user, self-hosted, small hardware budget, flaky
+          external APIs). Those constraints are <em>why</em> later decisions look the way they do.
+        </p>
+        <ul>
+          <li><strong>In:</strong> vision, success criteria, hard constraints, explicit non-goals.</li>
+          <li><strong>Out:</strong> schemas, file paths, step-by-step plans.</li>
+        </ul>
+
+        <h3 id="plan-sketchpad">Sketchpad</h3>
+        <p>
+          The thinking-out-loud doc: rough ideas, open questions, options not yet chosen, half-formed
+          designs. Low ceremony, explicitly disposable &mdash; nothing here is a commitment. In this
+          repo, sketchpad thinking lives inside <code>next_steps.md</code> ("Open questions",
+          "design wave" notes) and the "Open product calls" asides scattered through
+          <code>implementation.md</code> rather than a standalone file. Promote a sketch into a user
+          story or a design decision once it firms up; prune it once it's resolved.
+        </p>
+        <div class="callout do">
+          <span class="label">Do</span>
+          Date sketchpad entries (absolute ISO) and mark unknowns as open questions. A sketchpad's
+          value is capturing the option you <em>didn't</em> take and why.
+        </div>
+
+        <h3 id="plan-stories">User stories</h3>
+        <p>
+          The structured heart of the plan: discrete, prioritized statements of need in
+          <em>"As a &lt;role&gt;, I want &lt;capability&gt; so that &lt;benefit&gt;"</em> form.
+          This repo's <code>user-stories.md</code> is the model &mdash; numbered stories
+          (<code>S1.1</code>, <code>S2.3</code>) grouped by feature area, each tagged with a
+          priority and a status:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Marker</th><th>Meaning</th><th>Kind</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><span class="badge" style="color:#fb7185;border-color:#fb7185">🔴</span></td><td>Must-have for next ship</td><td>Priority</td></tr>
+              <tr><td><span class="badge" style="color:#fbbf24;border-color:#fbbf24">🟡</span></td><td>Important</td><td>Priority</td></tr>
+              <tr><td><span class="badge" style="color:#22d3ee;border-color:#22d3ee">🔵</span></td><td>Nice-to-have / later</td><td>Priority</td></tr>
+              <tr><td><span class="badge badge--do">✅</span></td><td>Shipped end-to-end</td><td>Status</td></tr>
+              <tr><td><span class="badge">◐ / ⛔</span></td><td>Partial / user-declined</td><td>Status</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn">
+          <span class="label">Keep priority ≠ status</span>
+          A 🔴 story can still be unbuilt. Don't collapse "how badly we want it" and "is it done"
+          into one symbol &mdash; <code>user-stories.md</code> tracks both independently, and so should
+          yours.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="architecture">
+        <h2><span class="num">04</span>Phase 2 &mdash; Architecture</h2>
+        <p>
+          The architecture phase answers <strong>how the system fits together</strong> &mdash; the
+          structure, the decisions, and the trade-offs behind them. It is <strong>graph-heavy by
+          design</strong>: a system-context diagram, a layering diagram, and data-flow diagrams carry
+          more than paragraphs can. <code>docs/architecture.md</code> is the exemplar &mdash; it opens
+          with a Mermaid system-context graph, then a layered-architecture table, then per-subsystem
+          data flows, and is explicit that <em>"where this document and the code disagree, the code
+          wins."</em>
+        </p>
+        <h4>What an architecture doc contains</h4>
+        <ul>
+          <li><strong>Design choices / decision records</strong> &mdash; what we picked, the alternatives, and <em>why</em> (e.g. "markdown-as-source-of-truth", "in-process cache that survives HMR via <code>globalThis</code>"). Capture the reasoning so it isn't re-litigated.</li>
+          <li><strong>Diagrams, lots of them</strong> &mdash; system context (boundaries &amp; external integrations), layered/component structure, and data-flow / sequence for the non-obvious paths. Mermaid only (see the <a href="./html-doc-standards.html#diagrams">format rules</a>).</li>
+          <li><strong>Trade-offs &amp; risks</strong> &mdash; what the design is bad at, and the constraints that forced it.</li>
+        </ul>
+        <figure class="diagram">
+          <pre class="mermaid">
+graph TB
+    US["User stories<br/>(what / why)"] --> DC["Design choices<br/>(what / why-this-way)"]
+    DC --> CTX["System-context<br/>diagram"]
+    DC --> LAY["Layering<br/>diagram"]
+    DC --> FLOW["Data-flow<br/>diagrams"]
+    CTX --> TO["Trade-offs<br/>+ risks"]
+    LAY --> TO
+    FLOW --> TO
+          </pre>
+          <figcaption>An architecture doc turns the <em>what/why</em> of the plan into a <em>how-it-fits</em>, mostly through diagrams.</figcaption>
+        </figure>
+        <div class="callout note">
+          <span class="label">Surface vs. synthesis</span>
+          Architecture splits into <strong>focused reference</strong> docs (this repo:
+          <code>apis.md</code>, <code>frontend_terminology.md</code>, <code>hosting.md</code> &mdash;
+          one subsystem each) and a <strong>synthesis</strong> doc (<code>architecture.md</code>) that
+          ties them together. Big systems want both; small ones can start with synthesis only.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="implementation">
+        <h2><span class="num">05</span>Phase 3 &mdash; Implementation</h2>
+        <p>
+          The implementation phase answers <strong>how, concretely, and in what order</strong>. This
+          is the granular layer: numbered milestones broken into sub-steps, each with file paths,
+          schema/API shapes, acceptance criteria, and a status. <code>docs/implementation.md</code> is
+          the exemplar &mdash; it states up front that <code>user-stories.md</code> says <em>what/why</em>
+          while it says <em>how / in what order</em>, then walks milestones like <code>M7.7</code>
+          down to ordered sub-tasks (<code>M7.7.1</code> schema &rarr; <code>M7.7.2</code> rewrite &rarr; …).
+        </p>
+        <h4>What an implementation doc contains</h4>
+        <ul>
+          <li><strong>Milestones &amp; ordered sub-steps</strong> &mdash; small enough to do in one sitting; the order encodes dependencies.</li>
+          <li><strong>Concrete shapes</strong> &mdash; the touched file paths, table columns, API contracts, the migration name. Specific enough to act on without re-deriving.</li>
+          <li><strong>Acceptance criteria</strong> &mdash; how you know a step is done (a passing smoke, an observed behavior).</li>
+          <li><strong>A status legend</strong> &mdash; this repo uses ✅ shipped · ◐ partial · 🟢 in&nbsp;progress · ⏳ planned · 💤 deferred · ⛔ declined · ❌ killed. Mark each milestone so the doc never overstates progress.</li>
+          <li><strong>Story back-references</strong> &mdash; every milestone names the user stories it satisfies, closing the loop to Phase 1.</li>
+        </ul>
+        <div class="ddgrid">
+          <div class="callout do">
+            <span class="label">Do</span>
+            Make steps small, ordered, and individually verifiable. Cite the exact file
+            (<code>lib/resumes/select.ts</code>) and the migration name. Mark status honestly.
+          </div>
+          <div class="callout dont">
+            <span class="label">Don't</span>
+            Restate the <em>why</em> here (that's the plan) or re-explain the structure (that's
+            architecture). Don't let a shipped milestone keep a ⏳ &mdash; a stale status is the
+            failure mode this phase is most prone to.
+          </div>
+        </div>
+        <div class="callout note">
+          <span class="label">Focused implementation docs</span>
+          A single thorny mechanism can earn its own implementation doc &mdash; this repo has
+          <code>resume-pipeline.md</code> (the selection algorithm + a "touch list" for adding a
+          field) and <code>close-detection-probe.md</code> (a probe-gated rollout + runbook).
+          Spin one off when a subsystem's how-to outgrows a milestone entry.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="living">
+        <h2><span class="num">06</span>The living-state layer</h2>
+        <p>
+          Across all three phases sits one perpetually-current doc: the <strong>living state</strong>.
+          It is not a phase &mdash; it's the running log of <em>where the loop is right now</em>: what
+          the last session did, what's in flight, what's blocked, today's critical path, parked TODOs.
+          This repo's <code>next_steps.md</code> fills the role and is read at the start of every
+          session and updated at the end of every one.
+        </p>
+        <div class="ddgrid">
+          <div class="callout do">
+            <span class="label">Do — living state</span>
+            Capture <em>state-derivable</em> facts: uncommitted work, decisions deferred to "next
+            time", critical-path ordering. Use absolute ISO dates. Keep it short and current.
+          </div>
+          <div class="callout dont">
+            <span class="label">Don't — living state</span>
+            Store <em>code-derivable</em> facts (architecture, conventions) here &mdash; those belong
+            in the architecture doc or a project guide. A living doc that accretes durable facts stops
+            being readable.
+          </div>
+        </div>
+        <p>The clean separation this repo enforces &mdash; worth copying:</p>
+        <figure class="diagram">
+          <pre class="mermaid">
+graph LR
+    US["user-stories<br/>what + why"] -->|"feeds order"| IMPL["implementation<br/>how + in what order"]
+    ARCH["architecture<br/>how it fits"] -->|"grounds"| IMPL
+    IMPL -.->|"current status"| NEXT["next_steps<br/>where we are now"]
+    US -.-> NEXT
+    GUIDE["project guide<br/>(durable conventions)"] -.->|"not here"| NEXT
+          </pre>
+          <figcaption>Each doc answers exactly one question; the living doc points at the next concrete action without duplicating the others.</figcaption>
+        </figure>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="which">
+        <h2><span class="num">07</span>Which doc do I write?</h2>
+        <p>Match the question you're holding to the doc that answers it:</p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>If you're asking…</th><th>Write / update</th><th>Phase</th><th>Detail level</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>"Should we even build this? What's the goal?"</td><td>General / overview</td><td>Plan</td><td>High-level</td></tr>
+              <tr><td>"What are the options? I'm not sure yet."</td><td>Sketchpad</td><td>Plan</td><td>Rough, disposable</td></tr>
+              <tr><td>"What exactly do users need, and how badly?"</td><td>User stories</td><td>Plan</td><td>Discrete, prioritized</td></tr>
+              <tr><td>"How do the pieces fit? What are we trading off?"</td><td>Architecture / design choices</td><td>Architecture</td><td>Structural, diagram-heavy</td></tr>
+              <tr><td>"What are the concrete steps, in order?"</td><td>Implementation / milestones</td><td>Implementation</td><td>Granular, file-level</td></tr>
+              <tr><td>"Where did we leave off? What's next?"</td><td>Living state</td><td>(all)</td><td>Current, terse</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn">
+          <span class="label">One question per doc</span>
+          When a doc starts answering a second question &mdash; a user-stories file sprouting schema
+          tables, an implementation doc re-arguing the <em>why</em> &mdash; that's the signal to split
+          it. Cross-link instead of duplicating.
+        </div>
+      </section>
+
+      <!-- ---------------------------------------------------------------- -->
+      <section id="lifecycle">
+        <h2><span class="num">08</span>Lifecycle &amp; maturity</h2>
+        <p>
+          A topic moves through the phases over time, and each doc carries a maturity badge in its
+          <code>.meta</code> row so readers know how much to trust it:
+        </p>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Badge</th><th>Meaning</th><th>Typical phase</th></tr>
+            </thead>
+            <tbody>
+              <tr><td><span class="badge badge--warn">Draft</span></td><td>Still forming; expect churn</td><td>Plan / sketchpad</td></tr>
+              <tr><td><span class="badge badge--accent">Living</span></td><td>Continuously updated; current by design</td><td>Living state</td></tr>
+              <tr><td><span class="badge badge--do">Stable</span></td><td>Settled; changes are deliberate</td><td>Architecture / shipped implementation</td></tr>
+              <tr><td><span class="badge">Archived</span></td><td>Historical; superseded but kept for context</td><td>any (moved to <code>docs/archive/</code>)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>
+          The forward arrow isn't one-way: a shipped milestone teaches you something that revises the
+          architecture, and real-world use revises the plan. Keep the feedback dotted-arrow alive &mdash;
+          when implementation contradicts the architecture doc, fix the doc (or note the divergence)
+          rather than letting it rot.
+        </p>
+      </section>
+
+      <footer class="doc-footer">
+        <p>
+          Content standard for Mission Control documentation · pairs with
+          <a href="./html-doc-standards.html">HTML Documentation Standards</a>.
+          Live examples in this repo:
+          <a href="./user-stories.md">user-stories</a> ·
+          <a href="./architecture.md">architecture</a> ·
+          <a href="./implementation.md">implementation</a> ·
+          <a href="./next_steps.md">next_steps</a>.
+        </p>
+      </footer>
+    </main>
+  </div>
+
+  <script type="module" src="assets/doc.js"></script>
+</body>
+</html>

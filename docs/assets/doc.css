@@ -1,0 +1,412 @@
+/* =========================================================================
+   doc.css — shared stylesheet for Mission Control HTML documentation.
+
+   This is the single source of truth for how every converted doc looks.
+   Edit here once; every doc that links it updates. Conventions for *using*
+   this stylesheet live in docs/html-doc-standards.html.
+   ========================================================================= */
+
+:root {
+  /* Surfaces */
+  --bg:            #0a0c0f;
+  --bg-grad-1:     #0d1117;
+  --bg-grad-2:     #090b0e;
+  --panel:         rgba(0, 0, 0, 0.40);
+  --panel-solid:   #11151a;
+  --code-bg:       #0d1117;
+
+  /* Lines */
+  --border:        rgba(255, 255, 255, 0.07);
+  --border-strong: rgba(255, 255, 255, 0.12);
+  --border-accent: rgba(34, 211, 238, 0.35);
+
+  /* Text */
+  --text:          #d6dde5;
+  --text-dim:      #93a0ad;
+  --text-faint:    #5c6773;
+
+  /* Accent (cyan, mirrors the app) */
+  --accent:        #22d3ee;
+  --accent-strong: #06b6d4;
+  --accent-soft:   rgba(34, 211, 238, 0.12);
+
+  /* Semantic */
+  --do:            #34d399;
+  --do-soft:       rgba(52, 211, 153, 0.10);
+  --dont:          #fb7185;
+  --dont-soft:     rgba(251, 113, 133, 0.10);
+  --warn:          #fbbf24;
+  --warn-soft:     rgba(251, 191, 36, 0.10);
+  --note:          #818cf8;
+  --note-soft:     rgba(129, 140, 248, 0.10);
+
+  /* Type */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+               Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, Consolas,
+               "Liberation Mono", monospace;
+
+  --radius:    10px;
+  --radius-sm: 6px;
+  --maxw:      820px;
+  --sidebar-w: 250px;
+}
+
+/* ---------- Reset-ish ---------------------------------------------------- */
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(34, 211, 238, 0.06), transparent 60%),
+    linear-gradient(180deg, var(--bg-grad-1), var(--bg-grad-2));
+  background-attachment: fixed;
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- Layout ------------------------------------------------------- */
+.layout {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  gap: 2.5rem;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100vh;
+  overflow-y: auto;
+  padding: 1.75rem 0.5rem 2rem 0;
+  border-right: 1px solid var(--border);
+}
+
+.content {
+  min-width: 0;            /* let code blocks / tables shrink instead of overflow the grid */
+  max-width: var(--maxw);
+  padding: 2.5rem 0 5rem;
+}
+
+/* ---------- Sidebar / TOC ------------------------------------------------ */
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  font-family: var(--font-mono);
+  font-size: 0.82rem;
+  letter-spacing: 0.04em;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  margin-bottom: 1.25rem;
+  padding-left: 0.65rem;
+}
+.brand .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  flex: none;
+}
+
+.toc { font-size: 0.9rem; }
+.toc a {
+  display: block;
+  padding: 0.28rem 0.65rem;
+  margin: 1px 0;
+  color: var(--text-dim);
+  text-decoration: none;
+  border-left: 2px solid transparent;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.toc a:hover {
+  color: var(--text);
+  background: var(--accent-soft);
+}
+.toc a.sub {
+  padding-left: 1.6rem;
+  font-size: 0.84rem;
+  color: var(--text-faint);
+}
+.toc a.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+/* ---------- Document header --------------------------------------------- */
+.doc-header { margin-bottom: 2.5rem; }
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin: 0 0 0.5rem;
+}
+.doc-header h1 {
+  font-size: 2.3rem;
+  line-height: 1.15;
+  margin: 0 0 0.75rem;
+  letter-spacing: -0.01em;
+}
+.lede {
+  font-size: 1.12rem;
+  color: var(--text-dim);
+  margin: 0 0 1.25rem;
+}
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+}
+
+/* ---------- Headings ----------------------------------------------------- */
+h2, h3, h4 { line-height: 1.25; letter-spacing: -0.01em; }
+h2 {
+  font-size: 1.55rem;
+  margin: 3rem 0 1rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--border);
+  scroll-margin-top: 1.5rem;
+}
+h2 .num {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  color: var(--accent);
+  margin-right: 0.5rem;
+}
+h3 {
+  font-size: 1.2rem;
+  margin: 2rem 0 0.75rem;
+  color: #eef3f7;
+  scroll-margin-top: 1.5rem;
+}
+h4 {
+  font-size: 1rem;
+  margin: 1.5rem 0 0.5rem;
+  color: var(--text-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* Hover anchor links on headings */
+.anchor {
+  margin-left: 0.4rem;
+  color: var(--text-faint);
+  text-decoration: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  font-weight: 400;
+}
+h2:hover .anchor,
+h3:hover .anchor { opacity: 1; }
+
+/* ---------- Prose -------------------------------------------------------- */
+p { margin: 0 0 1rem; }
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; text-underline-offset: 2px; }
+
+ul, ol { margin: 0 0 1rem; padding-left: 1.4rem; }
+li { margin: 0.3rem 0; }
+li::marker { color: var(--accent-strong); }
+
+strong { color: #eef3f7; font-weight: 650; }
+
+hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 2.5rem 0;
+}
+
+/* ---------- Code --------------------------------------------------------- */
+code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--accent-soft);
+  color: #a5f3fc;
+  padding: 0.1em 0.4em;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+}
+pre {
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.1rem;
+  overflow-x: auto;
+  margin: 0 0 1.25rem;
+  font-size: 0.85rem;
+  line-height: 1.55;
+}
+pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  color: #c9d4de;
+  font-size: inherit;
+}
+/* lightweight token tints applied via <span class="t-*"> in markup */
+.t-tag  { color: #7ee0f0; }
+.t-attr { color: #c4b5fd; }
+.t-str  { color: #86efac; }
+.t-com  { color: var(--text-faint); font-style: italic; }
+.t-kw   { color: #f0abfc; }
+
+/* ---------- Callouts (do / don't / note / warn) -------------------------- */
+.callout {
+  border: 1px solid var(--border);
+  border-left-width: 3px;
+  border-radius: var(--radius-sm);
+  padding: 0.9rem 1.1rem;
+  margin: 0 0 1.25rem;
+  background: var(--panel);
+}
+.callout > :last-child { margin-bottom: 0; }
+.callout .label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: 0.4rem;
+}
+.callout.do      { border-left-color: var(--do);   background: var(--do-soft); }
+.callout.do   .label { color: var(--do); }
+.callout.dont    { border-left-color: var(--dont); background: var(--dont-soft); }
+.callout.dont .label { color: var(--dont); }
+.callout.note    { border-left-color: var(--note); background: var(--note-soft); }
+.callout.note .label { color: var(--note); }
+.callout.warn    { border-left-color: var(--warn); background: var(--warn-soft); }
+.callout.warn .label { color: var(--warn); }
+
+/* Side-by-side do / don't pair */
+.ddgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+.ddgrid .callout { margin-bottom: 0; }
+
+/* ---------- Tables ------------------------------------------------------- */
+.table-wrap { overflow-x: auto; margin: 0 0 1.5rem; }
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+thead th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--border-accent);
+  white-space: nowrap;
+}
+tbody td {
+  padding: 0.6rem 0.85rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+tbody tr:hover { background: rgba(255, 255, 255, 0.02); }
+tbody tr:last-child td { border-bottom: none; }
+
+/* ---------- Badges ------------------------------------------------------- */
+.badge {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-dim);
+  background: var(--panel);
+  white-space: nowrap;
+}
+.badge--accent { color: var(--accent); border-color: var(--border-accent); background: var(--accent-soft); }
+.badge--do     { color: var(--do);   border-color: var(--do);   background: var(--do-soft); }
+.badge--warn   { color: var(--warn); border-color: var(--warn); background: var(--warn-soft); }
+
+/* ---------- Mermaid diagrams -------------------------------------------- */
+figure.diagram {
+  margin: 0 0 1.5rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1.25rem 1rem 0.75rem;
+}
+.mermaid {
+  display: flex;
+  justify-content: center;
+  /* mermaid renders sync once doc.js inits it */
+}
+.mermaid:not([data-processed]) {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
+figcaption {
+  margin-top: 0.5rem;
+  text-align: center;
+  font-size: 0.82rem;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* ---------- Footer ------------------------------------------------------- */
+.doc-footer {
+  margin-top: 4rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+  color: var(--text-faint);
+}
+.doc-footer a { color: var(--text-dim); }
+
+/* ---------- Responsive --------------------------------------------------- */
+@media (max-width: 880px) {
+  .layout {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .sidebar {
+    position: static;
+    height: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    padding: 1.25rem 0;
+    margin-bottom: 1rem;
+  }
+  .content { padding-top: 1.5rem; }
+  .ddgrid { grid-template-columns: 1fr; }
+  .doc-header h1 { font-size: 1.8rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  * { transition: none !important; }
+}
