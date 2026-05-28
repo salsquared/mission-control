@@ -59,6 +59,14 @@ function pruneExpiredL1(): number {
     return pruned;
 }
 if (!(globalThis as any).__apiCachePruner) {
+    // Kick once on next event-loop tick so entries that expire within the
+    // first L1_PRUNE_INTERVAL_MS window get pruned promptly. Mirrors
+    // scheduler/index.ts's "don't wait an interval before the first tick"
+    // pattern (audit-bug F + #9, 2026-05-27 consistency fix). setInterval
+    // alone waits L1_PRUNE_INTERVAL_MS before the first invocation, so an
+    // entry written 10s after process start with a 30s TTL would survive
+    // ~5min beyond its expiry on the first cycle.
+    setTimeout(pruneExpiredL1, 0);
     (globalThis as any).__apiCachePruner = setInterval(pruneExpiredL1, L1_PRUNE_INTERVAL_MS);
     // Don't let the timer hold the event loop open at shutdown.
     if (typeof (globalThis as any).__apiCachePruner?.unref === 'function') {

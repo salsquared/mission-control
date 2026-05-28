@@ -5,14 +5,29 @@ import { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
 import { loadPrompt } from "@/lib/ai/prompts";
 
+// Single source of truth for the model id. Kept in sync with `MODEL_LITE` in
+// lib/ai/gemini.ts; there's no shared symbol because the Vercel AI SDK wraps
+// the model name into a provider call inline. Bumping the model means
+// editing this line + MODEL_LITE — the [FIXTURE] log, the Lunary trace
+// `extra.model`, and the actual SDK call all read from here so the trace
+// can never disagree with what really ran.
+const MODEL_ID = "gemini-3.1-flash-lite";
+
 // LOP-5: this callsite bypasses `chatJSON` (uses Vercel AI SDK directly) so
 // LOP-3's wrapModel can't reach it. Track manually instead. Same gate as
 // gemini.ts so dev / CI runs without the key are a no-op.
-const LUNARY_ENABLED = Boolean(process.env.LUNARY_PUBLIC_KEY);
+//
+// Read at call time, NOT module-init — matches lib/ai/prompts.ts:lunaryEnabled.
+// Module-init read would freeze the choice on first import, so an ad-hoc tsx
+// script that imports email-parser before its env loader runs would silently
+// lose all traces even after the key was populated.
+function lunaryEnabled(): boolean {
+    return Boolean(process.env.LUNARY_PUBLIC_KEY);
+}
 
 // Defensive wrapper — a Lunary failure must never disrupt email ingest.
 function safeTrack(event: "start" | "end" | "error", data: Record<string, unknown>): void {
-    if (!LUNARY_ENABLED) return;
+    if (!lunaryEnabled()) return;
     try {
         // trackEvent's `Partial<RunEvent>` has an index signature, so the
         // top-level `name` from this object lands as the run name.
@@ -162,7 +177,7 @@ export async function parseApplicationEmail(
   if (process.env.CAPTURE_FIXTURES === "1") {
     console.info("[FIXTURE]", JSON.stringify({
       name: "email-parser",
-      model: "gemini-3.1-flash-lite",
+      model: MODEL_ID,
       system: undefined,
       user: prompt,
     }));
@@ -175,18 +190,16 @@ export async function parseApplicationEmail(
     runId,
     name: "email-parser",
     input: [{ role: "user", content: prompt }],
-    extra: { model: "gemini-3.1-flash-lite", anchor, from, subject },
+    extra: { model: MODEL_ID, anchor, from, subject },
   });
 
   try {
     const result = await generateObject({
-      // Pinned to Gemini 3.1 Flash-lite — the highest-volume caller in the
-      // app (one call per inbound Gmail message + backfill). Mechanical
-      // extraction (relevance gate + a handful of structured fields) doesn't
-      // need full Flash. Kept in sync with `MODEL_LITE` in lib/ai/gemini.ts;
-      // there's no shared symbol because the Vercel AI SDK wraps the model
-      // name into a provider call inline. See docs/llm-calls.md.
-      model: getProvider()("gemini-3.1-flash-lite"),
+      // Pinned to Gemini 3.1 Flash-lite (via MODEL_ID) — the highest-volume
+      // caller in the app (one call per inbound Gmail message + backfill).
+      // Mechanical extraction (relevance gate + a handful of structured
+      // fields) doesn't need full Flash. See docs/llm-calls.md.
+      model: getProvider()(MODEL_ID),
       schema: applicationSchema,
       prompt,
     });

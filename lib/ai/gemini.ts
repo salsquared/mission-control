@@ -3,10 +3,16 @@ import lunary from "lunary";
 import type { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
 
-// LOP-3: gate Lunary wrapping at module-init so dev / test / CI runs without
-// the public key are a true no-op (no queueing, no event loop hits). When
-// LUNARY_PUBLIC_KEY is unset, `tracedGenerate` is just `rawGenerate`.
-const LUNARY_ENABLED = Boolean(process.env.LUNARY_PUBLIC_KEY);
+// LOP-3 + audit-bug #10: gate Lunary wrapping at CALL time, not module-init.
+// Dev / test / CI runs without the public key are still a true no-op (no
+// queueing, no event loop hits) — `tracedGenerate` short-circuits to
+// `rawGenerate` whenever the env is empty. Reading at call time matches
+// lib/ai/prompts.ts:lunaryEnabled, so ad-hoc tsx scripts that import this
+// module before their env loader runs still pick up Lunary correctly once
+// the env settles.
+function lunaryEnabled(): boolean {
+    return Boolean(process.env.LUNARY_PUBLIC_KEY);
+}
 
 // LOP-9: when set, dump every chatJSON call's rendered (system, user) pair to
 // console.info as a single line: `[FIXTURE] {"name":..., "model":..., "system":..., "user":...}`.
@@ -128,7 +134,7 @@ async function withRetry<T>(fn: () => Promise<T>, config: RetryConfig = DEFAULT_
 }
 
 // LOP-3: inner generate function — the actual Gemini SDK call. Wrapped below
-// by lunary.wrapModel when LUNARY_ENABLED so every call is traced; bypassed
+// by lunary.wrapModel when lunaryEnabled() so every call is traced; bypassed
 // entirely when the public key is unset.
 interface GenerateArgs {
     name: string;
@@ -167,8 +173,15 @@ async function rawGenerate(args: GenerateArgs) {
     });
 }
 
-const tracedGenerate = LUNARY_ENABLED
-    ? lunary.wrapModel(rawGenerate, {
+// Wrapper is built lazily on first traced call and memoized — we don't pay
+// the wrapModel cost on processes that never enable Lunary, and we don't
+// freeze the choice at import time. Subsequent calls re-use the cached
+// wrapper. If LUNARY_PUBLIC_KEY toggles OFF mid-process, future calls bypass
+// the wrapper via the `lunaryEnabled()` check below.
+let _wrappedGenerate: typeof rawGenerate | null = null;
+function getWrappedGenerate(): typeof rawGenerate {
+    if (_wrappedGenerate) return _wrappedGenerate;
+    _wrappedGenerate = lunary.wrapModel(rawGenerate, {
         nameParser: (args) => args.name,
         inputParser: (args) => {
             const messages: { role: "system" | "user"; content: string }[] = [];
@@ -186,8 +199,13 @@ const tracedGenerate = LUNARY_ENABLED
             prompt: res?.usageMetadata?.promptTokenCount ?? 0,
             completion: res?.usageMetadata?.candidatesTokenCount ?? 0,
         }),
-    })
-    : rawGenerate;
+    });
+    return _wrappedGenerate;
+}
+
+function tracedGenerate(args: Parameters<typeof rawGenerate>[0]): ReturnType<typeof rawGenerate> {
+    return lunaryEnabled() ? getWrappedGenerate()(args) : rawGenerate(args);
+}
 
 /**
  * Run a single-turn JSON-mode prompt against Gemini and validate the response
