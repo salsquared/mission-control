@@ -47,6 +47,6 @@ Return JSON with these fields:
 - Conservative `temperature: 0.2` because this is extraction, not exploration.
 - Output schema: `title | company | location | seniority` are nullable strings; `keywords` is a 1–40 entry array of `{keyword, importance}` objects (Zod validates min 1, max 40; importance bounded 1–5). Bare string entries are accepted for back-compat (legacy Lunary templates that haven't been re-synced) and normalized to `{keyword, importance: 1}` in `parsePosting`.
 - The `importance` field is read by `lib/resumes/select.ts:scoreBullet` as a per-keyword multiplier on `TAG_WEIGHT` and `SUBSTRING_WEIGHT`. A bullet matching a keyword with importance=5 contributes 5× the score of one matching importance=1. This is how the scorer distinguishes domain-differentiating keywords (Space Systems) from commodity ones (JavaScript) without hard-coded weights.
-- Tightened from 12 KB to 8 KB input on 2026-05-19 alongside model swap to flash-lite. See `docs/llm-calls.md` change log.
+- Tightened from 12 KB to 8 KB input on 2026-05-19 alongside model swap to flash-lite. See `docs/llm-calls.html` change log.
 - Output drives the deterministic bullet scorer in `lib/resumes/select.ts` and the rewrite prompt in `resume-rewrite`. Keyword quality matters more than title/company accuracy here.
 - Conservative wording ("if a field is not clearly stated, return null") combats a known failure where the model would guess company from the URL path.

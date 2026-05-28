@@ -71,7 +71,7 @@ export async function extractProfileFromText(text: string, filename: string): Pr
         // extraction with no judgment calls; flash-lite is sufficient.
         // 32k output budget retained because nested bullet arrays across
         // many roles + projects + education can legitimately need it.
-        // See docs/llm-calls.md.
+        // See docs/llm-calls.html.
         maxOutputTokens: 32_768,
     });
 }

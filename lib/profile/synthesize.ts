@@ -121,10 +121,47 @@ function summarizeDrafts(drafts: { filename: string; tree: ExtractedProfile }[])
     );
 }
 
+/**
+ * True when the Flash synthesis pass has no work to do and can be skipped:
+ * exactly one uploaded draft AND a profile with zero existing entities.
+ *
+ * Synthesize earns its (expensive — FLASH, 32k output) call by doing two
+ * things: cross-FILE consolidation (dedup the same entity across N resumes,
+ * pick the winning wording) and cross-CATEGORY re-resolution against what the
+ * user already has. With a single draft into an empty profile there is no
+ * second file to reconcile and nothing existing to merge against — and the
+ * per-file extractor (`profile-import`) already runs the same project-vs-role
+ * classification (its rule 4 / synthesize's rule 5 are the same guidance). So
+ * the single extracted tree IS the canonical master; the downstream
+ * deterministic merge applies it unchanged.
+ *
+ * Deliberately narrow. With ≥2 drafts (cross-file dedup is the core job) or a
+ * non-empty profile (existing-merge reconciliation), the Flash pass still runs.
+ * Header-only existing profiles still count as empty here: `mergeImports` does
+ * append-never-overwrite header merging deterministically, same as synthesize's
+ * rule 8.
+ */
+export function canSkipSynthesis(
+    existing: ExistingProfileForMerge,
+    drafts: { filename: string; tree: ExtractedProfile }[],
+): boolean {
+    if (drafts.length !== 1) return false;
+    return existing.workRoles.length === 0
+        && existing.projects.length === 0
+        && existing.education.length === 0;
+}
+
 export async function synthesizeMasterResume(
     existing: ExistingProfileForMerge,
     drafts: { filename: string; tree: ExtractedProfile }[],
 ): Promise<ExtractedProfile> {
+    if (canSkipSynthesis(existing, drafts)) {
+        console.info(
+            "[profile-synthesize] skipped (single file + empty profile) — using extraction verbatim, no Flash call",
+        );
+        return drafts[0].tree;
+    }
+
     const existingJson = summarizeExisting(existing);
     let draftsJson = summarizeDrafts(drafts);
 

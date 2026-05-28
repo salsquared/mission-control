@@ -80,7 +80,7 @@ async function classifyOneBatch(
         temperature: 0.1,
         // Pure enum picker — output space is { full-time | part-time |
         // internship | contract | temporary | null } per item. Cheapest
-        // model is invisible-quality here. See docs/llm-calls.md.
+        // model is invisible-quality here. See docs/llm-calls.html.
         model: MODEL_LITE_CHEAP,
         // 50-item array of short enum strings — worst-case ~400 tokens. 1024
         // leaves headroom for array wrapping and surfaces any unexpected

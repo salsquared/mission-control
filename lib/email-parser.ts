@@ -151,7 +151,7 @@ export async function parseApplicationEmail(
   // status verb, action ask). 3KB captures the meaningful portion; the rest
   // is signature blocks, legal boilerplate, and forwarded threads. Tightened
   // from 6KB on 2026-05-19 alongside the model swap to flash-lite — see
-  // docs/llm-calls.md.
+  // docs/llm-calls.html.
   const trimmedBody = emailContent.length > 3000 ? emailContent.slice(0, 3000) + "\n…[truncated]" : emailContent;
   const anchor = (sentAt ?? new Date()).toISOString();
 
@@ -198,7 +198,7 @@ export async function parseApplicationEmail(
       // Pinned to Gemini 3.1 Flash-lite (via MODEL_ID) — the highest-volume
       // caller in the app (one call per inbound Gmail message + backfill).
       // Mechanical extraction (relevance gate + a handful of structured
-      // fields) doesn't need full Flash. See docs/llm-calls.md.
+      // fields) doesn't need full Flash. See docs/llm-calls.html.
       model: getProvider()(MODEL_ID),
       schema: applicationSchema,
       prompt,

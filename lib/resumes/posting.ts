@@ -1,8 +1,14 @@
 import * as cheerio from "cheerio";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { chatJSON } from "@/lib/ai/gemini";
 import { loadPrompt } from "@/lib/ai/prompts";
 import { assertExternalHttpUrl, assertSafeResponseUrl } from "@/lib/security/url-guard";
+
+// Test seam: parsePosting accepts an injectable chat function so hermetic
+// smokes can count LLM calls (and assert the cache below actually elides
+// them) without mocking the module. Defaults to the real chatJSON.
+export type ChatJSONFn = typeof chatJSON;
 
 export interface PostingInput {
     url?: string;
@@ -53,11 +59,69 @@ const PostingExtractSchema = z.object({
 // Job postings have their signal up top — title, must-haves, tech stack.
 // The tail is benefits/equal-opportunity/legal boilerplate. 8KB captures
 // the meaningful portion; tightened from 12KB on 2026-05-19 alongside the
-// model swap to flash-lite. See docs/llm-calls.md.
+// model swap to flash-lite. See docs/llm-calls.html.
 const MAX_INPUT_CHARS = 8_000;
 
 function clean(s: string): string {
     return s.replace(/[ \s]+/g, " ").trim();
+}
+
+// ─── posting-parse result cache ──────────────────────────────────────────
+//
+// parsePosting is invoked once per resume generate (app/api/resumes). Before
+// this cache, generating N tailored variants against the SAME posting meant N
+// identical URL fetches + N identical Gemini calls (LITE, 3072 out, 8 KB in).
+// The parse output is a pure function of the resolved posting text, so we
+// memoize it keyed on content:
+//   - pasted text  → key = "t:" + sha256(cleaned+capped text). Content-keyed,
+//                     so it can never go stale: identical text ⇒ identical parse.
+//   - URL only     → key = "u:" + sourceUrl, computed BEFORE the fetch so a hit
+//                     skips both the slow scrape AND the LLM call. TTL-bounded
+//                     because the live posting could change/close under us.
+// Process-memory (stashed on globalThis for HMR safety, same pattern as the
+// Prisma client + logger ring buffer). Not shared across PM2 processes — each
+// tier memoizes independently, which is fine: the win is intra-session repeat
+// generates, not cross-process coherence.
+const POSTING_CACHE_TTL_MS = 30 * 60 * 1000; // 30 min — bounds URL staleness
+const POSTING_CACHE_MAX = 200;
+
+interface PostingCacheEntry {
+    value: ParsedPosting;
+    expires: number;
+}
+
+const cacheStore: Map<string, PostingCacheEntry> = (() => {
+    const g = globalThis as unknown as { __postingParseCache?: Map<string, PostingCacheEntry> };
+    return g.__postingParseCache ?? (g.__postingParseCache = new Map());
+})();
+
+function cacheGet(key: string, now: number): ParsedPosting | null {
+    const hit = cacheStore.get(key);
+    if (!hit) return null;
+    if (hit.expires <= now) {
+        cacheStore.delete(key);
+        return null;
+    }
+    // Refresh insertion order so the cap eviction below is LRU-ish.
+    cacheStore.delete(key);
+    cacheStore.set(key, hit);
+    // Clone so a caller mutating the returned object can't poison the cache.
+    return structuredClone(hit.value);
+}
+
+function cacheSet(key: string, value: ParsedPosting, now: number): void {
+    cacheStore.set(key, { value: structuredClone(value), expires: now + POSTING_CACHE_TTL_MS });
+    // Evict oldest entries past the cap (Map iterates in insertion order).
+    while (cacheStore.size > POSTING_CACHE_MAX) {
+        const oldest = cacheStore.keys().next().value;
+        if (oldest === undefined) break;
+        cacheStore.delete(oldest);
+    }
+}
+
+/** Test seam — clears the process-memory parse cache between hermetic cases. */
+export function _clearPostingParseCache(): void {
+    cacheStore.clear();
 }
 
 async function fetchVisibleText(url: string): Promise<string> {
@@ -89,7 +153,10 @@ async function fetchVisibleText(url: string): Promise<string> {
     return text.slice(0, MAX_INPUT_CHARS);
 }
 
-export async function parsePosting(input: PostingInput): Promise<ParsedPosting> {
+export async function parsePosting(
+    input: PostingInput,
+    chatFn: ChatJSONFn = chatJSON,
+): Promise<ParsedPosting> {
     let rawText = "";
     let sourceUrl: string | null = null;
     const hasUrl = !!input.url && input.url.trim().length > 0;
@@ -101,9 +168,26 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
     // dodges SSRF-guard rejections from URLs the user only included for
     // archival purposes).
     if (hasUrl) sourceUrl = input.url!.trim();
+
+    // Resolve the cache key up front. For pasted text we must clean+cap first
+    // (so the key matches the bytes actually parsed); for URL-only we key on
+    // the URL so a hit skips the fetch entirely. Text wins, mirroring the
+    // rawText precedence below.
+    const now = Date.now();
+    let cacheKey: string | null = null;
     if (hasText) {
         rawText = clean(input.text!).slice(0, MAX_INPUT_CHARS);
+        cacheKey = "t:" + createHash("sha256").update(rawText).digest("hex");
     } else if (hasUrl) {
+        cacheKey = "u:" + sourceUrl!;
+    }
+
+    if (cacheKey) {
+        const cached = cacheGet(cacheKey, now);
+        if (cached) return cached;
+    }
+
+    if (!hasText && hasUrl) {
         rawText = await fetchVisibleText(sourceUrl!);
     }
 
@@ -113,7 +197,7 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
 
     const prompt = await loadPrompt("posting-parse", { postingText: rawText });
 
-    const extracted = await chatJSON({
+    const extracted = await chatFn({
         name: "posting-parse",
         system: prompt.system,
         user: prompt.user,
@@ -140,7 +224,7 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
         }
     }
 
-    return {
+    const result: ParsedPosting = {
         title: extracted.title,
         company: extracted.company,
         location: extracted.location,
@@ -150,4 +234,7 @@ export async function parsePosting(input: PostingInput): Promise<ParsedPosting> 
         keywords,
         keywordWeights,
     };
+
+    if (cacheKey) cacheSet(cacheKey, result, now);
+    return result;
 }

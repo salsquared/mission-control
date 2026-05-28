@@ -40,7 +40,7 @@ Body:
 ## Notes
 
 - Schema is `applicationSchema` in `lib/email-parser.ts` — relevance gate (`isApplicationRelated`) is the load-bearing field. When false, the caller skips the upsert.
-- Body cap tightened 6 KB → 3 KB on 2026-05-19 alongside the model swap to flash-lite (see `docs/llm-calls.md` change log).
+- Body cap tightened 6 KB → 3 KB on 2026-05-19 alongside the model swap to flash-lite (see `docs/llm-calls.html` change log).
 - College/university handling is calibrated against specific past failures — the FULL OFFICIAL name rule prevents the same school appearing as 'MIT' and 'Massachusetts Institute of Technology' in different emails (would defeat `normalizedCompany` dedup).
 - Tracing wiring: `lunary.trackEvent('llm', 'start' / 'end' / 'error', ...)` with `runId = 'email-parser:<base36-ts>:<random>'`. The Gmail msgId isn't in scope at this layer (caller has it); Lunary just needs uniqueness. See `safeTrack` helper in `lib/email-parser.ts`.
 - This callsite is the only one in the codebase using `@ai-sdk/google` + `generateObject` directly. Migration path: if `chatJSON` ever gains a `generateObject`-compatible mode, this should move to it (LOP-3's `wrapModel` would automatically pick it up). For now, the manual trackEvent path is the canonical pattern for SDK-bypassing callers.

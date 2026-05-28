@@ -3,7 +3,7 @@
  *
  * `loadPrompt(slug, vars)` returns the system/user pair (plus suggested
  * model + decoding params) for one of the 8 LLM callsites tracked in
- * `docs/llm-calls.md`. Two execution paths:
+ * `docs/llm-calls.html`. Two execution paths:
  *
  * 1. **Lunary registry** (when `LUNARY_PUBLIC_KEY` is set) — fetches the
  *    canonical version of the template from Lunary's prompt registry via

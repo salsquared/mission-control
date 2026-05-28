@@ -12,7 +12,7 @@
  *   npx tsx scripts/dryrun-prompt.ts <slug> vars.json        # vars from a JSON file
  *   echo '{"postingText":"…"}' | npx tsx scripts/dryrun-prompt.ts <slug> -
  *
- * Available slugs (see docs/llm-calls.md inventory):
+ * Available slugs (see docs/llm-calls.html inventory):
  *   bullet-assist-fill, bullet-assist-rewrite, discovery-suggest,
  *   email-parser, employment-type-classifier, posting-parse,
  *   profile-import, profile-synthesize, resume-rewrite

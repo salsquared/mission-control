@@ -175,8 +175,10 @@ export async function POST(req: NextRequest) {
         // 4. Synthesize the master resume — one Flash call that consolidates
         // every per-file draft + existing entities into a single canonical
         // tree. Resolves role-vs-project misclassifications across files,
-        // dedupes entities, sorts reverse-chrono. Skipped only when the user
-        // somehow uploaded zero parseable files (covered earlier).
+        // dedupes entities, sorts reverse-chrono. Short-circuited inside
+        // synthesizeMasterResume (canSkipSynthesis) for the common first-import
+        // case — a single file into an empty profile has nothing to consolidate,
+        // so the extraction is returned verbatim with no Flash call.
         stage = "synthesize";
         const synthesized = await synthesizeMasterResume(existingForMerge, trees);
 

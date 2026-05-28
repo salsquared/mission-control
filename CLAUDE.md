@@ -97,11 +97,11 @@ Anything that reads/sends Gmail or writes Calendar events depends on these scope
 
 `lib/ai/rate-limit.ts:acquireGeminiSlot()` is a process-shared token bucket gating every Gemini API call. Defaults: 12 req/min, burst cap 60. Tunable via `GEMINI_RATE_PER_MIN` / `GEMINI_RATE_BURST` env vars. Both `lib/email-parser.ts:parseApplicationEmail` and `lib/ai/gemini.ts:chatJSON` await it before each attempt — retries pay the rate cost too. New Gemini callers MUST go through one of those two helpers, never call the SDK directly without `await acquireGeminiSlot()`.
 
-Three-tier model fleet (`MODEL_FLASH` / `MODEL_LITE` / `MODEL_LITE_CHEAP`) — per-callsite model + token-cap rationale lives in [`docs/llm-calls.md`](./docs/llm-calls.md). Default is the lite model; reach for `MODEL_FLASH` only on quality-sensitive paths (resume bullet rewrite is currently the only one). Add a row to that doc when you wire a new Gemini caller.
+Three-tier model fleet (`MODEL_FLASH` / `MODEL_LITE` / `MODEL_LITE_CHEAP`) — per-callsite model + token-cap rationale lives in [`docs/llm-calls.html`](./docs/llm-calls.html). Default is the lite model; reach for `MODEL_FLASH` only on quality-sensitive paths (resume bullet rewrite is currently the only one). Add a row to that doc when you wire a new Gemini caller.
 
 ### LLM observability (Lunary + Promptfoo)
 
-Design doc: [`docs/implementation.md`](./docs/implementation.md) §LLM observability + prompt registry. Callsite inventory: [`docs/llm-calls.md`](./docs/llm-calls.md). Three invariants every new LLM caller respects:
+Design doc: [`docs/implementation.md`](./docs/implementation.md) §LLM observability + prompt registry. Callsite inventory: [`docs/llm-calls.html`](./docs/llm-calls.html). Three invariants every new LLM caller respects:
 
 1. **Stable kebab-case `name` on every `chatJSON` call** — `ChatJSONOptions.name: string` is required (TypeScript flags misses). Same string is Lunary slug + Promptfoo key + prompt-registry slug. For SDK-bypassing callers (only `lib/email-parser.ts` today), wrap manually with `lunary.trackEvent` — see `safeTrack` in that file.
 2. **Load prompts via `lib/ai/prompts.ts:loadPrompt(slug, vars)`** — Lunary-preferred, disk fallback to `docs/llm-prompts/<slug>.md` (keeps hermetic smokes + Lunary-less dev working). To push edits: `npx tsx scripts/sync-lunary-templates.ts` (idempotent; needs `LUNARY_SECRET_KEY` in `.env`, distinct from `LUNARY_PUBLIC_KEY`). One async wrinkle: `buildBulletAssistPrompt` is now async — `await` it.

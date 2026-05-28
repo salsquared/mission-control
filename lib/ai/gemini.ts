@@ -25,7 +25,7 @@ function captureFixturesEnabled(): boolean {
     return process.env.CAPTURE_FIXTURES === "1";
 }
 
-// Three-tier model fleet. See `docs/llm-calls.md` for the per-callsite
+// Three-tier model fleet. See `docs/llm-calls.html` for the per-callsite
 // rationale; the short version:
 //
 //   MODEL_FLASH      — full Flash. Quality-sensitive paths only (resume bullet
@@ -96,7 +96,7 @@ interface ChatJSONOptions<T> {
      * vast majority of structured-extraction outputs (a few hundred tokens of
      * JSON). Bump explicitly per-call for prompts that legitimately need a
      * larger window (profile import with nested bullets is the canonical
-     * case; see docs/llm-calls.md).
+     * case; see docs/llm-calls.html).
      */
     maxOutputTokens?: number;
 }

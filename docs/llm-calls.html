@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>LLM Calls &amp; Cost Optimization</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>LLM Calls &amp; Cost Optimization</h1>
+  <p class="subtitle">The operational reference for every Gemini callsite in mission-control — the model fleet, the per-callsite inventory + token budgets, the observability wiring — <em>and</em> how we keep the free-tier quota a sip, not a chug: the cost model, the optimizations already in place, the live backlog, and what we deliberately leave alone. Most LLM work here is mechanical extraction that doesn't need the highest-end model. Prompt blobs live in <a href="./llm-prompts/">llm-prompts/</a>; this doc is about <em>structure</em> — which model, how many calls, how big — not about what each prompt says.</p>
+
+  <div class="callout"><strong>Update this doc when:</strong> a new callsite ships (add an inventory row + a change-log line), a model/token-cap changes (update the row + change log), you observe a quality regression on a downgraded callsite (revert + record what you saw), or you add/ship a cost optimization (§6 + change log).</div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#fleet">Model fleet</a></li>
+      <li><a href="#inventory">Callsite inventory</a></li>
+      <li><a href="#cost-model">The cost model</a></li>
+      <li><a href="#in-place">Patterns already in place</a></li>
+      <li><a href="#pipeline">The resume-gen pipeline (the hot path)</a></li>
+      <li><a href="#opportunities">Opportunities (Tier 1–4)</a></li>
+      <li><a href="#non-goals">Non-goals</a></li>
+      <li><a href="#observability">Observability (Lunary + Promptfoo)</a></li>
+      <li><a href="#defaults">Defaults + rate limiting</a></li>
+      <li><a href="#adding">Adding a new Gemini caller</a></li>
+      <li><a href="#changelog">Change log</a></li>
+    </ol>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="fleet">Model fleet</h2></summary>
+    <div class="section-body">
+      <h3>The three tiers</h3>
+      <p>All three constants live in <code>lib/ai/gemini.ts</code> and pass through <code>chatJSON({ model: ... })</code>. The email-parser callsite uses the Vercel AI SDK directly and pins the model string inline (kept in sync by comment).</p>
+      <table>
+        <thead>
+          <tr><th>Constant</th><th>Model id</th><th>When to use</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>MODEL_FLASH</code></td><td><code>gemini-3.5-flash</code></td><td><strong>Quality-sensitive only.</strong> Output directly shapes user-facing artifacts. Reach for this when a mistake means a worse resume or a wrong applied-status.</td></tr>
+          <tr><td><code>MODEL_LITE</code> <em>(default)</em></td><td><code>gemini-3.1-flash-lite</code></td><td>Mechanical extraction at moderate volume — keyword pulls, structured-field extraction, classification with &gt;2 output classes. Default for new callsites unless you have a specific reason.</td></tr>
+          <tr><td><code>MODEL_LITE_CHEAP</code></td><td><code>gemini-2.5-flash-lite</code></td><td>Pure picker / enum tasks where the output space is tiny (a handful of strings or labels). Quality drop is invisible because the answer space is constrained.</td></tr>
+        </tbody>
+      </table>
+      <p><code>DEFAULT_MODEL</code> is set to <code>MODEL_LITE</code>. Forgetting to specify a model puts you in the cheap path by default — the fail-safe direction.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="inventory">Callsite inventory</h2></summary>
+    <div class="section-body">
+      <h3>The 14 callsites</h3>
+      <p>One row per Gemini callsite. The <strong>Lunary slug</strong> is the value passed to <code>chatJSON({ name: ... })</code> (or to <code>lunary.trackEvent</code> for email-parser) — required since LOP-2, TypeScript-enforced. The same kebab-case slug names the prompt blob in <a href="./llm-prompts/">llm-prompts/</a> and the Promptfoo suite in <code>eval/suites/</code>. <strong>Migrated?</strong> ✅ = the code calls <code>loadPrompt(slug, vars)</code> (Lunary-preferred, disk-fallback); all 10 <code>chatJSON</code> callsites cut over by 2026-05-25. The per-callsite detail below each row's load-bearing facts lives in the linked prompt blob.</p>
+      <table>
+        <thead>
+          <tr><th>Callsite</th><th>Slug</th><th>Model</th><th>maxOut</th><th>Input cap</th><th>Migrated?</th><th>Role / note</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>lib/email-parser.ts</code> (parseApplicationEmail)</td>
+            <td><a href="./llm-prompts/email-parser.md">email-parser</a></td>
+            <td>LITE</td><td>n/a (Vercel SDK)</td><td><strong>3 KB</strong> body</td><td>✅</td>
+            <td><strong>Highest-volume caller</strong> — one call per inbound Gmail message + every backfill. Bypasses <code>chatJSON</code> (Vercel AI SDK <code>generateObject</code>); traced manually via <code>lunary.trackEvent</code> in <code>safeTrack</code> (LOP-5). Gated by <code>looksRelevant()</code> pre-filter (§4).</td>
+          </tr>
+          <tr>
+            <td><code>lib/ai/classify-employment-type.ts</code></td>
+            <td><a href="./llm-prompts/employment-type-classifier.md">employment-type-classifier</a></td>
+            <td>LITE_CHEAP</td><td>1024</td><td>50 items/batch</td><td>✅</td>
+            <td>Pure 5-class enum picker per posting. Positional output (<code>{"types":[…]}</code>, no id echoing). Title-regex heuristic + cross-watchlist reuse run first; only ambiguous brand-new titles reach the LLM (§4).</td>
+          </tr>
+          <tr>
+            <td><code>lib/discovery/suggest.ts</code></td>
+            <td><a href="./llm-prompts/discovery-suggest.md">discovery-suggest</a></td>
+            <td>LITE</td><td>4096</td><td>small</td><td>✅</td>
+            <td>User-triggered "Discover companies". Temp 0.9 for exploration. Anti-repetition exclude block is load-bearing.</td>
+          </tr>
+          <tr>
+            <td><code>lib/resumes/posting.ts</code> (parsePosting)</td>
+            <td><a href="./llm-prompts/posting-parse.md">posting-parse</a></td>
+            <td>LITE</td><td><strong>3072</strong></td><td><strong>8 KB</strong></td><td>✅</td>
+            <td>Keyword extraction from posting HTML/text. Output is <code>Array&lt;{keyword, importance(1-5)}&gt;</code> since M8.7.5. <strong>Content-cached</strong> since 2026-05-28 (§6) — repeat generates against the same posting don't re-call.</td>
+          </tr>
+          <tr>
+            <td><code>lib/resumes/rewrite.ts</code> (rewriteBullets)</td>
+            <td><a href="./llm-prompts/resume-rewrite.md">resume-rewrite</a></td>
+            <td><strong>FLASH</strong></td><td>4096</td><td>small</td><td>✅</td>
+            <td>Output directly becomes resume bullets the user sends to employers — the <strong>only FLASH callsite</strong>. Pre-filters to bullets with a matched tag/keyword; no-match bullets pass through verbatim without an LLM round-trip (§4).</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/bullet-assist.ts</code> (fill)</td>
+            <td><a href="./llm-prompts/bullet-assist-fill.md">bullet-assist-fill</a></td>
+            <td>LITE</td><td>4096</td><td>~8 KB</td><td>✅</td>
+            <td>M7.6 — bullet drafting on empty Profile entries. Same builder + system prompt as rewrite mode; output schema differs.</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/bullet-assist.ts</code> (rewrite)</td>
+            <td><a href="./llm-prompts/bullet-assist-rewrite.md">bullet-assist-rewrite</a></td>
+            <td>LITE</td><td>2048</td><td>~8 KB</td><td>✅</td>
+            <td>M7.6 — per-bullet rewrite via wand icon. Same prompt builder + archive grounding as fill mode; smaller cap (single bullet).</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/import-llm.ts</code></td>
+            <td><a href="./llm-prompts/profile-import.md">profile-import</a></td>
+            <td>LITE</td><td><strong>32768</strong></td><td>60 KB</td><td>✅</td>
+            <td>Per-file mechanical extraction — verbatim preservation, no judgment. One call per uploaded file. Large output budget for nested bullets across many entities.</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/synthesize.ts</code></td>
+            <td><a href="./llm-prompts/profile-synthesize.md">profile-synthesize</a></td>
+            <td><strong>FLASH</strong></td><td><strong>32768</strong></td><td>80 KB</td><td>✅</td>
+            <td><strong>The single most expensive call in the app.</strong> One per import — consolidates per-file extractions + existing profile into the canonical master resume. <strong>Skipped</strong> for single-file + empty-profile imports since 2026-05-28 (§6).</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/auto-tag.ts</code> (autoTagBullets)</td>
+            <td><a href="./llm-prompts/bullet-tags-from-posting.md">bullet-tags-from-posting</a></td>
+            <td>LITE</td><td>2048</td><td>small</td><td>✅</td>
+            <td>M8.5 — auto-tag bullets with posting keywords during resume gen. One call per generate. Conservative temp 0.1. Post-filter enforces the <code>removedTags</code> blocklist + dedup independently of model behavior.</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/bullet-tag-suggest.ts</code></td>
+            <td><a href="./llm-prompts/bullet-tags-from-profile.md">bullet-tags-from-profile</a></td>
+            <td>LITE</td><td>1024</td><td>~4 KB</td><td>✅</td>
+            <td>M7.7 — per-bullet on-demand tag refresh via the Tags icon. Temp 0.3. Posting-agnostic — proposes from the user's profile-wide vocabulary or invents concrete new tags.</td>
+          </tr>
+          <tr>
+            <td><code>lib/resumes/tagline-tailor.ts</code></td>
+            <td><a href="./llm-prompts/resume-tagline.md">resume-tagline</a></td>
+            <td>LITE</td><td><strong>1024</strong></td><td>~4 KB + posting + evidence</td><td>✅</td>
+            <td>Posting-tailored subtitle + (since M8.7.3) the posting-aware section + entity ordering. One call per generate, two responsibilities. Best-effort — falls back to <code>profile.tagline</code> + <code>DEFAULT_SECTION_ORDER</code>. Sibling of <code>tagline-draft</code> (posting-agnostic, profile dash).</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/tagline-draft.ts</code></td>
+            <td><a href="./llm-prompts/tagline-draft.md">tagline-draft</a></td>
+            <td>LITE</td><td>256</td><td>~4 KB</td><td>✅</td>
+            <td>M7.9 — profile-dashboard Sparkles button; posting-agnostic one-sentence pitch. Sibling of <code>resume-tagline</code>; shares ~80% of its rule block (Tier 3 consolidation candidate, §6).</td>
+          </tr>
+          <tr>
+            <td><code>lib/profile/scratchpad-synth.ts</code></td>
+            <td><a href="./llm-prompts/scratchpad-synth.md">scratchpad-synth</a></td>
+            <td>LITE</td><td>2048</td><td>~2 KB scratchpad + keywords</td><td>✅</td>
+            <td>Resume-gen — synthesizes fresh bullet candidates from the entity's scratchpad + posting keywords. <strong>One call per entity</strong> (the N-multiplier), gated on scratchpad presence + uncovered keywords (§4). Batching candidate (Tier 2, §6).</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout"><strong>Count check.</strong> 14 callsites: 13 through <code>chatJSON</code> + <code>email-parser</code> via the Vercel AI SDK. (<code>tagline-draft</code> and <code>scratchpad-synth</code> were the 11th/12th–14th to land after the initial LOP-6 batch of 10.)</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="cost-model">The cost model</h2></summary>
+    <div class="section-body">
+      <h3>Two levers: calls and tokens</h3>
+      <p>Every Gemini interaction costs on two independent axes:</p>
+      <ul>
+        <li><strong>Call count</strong> — each call pays the <code>acquireGeminiSlot()</code> rate-limit cost (§9) and re-sends its system prompt. A loop firing one call per entity multiplies <em>both</em> slot pressure and the repeated system-prompt tokens.</li>
+        <li><strong>Token count per call</strong> — input (capped external content + prompt) plus output (bounded by <code>maxOutputTokens</code>). The system prompt is paid on every call, so a 250-token system prompt across an N-call loop is <code>250 × N</code> wasted if one call could carry all N items.</li>
+      </ul>
+      <p>The toolkit, in rough order of leverage:</p>
+      <ol>
+        <li><strong>Eliminate</strong> the call — cache a pure result, or replace it with deterministic code.</li>
+        <li><strong>Merge</strong> calls — fold two same-trigger, same-input calls into one; batch an N-loop into a single positional call.</li>
+        <li><strong>Gate</strong> the call — a cheap deterministic pre-filter that short-circuits the common no-op case.</li>
+        <li><strong>Trim</strong> tokens — cap input to the signal head; size <code>maxOutputTokens</code> to ~4× typical output; drop fields the model doesn't need.</li>
+      </ol>
+
+      <h3>Where the spend concentrates</h3>
+      <p>Not evenly. Two paths dominate, and they're where every opportunity in §6 lives:</p>
+      <ul>
+        <li><strong>The resume-gen pipeline</strong> (<code>POST /api/resumes</code>) — one generate fires 4 distinct callsites plus an <em>N-per-entity</em> loop. The multi-call hot path (§5).</li>
+        <li><strong>Profile import</strong> — one <code>profile-import</code> (LITE) call per file, then one <code>profile-synthesize</code> call — the single most expensive call in the app (FLASH, 32k output, 80 KB input).</li>
+      </ul>
+      <p>The two highest-<em>volume</em> callsites — <code>email-parser</code> and <code>employment-type-classifier</code> — are already heavily gated and batched (§4), so they're <em>not</em> where the remaining fat is.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="in-place">Patterns already in place</h2></summary>
+    <div class="section-body">
+      <h3>The good prior art</h3>
+      <p>Before adding anything, copy these — they're the template for any new caller. Each is a real, shipped optimization:</p>
+      <table>
+        <thead>
+          <tr><th>Pattern</th><th>Where</th><th>What it saves</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Deterministic relevance pre-gate</strong></td>
+            <td><code>lib/applications/relevance.ts:looksRelevant()</code> in front of <code>email-parser</code></td>
+            <td>The highest-volume caller skips Gemini entirely unless the sender domain (20+ ATS/admissions hosts) or one of 58 phrases matches subject/snippet. Marketing + digests never hit the LLM.</td>
+          </tr>
+          <tr>
+            <td><strong>Heuristic-first + reuse</strong></td>
+            <td><code>lib/fetchers/employment-type.ts:inferEmploymentTypeFromTitle()</code> + cross-watchlist reuse in <code>scheduler/jobs/job-watcher.ts</code></td>
+            <td>A title regex resolves the obvious cases (<code>Intern</code>, <code>Summer 20XX</code>, <code>Contract</code> minus the <code>Contract Manager</code> trap). Only brand-new, heuristic-null titles reach the LLM, batched ≤50 per call.</td>
+          </tr>
+          <tr>
+            <td><strong>No-op pre-filter before the LLM</strong></td>
+            <td><code>lib/resumes/rewrite.ts:rewriteBullets</code></td>
+            <td>Bullets with no matched tag/keyword have no rewrite lever, so they pass through verbatim — never sent to FLASH. ~30% fewer tokens on a typical profile.</td>
+          </tr>
+          <tr>
+            <td><strong>Gated N-loop</strong></td>
+            <td><code>app/api/resumes/route.ts</code> scratchpad-synth loop</td>
+            <td>An entity is sent to <code>scratchpad-synth</code> only if it has a non-empty scratchpad <em>and</em> a posting keyword the existing bullets don't cover <em>and</em> the scratchpad mentions it. Most entities are skipped.</td>
+          </tr>
+          <tr>
+            <td><strong>Input caps to the signal head</strong></td>
+            <td>email body 3 KB, posting text 8 KB, import text 60 KB</td>
+            <td>Application emails + job postings put the signal up top; the tail is signatures / EOE boilerplate / legal. Capping costs nothing in quality.</td>
+          </tr>
+          <tr>
+            <td><strong>Positional batch output</strong></td>
+            <td><code>employment-type-classifier</code> — <code>{"types":[...]}</code> aligned by index</td>
+            <td>Dropped external-id echoing (Workday/Lever UUIDs were ~70% of the output budget). ~8× token reduction per batch.</td>
+          </tr>
+          <tr>
+            <td><strong>Content-keyed result cache</strong></td>
+            <td><code>lib/resumes/posting.ts:parsePosting</code> (2026-05-28)</td>
+            <td>The parse is a pure function of the posting content, so it's memoized — repeat generates against the same posting skip both the URL fetch and the LLM call.</td>
+          </tr>
+          <tr>
+            <td><strong>Tiered model fleet + <code>thinkingBudget: 0</code></strong></td>
+            <td><code>lib/ai/gemini.ts</code></td>
+            <td>FLASH reserved for the one user-facing-text callsite (<code>resume-rewrite</code>); everything mechanical defaults to LITE / LITE_CHEAP. Thinking mode off — all callers are extraction, no chain-of-thought.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout tip"><strong>Takeaway.</strong> The inbox + scheduler paths are already lean — they're the model, not the target. New work should match these patterns; the remaining opportunities (§6) are concentrated in resume-gen and import.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="pipeline">The resume-gen pipeline (the hot path)</h2></summary>
+    <div class="section-body">
+      <h3>Call sequence for one generate</h3>
+      <p>A single <code>POST /api/resumes</code> runs this sequence. Calls in best-effort steps are wrapped in try/catch — a failure degrades but never blocks the generate. The scratchpad-synth step is the N-multiplier.</p>
+      <pre class="mermaid">
+flowchart TB
+  parse["posting-parse<br/>(LITE) — keywords + importance"]
+  autotag["bullet-tags-from-posting<br/>(LITE, best-effort)"]
+  select["selectBullets()<br/>deterministic — no LLM"]
+  synth["scratchpad-synth<br/>(LITE, best-effort)<br/>ONE CALL PER ENTITY"]
+  rewrite["resume-rewrite<br/>(FLASH) — ships to employer"]
+  tagline["resume-tagline<br/>(LITE, best-effort)<br/>tagline + section/entity order"]
+  parse --> autotag --> select --> synth --> rewrite --> tagline
+      </pre>
+      <p>Deterministic floor is 2 calls (<code>posting-parse</code> + <code>resume-rewrite</code>); the usual case is 4 plus one per scratchpad-bearing entity. A heavy generate (fresh posting, 6 scratchpad'd entities) is ~10 calls.</p>
+
+      <h3>Why this is the target</h3>
+      <ul>
+        <li><code>posting-parse</code> is a <strong>pure function of the posting content</strong>, yet was re-run on every generate. (Fixed — Tier 1, §6.)</li>
+        <li><code>scratchpad-synth</code> is a <strong>per-entity loop</strong>, each iteration re-paying its ~250-token system prompt. (Batching candidate — Tier 2, §6.)</li>
+        <li><code>resume-tagline</code> and <code>resume-rewrite</code> are <strong>both post-selection, both posting-aware, both over the same selected entities</strong> — two calls doing adjacent work. (Merge candidate — Tier 2, §6.)</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="opportunities">Opportunities (Tier 1–4)</h2></summary>
+    <div class="section-body">
+      <h3>Tier 1 — eliminate redundant calls (shipped 2026-05-28)</h3>
+      <p>Clean wins, low risk, no quality tradeoff. Both landed.</p>
+      <ul>
+        <li><strong>Cache <code>posting-parse</code> per posting content.</strong> <code>lib/resumes/posting.ts:parsePosting</code> memoizes keyed on content: pasted text → <code>sha256</code> of cleaned+capped text (never stale); URL-only → keyed on URL, computed before the fetch so a hit skips both the scrape <em>and</em> the LLM. 30-min TTL bounds URL staleness; 200-entry LRU cap; clones on read/write. Eliminates N−1 parses across N variants of one job. Smoke: <code>posting-parse-cache-smoke.ts</code>.</li>
+        <li><strong>Skip <code>profile-synthesize</code> for single-file + empty-profile imports.</strong> <code>lib/profile/synthesize.ts:canSkipSynthesis</code> short-circuits the FLASH call when there's exactly one draft and no existing entities — the extraction <em>is</em> the canonical master (nothing to consolidate cross-file, nothing existing to reconcile, and <code>profile-import</code> already ran the same project-vs-role classification). Eliminates the priciest call on the common first-import path. Deliberately narrow: ≥2 files or a non-empty profile still runs the pass. Smoke: <code>synthesize-skip-guard-smoke.ts</code>.</li>
+      </ul>
+
+      <h3>Tier 2 — merge calls (proposed)</h3>
+      <ul>
+        <li><strong>Fold <code>resume-tagline</code> into <code>resume-rewrite</code>.</strong> One FLASH call returns <code>{ bullets[], tagline, sectionOrder, entityOrder }</code> instead of a FLASH rewrite + a separate LITE tagline call. Saves one call per generate; the tagline inherits FLASH quality. <strong>Tradeoff:</strong> today a tagline failure degrades independently (own try/catch + fallback); merged, a rewrite failure takes the tagline too — though both fall back to defaults. Watch the combined output against the 4096 cap.</li>
+        <li><strong>Batch <code>scratchpad-synth</code> N → 1.</strong> Replace the per-entity loop with one call carrying all entities as delimited blocks + positional output (the <code>employment-type-classifier</code> pattern). Saves (N−1) repeated system prompts and (N−1) calls per generate. <strong>Tradeoff:</strong> the per-entity isolation ("a sibling's notes never reach this prompt") is deliberate — a batched prompt must firewall entities structurally. Latency is already fine (parallel <code>Promise.allSettled</code>), so the win is tokens + call count.</li>
+      </ul>
+
+      <h3>Tier 3 — prompt-text consolidation (proposed)</h3>
+      <p>Cuts per-call tokens + drift, not call count. Can't merge the calls (different surfaces), but the text overlaps.</p>
+      <ul>
+        <li><strong><code>tagline-draft</code> ≈ <code>resume-tagline</code>.</strong> ~80% shared rule block (no-fabrication / one-sentence / no-first-person / no-puffery). Factor the shared rules into a <code>loadPrompt</code> partial so the templates can't drift apart.</li>
+        <li><strong>Bullet-drafting family shares a hallucination guard.</strong> <code>bullet-assist-fill</code> + <code>bullet-assist-rewrite</code> already share one system prompt; <code>scratchpad-synth</code> carries a near-identical variant. Consolidate into one shared guard block.</li>
+      </ul>
+
+      <h3>Tier 4 — evaluate, needs measurement (proposed)</h3>
+      <ul>
+        <li><strong><code>bullet-tags-from-posting</code> overlaps the deterministic scorer.</strong> <code>lib/resumes/select.ts</code> already does substring + tag matching for free; the LLM auto-tag's only marginal value is <em>conceptual</em> matching ("Built a Python API" ⇒ "Python"). Measure whether gating it to keywords the substring scorer missed (or dropping it) changes selection. <strong>Caution:</strong> it also writes the UI "pending review" tag badges, so dropping it has a UX cost beyond selection.</li>
+      </ul>
+
+      <div class="callout"><strong>Rough impact.</strong> A heavy generate (~10 calls today) drops to ~4 with Tier 1+2; a re-generate against the same posting drops another (Tier 1 cache). Tier 3/4 trim per-call tokens on top.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="non-goals">Non-goals</h2></summary>
+    <div class="section-body">
+      <h3>Deliberately left alone</h3>
+      <ul>
+        <li><strong>Don't over-gate <code>email-parser</code>.</strong> The relevance gate is load-bearing but conservative on purpose — a tighter pre-filter risks dropping real application emails (false negatives are worse than an extra LITE call). The 3 KB body cap is already tight.</li>
+        <li><strong>Don't downgrade <code>resume-rewrite</code> off FLASH.</strong> It's the only FLASH callsite because its output is what the user emails to employers. Quality dominates cost here.</li>
+        <li><strong>Don't widen <code>profile-synthesize</code>'s skip.</strong> With ≥2 files, cross-file dedup is its core job; with a non-empty profile, existing-merge reconciliation matters. The skip is narrow by design.</li>
+        <li><strong>Don't raise the rate-limit bucket to "save calls".</strong> It doesn't — ingest is sequential and Gemini's own latency dominates past ~120 RPM. Raising the bucket only helps when the bucket itself is the bottleneck.</li>
+        <li><strong>Don't merge calls that fire on different triggers.</strong> <code>tagline-draft</code> (profile Sparkles button) and <code>resume-tagline</code> (resume-gen) never co-fire — consolidate their <em>prompt text</em> (Tier 3), not their calls.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="observability">Observability (Lunary + Promptfoo)</h2></summary>
+    <div class="section-body">
+      <p>Three pieces wire LLM ops across every callsite (LOP-1 → LOP-9, landed 2026-05-24). Design doc: <a href="./implementation.md">implementation</a> §LLM observability + prompt registry.</p>
+
+      <h3>Tracing — Lunary (managed cloud)</h3>
+      <p><code>lib/ai/gemini.ts</code> wraps the inner <code>generateContent</code> call with <code>lunary.wrapModel</code> at module-init, <strong>gated on <code>LUNARY_PUBLIC_KEY</code></strong> — unset (dev / CI / fresh clones) ⇒ <code>tracedGenerate === rawGenerate</code> and Lunary code never executes. Set ⇒ every call lands in Lunary's dashboard with name, model, input messages, output, prompt+completion tokens, latency. <code>lib/email-parser.ts</code> bypasses <code>chatJSON</code>, so it tracks manually via <code>lunary.trackEvent</code> inside a defensive <code>safeTrack</code> helper — a Lunary failure logs a warn but never disrupts Gmail ingest. Init lives in <code>instrumentation.ts</code> next to <code>initLogger()</code>. Activate: drop <code>LUNARY_PUBLIC_KEY</code> into <code>.env</code> → <code>pm2 restart mission-control-{dev,scheduler-dev,scheduler-prod} --update-env</code>.</p>
+
+      <h3>Prompt registry — Lunary templates</h3>
+      <p>All 10 <code>chatJSON</code> callsites (plus the later <code>tagline-draft</code> / <code>scratchpad-synth</code>) route through <code>lib/ai/prompts.ts:loadPrompt(slug, vars)</code>. It prefers Lunary's <code>renderTemplate</code> (versioned, dashboard-editable) when <code>LUNARY_PUBLIC_KEY</code> is set, else falls back to parsing <code>docs/llm-prompts/&lt;slug&gt;.md</code> from disk — the path that makes hermetic smokes + Lunary-less dev work, and protects prod through Lunary blips. Editing: dashboard edits publish a new version instantly (mirror back to the <code>.md</code> same-day); code edits to the <code>.md</code> push via <code>npx tsx scripts/sync-lunary-templates.ts</code> (idempotent; needs <code>LUNARY_SECRET_KEY</code>, distinct from the public key).</p>
+      <div class="callout warn"><strong>Dashboard caveat.</strong> Lunary's model picker only knows its built-in OpenAI/Anthropic SKUs, so our Gemini 3.x strings show as "gpt-5.5" or similar in the dropdown. The actual <code>extra.model</code> is stored correctly and surfaces through <code>renderTemplate</code> — the dropdown is cosmetic. The playground / built-in eval is unusable for our fleet; Promptfoo is the eval path.</div>
+
+      <h3>Eval harness — Promptfoo (manual trigger only)</h3>
+      <p><code>eval/</code> with a TS custom provider (<code>eval/provider.ts</code>) dispatching each fixture's <code>callsite</code> slug to the real <code>chatJSON</code>-wrapped lib function. One YAML per slug under <code>eval/suites/</code>, each an array of fixtures with <code>is-json</code> + schema-shape <code>javascript</code> + <code>llm-rubric</code> assertions. Judge model pinned to <code>MODEL_LITE_CHEAP</code> (~$0.001/call). Run: <code>npm run test:prompts</code>. <strong>NOT</strong> in <code>pre-push.sh</code> — burns real Gemini tokens (~$0.01–0.05/full-run). A new callsite needs: name in the inventory, prompt blob in <code>docs/llm-prompts/</code>, handler in <code>eval/provider.ts:HANDLERS</code>, fixture in <code>eval/suites/&lt;slug&gt;.yaml</code>.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="defaults">Defaults + rate limiting</h2></summary>
+    <div class="section-body">
+      <h3>Defaults baked into <code>chatJSON</code></h3>
+      <ul>
+        <li><code>temperature</code> → 0.4 (callers override: 0.1 conservative extraction, 0.9 exploration).</li>
+        <li><code>maxOutputTokens</code> → <strong>4096</strong> (callers override; 32k only for profile import + synthesize).</li>
+        <li><code>thinkingBudget</code> → 0 (Gemini 2.5+ defaults to thinking mode, adding 30s–2min latency and eating the output budget — all current callers are mechanical extraction, no chain-of-thought needed).</li>
+        <li><code>responseMimeType</code> → <code>"application/json"</code> (every caller is structured-output).</li>
+      </ul>
+
+      <h3>Rate limiting</h3>
+      <p><code>lib/ai/rate-limit.ts:acquireGeminiSlot()</code> is a process-shared token bucket. Code default <strong>12 req/min, burst 60</strong> (free-tier safe). Every Gemini call MUST go through <code>chatJSON</code> or <code>parseApplicationEmail</code> — both block on the bucket before hitting the API. Bypass = quota drain risk. Env overrides: <code>GEMINI_RATE_PER_MIN</code> (default 12, <strong>prod ships 60</strong> via <code>.env.production</code>), <code>GEMINI_RATE_BURST</code> (default 60). Practical ceiling: ingest is sequential, so RPM above ~120 stops mattering — Gemini's own ~1–2s response latency dominates. Raising the bucket only helps when the bucket itself is the bottleneck.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="adding">Adding a new Gemini caller</h2></summary>
+    <div class="section-body">
+      <h3>Wiring steps</h3>
+      <ol>
+        <li>Route through <code>chatJSON</code> (<code>lib/ai/gemini.ts</code>) — gets you retries, the rate-limit gate, Zod validation, token-usage logging.</li>
+        <li>Pick the model: enum-like with ≤5 classes → <code>MODEL_LITE_CHEAP</code>; output ships to a user as resume / cover-letter / high-stakes text → <code>MODEL_FLASH</code>; anything else → omit <code>model</code> (inherits <code>MODEL_LITE</code>).</li>
+        <li>Pass <code>maxOutputTokens</code> matched to expected size (~4× typical output, to absorb tail variance without burning budget).</li>
+        <li>Add a row to the inventory (§2) + a prompt blob in <a href="./llm-prompts/">llm-prompts/</a> + a Promptfoo fixture in <code>eval/suites/&lt;slug&gt;.yaml</code> + handler in <code>eval/provider.ts:HANDLERS</code>.</li>
+        <li>If sending external content (HTML, email body, resume text), cap the input length at the smallest size that still preserves the signal — tail content is almost always boilerplate.</li>
+      </ol>
+
+      <h3>Cost checklist</h3>
+      <p>Before you ship, also ask:</p>
+      <ol>
+        <li><strong>Is the output a pure function of the input?</strong> If so, cache it (content-keyed) so repeat calls are free. (See <code>parsePosting</code>.)</li>
+        <li><strong>Is there a common no-op case?</strong> Add a deterministic pre-gate that short-circuits it before the LLM. (See <code>looksRelevant</code>, the rewrite no-match filter.)</li>
+        <li><strong>Are you calling it in a loop?</strong> Can the items batch into one positional call so the system prompt is paid once? (See <code>employment-type-classifier</code>.)</li>
+        <li><strong>Does a deterministic rule cover the obvious cases?</strong> Run the regex/heuristic first; only send the ambiguous remainder to the LLM. (See <code>inferEmploymentTypeFromTitle</code>.)</li>
+        <li><strong>Does an existing callsite fire on the same trigger over the same input?</strong> Consider merging the output schemas into one call.</li>
+        <li><strong>Is the input capped to the signal head?</strong> External content is mostly boilerplate past the first few KB.</li>
+        <li><strong>Is <code>maxOutputTokens</code> sized to ~4× typical output?</strong> Too generous burns budget silently; too tight surfaces as a <code>MAX_TOKENS</code> error (the safer failure).</li>
+      </ol>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="changelog">Change log</h2></summary>
+    <div class="section-body">
+      <h3>History</h3>
+      <ul>
+        <li><strong>2026-05-28</strong> — Cost-optimization pass + doc merge. Tier 1 shipped: (a) <code>posting-parse</code> result cache (content-keyed, 30-min TTL, 200-entry LRU) in <code>lib/resumes/posting.ts</code> — repeat generates against the same posting no longer re-call Gemini; <code>posting-parse-cache-smoke.ts</code>. (b) <code>profile-synthesize</code> skip-guard (<code>canSkipSynthesis</code>) — single-file + empty-profile imports return the extraction verbatim, eliminating the priciest FLASH call on first import; <code>synthesize-skip-guard-smoke.ts</code>. This doc absorbed the former <code>llm-cost-optimization.html</code> and converted from <code>llm-calls.md</code> → <code>llm-calls.html</code> (cost model, patterns-in-place, resume-gen pipeline, Tier 1–4 opportunities, non-goals, cost checklist).</li>
+        <li><strong>2026-05-26</strong> — M8.7 resume relevance pipeline overhaul. <code>posting-parse</code>: output → <code>Array&lt;{keyword, importance(1-5)}&gt;</code>, <code>maxOutputTokens</code> 2048→3072, per-tier importance rubric added. <code>resume-tagline</code>: extended to also return <code>sectionOrder</code> + <code>entityOrder</code> from a per-entity evidence block; <code>maxOutputTokens</code> 256→1024. <code>resume-rewrite</code>: pre-filters to bullets with a matched tag/keyword before the LLM call (~30% token savings). <code>bullet-tags-from-posting</code>: per-bullet line trimmed (<code>removedTags</code> omitted when empty).</li>
+        <li><strong>2026-05-26</strong> — Tag case-sensitivity bug class fixed across <code>auto-tag.ts</code>, <code>bullet-tag-suggest.ts</code>, <code>select.ts</code>; lowercase-dedup added everywhere; one-shot backfill cleaned dev.db.</li>
+        <li><strong>2026-05-25</strong> — New callsite <code>bullet-tags-from-posting</code> (landed as <code>bullet-auto-tag</code>, renamed same day). Slug renames: <code>bullet-auto-tag</code> → <code>bullet-tags-from-posting</code>, <code>bullet-tag-suggest</code> → <code>bullet-tags-from-profile</code> (drives at WHERE candidate tag strings come from).</li>
+        <li><strong>2026-05-24</strong> — LOP-6 cutover: all 9 (then 10) callsites moved off inline <code>SYSTEM_PROMPT</code> constants onto <code>loadPrompt(slug, vars)</code>. Observability infra landed (Lunary <code>wrapModel</code>, required <code>name</code> on <code>ChatJSONOptions</code>, <code>docs/llm-prompts/</code> seeded, <code>eval/</code> Promptfoo harness).</li>
+        <li><strong>2026-05-20</strong> — Employment-type classifier call-shape rewrite: positional output (no UUID echoing — was ~70% of output budget), pipe-delimited single-line input, dropped snippet/department. <code>maxOutputTokens</code> 4096→1024. ~8× token reduction per batch.</li>
+        <li><strong>2026-05-19</strong> — Three-tier model split. FLASH reserved for resume rewrite; LITE_CHEAP for employment-type classifier; LITE default. Per-call <code>maxOutputTokens</code> introduced (default 32k→4k). Email-parser input cap 6 KB→3 KB; posting parser 12 KB→8 KB. <code>DEFAULT_MODEL</code> pinned to <code>gemini-3.5-flash</code> (superseded same day by the split).</li>
+        <li><strong>2026-05-15</strong> — Switched from <code>gemini-2.5-flash</code> to <code>gemini-flash-latest</code> for ~30–42% latency improvement on resume generation.</li>
+      </ul>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

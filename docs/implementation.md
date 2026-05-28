@@ -605,7 +605,7 @@ Empty-state pane on the entry cards (`components/cards/WorkRoleCard.tsx` / `Proj
 ##### M7.6.10 — Telemetry + llm-calls doc ✅
 
 - Each assist call logs `[LLM] bullet-assist:<mode>:<parentKind>:<parentId>` to the in-app log buffer (`lib/logger.ts`). Surfaces on the Internal Systems dash via the existing log-tail SSE — no new metric.
-- Add a row to `docs/llm-calls.md`: caller `lib/profile/bullet-assist.ts`, model `MODEL_LITE` (`gemini-3.1-flash-lite`), `maxOutputTokens` 2048 (rewrite) / 4096 (fill), scope "Profile bullet drafting + rewriting + archive grounding (S7.7 / S7.8 / S7.9)".
+- Add a row to `docs/llm-calls.html`: caller `lib/profile/bullet-assist.ts`, model `MODEL_LITE` (`gemini-3.1-flash-lite`), `maxOutputTokens` 2048 (rewrite) / 4096 (fill), scope "Profile bullet drafting + rewriting + archive grounding (S7.7 / S7.8 / S7.9)".
 
 ##### M7.6.11 — Hermetic smokes ✅
 
@@ -1230,7 +1230,7 @@ New LLM callsite, slug `bullet-tags-from-posting`. Steps per the LLM-observabili
 
 - **Prompt file**: `docs/llm-prompts/bullet-tags-from-posting.md`. System + user template. System enumerates the no-fabrication rule. User template interpolates posting keywords + flattened bullet list (`{id, text, tags, removedTags}` per bullet — `tags` shown so the LLM doesn't re-propose existing ones; `removedTags` shown so it doesn't propose blocked ones; `text` is the evidence the LLM judges against).
 - **Lunary registry upload**: extend `scripts/sync-lunary-templates.ts`'s slug list; re-run to push to Lunary. Disk fallback automatic via `lib/ai/prompts.ts:loadPrompt('bullet-tags-from-posting', vars)`.
-- **Inventory entry**: append to `docs/llm-calls.md` — caller `lib/profile/auto-tag.ts`, model `MODEL_LITE`, `maxOutputTokens` 2048, scope "Auto-tag bullets with posting keywords during resume gen (S8.9)".
+- **Inventory entry**: append to `docs/llm-calls.html` — caller `lib/profile/auto-tag.ts`, model `MODEL_LITE`, `maxOutputTokens` 2048, scope "Auto-tag bullets with posting keywords during resume gen (S8.9)".
 - **Promptfoo suite**: new `eval/suites/bullet-tags-from-posting.yaml`. Four starter fixtures:
   - **Positive**: bullet `"Built a Python API"`, keyword `"Python"` → expect `addedTags: ["Python"]`.
   - **Negative (no evidence)**: bullet `"Built a Go API"`, keyword `"Python"` → expect `addedTags: []`.
@@ -1349,7 +1349,7 @@ Run `npm run test:prompts` end-to-end after prompts + fixtures land. Expected:
 - Two new `resume-rewrite` fold-in fixtures pass against `MODEL_FLASH`.
 - Added Gemini spend ~$0.01 per full eval run.
 
-If LITE fails the auto-tag fixtures (false positives proposing tags without evidence), bump to `MODEL_FLASH` in `lib/profile/auto-tag.ts:callBulletAutoTag` and re-run. Document the actual model picked in `docs/llm-calls.md`.
+If LITE fails the auto-tag fixtures (false positives proposing tags without evidence), bump to `MODEL_FLASH` in `lib/profile/auto-tag.ts:callBulletAutoTag` and re-run. Document the actual model picked in `docs/llm-calls.html`.
 
 ---
 
@@ -1513,7 +1513,7 @@ Run `npm run test:prompts` after prompts + fixtures land. Expected:
 - The four `scratchpad-synth` fixtures pass against `MODEL_LITE`.
 - Added Gemini spend ~$0.01 per full eval run.
 
-If LITE fails the positive-coverage fixture (e.g. fabricates technologies not in scratchpad) or the no-invention fixture, bump to `MODEL_FLASH` in `lib/profile/scratchpad-synth.ts` and re-run. Document the actual model picked in `docs/llm-calls.md`.
+If LITE fails the positive-coverage fixture (e.g. fabricates technologies not in scratchpad) or the no-invention fixture, bump to `MODEL_FLASH` in `lib/profile/scratchpad-synth.ts` and re-run. Document the actual model picked in `docs/llm-calls.html`.
 
 ---
 
@@ -1980,7 +1980,7 @@ This phase wires three things:
 
 ##### LOP-2 — Required `name` on `ChatJSONOptions` ✅
 
-`lib/ai/gemini.ts` `ChatJSONOptions<T>` gains required `name: string`. Forcing it required (not optional) means TypeScript flags every callsite — no quiet "unnamed" runs leak into Lunary. Naming convention enforced via the inventory table above plus a row in `docs/llm-calls.md` (see LOP-10).
+`lib/ai/gemini.ts` `ChatJSONOptions<T>` gains required `name: string`. Forcing it required (not optional) means TypeScript flags every callsite — no quiet "unnamed" runs leak into Lunary. Naming convention enforced via the inventory table above plus a row in `docs/llm-calls.html` (see LOP-10).
 
 ##### LOP-3 — Wrap inner `generateContent` with `lunary.wrapModel` ✅
 
@@ -2048,7 +2048,7 @@ For each callsite, 2–3 representative fixtures captured from real runs. Per fi
 
 Capture path: gate `console.info('[FIXTURE]', JSON.stringify({ name, system, user }))` inside `chatJSON` behind `CAPTURE_FIXTURES=1`, use the app for ~30 min, grep + manually clean into `eval/fixtures/`.
 
-##### LOP-10 — Update `docs/llm-calls.md` ✅
+##### LOP-10 — Update `docs/llm-calls.html` ✅
 
 - Add an "Observability" section noting Lunary integration, the `name` field convention, the `renderTemplate` migration path, and the Promptfoo eval workflow.
 - Inventory table gains a "Lunary slug" column + a "Template migrated?" status column. Cross-references this section for the canonical naming list.
@@ -2068,7 +2068,7 @@ New subsection under "Gemini rate limiting + model fleet" → "LLM observability
 - All 9 prompts editable in Lunary's UI; runtime calls fetch via `renderTemplate` (post-LOP-6, per-callsite acceptance).
 - `npm run test:prompts` runs end-to-end against all 9 callsites with ≥ 2 fixtures each; failures emit diffable output to `eval/output/`.
 - Pre-push hook unchanged — no real Gemini in pre-push, no new hermetic suites required for this phase.
-- `docs/llm-calls.md` + `CLAUDE.md` reference the system.
+- `docs/llm-calls.html` + `CLAUDE.md` reference the system.
 
 #### Out of scope for this phase
 

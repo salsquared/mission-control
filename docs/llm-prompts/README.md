@@ -44,4 +44,4 @@ Slug = the `name:` field passed to `chatJSON` (or to `lunary.trackEvent` for ema
 
 - Editing the live prompt in code → update the file in the same commit.
 - Editing the Lunary template via dashboard → mirror the change back here, same-day.
-- Adding a new callsite → add its file here as part of the `chatJSON({ name: ... })` PR. Also add a row to `../llm-calls.md` and an entry to `../implementation.md` §LLM observability.
+- Adding a new callsite → add its file here as part of the `chatJSON({ name: ... })` PR. Also add a row to `../llm-calls.html` and an entry to `../implementation.md` §LLM observability.

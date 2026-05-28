@@ -81,7 +81,7 @@ export async function rewriteBullets(
         temperature: 0.4,
         // Quality-sensitive — this output directly shapes what the user
         // sends to employers. Full Flash, NOT the lite default. See
-        // docs/llm-calls.md for the rationale.
+        // docs/llm-calls.html for the rationale.
         model: MODEL_FLASH,
         // ≤25 bullets × ~50 tokens of rewrittenText + matchedKeywords each
         // ≈ 1.5k. 4k caps a runaway response without clipping legit output.

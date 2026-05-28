@@ -53,7 +53,7 @@ Some callsites burn extra:
 
 1. Add the slug to `HANDLERS` in `eval/provider.ts` — a single async function that takes the fixture's `input` and calls the real lib function.
 2. Drop a new `eval/suites/<slug>.yaml` with at least one test case. The glob in `promptfooconfig.yaml` picks it up automatically.
-3. Add a row to `docs/llm-calls.md` and update the inventory table in `docs/implementation.md` §LLM observability.
+3. Add a row to `docs/llm-calls.html` and update the inventory table in `docs/implementation.md` §LLM observability.
 
 ## Capturing real fixtures (TODO — LOP-9 follow-up)
 

@@ -41,7 +41,7 @@ Classify each line below (one row per line). Return {{itemCount}} types in input
 
 ## Notes
 
-- **Positional output** — the model returns `{"types": [...]}` aligned by array index to the input rows; no external id echoing. UUIDs from Workday/Lever would have burned ~70% of the output budget for zero signal (see 2026-05-20 change log entry in `docs/llm-calls.md`).
+- **Positional output** — the model returns `{"types": [...]}` aligned by array index to the input rows; no external id echoing. UUIDs from Workday/Lever would have burned ~70% of the output budget for zero signal (see 2026-05-20 change log entry in `docs/llm-calls.html`).
 - Batch size 50 is the empirical sweet spot — bigger batches save calls but raise the chance of one bad item failing schema validation for the whole batch.
 - Caller handles missing items (model returns fewer entries than expected) — those default to `null` in the returned Map.
 - Sequential dispatch — not `Promise.all`. Rate limiter (12 req/min default) would serialize anyway, and a 429 in one parallel branch can poison the others; sequential keeps timing logs interpretable.
