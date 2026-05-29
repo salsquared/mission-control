@@ -4,6 +4,8 @@
 
 ## 1. Google Pub/Sub Webhook Auth (OIDC)
 
+> **⚠️ Superseded (2026-05-29).** The Gmail real-time push setup is now canonically documented — and live — in [`gmail-realtime-push.html`](./gmail-realtime-push.html) §4: one shared topic `gmail-push`, two per-tier push subscriptions (`gmail-push-prod` / `gmail-push-dev`), the signer-SA `roles/iam.serviceAccountTokenCreator` prerequisite, and the audience-per-tier env split. **The `mc.local` URLs below are WRONG for Pub/Sub push** — `mc.local` is LAN-only and unreachable by Google; the push endpoints must be the public `ms-{prod,dev}.salsquared.xyz/api/gmail/webhook` hostnames. Follow the HTML doc, not this section. (Section 2 below — service-token auth for internal callers — is still current.)
+
 The Gmail push-notification webhook at `/api/gmail/webhook` verifies a Google-issued OIDC JWT on every request. Pub/Sub signs the token with a configured service account; mission-control checks the signature against Google's JWKS, the issuer (`https://accounts.google.com`), and the audience (the route URL).
 
 1. **Pick a service account** in your Google Cloud project (or create a new one — `pubsub-mc-publisher@<project>.iam.gserviceaccount.com` is a reasonable name). Grant it `roles/iam.serviceAccountTokenCreator` on itself if Pub/Sub doesn't already have permission to mint tokens for it.

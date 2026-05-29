@@ -6,6 +6,7 @@ import { PubSubEnvelopeSchema, PubSubPayloadSchema } from "@/lib/schemas/gmail-w
 import { findUserByEmailWithAccounts } from "@/lib/repositories/users";
 import { ingestGmailMessage } from "@/lib/applications/ingest";
 import { verifyPubSubOIDC } from "@/lib/google-oidc";
+import { isStaleHistoryError } from "@/lib/gmail/history-errors";
 
 // Pin to Node runtime — this route uses googleapis + jose, both of which pull
 // in `node:*` imports (notably undici → node:assert) that the edge runtime
@@ -92,10 +93,25 @@ export async function POST(req: NextRequest) {
       ? user.lastSyncedHistoryId
       : envelopeHistoryId;
 
-    const historyRes = await gmail.users.history.list({
-      userId: "me",
-      startHistoryId,
-    });
+    // C4: if startHistoryId is older than Gmail's retained history window (the
+    // webhook was down > ~7d), history.list 404s. Re-seed the watermark to the
+    // envelope's historyId and ack 200 so Pub/Sub stops retrying — the manual
+    // Scan Inbox backfill recovers the gap, and the next push resumes cleanly
+    // from the re-seed. Any non-404 error is a real failure → rethrow → 500.
+    const historyRes = await gmail.users.history
+      .list({ userId: "me", startHistoryId })
+      .catch((histErr: unknown) => {
+        if (isStaleHistoryError(histErr)) return null;
+        throw histErr;
+      });
+    if (historyRes === null) {
+      console.warn(`[GMAIL WEBHOOK] history.list 404 (startHistoryId=${startHistoryId} too old) — re-seeding lastSyncedHistoryId=${envelopeHistoryId}, acking 200`);
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { lastSyncedHistoryId: envelopeHistoryId },
+      });
+      return NextResponse.json({ success: true, reseeded: true }, { status: 200 });
+    }
 
     const messagesAdded = historyRes.data.history?.flatMap((h: any) => h.messagesAdded || []) || [];
 

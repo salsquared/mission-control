@@ -86,6 +86,7 @@ SUITES=(
     "scripts/tests/hermetic/gcal-idempotency-smoke.ts"
     "scripts/tests/hermetic/webhook-prune-smoke.ts"
     "scripts/tests/hermetic/gmail-watch-renew-smoke.ts"
+    "scripts/tests/hermetic/gmail-webhook-404-recovery-smoke.ts"
     "scripts/tests/hermetic/app-race-dedup-smoke.ts"
     "scripts/tests/hermetic/gemini-rate-limit-smoke.ts"
     "scripts/tests/hermetic/llm-cache-smoke.ts"
