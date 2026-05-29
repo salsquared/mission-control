@@ -22,6 +22,8 @@ import {
     type ChatJSONFn,
     type ClassifyInput,
 } from "@/lib/ai/classify-employment-type";
+import { compileNegativeFiltersFromArray, matchesNegativeFilters } from "@/lib/postings/negative-filters";
+import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 
 const SWEEP_CAP = 1_000;
 
@@ -62,9 +64,26 @@ export async function runClassifyPendingEmploymentTypes(
 
     // Dedupe by externalId — same (company|title|sourceUrl) hash across
     // watchlists is the same posting, classify once and apply to all rows.
+    // Global negative-filter gate (defense-in-depth, 2026-05-29). The
+    // job-watcher ingestion drop stops NEW blacklisted postings from being
+    // stored, but legacy rows created before that landed can still be NULL +
+    // blacklisted. Skip them here so they never reach Gemini. A global match
+    // means the posting is hidden on every watchlist, so excluding the whole
+    // externalId is safe. (Per-watchlist filters are read-time only — not
+    // applied here, matching scope.) One cheap singleton query per sweep.
+    const globalSettingRow = await findGlobalSetting();
+    const globalNegativeRegexes = compileNegativeFiltersFromArray(
+        globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
+    );
+
     const byExternalId = new Map<string, ClassifyInput>();
+    const filteredIds = new Set<string>();
     for (const p of pending) {
-        if (byExternalId.has(p.externalId)) continue;
+        if (byExternalId.has(p.externalId) || filteredIds.has(p.externalId)) continue;
+        if (globalNegativeRegexes.length > 0 && matchesNegativeFilters(p, globalNegativeRegexes)) {
+            filteredIds.add(p.externalId);
+            continue;
+        }
         byExternalId.set(p.externalId, {
             id: p.externalId,
             company: p.company,
@@ -73,6 +92,9 @@ export async function runClassifyPendingEmploymentTypes(
             location: p.location,
         });
         if (byExternalId.size >= SWEEP_CAP) break;
+    }
+    if (filteredIds.size > 0) {
+        console.info(`[classify-pending-employment-types] skipped ${filteredIds.size} distinct posting(s) via global negative filter — not sent to Gemini`);
     }
 
     const inputs = Array.from(byExternalId.values());

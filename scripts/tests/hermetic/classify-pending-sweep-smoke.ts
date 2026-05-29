@@ -54,9 +54,9 @@ function externalIdFor(company: string, title: string, sourceUrl: string): strin
 
 const TAG = "Classify-Sweep-Smoke";
 
-async function seedPosting(watchlistId: string, idx: number, opts: { employmentType?: string | null; status?: string; sharedExternalId?: string } = {}): Promise<{ id: string; externalId: string }> {
+async function seedPosting(watchlistId: string, idx: number, opts: { employmentType?: string | null; status?: string; sharedExternalId?: string; title?: string } = {}): Promise<{ id: string; externalId: string }> {
     const company = `${TAG}-Co-${idx}`;
-    const title = `Title-${idx}`;
+    const title = opts.title ?? `Title-${idx}`;
     const sourceUrl = `https://example.test/${TAG}/${idx}`;
     const externalId = opts.sharedExternalId ?? externalIdFor(company, title, sourceUrl);
     // Backdate firstSeenAt to 1970 so our test rows sort FIRST in the sweep's
@@ -89,6 +89,13 @@ async function main() {
     }
 
     const createdWatchlistIds: string[] = [];
+
+    // Snapshot the real global negative filter — test-8 overrides it to a known
+    // value and must restore it (Sal's dev instance has live filters).
+    const origGlobalRow = await prisma.globalSetting.findUnique({
+        where: { id: "global" },
+        select: { globalNegativeFilters: true },
+    });
 
     try {
         const wlConfig = JSON.stringify({
@@ -249,7 +256,39 @@ async function main() {
         } else {
             pass(`test-7: final state — only expected rows (closed, hidden, null-verdict) remain NULL`);
         }
+
+        // ───────────────────────────────────────────────────────────────
+        // Test 8 — global negative filter excludes a posting from the LLM
+        // call (defense-in-depth gate: a legacy null + blacklisted row must
+        // never reach Gemini). Override the global filter to block "Senior".
+        // ───────────────────────────────────────────────────────────────
+        const senior = await seedPosting(w1.id, 600, { title: "Senior Staff Engineer" });
+        const normal = await seedPosting(w1.id, 601, { title: "Engineer 601" });
+        ours.add(senior.externalId);
+        ours.add(normal.externalId);
+        await prisma.globalSetting.upsert({
+            where: { id: "global" },
+            update: { globalNegativeFilters: JSON.stringify(["Senior"]) },
+            create: { id: "global", globalNegativeFilters: JSON.stringify(["Senior"]) },
+        });
+
+        const mock6 = makeMockChat(parsed => parsed.map(p => (p.company.startsWith(`${TAG}-Co`) ? "full-time" : null)));
+        await runClassifyPendingEmploymentTypes(mock6.chatFn);
+
+        const seniorAfter = await prisma.jobPosting.findUnique({ where: { id: senior.id }, select: { employmentType: true } });
+        const normalAfter = await prisma.jobPosting.findUnique({ where: { id: normal.id }, select: { employmentType: true } });
+        if (seniorAfter?.employmentType !== null) fail(`test-8: global-filtered 'Senior' row was classified to "${seniorAfter?.employmentType}" (must be excluded from the LLM)`);
+        else pass("test-8: global-filtered 'Senior' posting excluded from LLM — stays NULL");
+        if (normalAfter?.employmentType !== "full-time") fail(`test-8: non-filtered row not classified (got "${normalAfter?.employmentType}")`);
+        else pass("test-8: non-filtered posting still classified normally (gate is targeted, not blanket)");
     } finally {
+        // Restore Sal's real global filter (test-8 overrode it).
+        if (origGlobalRow) {
+            await prisma.globalSetting.update({
+                where: { id: "global" },
+                data: { globalNegativeFilters: origGlobalRow.globalNegativeFilters },
+            }).catch(() => undefined);
+        }
         for (const wId of createdWatchlistIds) {
             await prisma.jobPosting.deleteMany({ where: { watchlistId: wId } }).catch(() => undefined);
             await prisma.watchlist.delete({ where: { id: wId } }).catch(() => undefined);

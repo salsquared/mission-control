@@ -27,6 +27,14 @@
  *      dispatch failure" by only advancing when we considered ≥1 posting.
  *   3. Global filters cull postings on side-tracked watchlists too (Part 5).
  *
+ * UPDATE (2026-05-29): the GLOBAL filter is now an ingestion DROP — job-watcher
+ * removes global-filtered postings before create, so they are NOT stored at all
+ * (compute saving: no row, no LLM classify). The PER-WATCHLIST filter is
+ * UNCHANGED — read-time only: the row is still stored, only its per-posting
+ * notification is suppressed. Parts 1 & 5 (which run through job-watcher) assert
+ * the global drop; Parts 2-4 insert rows directly via prisma.create (bypassing
+ * job-watcher) so they still exercise the digest READ-time filter.
+ *
  * Cleans up: deletes scratch watchlists, postings, notifications, and
  * RESTORES the prior GlobalSetting.globalNegativeFilters value so this smoke
  * doesn't bleed into posting-digest-smoke (which uses "Senior Engineer N"
@@ -181,10 +189,10 @@ async function main() {
         watchlistIds.push(wEach.id);
 
         // Fixture: 4 postings.
-        //   - "Senior Engineer"     → culled by global ("Senior")
-        //   - "Lead Designer"       → culled by global ("Lead")
-        //   - "Software Intern"     → culled by per-watchlist ("Intern")
-        //   - "Software Engineer"   → survives both filter sets — NOTIFY
+        //   - "Senior Engineer"     → global ("Senior")  → DROPPED at ingest (not stored)
+        //   - "Lead Designer"       → global ("Lead")    → DROPPED at ingest (not stored)
+        //   - "Software Intern"     → per-watchlist ("Intern") → stored, notification suppressed
+        //   - "Software Engineer"   → survives both           → stored + NOTIFY
         fixture.setPostings([
             { slug: "10", title: "Senior Engineer" },
             { slug: "20", title: "Lead Designer" },
@@ -195,13 +203,17 @@ async function main() {
         const r1 = await runWatchlist(wEach.id);
         if (r1.error) fail(`per-posting run errored: ${r1.error}`);
         else pass("per-posting run completed");
-        if (r1.newPostings !== 4) fail(`per-posting: expected 4 newPostings (all land in DB), got ${r1.newPostings}`);
-        else pass("per-posting: all 4 postings created in DB regardless of filter");
+        // Global-filtered Senior/Lead are dropped at ingest; the per-watchlist-
+        // filtered Intern + the survivor Engineer are stored. So 2 rows land.
+        if (r1.newPostings !== 2) fail(`per-posting: expected 2 newPostings (Senior/Lead dropped at ingest), got ${r1.newPostings}`);
+        else pass("per-posting: 2 postings created (global-filtered Senior/Lead dropped at ingest)");
 
-        // 4 JobPosting rows should exist
         const eachRows = await prisma.jobPosting.findMany({ where: { watchlistId: wEach.id } });
-        if (eachRows.length !== 4) fail(`per-posting: expected 4 JobPosting rows, got ${eachRows.length}`);
-        else pass("per-posting: 4 JobPosting rows (filter does not gate row creation)");
+        if (eachRows.length !== 2) fail(`per-posting: expected 2 JobPosting rows (global drop, per-watchlist stored), got ${eachRows.length}`);
+        else pass("per-posting: 2 JobPosting rows — global filter drops at ingest, per-watchlist does not");
+        const eachTitles = new Set(eachRows.map(r => r.title));
+        if (eachTitles.has("Senior Engineer") || eachTitles.has("Lead Designer")) fail(`per-posting: a global-filtered title was stored: ${[...eachTitles].join(" | ")}`);
+        else pass("per-posting: neither global-filtered title (Senior/Lead) was stored");
 
         // Only the "Software Engineer" notification should fire.
         // payload.postingId is set per posting; we match on title via the parent row.
@@ -401,8 +413,10 @@ async function main() {
         const r5 = await runWatchlist(wSide.id);
         if (r5.error) fail(`shared-blocklist: side run errored: ${r5.error}`);
         else pass("shared-blocklist: side run completed");
-        if (r5.newPostings !== 4) fail(`shared-blocklist: expected 4 newPostings (all land in DB), got ${r5.newPostings}`);
-        else pass("shared-blocklist: 4 side JobPosting rows created (filter does not gate row creation)");
+        // Senior/Lead/Manager are all GLOBAL-filtered → dropped at ingest; only
+        // "Warehouse Picker" survives and is stored.
+        if (r5.newPostings !== 1) fail(`shared-blocklist: expected 1 newPosting (global Senior/Lead/Manager dropped at ingest), got ${r5.newPostings}`);
+        else pass("shared-blocklist: 1 side row created — global filters drop Senior/Lead/Manager at ingest");
 
         const sideNotifs = await prisma.notification.findMany({
             where: {

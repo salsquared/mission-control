@@ -92,6 +92,7 @@ SUITES=(
     "scripts/tests/hermetic/cache-smoke.ts"
     "scripts/tests/hermetic/classify-employment-type-smoke.ts"
     "scripts/tests/hermetic/classify-pending-sweep-smoke.ts"
+    "scripts/tests/hermetic/job-watcher-negative-filter-ingest-smoke.ts"
     "scripts/tests/hermetic/discovery-suggest-smoke.ts"
     "scripts/tests/hermetic/location-expansion-smoke.ts"
     # M8.4 / M8.5 Wave 1

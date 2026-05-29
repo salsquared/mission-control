@@ -172,12 +172,17 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     const modeAllowsPerPosting = watchlist.notificationMode === "each";
     const willNotifyForNew = modeAllowsPerPosting && (!isFirstRun || fetchResult.postings.length <= FIRST_RUN_NOTIFY_LIMIT);
 
-    // Negative-filter gate (parity with /api/postings GET). Postings matching
-    // the global or per-watchlist negative filter still land in the
-    // JobPosting table — the user can surface them later by toggling the
-    // filter off or hitting ?includeFiltered=true. We only suppress the
-    // *notification*. Compiled once per run; both regex sets cached by JSON
-    // identity in lib/postings/negative-filters.ts.
+    // Negative-filter gates. Compiled once per run; both regex sets cached by
+    // JSON identity in lib/postings/negative-filters.ts.
+    //   - GLOBAL filter → an ingestion DROP (2026-05-29). Postings matching it
+    //     are removed below BEFORE any existence query, cross-watchlist lookup,
+    //     LLM classification, or row create — they never enter the system. The
+    //     scheduler runs on a Mac mini; this saves all that wasted work on
+    //     blacklisted titles.
+    //   - PER-WATCHLIST filter → read-time only (unchanged). Matching postings
+    //     still land in the JobPosting table (surface via ?includeFiltered=true);
+    //     here we only suppress the per-posting *notification* (parity with the
+    //     /api/postings GET feed filter).
     const globalSettingRow = await findGlobalSetting();
     const globalNegativeRegexes = compileNegativeFiltersFromArray(
         globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
@@ -199,8 +204,29 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         raw,
         externalId: externalIdFor(raw.company, raw.title, raw.sourceUrl),
     }));
+
+    // Record EVERY externalId the source returned as "seen" this run, BEFORE the
+    // global-filter drop below. Close-detection keys on seenExternalIds; a
+    // globally-filtered-but-still-live legacy row must count as seen so it's
+    // never probed/closed (and re-dropped each run while it stays on the source).
+    for (const p of postingsWithIds) seenExternalIds.add(p.externalId);
+
+    // Global negative-filter ingestion DROP. Everything downstream (existence
+    // query, cross-watchlist reuse, LLM classify, create, notify) operates on
+    // `kept` — so a blacklisted title costs nothing past a cheap regex test.
+    const kept = globalNegativeRegexes.length === 0
+        ? postingsWithIds
+        : postingsWithIds.filter(p => !matchesNegativeFilters(
+            { title: p.raw.title, snippet: p.raw.snippet, location: p.raw.location },
+            globalNegativeRegexes,
+        ));
+    const filteredAtIngest = postingsWithIds.length - kept.length;
+    if (filteredAtIngest > 0) {
+        console.info(`[job-watcher] dropped ${filteredAtIngest} posting(s) at ingest via global negative filter (watchlist=${watchlistId}) — not stored, not classified`);
+    }
+
     const existingRows = await prisma.jobPosting.findMany({
-        where: { watchlistId, externalId: { in: postingsWithIds.map(p => p.externalId) } },
+        where: { watchlistId, externalId: { in: kept.map(p => p.externalId) } },
         select: { id: true, externalId: true, employmentType: true },
     });
     const existingByExternalId = new Map(
@@ -216,7 +242,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // postings whose heuristic returned null, AND (b) existing rows in this
     // watchlist that have null employmentType (self-heal path for rows
     // that got wiped by the pre-2026-05-24 update bug).
-    const lookupCandidates = postingsWithIds.filter(p => {
+    const lookupCandidates = kept.filter(p => {
         if (p.raw.employmentType != null) return false;
         const existing = existingByExternalId.get(p.externalId);
         if (existing == null) return true; // new posting
@@ -267,7 +293,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // across all watchlists in one consolidated LLM call. Saves the cost of
     // N small scattered batches when watchlists' cadence clocks drift apart.
     const classifyInputs = isFirstRun
-        ? postingsWithIds
+        ? kept
             .filter(p => !existingByExternalId.has(p.externalId) && p.raw.employmentType == null)
             .map(p => ({
                 id: p.externalId,
@@ -280,7 +306,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     if (classifyInputs.length > 0) {
         try {
             const classified = await classifyEmploymentTypes(classifyInputs);
-            for (const p of postingsWithIds) {
+            for (const p of kept) {
                 const t = classified.get(p.externalId);
                 if (t !== undefined && p.raw.employmentType == null) {
                     p.raw.employmentType = t;
@@ -291,8 +317,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         }
     }
 
-    for (const { raw, externalId } of postingsWithIds) {
-        seenExternalIds.add(externalId);
+    for (const { raw, externalId } of kept) {
         const existing = existingByExternalId.get(externalId);
         if (existing) {
             // Always refresh lastSeenAt. Refresh employmentType ONLY when
@@ -364,10 +389,12 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             }
             throw e;
         }
-        const postingForFilter = { title: raw.title, snippet: raw.snippet, location: raw.location };
-        const filteredOut =
-            matchesNegativeFilters(postingForFilter, globalNegativeRegexes) ||
-            matchesNegativeFilters(postingForFilter, watchlistNegativeRegexes);
+        // Global-filtered postings were dropped at ingest above, so only the
+        // per-watchlist filter can suppress a per-posting notification here.
+        const filteredOut = matchesNegativeFilters(
+            { title: raw.title, snippet: raw.snippet, location: raw.location },
+            watchlistNegativeRegexes,
+        );
         if (willNotifyForNew && !filteredOut) {
             // Low-tier — in-app only. Posting notifications are high-volume by
             // nature; email-blasting them would be a terrible UX. The user
