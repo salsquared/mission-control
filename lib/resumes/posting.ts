@@ -62,6 +62,12 @@ const PostingExtractSchema = z.object({
 // model swap to flash-lite. See docs/llm-calls.html.
 const MAX_INPUT_CHARS = 8_000;
 
+// Below this many characters we treat the fetched/pasted posting as unusable
+// (near-empty → nothing for the LLM to extract). Used both as the parsePosting
+// guard AND as the "is the rendered DOM substantial enough?" bar in
+// extractPostingTextFromHtml before falling back to embedded JSON.
+const MIN_POSTING_TEXT_CHARS = 30;
+
 function clean(s: string): string {
     return s.replace(/[ \s]+/g, " ").trim();
 }
@@ -124,6 +130,143 @@ export function _clearPostingParseCache(): void {
     cacheStore.clear();
 }
 
+// ─── embedded-JSON fallback for client-rendered (SPA) ATS portals ──────────
+//
+// Many modern ATS job boards are client-rendered single-page apps: the server
+// ships a near-empty <body> and hydrates the posting with JavaScript after
+// load. A static fetch + cheerio DOM read (our approach — no headless browser)
+// therefore returns ZERO visible text, and parsePosting would throw "empty or
+// too short" even though the page clearly has content.
+//
+// The content isn't gone, though — these frameworks serialize the full posting
+// into the initial HTML as a JSON blob, just inside <script> tags (which our
+// DOM pass strips). Two near-universal carriers:
+//
+//   • Dayforce HCM (jobs.dayforcehcm.com), and any Next.js-built board, embed a
+//     <script id="__NEXT_DATA__"> blob. Dayforce nests the posting under a node
+//     with `jobTitle` + a `jobPostingContent` object holding the description
+//     (header / body / footer).
+//   • Greenhouse, LinkedIn, and many job boards emit a schema.org
+//     <script type="application/ld+json"> with `@type: "JobPosting"` and a
+//     standard `description` field.
+//
+// Workday and some others use yet other shapes (and a few are pure XHR with no
+// initial-state blob at all — those still need a paste). We cover the two
+// common carriers here; anything we can't read falls through to the paste tab.
+function stripHtmlToText(s: string): string {
+    if (!s) return "";
+    // Embedded descriptions are HTML fragments with entities; cheerio strips
+    // tags and decodes entities in one pass.
+    return clean(cheerio.load(s).root().text());
+}
+
+// JSON-LD payloads come as a single object, an array, or an object whose
+// `@graph` holds the nodes. Flatten to a list of plain objects.
+function jsonLdNodes(parsed: unknown): Record<string, unknown>[] {
+    const out: Record<string, unknown>[] = [];
+    const visit = (n: unknown) => {
+        if (!n || typeof n !== "object") return;
+        if (Array.isArray(n)) { n.forEach(visit); return; }
+        const obj = n as Record<string, unknown>;
+        out.push(obj);
+        if (Array.isArray(obj["@graph"])) (obj["@graph"] as unknown[]).forEach(visit);
+    };
+    visit(parsed);
+    return out;
+}
+
+function extractJsonLdJobPosting($: cheerio.CheerioAPI): string | null {
+    let best: string | null = null;
+    $('script[type="application/ld+json"]').each((_, el) => {
+        if (best) return;
+        const raw = ($(el).html() || $(el).text() || "").trim();
+        if (!raw) return;
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch { return; }
+        for (const node of jsonLdNodes(parsed)) {
+            const type = node["@type"];
+            const isJob = type === "JobPosting" || (Array.isArray(type) && type.includes("JobPosting"));
+            if (!isJob) continue;
+            const parts: string[] = [];
+            // Every field gets stripHtmlToText: titles/org names can carry HTML
+            // entities (e.g. "R&amp;D", "Don&#39;t") and JSON doesn't decode them.
+            if (typeof node.title === "string") parts.push(stripHtmlToText(node.title));
+            const org = node.hiringOrganization;
+            if (org && typeof org === "object" && typeof (org as Record<string, unknown>).name === "string") {
+                parts.push(stripHtmlToText((org as Record<string, unknown>).name as string));
+            } else if (typeof org === "string") {
+                parts.push(stripHtmlToText(org));
+            }
+            if (typeof node.description === "string") parts.push(stripHtmlToText(node.description));
+            const joined = clean(parts.join("\n"));
+            if (joined.length >= MIN_POSTING_TEXT_CHARS) { best = joined; return; }
+        }
+    });
+    return best;
+}
+
+// Recursively locate the posting node in a __NEXT_DATA__ tree. Anchored on the
+// pair (`jobTitle` string + `jobPostingContent` object) so we don't match the
+// i18n string dictionary these blobs also carry (whose innocuous keys like
+// "description":"Description" a looser match would grab).
+function findNextDataJobNode(o: unknown, depth = 0): Record<string, unknown> | null {
+    if (!o || typeof o !== "object" || depth > 25) return null;
+    if (Array.isArray(o)) {
+        for (const item of o) { const r = findNextDataJobNode(item, depth + 1); if (r) return r; }
+        return null;
+    }
+    const obj = o as Record<string, unknown>;
+    if (typeof obj.jobTitle === "string" && obj.jobPostingContent && typeof obj.jobPostingContent === "object") {
+        return obj;
+    }
+    for (const k of Object.keys(obj)) {
+        const r = findNextDataJobNode(obj[k], depth + 1);
+        if (r) return r;
+    }
+    return null;
+}
+
+function extractNextDataJobPosting($: cheerio.CheerioAPI): string | null {
+    const raw = ($("script#__NEXT_DATA__").html() || $("script#__NEXT_DATA__").text() || "").trim();
+    if (!raw) return null;
+    let json: unknown;
+    try { json = JSON.parse(raw); } catch { return null; }
+    const node = findNextDataJobNode(json);
+    if (!node) return null;
+    const parts: string[] = [];
+    if (typeof node.jobTitle === "string") parts.push(stripHtmlToText(node.jobTitle));
+    const content = node.jobPostingContent;
+    if (content && typeof content === "object") {
+        for (const v of Object.values(content as Record<string, unknown>)) {
+            if (typeof v === "string" && v.trim()) parts.push(stripHtmlToText(v));
+        }
+    }
+    const joined = clean(parts.join("\n"));
+    return joined.length >= MIN_POSTING_TEXT_CHARS ? joined : null;
+}
+
+function extractEmbeddedPostingText($: cheerio.CheerioAPI): string | null {
+    // JSON-LD first (standardized, unambiguous), then the Next.js blob.
+    return extractJsonLdJobPosting($) ?? extractNextDataJobPosting($);
+}
+
+/**
+ * Pure HTML → posting-text extractor (no network). Exported for hermetic tests.
+ * Prefers the rendered DOM text; when that comes back empty/too short (a
+ * client-rendered SPA), falls back to posting JSON embedded in <script> tags.
+ * Result is capped at MAX_INPUT_CHARS. Returns "" when nothing usable is found.
+ */
+export function extractPostingTextFromHtml(html: string): string {
+    const $ = cheerio.load(html);
+    // Read embedded JSON BEFORE we strip <script> tags for the DOM pass.
+    const embedded = extractEmbeddedPostingText($);
+    $("script, style, nav, footer, header, noscript, svg").remove();
+    const body = $("main, [role=main], article, body").first();
+    const domText = clean(body.length ? body.text() : $.root().text());
+    const chosen = domText.length >= MIN_POSTING_TEXT_CHARS ? domText : (embedded ?? domText);
+    return chosen.slice(0, MAX_INPUT_CHARS);
+}
+
 async function fetchVisibleText(url: string): Promise<string> {
     assertExternalHttpUrl(url);
     const controller = new AbortController();
@@ -145,12 +288,8 @@ async function fetchVisibleText(url: string): Promise<string> {
     // Re-check in case the redirect chain landed on an internal target.
     assertSafeResponseUrl(res);
     const html = await res.text();
-    const $ = cheerio.load(html);
-    // Drop noise
-    $("script, style, nav, footer, header, noscript, svg").remove();
-    const body = $("main, [role=main], article, body").first();
-    const text = clean(body.length ? body.text() : $.root().text());
-    return text.slice(0, MAX_INPUT_CHARS);
+    // DOM text when present; embedded posting JSON as the SPA fallback.
+    return extractPostingTextFromHtml(html);
 }
 
 export async function parsePosting(
@@ -191,7 +330,10 @@ export async function parsePosting(
         rawText = await fetchVisibleText(sourceUrl!);
     }
 
-    if (rawText.length < 30) {
+    if (rawText.length < MIN_POSTING_TEXT_CHARS) {
+        // A client-rendered SPA whose posting JSON we couldn't read (Workday,
+        // an unrecognized blob shape) lands here too — the message points at the
+        // paste tab, which bypasses scraping entirely.
         throw new Error("Posting input is empty or too short — provide a URL or paste the listing text.");
     }
 
