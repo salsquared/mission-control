@@ -42,7 +42,8 @@ Classify each line below (one row per line). Return {{itemCount}} types in input
 ## Notes
 
 - **Positional output** — the model returns `{"types": [...]}` aligned by array index to the input rows; no external id echoing. UUIDs from Workday/Lever would have burned ~70% of the output budget for zero signal (see 2026-05-20 change log entry in `docs/llm-calls.html`).
-- Batch size 50 is the empirical sweet spot — bigger batches save calls but raise the chance of one bad item failing schema validation for the whole batch.
+- Batch size 50 is the empirical sweet spot. The parse is **tolerant** (`ResultSchema`, 2026-05-29): the cheap model intermittently returns a bare array instead of `{"types":[...]}` (rewrapped) or an out-of-enum string (coerced to `null`), so one bad item no longer fails the whole 50-item batch.
+- **Per-batch isolation** (2026-05-29): a batch that still fails to parse defaults *its* items to `null` and the sweep continues — it does NOT abort the run. Before this, one malformed response among ~20 batches threw the whole sweep and discarded every already-classified batch (observed failing ~100% live on `MODEL_LITE_CHEAP`).
 - Caller handles missing items (model returns fewer entries than expected) — those default to `null` in the returned Map.
 - Sequential dispatch — not `Promise.all`. Rate limiter (12 req/min default) would serialize anyway, and a 429 in one parallel branch can poison the others; sequential keeps timing logs interpretable.
 - Tightened output cap (4096 → 1024 on 2026-05-20) since the output is a short string array — surfaces unexpected growth as MAX_TOKENS instead of silently burning budget.

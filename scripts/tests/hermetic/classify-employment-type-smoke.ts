@@ -12,12 +12,12 @@
  *   2. Single-batch input (< 50 items) → 1 chatFn call, all ids returned
  *   3. Multi-batch input (120 items) → 3 chatFn calls of 50/50/20
  *   4. Model drops items from its response → ids still in output, value=null
- *   5. Model returns an invalid employmentType ("manager") → filtered → null
+ *   5. Tolerant schema: bare array rewrapped; out-of-enum/wrong-case → null; non-array `types` rejected
  *   6. Per-batch prompt contains the right input rows in the right shape
  *   7. Sequential dispatch (batch N+1 starts only after batch N resolves)
- *   8. chatFn throw inside a batch propagates (caller handles in job-watcher)
+ *   8. Per-batch isolation: one failing batch nulls its items; other batches survive (no whole-sweep throw)
  */
-import { classifyEmploymentTypes, type ChatJSONFn } from "@/lib/ai/classify-employment-type";
+import { classifyEmploymentTypes, ResultSchema, type ChatJSONFn } from "@/lib/ai/classify-employment-type";
 
 let passes = 0;
 let fails = 0;
@@ -119,23 +119,32 @@ async function testDroppedItems() {
     else pass("dropped item: position past response length maps to null (not absent)");
 }
 
-async function testInvalidEmploymentType() {
-    const items = [makeItem(0), makeItem(1), makeItem(2)];
-    // Schema validation will reject the whole batch if a value is outside the enum.
-    // So this test verifies the schema is doing its job — chatFn throwing is what
-    // bubbles up. We model the model returning an out-of-enum value by having
-    // the mock throw (representing the schema-validation failure in chatJSON).
-    const { chatFn } = makeMockChat(() => {
-        throw new Error("Gemini response failed schema validation: types.0: Invalid enum value");
-    });
-    let threw = false;
-    try {
-        await classifyEmploymentTypes(items, chatFn);
-    } catch (e) {
-        threw = (e as Error).message.includes("schema validation");
-    }
-    if (threw) pass("schema-invalid model response → error propagates (caller handles)");
-    else fail("schema-invalid: expected propagating throw, classifier swallowed it");
+async function testTolerantSchema() {
+    // The tolerant ResultSchema is applied inside the REAL chatJSON (which the
+    // mock seam bypasses), so exercise it directly against the kinds of
+    // malformed payloads the cheap model actually emits.
+
+    // (a) bare array instead of the {types:[...]} wrapper → rewrapped.
+    const bare = ResultSchema.safeParse(["full-time", "internship", null]);
+    if (!bare.success) fail("tolerant: bare array rejected", bare.error);
+    else if (bare.data.types.length !== 3 || bare.data.types[0] !== "full-time" || bare.data.types[2] !== null)
+        fail("tolerant: bare array rewrapped wrong", bare.data.types);
+    else pass("tolerant: bare array [...] rewrapped to {types:[...]}");
+
+    // (b) out-of-enum + wrong-case items coerce to null; valid ones survive —
+    // so one bad item no longer poisons its 49 neighbors.
+    const mixed = ResultSchema.safeParse({ types: ["full-time", "manager", "Internship", null, "contract"] });
+    if (!mixed.success) fail("tolerant: a bad item failed the whole parse", mixed.error);
+    else if (mixed.data.types[0] !== "full-time" || mixed.data.types[1] !== null
+          || mixed.data.types[2] !== null || mixed.data.types[3] !== null || mixed.data.types[4] !== "contract")
+        fail("tolerant: bad items not coerced to null / valid ones dropped", mixed.data.types);
+    else pass("tolerant: out-of-enum ('manager') + wrong-case ('Internship') coerce to null, valid survive");
+
+    // (c) genuinely unparseable (`types` not an array) must still FAIL so the
+    // per-batch isolation can default it to null (rather than silently caching garbage).
+    const garbage = ResultSchema.safeParse({ types: "nope" });
+    if (garbage.success) fail("tolerant: non-array `types` should not parse", garbage.data);
+    else pass("tolerant: non-array `types` fails parse (→ per-batch isolation handles it)");
 }
 
 async function testPromptShape() {
@@ -187,20 +196,40 @@ async function testSequentialDispatch() {
     }
 }
 
-async function testThrowPropagates() {
-    const items = Array.from({ length: 10 }, (_, i) => makeItem(i));
-    const chatFn = (async () => {
-        throw new Error("Gemini request failed: 429");
+async function testPerBatchIsolation() {
+    // 120 items → 3 batches (50/50/20). The 2nd batch throws (a malformed
+    // response the tolerant schema couldn't salvage); batches 1 + 3 succeed.
+    // The sweep must NOT throw, and must keep batches 1 + 3's results — one bad
+    // batch can no longer discard the whole run (the bug that made the live
+    // sweep persist ~nothing).
+    const items = Array.from({ length: 120 }, (_, i) => makeItem(i));
+    let call = 0;
+    const chatFn = (async (opts: any) => {
+        const idx = call++; // sequential dispatch ⇒ idx 0/1/2 = batch 1/2/3
+        const parsed = parseUserPrompt(opts.user);
+        if (idx === 1) throw new Error("Gemini response failed schema validation: types: expected array");
+        return { types: parsed.map(() => "full-time") };
     }) as unknown as ChatJSONFn;
 
     let threw = false;
+    let result = new Map<string, string | null>();
     try {
-        await classifyEmploymentTypes(items, chatFn);
-    } catch (e) {
-        threw = (e as Error).message.includes("429");
+        result = await classifyEmploymentTypes(items, chatFn) as Map<string, string | null>;
+    } catch {
+        threw = true;
     }
-    if (threw) pass("chatFn throw → error propagates from classifier");
-    else fail("expected chatFn throw to propagate, was swallowed");
+    if (threw) { fail("per-batch isolation: a single failing batch threw the whole sweep"); return; }
+    if (result.size !== 120) { fail(`per-batch isolation: expected all 120 ids present, got ${result.size}`); return; }
+
+    const classified = Array.from(result.values()).filter(v => v === "full-time").length;
+    const nulled = Array.from(result.values()).filter(v => v === null).length;
+    if (classified !== 70 || nulled !== 50) fail(`per-batch isolation: expected 70 classified + 50 null, got ${classified}/${nulled}`);
+    else pass("per-batch isolation: failed batch 2 → its 50 items null, batches 1+3 (70) survive, no throw");
+
+    // batch 2 = items 50..99 → those ids null; a batch-1 id stays classified.
+    if (result.get("posting-50") !== null) fail("per-batch isolation: failed-batch item should be null");
+    else if (result.get("posting-0") !== "full-time") fail("per-batch isolation: surviving-batch item lost its classification");
+    else pass("per-batch isolation: failed-batch ids null, surviving-batch ids classified");
 }
 
 async function main() {
@@ -208,10 +237,10 @@ async function main() {
     await testSingleBatchHappy();
     await testMultiBatch();
     await testDroppedItems();
-    await testInvalidEmploymentType();
+    await testTolerantSchema();
     await testPromptShape();
     await testSequentialDispatch();
-    await testThrowPropagates();
+    await testPerBatchIsolation();
 
     console.log(`\n${passes}/${passes + fails} steps passed`);
     if (fails > 0) process.exit(1);

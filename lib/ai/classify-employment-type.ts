@@ -37,9 +37,27 @@ export interface ClassifyInput {
 // inputs were sent. Stops the model from echoing every external id back
 // (Workday/Lever UUIDs are 20-40 chars apiece — that was burning ~70% of the
 // output budget for no signal). Caller maps array index → input id.
-const ResultSchema = z.object({
-    types: z.array(z.enum(["full-time", "part-time", "internship", "contract", "temporary"]).nullable()),
-});
+//
+// TOLERANT BY DESIGN. The cheapest model (MODEL_LITE_CHEAP) intermittently
+// (a) returns a bare array instead of the {types:[...]} wrapper, or (b) emits
+// an out-of-enum string for one item. A strict schema rejected the ENTIRE
+// 50-item batch on either — and (combined with the per-batch isolation now in
+// classifyEmploymentTypes) that used to abort the whole sweep and discard every
+// good batch. So: a top-level bare array is rewrapped, and a bad item coerces
+// to null (→ Unspecified, retried next sweep) instead of poisoning its 49
+// neighbors. Mirrors the existing count-drift tolerance (missing items default
+// to null below). Exported for the hermetic smoke. NOTE: a tolerant parse still
+// SUCCEEDS, so its result is cached (lib/ai/llm-cache.ts) like any other — only
+// a genuinely unparseable response (e.g. `types` not an array) throws, and that
+// throw is isolated per-batch (not cached, retried next sweep).
+export const ResultSchema = z.preprocess(
+    (v) => (Array.isArray(v) ? { types: v } : v),
+    z.object({
+        types: z.array(
+            z.enum(["full-time", "part-time", "internship", "contract", "temporary"]).nullable().catch(null),
+        ),
+    }),
+);
 
 // 50 keeps the prompt well under Gemini's 32k output budget while still
 // amortising the per-request rate-bucket cost. Bigger batches save calls but
@@ -112,9 +130,13 @@ async function classifyOneBatch(
  * Caller is expected to filter to *new postings with null employmentType* before
  * calling — we don't re-classify rows already in the DB.
  *
- * Throws if any batch fails after retries (caller in job-watcher catches and
- * falls back to leaving the postings as Unspecified — strictly degrades, never
- * worse than today's behavior).
+ * Per-batch isolation: a batch that fails (a malformed response the tolerant
+ * ResultSchema still can't salvage, a 429 past retries, etc.) defaults ITS items
+ * to null and the sweep continues with the other batches — it does NOT throw the
+ * whole run. This used to be all-or-nothing: one bad batch among ~20 aborted the
+ * entire sweep AND discarded every good batch's result, so the sweep persisted
+ * nothing (observed failing ~100% on the cheap model). Null = Unspecified, which
+ * is retried next sweep — strictly degrades, never worse than today's behavior.
  */
 export async function classifyEmploymentTypes(
     items: ClassifyInput[],
@@ -131,8 +153,19 @@ export async function classifyEmploymentTypes(
     // poison the others. Sequential keeps the timing logs interpretable.
     const merged = new Map<string, EmploymentType | null>();
     for (let i = 0; i < batches.length; i++) {
-        const batchResult = await classifyOneBatch(batches[i], i, batches.length, chatFn);
-        for (const [k, v] of batchResult) merged.set(k, v);
+        try {
+            const batchResult = await classifyOneBatch(batches[i], i, batches.length, chatFn);
+            for (const [k, v] of batchResult) merged.set(k, v);
+        } catch (e) {
+            // One bad batch must not discard the other batches' work. Default
+            // this batch's items to null (Unspecified → retried next sweep) and
+            // keep going. Without this, a single malformed response aborted the
+            // whole sweep and threw away every already-classified batch.
+            console.warn(
+                `[employment-type-classifier] batch ${i + 1}/${batches.length} failed — defaulting ${batches[i].length} items to null, continuing: ${e instanceof Error ? e.message : String(e)}`,
+            );
+            for (const it of batches[i]) if (!merged.has(it.id)) merged.set(it.id, null);
+        }
     }
     const elapsed = Date.now() - start;
     const decided = Array.from(merged.values()).filter(v => v !== null).length;
