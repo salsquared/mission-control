@@ -20,6 +20,7 @@ import { runPostingDigest } from './jobs/posting-digest';
 import { runWebhookDeliveryPrune } from './jobs/webhook-delivery-prune';
 import { runClassifyPendingEmploymentTypes } from './jobs/classify-pending-employment-types';
 import { runGmailWatchRenew } from './jobs/gmail-watch-renew';
+import { runLlmCachePrune } from './jobs/llm-cache-prune';
 
 interface IntervalJob {
     name: string;
@@ -115,6 +116,22 @@ const JOBS: IntervalJob[] = [
             const r = await runGmailWatchRenew();
             if (r.processed > 0) {
                 console.info(`[gmail-watch-renew] ${r.renewed}/${r.processed} re-armed, ${r.failed} failed`);
+            }
+        },
+    },
+    {
+        name: 'llm-cache-prune',
+        // Daily — bound the shared cross-tier LLM cache (data/llm-cache.db).
+        // Content-addressed keys make eviction housekeeping, not correctness
+        // (a pruned entry just recomputes on next recurrence). Both tiers run
+        // this against the same file; the deletes are idempotent. No-op when
+        // the cache failed to init on this tier (best-effort). See
+        // docs/cross-tier-llm-dedup.html.
+        intervalMs: 24 * 60 * 60 * 1000,
+        run: async () => {
+            const r = await runLlmCachePrune();
+            if (r.deleted > 0) {
+                console.info(`[llm-cache-prune] deleted ${r.deleted} rows (done<${r.doneCutoff.toISOString()}, pending<${r.pendingCutoff.toISOString()})`);
             }
         },
     },

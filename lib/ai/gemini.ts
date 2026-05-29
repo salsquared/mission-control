@@ -2,6 +2,7 @@ import { GoogleGenAI } from "@google/genai";
 import lunary from "lunary";
 import type { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
+import { cacheKey, llmCached } from "@/lib/ai/llm-cache";
 
 // LOP-3 + audit-bug #10: gate Lunary wrapping at CALL time, not module-init.
 // Dev / test / CI runs without the public key are still a true no-op (no
@@ -99,6 +100,16 @@ interface ChatJSONOptions<T> {
      * case; see docs/llm-calls.html).
      */
     maxOutputTokens?: number;
+    /**
+     * Cross-tier dedup (docs/cross-tier-llm-dedup.html). Default `true`: the
+     * call is content-addressed (model + rendered prompt + schema) and shared
+     * with the other tier via the SQLite store, so Gemini is hit once per
+     * unique input. Set `false` for intentionally-generative callsites meant to
+     * RE-ROLL on identical input (the "suggest / draft N things" calls) —
+     * freezing those would be a regression. Deterministic extraction /
+     * classification (the default) is safe and high-value to cache.
+     */
+    cache?: boolean;
 }
 
 interface RetryConfig {
@@ -238,76 +249,102 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
         }));
     }
 
-    const response = await withRetry(async () => {
-        // PC-6: block on the token bucket BEFORE each attempt — retries
-        // shouldn't bypass the rate gate either. The bucket is process-shared
-        // with lib/email-parser.ts so resume gen + classifier compete fairly
-        // for the same Gemini free-tier quota.
-        await acquireGeminiSlot();
-        return tracedGenerate({
-            name: opts.name,
-            model,
-            system: opts.system,
-            user: opts.user,
-            temperature: opts.temperature ?? 0.4,
-            maxOutputTokens: opts.maxOutputTokens ?? 4096,
+    // Resolve the per-call params ONCE so the cache key matches exactly what
+    // the API call would receive.
+    const temperature = opts.temperature ?? 0.4;
+    const maxOutputTokens = opts.maxOutputTokens ?? 4096;
+
+    // The real (rate-limited) model call + parse + validate. Runs only when WE
+    // lead the reservation (or on the cache's best-effort fallback). The rate
+    // slot lives INSIDE here so a cache hit / follower spends no token and
+    // makes no API call. See docs/cross-tier-llm-dedup.html §5.
+    const compute = async (): Promise<T> => {
+        const response = await withRetry(async () => {
+            // PC-6: block on the token bucket BEFORE each attempt — retries
+            // shouldn't bypass the rate gate either. The bucket is process-shared
+            // with lib/email-parser.ts so resume gen + classifier compete fairly
+            // for the same Gemini free-tier quota.
+            await acquireGeminiSlot();
+            return tracedGenerate({
+                name: opts.name,
+                model,
+                system: opts.system,
+                user: opts.user,
+                temperature,
+                maxOutputTokens,
+            });
+        }).catch((err: unknown) => {
+            throw new AIError(`Gemini request failed: ${err instanceof Error ? err.message : String(err)}`, err, "request");
         });
-    }).catch((err: unknown) => {
-        throw new AIError(`Gemini request failed: ${err instanceof Error ? err.message : String(err)}`, err, "request");
+
+        const usage = response.usageMetadata;
+        if (usage) {
+            console.info(
+                `[AI] ${opts.name} ${model} tokens: prompt=${usage.promptTokenCount ?? "?"} candidates=${usage.candidatesTokenCount ?? "?"} total=${usage.totalTokenCount ?? "?"}`,
+            );
+        }
+
+        const text = response.text;
+        const finishReason = response.candidates?.[0]?.finishReason;
+        if (!text) {
+            throw new AIError("Gemini returned an empty response", response, "parse");
+        }
+        // If the model ran out of output budget mid-stream the text will be a
+        // half-finished JSON document — `JSON.parse` will throw a confusing
+        // "Unterminated string". Surface the actual cause so the UI can tell the
+        // user to retry / shrink the input instead of just showing a stack trace.
+        if (finishReason === "MAX_TOKENS") {
+            throw new AIError(
+                "Gemini response was truncated (hit the output-token limit). The input is too large for a single call — try splitting it into smaller files.",
+                response,
+                "parse",
+            );
+        }
+
+        let parsed: unknown;
+        try {
+            parsed = JSON.parse(text);
+        } catch (err) {
+            const errMsg = err instanceof Error ? err.message : String(err);
+            const posMatch = errMsg.match(/position (\d+)/);
+            const pos = posMatch ? parseInt(posMatch[1], 10) : null;
+            // For trailing-garbage / mid-string failures the relevant bytes are at
+            // `pos`, not the head — log a window around it (with JSON.stringify so
+            // newlines/control chars are visible) plus the tail length so we can
+            // see whether the model double-emitted, fence-wrapped, etc.
+            const window = pos != null
+                ? `pos ${pos} window=${JSON.stringify(text.slice(Math.max(0, pos - 80), pos + 80))}`
+                : `tail=${JSON.stringify(text.slice(-200))}`;
+            throw new AIError(
+                `Gemini response was not valid JSON [${errMsg}; total length=${text.length}]: head=${JSON.stringify(text.slice(0, 200))}; ${window}`,
+                err,
+                "parse",
+            );
+        }
+
+        const validation = opts.schema.safeParse(parsed);
+        if (!validation.success) {
+            throw new AIError(
+                `Gemini response failed schema validation: ${validation.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
+                validation.error,
+                "validate",
+            );
+        }
+        return validation.data;
+    };
+
+    // Opt-out: generative callsites (suggest / draft) re-roll on identical
+    // input and must NOT be frozen. Everything else is content-addressed and
+    // shared cross-tier. See docs/cross-tier-llm-dedup.html §6.
+    if (opts.cache === false) return compute();
+
+    const key = cacheKey({
+        model,
+        system: opts.system,
+        user: opts.user,
+        schema: opts.schema,
+        temperature,
+        maxOutputTokens,
     });
-
-    const usage = response.usageMetadata;
-    if (usage) {
-        console.info(
-            `[AI] ${opts.name} ${model} tokens: prompt=${usage.promptTokenCount ?? "?"} candidates=${usage.candidatesTokenCount ?? "?"} total=${usage.totalTokenCount ?? "?"}`,
-        );
-    }
-
-    const text = response.text;
-    const finishReason = response.candidates?.[0]?.finishReason;
-    if (!text) {
-        throw new AIError("Gemini returned an empty response", response, "parse");
-    }
-    // If the model ran out of output budget mid-stream the text will be a
-    // half-finished JSON document — `JSON.parse` will throw a confusing
-    // "Unterminated string". Surface the actual cause so the UI can tell the
-    // user to retry / shrink the input instead of just showing a stack trace.
-    if (finishReason === "MAX_TOKENS") {
-        throw new AIError(
-            "Gemini response was truncated (hit the output-token limit). The input is too large for a single call — try splitting it into smaller files.",
-            response,
-            "parse",
-        );
-    }
-
-    let parsed: unknown;
-    try {
-        parsed = JSON.parse(text);
-    } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err);
-        const posMatch = errMsg.match(/position (\d+)/);
-        const pos = posMatch ? parseInt(posMatch[1], 10) : null;
-        // For trailing-garbage / mid-string failures the relevant bytes are at
-        // `pos`, not the head — log a window around it (with JSON.stringify so
-        // newlines/control chars are visible) plus the tail length so we can
-        // see whether the model double-emitted, fence-wrapped, etc.
-        const window = pos != null
-            ? `pos ${pos} window=${JSON.stringify(text.slice(Math.max(0, pos - 80), pos + 80))}`
-            : `tail=${JSON.stringify(text.slice(-200))}`;
-        throw new AIError(
-            `Gemini response was not valid JSON [${errMsg}; total length=${text.length}]: head=${JSON.stringify(text.slice(0, 200))}; ${window}`,
-            err,
-            "parse",
-        );
-    }
-
-    const validation = opts.schema.safeParse(parsed);
-    if (!validation.success) {
-        throw new AIError(
-            `Gemini response failed schema validation: ${validation.error.issues.map(i => `${i.path.join(".")}: ${i.message}`).join("; ")}`,
-            validation.error,
-            "validate",
-        );
-    }
-    return validation.data;
+    return llmCached({ key, name: opts.name, model }, compute);
 }

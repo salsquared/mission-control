@@ -241,6 +241,9 @@ export async function draftTagline(input: DraftTaglineInput): Promise<DraftTagli
 
     const response = await chatJSON({
         name: 'tagline-draft',
+        // Generative: drafts a fresh tagline — re-ask should re-roll, so opt
+        // out of cross-tier dedup.
+        cache: false,
         system: prompt.system,
         user: prompt.user,
         schema: ResponseSchema,

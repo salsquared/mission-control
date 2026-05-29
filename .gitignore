@@ -90,6 +90,14 @@ public/swe-worker-*.js
 /data/perf/*
 !/data/perf/.gitkeep
 
+# Cross-tier LLM dedup cache (lib/ai/llm-cache.ts) + its WAL/shm sidecars. It's
+# a content-addressed cache, not state — both tiers regenerate it. Also matched
+# by the global *.db / *.db-wal / *.db-shm globs above; listed explicitly for
+# clarity. See docs/cross-tier-llm-dedup.html.
+/data/llm-cache.db
+/data/llm-cache.db-wal
+/data/llm-cache.db-shm
+
 # Promptfoo eval output — JSON results + per-run dirs from `npm run test:prompts`.
 # LOP-9. The fixtures themselves (eval/fixtures/, eval/suites/) ARE checked in;
 # results are not.

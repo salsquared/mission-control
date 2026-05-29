@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cross-tier LLM call deduplication</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Cross-tier LLM call deduplication</h1>
+  <p class="subtitle">dev and prod run the same code on the same machine against the same data, so every LLM-backed step (email parsing, posting classification, …) calls Gemini <strong>twice</strong> for identical input — and bills twice. This is the design for calling Gemini <strong>once</strong> per unique input and having the other tier reuse the result. Scoped to email ingestion first (the hardest case), then extended to every callsite through a single chokepoint. <strong>Implementation spec for a handoff agent — see §9 for coordination with the in-flight Gmail-push work.</strong></p>
+
+  <div class="callout tip"><strong>✅ SHIPPED 2026-05-29.</strong> Implemented as specified: <code>lib/ai/llm-cache.ts</code> (shared-WAL-SQLite store + reservation protocol + best-effort degradation + prune), both chokepoints wrapped (<code>chatJSON</code> with a default-on <code>cache?: boolean</code> + 6 generative opt-outs; <code>parseApplicationEmail</code>), the <code>llm-cache-prune</code> scheduler job, and the <code>llm-cache-smoke</code> hermetic suite (in <code>pre-push.sh</code>). Decisions that diverged from this spec: (1) <strong><code>better-sqlite3</code> promoted to a direct dependency</strong> — it was only a transitive <em>devDependency</em> (via promptfoo) and ships no types, so the "zero new deps" assumption wouldn't survive a prod-only install; loaded via a guarded dynamic <code>import()</code> + added to <code>serverExternalPackages</code> (native module). (2) Cache-hit tracing: <strong>suppressed</strong> (no model event emitted on a hit, since no model call happens). Verified: full hermetic 82/82, <code>tsc</code> clean, prod rebuilt + redeployed, and cross-process dedup confirmed live against the real <code>data/llm-cache.db</code>. The task plan below is checked off; see <a href="./llm-calls.html#cross-tier">llm-calls.html §7</a> + that doc's change log for the operational record.</div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#problem">Problem &amp; goal</a></li>
+      <li><a href="#design">Design overview</a></li>
+      <li><a href="#store">The shared store</a></li>
+      <li><a href="#protocol">The reservation protocol</a></li>
+      <li><a href="#integrate">Integration points</a></li>
+      <li><a href="#cacheable">What to cache (and what not to)</a></li>
+      <li><a href="#gateway">Rate-limit &amp; the gateway evolution</a></li>
+      <li><a href="#testing">Testing</a></li>
+      <li><a href="#coordination">Coordination with the Gmail work</a></li>
+      <li><a href="#tasks">Touch list &amp; task plan</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="problem">Problem &amp; goal</h2></summary>
+    <div class="section-body">
+      <h3>Why we pay twice</h3>
+      <ul>
+        <li><strong>Two tiers, one machine, same inputs.</strong> <code>mission-control</code> (prod, :3101 / prod.db) and <code>mission-control-dev</code> (dev, :4101 / dev.db) — plus their two schedulers — run identical code. Scheduler jobs like <code>job-watcher</code> classify the same postings in both tiers today; once the Gmail push fan-out lands (see <code>docs/gmail-realtime-push.html</code>), both webhooks will parse the same email too.</li>
+        <li><strong>Per-process rate buckets.</strong> <code>lib/ai/rate-limit.ts</code> stashes its token bucket on <code>globalThis</code> (line 38) — so it's shared <em>within</em> a process, but dev and prod each get their own. Two tiers ⇒ effectively <code>2 × GEMINI_RATE_PER_MIN</code> against Google. A cache reduces call <em>volume</em>; it does not unify the buckets (that's the gateway's job — §7).</li>
+      </ul>
+      <h3>Goal &amp; non-goal</h3>
+      <p><strong>Goal:</strong> for a given (model + rendered prompt + output schema), Gemini is called <em>once</em>; the other tier reuses the result — even when both tiers fire near-simultaneously.</p>
+      <div class="callout"><strong>Non-goal: a shared ingestion service.</strong> Both tiers must keep ingesting independently so both DBs (and both kanbans) stay populated. We share only the expensive, deterministic-ish <em>sub-computation</em> (the LLM call), not the ingestion flow around it. The unit of sharing is <strong>the LLM result</strong>, keyed on its input.</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="design">Design overview</h2></summary>
+    <div class="section-body">
+      <h3>Content-addressed cache + shared SQLite + in-flight reservation</h3>
+      <p>A thin wrapper, <code>llmCached(req, compute)</code>, sits in front of every real Gemini call. It computes a content hash of the request, checks a <strong>shared SQLite file</strong> both tiers open, and either returns a cached result, leads the computation, or waits for the other tier's in-flight computation.</p>
+      <pre><code class="language-typescript">// cache key — everything that determines the output, nothing that doesn't
+key = sha256([
+  model,                                  // resolved model id (not the optional input)
+  system ?? "",
+  user,                                   // the fully-rendered prompt
+  String(temperature ?? ""),
+  String(maxOutputTokens ?? ""),
+  JSON.stringify(zToJsonSchema(schema)),  // output contract (same serializer api-docs uses)
+].join(""));</code></pre>
+      <p>Two properties fall out of putting the rendered prompt + model <em>in the key</em>:</p>
+      <ul>
+        <li><strong>Auto-invalidation.</strong> Edit a prompt template or bump a model ⇒ new key ⇒ never a stale hit. TTL becomes pure housekeeping (§7), not correctness.</li>
+        <li><strong>Cross-tier consistency bonus.</strong> dev and prod now return the <em>same</em> classification for the same input instead of independently drifting.</li>
+      </ul>
+      <div class="callout tip"><strong>Zero new deps.</strong> <code>better-sqlite3</code> is already in <code>node_modules</code> (synchronous, single-file, perfect for a one-box KV). Node is v24 — <code>node:sqlite</code> exists too but is still experimental; prefer <code>better-sqlite3</code>.</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="store">The shared store</h2></summary>
+    <div class="section-body">
+      <h3>A third SQLite file, neither tier's DB</h3>
+      <p>dev.db and prod.db are separate, so the cache lives in its own file both processes open — e.g. <code>data/llm-cache.db</code> (gitignored; it's a cache, not state). WAL mode gives many readers + a serialized writer; <code>busy_timeout</code> makes a brief cross-process write contention wait rather than throw.</p>
+      <pre><code class="language-sql">CREATE TABLE IF NOT EXISTS llm_cache (
+  key         TEXT PRIMARY KEY,
+  name        TEXT,            -- callsite name (chatJSON.name / 'parse-application-email') — observability
+  model       TEXT,
+  status      TEXT NOT NULL,   -- 'pending' | 'done'
+  result      TEXT,            -- JSON string; NULL while pending
+  reserved_at INTEGER NOT NULL,-- ms epoch — lease clock for stale-leader takeover
+  done_at     INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_llm_cache_done_at ON llm_cache(done_at);</code></pre>
+      <pre><code class="language-typescript">// module init (lib/ai/llm-cache.ts)
+const db = new Database(process.env.LLM_CACHE_PATH ?? "data/llm-cache.db");
+db.pragma("journal_mode = WAL");
+db.pragma("busy_timeout = 5000");
+db.pragma("synchronous = NORMAL");   // cache durability is non-critical; favor speed</code></pre>
+      <div class="callout warn"><strong>Path must resolve identically from both processes.</strong> dev and prod have the same CWD (the repo root, under PM2), so a repo-relative path is fine — but make it overridable via <code>LLM_CACHE_PATH</code> and assert the resolved absolute path on startup so a CWD surprise fails loud instead of silently giving each tier its own file (which would defeat the whole thing).</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="protocol">The reservation protocol</h2></summary>
+    <div class="section-body">
+      <h3>Why read-through alone is not enough</h3>
+      <p>The Gmail fan-out delivers the same email to both webhooks within ~the same second. A naive read-through cache would <strong>double-miss</strong> (both check, both find nothing, both call Gemini). To actually hit "once" we need an in-flight reservation so exactly one tier leads and the other waits.</p>
+
+      <h3>Leader / follower / steal / fallback</h3>
+      <pre class="mermaid">
+stateDiagram-v2
+  [*] --> Check
+  Check --> Return: row.status == done
+  Check --> Reserve: no row
+  Check --> Follow: row pending
+  Reserve --> Lead: INSERT OR IGNORE won
+  Reserve --> Follow: lost race (someone inserted first)
+  Lead --> Return: compute() ok, write done
+  Lead --> Release: compute() threw (DELETE row, rethrow)
+  Follow --> Return: poll sees done
+  Follow --> Steal: pending older than LEASE_MS
+  Follow --> Fallback: waited &gt; MAX_WAIT
+  Steal --> Lead: conditional UPDATE won
+  Steal --> Follow: lost steal
+  Fallback --> Return: compute() myself (rare duplicate)
+  Release --> [*]
+  Return --> [*]
+      </pre>
+      <pre><code class="language-typescript">export async function llmCached&lt;T&gt;(
+  req: { key: string; name: string; model: string },
+  compute: () =&gt; Promise&lt;T&gt;,
+  opts?: { leaseMs?: number; maxWaitMs?: number; pollMs?: number },
+): Promise&lt;T&gt; {
+  const LEASE = opts?.leaseMs ?? 30_000;   // &gt; worst-case Gemini latency incl. retries
+  const MAX_WAIT = opts?.maxWaitMs ?? 8_000;
+  const POLL = opts?.pollMs ?? 150;
+
+  const hit = getRow(req.key);
+  if (hit?.status === "done" &amp;&amp; hit.result) return JSON.parse(hit.result) as T;
+
+  if (tryReserve(req)) return await lead(req, compute);  // INSERT OR IGNORE won → leader
+
+  const deadline = nowMs() + MAX_WAIT;
+  while (nowMs() &lt; deadline) {
+    await sleep(POLL);
+    const r = getRow(req.key);
+    if (r?.status === "done" &amp;&amp; r.result) return JSON.parse(r.result) as T;   // leader finished
+    if (!r) { if (tryReserve(req)) return await lead(req, compute); continue; } // released → re-lead
+    if (r.status === "pending" &amp;&amp; nowMs() - r.reserved_at &gt; LEASE) {            // stale leader
+      if (trySteal(req.key, r.reserved_at)) return await lead(req, compute);    // atomic takeover
+    }
+  }
+  return compute();   // fallback: leader stalled past MAX_WAIT — accept a rare duplicate over hanging
+}
+
+async function lead&lt;T&gt;(req, compute): Promise&lt;T&gt; {
+  try { const out = await compute(); finish(req.key, JSON.stringify(out)); return out; }
+  catch (e) { release(req.key); throw e; }   // DELETE so the next caller can lead cleanly
+}</code></pre>
+      <p>All three mutations are atomic in SQLite even across processes:</p>
+      <ul>
+        <li><code>tryReserve</code> → <code>INSERT INTO llm_cache(...) VALUES(..., 'pending', ...) ON CONFLICT(key) DO NOTHING</code>; <code>.changes === 1</code> means I won.</li>
+        <li><code>trySteal</code> → <code>UPDATE ... SET reserved_at=? WHERE key=? AND reserved_at=?</code> (the old value); <code>.changes === 1</code> means I won the takeover.</li>
+        <li><code>finish</code> / <code>release</code> → single-row <code>UPDATE</code> / <code>DELETE</code>.</li>
+      </ul>
+
+      <h3>Failure modes &amp; why each is safe</h3>
+      <table>
+        <thead><tr><th>Scenario</th><th>Outcome</th></tr></thead>
+        <tbody>
+          <tr><td>Both tiers arrive simultaneously</td><td>One wins <code>INSERT OR IGNORE</code> and computes; the other follows and reuses. One Gemini call.</td></tr>
+          <tr><td>Leader crashes mid-compute</td><td>Row stuck <code>pending</code>; first follower past <code>LEASE_MS</code> steals it via conditional UPDATE and re-leads. No permanent stall.</td></tr>
+          <tr><td>Leader errors (4xx/exhausted retries)</td><td>Leader <code>DELETE</code>s the row and rethrows; next caller leads cleanly. Errors are never cached.</td></tr>
+          <tr><td>Leader slow but alive (&gt; MAX_WAIT)</td><td>Follower falls back to computing itself — a rare duplicate, strictly better than hanging.</td></tr>
+          <tr><td>Corrupt/locked cache file</td><td>Wrapper catches store errors and computes directly (cache is best-effort, never load-bearing).</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><strong>Cache is best-effort.</strong> Any store-layer exception (open/read/write) must degrade to "just call <code>compute()</code>". Dedup is an optimization; correctness never depends on the cache being up.</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="integrate">Integration points</h2></summary>
+    <div class="section-body">
+      <h3>One wrapper, two chokepoints</h3>
+      <p>Every Gemini call already funnels through exactly two helpers — wrap both and the whole app is covered:</p>
+      <ul>
+        <li><strong><code>lib/ai/gemini.ts:chatJSON</code></strong> (line 219) — the generic structured-output path used by every callsite except email. Its options (<code>name</code>, <code>system?</code>, <code>user</code>, <code>schema</code>, <code>model?</code>, <code>temperature?</code>, <code>maxOutputTokens?</code>) are exactly the cache-key inputs.</li>
+        <li><strong><code>lib/email-parser.ts:parseApplicationEmail</code></strong> (line 144) — the SDK-bypassing email path. Key on (<code>MODEL_ID</code>, the rendered prompt, the parse schema).</li>
+      </ul>
+
+      <h3>Where exactly — and move the rate slot inside the leader</h3>
+      <p>Check the cache <em>before</em> <code>acquireGeminiSlot()</code>. On a hit (or as a follower), you spend no rate token and make no API call. The slot acquisition moves <em>into</em> the <code>compute()</code> closure so only the leader pays for it:</p>
+      <pre><code class="language-typescript">// inside chatJSON, replacing the direct `await acquireGeminiSlot(); ...call...`
+const key = cacheKey({ model, system: opts.system, user: opts.user,
+                       schema: opts.schema, temperature: opts.temperature,
+                       maxOutputTokens: opts.maxOutputTokens });
+return llmCached({ key, name: opts.name, model }, async () =&gt; {
+  await acquireGeminiSlot();          // only the leader acquires a token
+  return runGeminiCallWithRetries();  // the existing body, unchanged
+});</code></pre>
+      <p><code>parseApplicationEmail</code> wraps identically around its <code>acquireGeminiSlot()</code> + <code>generateContent</code> body, keeping its existing <code>safeTrack</code> Lunary events inside the closure so a cache hit isn't traced as a model call (or is traced as a <code>cache-hit</code> event — implementer's call; note it in <code>docs/llm-calls.html</code>).</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="cacheable">What to cache (and what not to)</h2></summary>
+    <div class="section-body">
+      <h3>Default-on with an opt-out</h3>
+      <p>Most callsites are deterministic extraction/classification (email parse, posting parse, employment-type classify, resume selection) — safe and high-value to cache. A few are intentionally generative and re-rolled for variety; freezing those would be a regression.</p>
+      <div class="callout warn"><strong>Audit <code>docs/llm-calls.html</code> before flipping <code>chatJSON</code> default-on.</strong> Add a <code>cache?: boolean</code> (default <code>true</code>) to <code>ChatJSONOptions</code> and set <code>cache: false</code> on any "suggest N things"-style callsite. Per the anti-repetition rule, those calls already fold the user's known items into the prompt — so identical input genuinely <em>should</em> reuse, but if a callsite is meant to vary on re-ask with identical input, it must opt out. Treat the inventory as the checklist; tag each row cache-on/off.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="gateway">Rate-limit &amp; the gateway evolution</h2></summary>
+    <div class="section-body">
+      <h3>What the cache fixes vs. what it doesn't</h3>
+      <p>The cache cuts duplicate <em>calls</em>, which indirectly relieves rate pressure — but the two tiers still run independent rate buckets. Unifying the bucket (and centralizing observability/cost, or sharing across machines) is the job of a future <strong>LLM gateway</strong>: one PM2 process both tiers POST to over localhost.</p>
+      <h3>The cache is the on-ramp, not a throwaway</h3>
+      <p>Because callsites only ever touch <code>llmCached(req, compute)</code>, promoting the store behind a gateway later doesn't change a single callsite — only the wrapper's body swaps a SQLite read for a <code>fetch('http://localhost:PORT/llm')</code>. Build the cache now; reach for the gateway only when you specifically need a single shared rate bucket or cross-host sharing.</p>
+      <pre class="mermaid">
+flowchart LR
+  cs["callsites<br/>(chatJSON / parseApplicationEmail)"] --> w["llmCached(req, compute)"]
+  w -->|"now"| sq[("shared SQLite<br/>llm-cache.db")]
+  w -.->|"later, same wrapper"| gw["LLM gateway<br/>(1 process: cache + 1 rate bucket)"]
+  gw --> gemini["Gemini"]
+  sq --> gemini
+      </pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="testing">Testing</h2></summary>
+    <div class="section-body">
+      <h3>Hermetic smoke (add to pre-push SUITES)</h3>
+      <ul>
+        <li><strong>Single-flight:</strong> fire N concurrent <code>llmCached(sameKey, compute)</code> where <code>compute</code> increments a counter; assert the counter is <strong>1</strong> and all N callers get the same result.</li>
+        <li><strong>Leader error not cached:</strong> first <code>compute</code> throws → assert row released and a second call re-leads (counter increments again).</li>
+        <li><strong>Stale takeover:</strong> seed a <code>pending</code> row with <code>reserved_at</code> older than <code>LEASE_MS</code>; assert a fresh caller steals + computes.</li>
+        <li><strong>Cache-down degradation:</strong> point <code>LLM_CACHE_PATH</code> at an unwritable path; assert calls still succeed via direct compute.</li>
+        <li><strong>Cross-process (optional):</strong> spawn two <code>tsx</code> child procs against one temp <code>LLM_CACHE_PATH</code>, both calling the same key; assert one compute total via a shared side-file counter.</li>
+      </ul>
+      <p>Use a fake <code>compute</code> (no real Gemini) so it stays hermetic. Append the file to the <code>SUITES</code> array in <code>scripts/pre-push.sh</code>.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="coordination">Coordination with the Gmail work</h2></summary>
+    <div class="section-body">
+      <h3>Parallel-safe, with two touchpoints to know about</h3>
+      <p>This work and <code>docs/gmail-realtime-push.html</code> can run concurrently (different owners). They're independent <em>except</em>:</p>
+      <ul>
+        <li><strong>Shared file: <code>scheduler/index.ts</code>.</strong> Both register a new job in the <code>JOBS</code> array (this one adds <code>llm-cache-prune</code>; Gmail adds <code>gmail-watch-renew</code>). Trivial merge — just two non-overlapping array entries + imports — but expect it.</li>
+        <li><strong>Shared file: <code>docs/next_steps.md</code>.</strong> Per session protocol, both will touch it. Coordinate the "In-progress" entries.</li>
+      </ul>
+      <div class="callout"><strong>Sequencing note (neither blocks the other).</strong> Dedup delivers value <em>today</em> for the existing scheduler callsites regardless of Gmail. The Gmail fan-out is what makes the email <em>simultaneity</em> case real — so until dedup lands, the fan-out simply double-classifies email (harmless, temporary 2× cost). No ordering dependency: ship them in either order or in parallel.</div>
+      <p>This doc does <strong>not</strong> touch <code>lib/gmail/*</code>, <code>lib/auth.ts</code>, or <code>app/api/gmail/webhook/route.ts</code>; the Gmail work does <strong>not</strong> touch <code>lib/ai/*</code> or <code>lib/email-parser.ts</code>. No conflicts outside the two files above.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="tasks">Touch list &amp; task plan</h2></summary>
+    <div class="section-body">
+      <h3>Files</h3>
+      <table>
+        <thead><tr><th>File</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td><code>lib/ai/llm-cache.ts</code></td><td><strong>new</strong> — store init, <code>cacheKey()</code>, <code>llmCached()</code>, reservation helpers, best-effort error swallowing</td></tr>
+          <tr><td><code>lib/ai/gemini.ts</code></td><td>wrap <code>chatJSON</code> body in <code>llmCached</code>; add <code>cache?: boolean</code> to <code>ChatJSONOptions</code></td></tr>
+          <tr><td><code>lib/email-parser.ts</code></td><td>wrap <code>parseApplicationEmail</code>'s slot+SDK body in <code>llmCached</code></td></tr>
+          <tr><td><code>scheduler/jobs/llm-cache-prune.ts</code></td><td><strong>new</strong> — age/size prune (mirror <code>webhook-delivery-prune.ts</code>)</td></tr>
+          <tr><td><code>scheduler/index.ts</code></td><td>register <code>llm-cache-prune</code> (daily) — ⚠ shared with Gmail work</td></tr>
+          <tr><td><code>.gitignore</code></td><td>ignore <code>data/llm-cache.db*</code> (WAL/shm too)</td></tr>
+          <tr><td><code>docs/llm-calls.html</code></td><td>tag each callsite cache-on/off; note cache-hit tracing behavior</td></tr>
+          <tr><td><code>scripts/tests/hermetic/llm-cache-smoke.ts</code></td><td><strong>new</strong> — single-flight + failure-mode smokes; add to <code>pre-push.sh</code> SUITES</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Phased plan</h3>
+      <details class="task" open>
+        <summary><input type="checkbox" checked><span class="task-id">P1</span><span class="task-title">Phase 1 — Cache module + tests (no callsite changes)</span></summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.1</span><span class="task-title">lib/ai/llm-cache.ts — store, key, llmCached, reservation</span></summary><div class="task-body"><p>better-sqlite3 + WAL; INSERT OR IGNORE reserve, conditional-UPDATE steal, finish/release; best-effort degradation.</p></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.2</span><span class="task-title">Hermetic smoke + pre-push wiring</span></summary><div class="task-body"><p>single-flight, error-not-cached, stale-takeover, cache-down, optional cross-process.</p></div></details>
+        </div>
+      </details>
+      <details class="task" open>
+        <summary><input type="checkbox" checked><span class="task-id">P2</span><span class="task-title">Phase 2 — Wire the chokepoints</span></summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.1</span><span class="task-title">Wrap parseApplicationEmail (the hard simultaneity case)</span></summary><div class="task-body"><p>Slot + SDK inside compute(); keep safeTrack semantics.</p></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.2</span><span class="task-title">Wrap chatJSON + add cache opt-out; audit docs/llm-calls.html</span></summary><div class="task-body"><p>Default-on; set cache:false on generative callsites per the inventory audit.</p></div></details>
+        </div>
+      </details>
+      <details class="task" open>
+        <summary><input type="checkbox" checked><span class="task-id">P3</span><span class="task-title">Phase 3 — Housekeeping + verify</span></summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.1</span><span class="task-title">llm-cache-prune scheduler job (daily)</span></summary><div class="task-body"><p>Bound disk; key is content+model-addressed so eviction is housekeeping, not correctness.</p></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.2</span><span class="task-title">Verify dedup live; document; update next_steps.md</span></summary><div class="task-body"><p>Confirm one Gemini call across both tiers for a shared input (watch logs / Lunary). Add a CLAUDE.md note under the Gemini fleet section.</p></div></details>
+        </div>
+      </details>
+
+      <h3>Open decisions for the implementer</h3>
+      <ul>
+        <li><strong>Cache-hit tracing:</strong> suppress the Lunary event entirely, or emit a distinct <code>cache-hit</code> event? (Affects cost dashboards.)</li>
+        <li><strong>Prune policy:</strong> age-based (e.g. 60d on <code>done_at</code>) vs. row-count cap vs. both. Volume is low; age-based is likely enough.</li>
+        <li><strong>Default-on vs. default-off for <code>chatJSON</code>:</strong> spec recommends default-on + audited opt-outs for max leverage; flip if the audit surfaces many generative callsites.</li>
+      </ul>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

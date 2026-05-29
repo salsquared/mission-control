@@ -26,6 +26,7 @@
       <li><a href="#in-place">Patterns already in place</a></li>
       <li><a href="#pipeline">The resume-gen pipeline (the hot path)</a></li>
       <li><a href="#opportunities">Opportunities (Tier 1–4)</a></li>
+      <li><a href="#cross-tier">Cross-tier call dedup</a></li>
       <li><a href="#non-goals">Non-goals</a></li>
       <li><a href="#observability">Observability (Lunary + Promptfoo)</a></li>
       <li><a href="#defaults">Defaults + rate limiting</a></li>
@@ -300,6 +301,39 @@ flowchart TB
     </div>
   </details>
 
+  <details class="section" open>
+    <summary><h2 id="cross-tier">Cross-tier call dedup</h2></summary>
+    <div class="section-body">
+      <p>Full design: <a href="./cross-tier-llm-dedup.html">cross-tier-llm-dedup.html</a>. dev (:4101 / dev.db) and prod (:3101 / prod.db) — plus their two schedulers — run the SAME code on the SAME box against the SAME data, so every cacheable LLM step was calling Gemini <strong>twice</strong> for identical input. A thin wrapper, <code>llmCached(req, compute)</code> in <code>lib/ai/llm-cache.ts</code>, content-hashes the request, checks a <strong>shared SQLite file both tiers open</strong> (<code>data/llm-cache.db</code>, WAL), and either returns a cached result, leads the computation, or follows the other tier's in-flight one (an <code>INSERT OR IGNORE</code> reservation gives single-flight even when both tiers fire within the same second — the Gmail push fan-out case). <strong>Shipped 2026-05-29.</strong></p>
+
+      <h3>What's cached vs. what re-rolls</h3>
+      <p>Caching is <strong>default-on</strong> in <code>chatJSON</code> (<code>cache?: boolean</code>, default <code>true</code>): deterministic extraction / classification is safe and high-value to cache. The key is content-addressed (resolved model + rendered prompt + output JSON Schema), so editing a prompt or bumping a model auto-invalidates — eviction is housekeeping, never correctness. A few intentionally-generative callsites <strong>opt out</strong> (<code>cache: false</code>) because they are meant to <em>re-roll</em> on identical input; freezing them would be a regression.</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>State</th><th>Callsites</th><th>Why</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Cached</strong> (default)</td>
+            <td><code>email-parser</code>, <code>employment-type-classifier</code>, <code>posting-parse</code>, <code>resume-rewrite</code>, <code>profile-import</code>, <code>profile-synthesize</code>, <code>bullet-tags-from-posting</code>, <code>resume-tagline</code></td>
+            <td>Deterministic extraction / classification / tailoring. Identical input genuinely <em>should</em> produce the same output — and dedups both across tiers and across the N-resume-variants-against-one-posting case.</td>
+          </tr>
+          <tr>
+            <td><code>cache: false</code></td>
+            <td><code>discovery-suggest</code>, <code>bullet-assist-fill</code>, <code>bullet-assist-rewrite</code>, <code>tagline-draft</code>, <code>bullet-tags-from-profile</code>, <code>scratchpad-synth</code></td>
+            <td>Generative "suggest / draft" calls the user re-asks for a fresh take. Per the anti-repetition rule they already fold the user's known items into the prompt — but they're meant to vary on re-ask with identical input, so they must opt out.</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Cache-hit tracing</h3>
+      <p>The rate-slot acquisition (<code>acquireGeminiSlot</code>) + the model call + the Lunary trace all live <em>inside</em> the <code>compute()</code> closure, which runs only for the leader. So a cache hit / follower spends no rate token, makes no API call, and is <strong>not</strong> traced as a model call in Lunary — there is no model event to attribute, because no model call happened. (No distinct <code>cache-hit</code> event is emitted; cost dashboards count only real calls.) The <code>[AI] &lt;name&gt; … tokens=…</code> log line likewise only prints on a real call.</p>
+
+      <h3>Best-effort, never load-bearing</h3>
+      <p>Any store-layer failure — a <code>better-sqlite3</code> ABI mismatch after an nvm Node switch, a missing/locked/unwritable file, a write error — degrades to calling <code>compute()</code> directly (uncached) and logs one warning. The native binding is loaded via a guarded dynamic <code>import()</code> so a load failure can be caught instead of crashing every importer of <code>lib/ai/gemini.ts</code>. Errors from <code>compute()</code> itself are never cached (the leader <code>DELETE</code>s its reservation and rethrows). A daily <code>llm-cache-prune</code> scheduler job bounds disk (60d on <code>done</code>, 24h on crashed <code>pending</code> rows). Hermetic coverage: <code>scripts/tests/hermetic/llm-cache-smoke.ts</code> (single-flight, error-not-cached, stale-takeover, cache-down, prune).</p>
+    </div>
+  </details>
+
   <details class="section">
     <summary><h2 id="non-goals">Non-goals</h2></summary>
     <div class="section-body">
@@ -378,6 +412,7 @@ flowchart TB
     <div class="section-body">
       <h3>History</h3>
       <ul>
+        <li><strong>2026-05-29</strong> — Cross-tier call dedup shipped (§7, design: <a href="./cross-tier-llm-dedup.html">cross-tier-llm-dedup.html</a>). New <code>lib/ai/llm-cache.ts</code>: a content-addressed, shared-SQLite (<code>data/llm-cache.db</code>, WAL) cache with an <code>INSERT OR IGNORE</code> in-flight reservation (leader / follower / stale-lease steal / fallback) so the two tiers call Gemini once per unique input. <code>chatJSON</code> gains <code>cache?: boolean</code> (default <code>true</code>); the rate slot moved inside the leader's <code>compute()</code>. Opt-outs (<code>cache: false</code>) on the 6 generative callsites (<code>discovery-suggest</code>, <code>bullet-assist-fill</code>/<code>-rewrite</code>, <code>tagline-draft</code>, <code>bullet-tags-from-profile</code>, <code>scratchpad-synth</code>). <code>email-parser</code> wrapped identically (slot + SDK + <code>safeTrack</code> inside <code>compute()</code>, so cache hits aren't traced as model calls). Best-effort: a store failure (better-sqlite3 ABI mismatch, unwritable file) degrades to direct uncached compute. Daily <code>llm-cache-prune</code> scheduler job (60d done / 24h crashed-pending). <code>better-sqlite3</code> promoted to a direct dependency + added to <code>serverExternalPackages</code>. Hermetic: <code>llm-cache-smoke.ts</code> (5 scenarios).</li>
         <li><strong>2026-05-28</strong> — Tier 2 shipped (validation pass first confirmed Tier 1 + the still-open premises). <strong>2a:</strong> <code>resume-rewrite</code> (FLASH) and <code>resume-tagline</code> (LITE) now run concurrently via <code>Promise.all</code> in <code>app/api/resumes/route.ts</code> — chosen over the originally-proposed merge, which would have moved the tagline's multi-KB superset input onto FLASH pricing for only a system-prompt-sized saving. Rewrite stays fatal-on-throw; tagline keeps its independent fallback. <strong>2b:</strong> <code>scratchpad-synth</code> batched N→1 — one call carries every gated entity as a delimited, positionally-aligned block (<code>synthesizeBulletsForEntities</code> replaces <code>synthesizeBulletsForEntity</code>), output budget <code>min(8192, 512 + N×1536)</code>, structural + instructional cross-entity isolation. Output shape <code>{ bullets }</code> → <code>{ entries }</code>; prompt blob rewritten, <code>eval/provider.ts</code> + suite updated (multi-entity isolation fixture added, Promptfoo 4/4), <code>scratchpad-synth-smoke.ts</code> rewritten to prove 2 entities → 1 call. A heavy generate drops ~10 → ~5 calls. <strong>Deploy:</strong> requires a Lunary template sync (<code>ONLY=scratchpad-synth</code>) shipped with the code — see §6 Tier 2 deploy-coupling note.</li>
         <li><strong>2026-05-28</strong> — Cost-optimization pass + doc merge. Tier 1 shipped: (a) <code>posting-parse</code> result cache (content-keyed, 30-min TTL, 200-entry LRU) in <code>lib/resumes/posting.ts</code> — repeat generates against the same posting no longer re-call Gemini; <code>posting-parse-cache-smoke.ts</code>. (b) <code>profile-synthesize</code> skip-guard (<code>canSkipSynthesis</code>) — single-file + empty-profile imports return the extraction verbatim, eliminating the priciest FLASH call on first import; <code>synthesize-skip-guard-smoke.ts</code>. This doc absorbed the former <code>llm-cost-optimization.html</code> and converted from <code>llm-calls.md</code> → <code>llm-calls.html</code> (cost model, patterns-in-place, resume-gen pipeline, Tier 1–4 opportunities, non-goals, cost checklist).</li>
         <li><strong>2026-05-26</strong> — M8.7 resume relevance pipeline overhaul. <code>posting-parse</code>: output → <code>Array&lt;{keyword, importance(1-5)}&gt;</code>, <code>maxOutputTokens</code> 2048→3072, per-tier importance rubric added. <code>resume-tagline</code>: extended to also return <code>sectionOrder</code> + <code>entityOrder</code> from a per-entity evidence block; <code>maxOutputTokens</code> 256→1024. <code>resume-rewrite</code>: pre-filters to bullets with a matched tag/keyword before the LLM call (~30% token savings). <code>bullet-tags-from-posting</code>: per-bullet line trimmed (<code>removedTags</code> omitted when empty).</li>

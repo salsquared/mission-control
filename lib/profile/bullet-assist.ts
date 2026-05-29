@@ -375,6 +375,9 @@ export async function callBulletAssist(
     if (input.mode === 'fill') {
         const response = await chatJSON({
             name: "bullet-assist-fill",
+            // Generative: drafts NEW bullet prose — the user expects a fresh
+            // take on re-ask, so opt out of cross-tier dedup.
+            cache: false,
             system: input.prompt.system,
             user: input.prompt.user,
             schema: FillResponseSchema,
@@ -406,6 +409,9 @@ export async function callBulletAssist(
 
     const response = await chatJSON({
         name: "bullet-assist-rewrite",
+        // Generative: rewrites a bullet into a fresh phrasing — re-ask should
+        // re-roll, so opt out of cross-tier dedup.
+        cache: false,
         system: input.prompt.system,
         user: input.prompt.user,
         schema: RewriteResponseSchema,

@@ -134,6 +134,10 @@ export async function suggestCompanies(opts: SuggestOptions): Promise<SuggestRes
         ? await opts._suggestFn(loaded.user)
         : await chatJSON({
             name: "discovery-suggest",
+            // Generative: discovery deliberately RE-ROLLS to surface fresh
+            // companies on re-ask (temp 0.9 + anti-repetition exclude block).
+            // Content-addressed caching would freeze it — opt out of dedup.
+            cache: false,
             user: loaded.user,
             schema: GeminiResponseSchema,
             // Higher temp than the default 0.4 — discovery benefits from

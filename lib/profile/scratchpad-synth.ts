@@ -249,6 +249,9 @@ export async function synthesizeBulletsForEntities(input: SynthesizeBatchInput):
 
     const response = await chatJSON({
         name: 'scratchpad-synth',
+        // Generative: synthesizes fresh bullet drafts from the scratchpad —
+        // re-ask should re-roll, so opt out of cross-tier dedup.
+        cache: false,
         system: prompt.system,
         user: prompt.user,
         schema: BatchResponseSchema,

@@ -419,6 +419,9 @@ export async function suggestTagsForBullet(input: SuggestTagsInput): Promise<Sug
 
     const response = await chatJSON({
         name: 'bullet-tags-from-profile',
+        // Generative: suggests tags for the user to pick from and is meant to
+        // re-roll on re-ask (per the anti-repetition rule) — opt out of dedup.
+        cache: false,
         system: prompt.system,
         user: prompt.user,
         schema: ResponseSchema,

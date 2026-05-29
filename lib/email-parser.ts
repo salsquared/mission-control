@@ -4,6 +4,7 @@ import lunary from "lunary";
 import { z } from "zod";
 import { acquireGeminiSlot } from "@/lib/ai/rate-limit";
 import { loadPrompt } from "@/lib/ai/prompts";
+import { cacheKey, llmCached } from "@/lib/ai/llm-cache";
 
 // Single source of truth for the model id. Kept in sync with `MODEL_LITE` in
 // lib/ai/gemini.ts; there's no shared symbol because the Vercel AI SDK wraps
@@ -155,14 +156,10 @@ export async function parseApplicationEmail(
   const trimmedBody = emailContent.length > 3000 ? emailContent.slice(0, 3000) + "\n…[truncated]" : emailContent;
   const anchor = (sentAt ?? new Date()).toISOString();
 
-  // PC-6 (RAH-12): block on the token bucket BEFORE the API call. A backfill
-  // (or pre-PB-6 redelivery storm) can blow Gemini's free-tier 15/min cap in
-  // seconds otherwise.
-  await acquireGeminiSlot();
-
   // email-parser's disk doc has no separate system field — the entire
   // instruction set + interleaved inputs is one user-mode prompt that
-  // Vercel AI SDK takes as `prompt: string`.
+  // Vercel AI SDK takes as `prompt: string`. Loaded BEFORE the cache check
+  // because the rendered prompt IS the cache key (along with the schema).
   const loaded = await loadPrompt("email-parser", {
     anchor,
     from: from ?? "(unknown)",
@@ -183,42 +180,57 @@ export async function parseApplicationEmail(
     }));
   }
 
-  // LOP-5: trace start. RunId is a fresh cuid-ish — the Gmail msgId isn't in
-  // scope here (caller has it), and Lunary just needs uniqueness.
-  const runId = `email-parser:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
-  safeTrack("start", {
-    runId,
-    name: "email-parser",
-    input: [{ role: "user", content: prompt }],
-    extra: { model: MODEL_ID, anchor, from, subject },
+  // Cross-tier dedup (docs/cross-tier-llm-dedup.html): the same email is
+  // delivered to BOTH webhooks by the Gmail push fan-out within ~the same
+  // second — this makes exactly one tier call Gemini, the other reuses. The
+  // anchor (sentAt) is part of the rendered prompt, so the key is stable
+  // across tiers for the same message. Slot acquisition + the SDK call +
+  // Lunary tracing all live INSIDE compute(), so a cache hit / follower spends
+  // no rate token, makes no API call, and is NOT traced as a model call.
+  const key = cacheKey({ model: MODEL_ID, user: prompt, schema: applicationSchema });
+  return llmCached({ key, name: "email-parser", model: MODEL_ID }, async () => {
+    // PC-6 (RAH-12): block on the token bucket BEFORE the API call. A backfill
+    // (or pre-PB-6 redelivery storm) can blow Gemini's free-tier 15/min cap in
+    // seconds otherwise.
+    await acquireGeminiSlot();
+
+    // LOP-5: trace start. RunId is a fresh cuid-ish — the Gmail msgId isn't in
+    // scope here (caller has it), and Lunary just needs uniqueness.
+    const runId = `email-parser:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
+    safeTrack("start", {
+      runId,
+      name: "email-parser",
+      input: [{ role: "user", content: prompt }],
+      extra: { model: MODEL_ID, anchor, from, subject },
+    });
+
+    try {
+      const result = await generateObject({
+        // Pinned to Gemini 3.1 Flash-lite (via MODEL_ID) — the highest-volume
+        // caller in the app (one call per inbound Gmail message + backfill).
+        // Mechanical extraction (relevance gate + a handful of structured
+        // fields) doesn't need full Flash. See docs/llm-calls.html.
+        model: getProvider()(MODEL_ID),
+        schema: applicationSchema,
+        prompt,
+      });
+
+      safeTrack("end", {
+        runId,
+        output: { role: "assistant", content: JSON.stringify(result.object) },
+        tokensUsage: {
+          prompt: result.usage?.inputTokens ?? 0,
+          completion: result.usage?.outputTokens ?? 0,
+        },
+      });
+
+      return result.object;
+    } catch (err) {
+      safeTrack("error", {
+        runId,
+        error: { message: err instanceof Error ? err.message : String(err) },
+      });
+      throw err;
+    }
   });
-
-  try {
-    const result = await generateObject({
-      // Pinned to Gemini 3.1 Flash-lite (via MODEL_ID) — the highest-volume
-      // caller in the app (one call per inbound Gmail message + backfill).
-      // Mechanical extraction (relevance gate + a handful of structured
-      // fields) doesn't need full Flash. See docs/llm-calls.html.
-      model: getProvider()(MODEL_ID),
-      schema: applicationSchema,
-      prompt,
-    });
-
-    safeTrack("end", {
-      runId,
-      output: { role: "assistant", content: JSON.stringify(result.object) },
-      tokensUsage: {
-        prompt: result.usage?.inputTokens ?? 0,
-        completion: result.usage?.outputTokens ?? 0,
-      },
-    });
-
-    return result.object;
-  } catch (err) {
-    safeTrack("error", {
-      runId,
-      error: { message: err instanceof Error ? err.message : String(err) },
-    });
-    throw err;
-  }
 }
