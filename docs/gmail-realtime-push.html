@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gmail real-time push — wiring plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Gmail real-time push — wiring plan</h1>
+  <p class="subtitle">The Applications dash claims it "auto-syncs via Gmail &amp; Pub/Sub", but new mail only lands when you press <strong>Scan Inbox</strong>. The receive-side plumbing (OIDC verify → dedup → <code>history.list</code> resume → ingest) is fully built and has <em>never run</em>. This plan wires the two missing ends — registering the Gmail <code>watch()</code> and keeping it alive — so arrival → kanban becomes real-time. <strong>Plan only; no code is changed yet.</strong></p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#diagnosis">Diagnosis — what's actually broken</a></li>
+      <li><a href="#target">Target architecture</a></li>
+      <li><a href="#code">Code changes (the half I build)</a></li>
+      <li><a href="#gcp">Google Cloud + env (the half you do)</a></li>
+      <li><a href="#verify">Verification &amp; rollback</a></li>
+      <li><a href="#ops">Failure modes &amp; ops</a></li>
+      <li><a href="#tasks">Task list</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="diagnosis">Diagnosis — what's actually broken</h2></summary>
+    <div class="section-body">
+      <h3>Evidence</h3>
+      <p>This is <strong>not</strong> a watch that expired after 7 days — the real-time path was never wired end-to-end. Four independent checks, all confirming the webhook has never fired even once:</p>
+      <table>
+        <thead><tr><th>Check</th><th>Result</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td><code>gmail.users.watch()</code> calls in app code</td><td><strong>0</strong> (only a comment in a debug script)</td><td>Nothing ever tells Gmail to push notifications</td></tr>
+          <tr><td><code>WebhookDelivery</code> rows in <code>prod.db</code></td><td><strong>0</strong></td><td>The webhook's first action (INSERT) has never executed</td></tr>
+          <tr><td><code>user.lastSyncedHistoryId</code></td><td><strong>null</strong></td><td>The checkpoint the webhook advances was never set</td></tr>
+          <tr><td><code>[GMAIL WEBHOOK]</code> lines in prod logs</td><td><strong>0</strong> ever (vs. 4 <code>[BACKFILL]</code>)</td><td>Log capture works; only the manual scan has ever run</td></tr>
+          <tr><td><code>PUBSUB_AUDIENCE</code> env var</td><td><strong>MISSING</strong></td><td>Even a delivered push would 500 at <code>webhook/route.ts:18</code> before any work</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><strong>Note.</strong> The UI copy in <code>ApplicationsView.tsx:282</code> ("Auto-syncs via Gmail &amp; Pub/Sub API") and the login screen's "live Pub/Sub polling" are aspirational. The <em>only</em> ingestion path that has ever run is the manual <code>POST /api/applications/backfill</code> behind the Scan Inbox button — which scans the last 180 days, capped at 200 messages.</div>
+
+      <h3>The two missing ends</h3>
+      <p>The webhook (<code>app/api/gmail/webhook/route.ts</code>) and the ingest pipeline (<code>lib/applications/ingest.ts</code>) are complete and correct. What's absent:</p>
+      <ul>
+        <li><strong>Registration</strong> — nobody calls <code>gmail.users.watch()</code>, so Gmail has no Pub/Sub topic to publish change notifications to.</li>
+        <li><strong>Renewal</strong> — Gmail <code>watch</code> subscriptions expire after <strong>7 days</strong>. Even a one-time manual <code>watch()</code> would go silent a week later. There is no renewal job.</li>
+        <li><strong>Receive config</strong> — <code>PUBSUB_AUDIENCE</code> and <code>PUBSUB_SERVICE_ACCOUNT_EMAIL</code> are unset, so the webhook can't accept a push. (<code>PUBSUB_WEBHOOK_SECRET</code> <em>is</em> set but the current OIDC-based route never reads it — dead env from an older design.)</li>
+        <li><strong>Public reachability</strong> — Pub/Sub push needs a public HTTPS endpoint. The webhook must be served on the <code>cloudflared</code> public hostname and must <em>not</em> sit behind Cloudflare Access (the route does its own OIDC verification — it deliberately does not use <code>requireLocalOrSession</code>).</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="target">Target architecture</h2></summary>
+    <div class="section-body">
+      <h3>End-to-end flow</h3>
+      <p>Once wired, a new email triggers a push within seconds; the webhook resumes from the per-user watermark and replays the existing ingest. The scheduler keeps the 7-day watch alive with a daily re-arm (7× safety margin).</p>
+      <pre class="mermaid">
+sequenceDiagram
+  participant Gmail
+  participant PubSub as Pub/Sub topic
+  participant Sched as scheduler-prod
+  participant Watch as registerGmailWatch()
+  participant Hook as /api/gmail/webhook
+  participant Ingest as ingestGmailMessage()
+
+  Note over Sched,Watch: daily (+ on startup, + on sign-in)
+  Sched->>Watch: re-arm watch (7d expiry)
+  Watch->>Gmail: users.watch(topic, labels=INBOX)
+  Gmail-->>Watch: { historyId, expiration }
+  Watch->>Watch: seed lastSyncedHistoryId if null
+
+  Note over Gmail,Ingest: a new email arrives
+  Gmail->>PubSub: publish { emailAddress, historyId }
+  PubSub->>Hook: POST (OIDC-signed JWT)
+  Hook->>Hook: verify OIDC + INSERT WebhookDelivery (dedup)
+  Hook->>Gmail: history.list(startHistoryId)
+  Gmail-->>Hook: messagesAdded[]
+  loop each message
+    Hook->>Ingest: classify + upsert Application
+  end
+  Hook->>Hook: advance lastSyncedHistoryId
+      </pre>
+
+      <h3 id="both-tiers">Both tiers, one mailbox — the fan-out</h3>
+      <p>dev.db and prod.db are both linked to the <strong>same Google account</strong> (<code>salsalcedo4321@gmail.com</code>, refresh token present in both). Gmail permits exactly <strong>one active <code>watch()</code> per mailbox</strong> — calling <code>watch()</code> again replaces the prior registration (that's how renewal works). So dev and prod <em>cannot</em> each point at their own topic; the daily renewals would clobber each other and only the last-armed tier would receive pushes.</p>
+      <p>The standard fix is <strong>one topic, two push subscriptions</strong>. Gmail publishes each change once to the single topic; Pub/Sub fans it out to both tier webhooks. Each tier walks history from its own per-DB <code>lastSyncedHistoryId</code> and ingests into its own DB. Dev's <code>EMAIL_ENABLED=0</code> keeps notification emails from firing twice.</p>
+      <div class="callout"><strong>This doubles email LLM classification</strong> (each tier parses the same email once). That's a deliberate, separate concern — see <code>docs/cross-tier-llm-dedup.html</code>, which makes Gemini fire once per unique input across both tiers. The two efforts are parallel-safe; until dedup lands, the 2× email cost is harmless and temporary.</div>
+      <pre class="mermaid">
+flowchart LR
+  gmail["Gmail mailbox<br/>(one account)"] -->|"single watch()"| topic["Pub/Sub topic<br/>gmail-push"]
+  topic -->|"sub-prod"| prodHook["prod webhook<br/>:3101"]
+  topic -->|"sub-dev"| devHook["dev webhook<br/>:4101"]
+  prodHook --> prodDb[("prod.db")]
+  devHook --> devDb[("dev.db")]
+      </pre>
+      <div class="callout tip"><strong>Both public hosts already exist.</strong> <code>ms-prod.salsquared.xyz</code> → :3101 and <code>ms-dev.salsquared.xyz</code> → :4101 are already routed, so each tier just needs its own subscription + matching <code>PUBSUB_AUDIENCE</code> (see <a href="#gcp">§4</a>) — no new tunnel work. (A purely-local fallback, if a push endpoint were ever unavailable: a synthetic-push driver + an <code>MC_PUBSUB_OIDC_BYPASS</code> dev flag mirroring <code>MC_LIVENESS_BYPASS</code> — real ingest, simulated transport. Not needed here.)</div>
+
+      <h3>What stays untouched</h3>
+      <p>The webhook body, dedup, <code>history.list</code> resume logic, per-event checkpoints, and the whole ingest pipeline are unchanged — they were built correctly for a push that never came. The Scan Inbox backfill also stays as the manual catch-up / disaster-recovery path.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="code">Code changes (the half I build)</h2></summary>
+    <div class="section-body">
+      <h3>C1 — <code>lib/gmail/watch.ts</code> (new): the registration helper</h3>
+      <p>One small module. Calls <code>users.watch()</code> against the configured topic, scoped to the INBOX label (application mail lands there). Seeds <code>lastSyncedHistoryId</code> only when it's null — on a renewal the webhook owns that watermark, and overwriting it would skip events between the last checkpoint and "now". No-ops cleanly when the topic env var is unset (so dev never arms a watch on the shared Google account).</p>
+      <pre><code class="language-typescript">import { google } from "googleapis";
+import { getGoogleAuthClient } from "@/lib/googleapis";
+import { prisma } from "@/lib/prisma";
+
+// Set in .env (SHARED by both tiers) — dev and prod arm the SAME topic, so the
+// renewals are idempotent rather than clobbering each other (Gmail allows one
+// watch per mailbox; see §2.2). Format: projects/&lt;project&gt;/topics/&lt;topic&gt;
+const TOPIC = process.env.GMAIL_PUBSUB_TOPIC;
+
+export async function registerGmailWatch(userId: string) {
+  if (!TOPIC) {
+    console.warn("[gmail-watch] GMAIL_PUBSUB_TOPIC unset — skipping watch registration");
+    return null;
+  }
+  const auth = await getGoogleAuthClient(userId);
+  const gmail = google.gmail({ version: "v1", auth });
+  const res = await gmail.users.watch({
+    userId: "me",
+    requestBody: {
+      topicName: TOPIC,
+      labelIds: ["INBOX"],
+      labelFilterBehavior: "INCLUDE",
+    },
+  });
+  const historyId = String(res.data.historyId);
+  const expiration = String(res.data.expiration); // ms-epoch, ~7d out
+
+  // Seed the watermark ONLY on first arm. On renewal the webhook is the owner;
+  // clobbering it with "now" would drop anything between checkpoint and now.
+  const u = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { lastSyncedHistoryId: true },
+  });
+  if (u && !u.lastSyncedHistoryId) {
+    await prisma.user.update({ where: { id: userId }, data: { lastSyncedHistoryId: historyId } });
+  }
+  console.info(`[gmail-watch] armed user=${userId} historyId=${historyId} exp=${expiration}`);
+  return { historyId, expiration };
+}</code></pre>
+      <div class="callout tip"><strong>Scope.</strong> <code>users.watch()</code> works with the existing <code>gmail.readonly</code> scope already granted in <code>lib/auth.ts</code> — no re-consent needed.</div>
+
+      <h3>C2 — <code>scheduler/jobs/gmail-watch-renew.ts</code> (new): the daily re-arm</h3>
+      <p>Modeled on the existing stateless sweeps (e.g. <code>webhook-delivery-prune.ts</code>). Finds every user with a linked Google account that has a refresh token and re-arms each. Idempotent — calling <code>watch()</code> again just resets the 7-day clock against the same topic.</p>
+      <pre><code class="language-typescript">import { prisma } from "@/lib/prisma";
+import { registerGmailWatch } from "@/lib/gmail/watch";
+
+export interface GmailWatchRenewResult { processed: number; renewed: number; failed: number; }
+
+export async function runGmailWatchRenew(): Promise&lt;GmailWatchRenewResult&gt; {
+  const accounts = await prisma.account.findMany({
+    where: { provider: "google", refresh_token: { not: null } },
+    select: { userId: true },
+  });
+  const userIds = [...new Set(accounts.map((a) =&gt; a.userId))];
+  let renewed = 0, failed = 0;
+  for (const userId of userIds) {
+    try {
+      if (await registerGmailWatch(userId)) renewed++;
+    } catch (e) {
+      failed++;
+      console.warn(`[gmail-watch-renew] failed for user ${userId}:`, (e as Error).message);
+    }
+  }
+  return { processed: userIds.length, renewed, failed };
+}</code></pre>
+      <p>Register it in <code>scheduler/index.ts</code> at a 24h interval. The existing startup-stagger (<code>setTimeout(tick, 10_000 * (i+1))</code>) means it also re-arms within ~seconds of every scheduler restart — so a deploy or reboot self-heals the watch:</p>
+      <pre><code class="language-typescript">{
+  name: 'gmail-watch-renew',
+  intervalMs: 24 * 60 * 60 * 1000, // daily — Gmail watch expires in 7d (7x margin)
+  run: async () =&gt; {
+    const r = await runGmailWatchRenew();
+    if (r.processed &gt; 0) {
+      console.info(`[gmail-watch-renew] ${r.renewed}/${r.processed} re-armed, ${r.failed} failed`);
+    }
+  },
+},</code></pre>
+      <div class="callout"><strong>Both tiers arm the same topic.</strong> <code>GMAIL_PUBSUB_TOPIC</code> lives in <code>.env</code> (shared), so the dev and prod schedulers both re-arm the <em>same</em> watch target every day — idempotent, no clobber. This is the only safe shape because dev.db and prod.db are linked to the <strong>same mailbox</strong> and Gmail permits one watch per mailbox (see <a href="#both-tiers">§2.2</a>). Verify <em>both</em> scheduler processes see the topic var (PM2 env-file loading) — see <a href="#gcp">§4</a>.</div>
+
+      <h3>C3 — sign-in trigger in <code>lib/auth.ts</code> (best-effort)</h3>
+      <p>After the <code>signIn</code> callback persists fresh tokens, fire a one-shot arm so connecting (or re-consenting) an account is live immediately instead of waiting for the next daily tick. Wrapped so a watch failure never blocks sign-in. This is belt-and-suspenders; the scheduler is the primary keeper.</p>
+      <pre><code class="language-typescript">// inside signIn({ account }), after the existing token-persist block:
+try {
+  const acct = await prisma.account.findFirst({
+    where: { provider: "google", providerAccountId: account.providerAccountId },
+    select: { userId: true },
+  });
+  if (acct) await registerGmailWatch(acct.userId);
+} catch (e) {
+  console.warn("[auth] gmail watch on sign-in failed:", (e as Error).message);
+}
+return true;</code></pre>
+
+      <h3>C4 — webhook 404 recovery (optional hardening, phase 2)</h3>
+      <p>If the webhook is down &gt; 7 days, <code>lastSyncedHistoryId</code> goes older than Gmail's history window and <code>history.list</code> returns 404. Today that surfaces as a 500. Add a catch: on 404, re-seed <code>lastSyncedHistoryId</code> from the envelope's <code>historyId</code> and return 200 (the next push catches up; the manual backfill recovers the gap). Not required for first light — call it out as a follow-up.</p>
+
+      <h3>C5 — what does NOT change</h3>
+      <ul>
+        <li><strong>No schema migration.</strong> Stateless daily renewal needs no new column. (Considered + rejected: a <code>gmailWatchExpiration</code> field to renew only near expiry — pointless micro-optimization for a single-user system; daily re-arm is simpler and self-healing.)</li>
+        <li><strong>No webhook body changes</strong> (beyond optional C4) — it already resumes from the watermark, dedups, and ingests correctly.</li>
+        <li><strong>No new Gemini callsite</strong> — so no Lunary/Promptfoo/<code>docs/llm-calls.html</code> work.</li>
+      </ul>
+
+      <h3>C6 — tests</h3>
+      <ul>
+        <li><strong>Hermetic smoke</strong> for <code>runGmailWatchRenew</code>'s DB selection + error isolation, with <code>registerGmailWatch</code> stubbed (no live Gmail). Append to the <code>SUITES</code> array in <code>scripts/pre-push.sh</code>.</li>
+        <li><strong>Live probe</strong> under <code>scripts/tests/probes/</code> that calls <code>registerGmailWatch</code> against the real account and prints the returned <code>historyId</code>/<code>expiration</code> — diagnostic only, exit-zero not a contract.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="gcp">Google Cloud + env (the half you do)</h2></summary>
+    <div class="section-body">
+      <h3>G1 — Pub/Sub topic + Gmail publish grant</h3>
+      <p>In the same GCP project as your OAuth client:</p>
+      <pre><code class="language-bash"># 1. Create the topic
+gcloud pubsub topics create gmail-push
+
+# 2. Let Gmail's system service account publish change notifications to it
+gcloud pubsub topics add-iam-policy-binding gmail-push \
+  --member="serviceAccount:gmail-api-push@system.gserviceaccount.com" \
+  --role="roles/pubsub.publisher"</code></pre>
+
+      <h3>G2 — Two push subscriptions (one per tier) → public webhook URLs</h3>
+      <p>Both tiers receive from the <em>same</em> topic via separate subscriptions. Push needs <strong>public</strong> HTTPS endpoints, so each is a <code>cloudflared</code> hostname (<em>not</em> <code>mc.local</code> — that's LAN-only and unreachable by Pub/Sub). Pick (or create) a service account for Pub/Sub to sign the OIDC token with (e.g. <code>pubsub-mc-publisher@&lt;project&gt;.iam.gserviceaccount.com</code>):</p>
+      <pre><code class="language-bash"># prod subscription
+gcloud pubsub subscriptions create gmail-push-prod \
+  --topic=gmail-push \
+  --push-endpoint="https://ms-prod.salsquared.xyz/api/gmail/webhook" \
+  --push-auth-service-account="pubsub-mc-publisher@&lt;project&gt;.iam.gserviceaccount.com" \
+  --push-auth-token-audience="https://ms-prod.salsquared.xyz/api/gmail/webhook"
+
+# dev subscription (ms-dev.salsquared.xyz already routes to :4101)
+gcloud pubsub subscriptions create gmail-push-dev \
+  --topic=gmail-push \
+  --push-endpoint="https://ms-dev.salsquared.xyz/api/gmail/webhook" \
+  --push-auth-service-account="pubsub-mc-publisher@&lt;project&gt;.iam.gserviceaccount.com" \
+  --push-auth-token-audience="https://ms-dev.salsquared.xyz/api/gmail/webhook"</code></pre>
+      <div class="callout warn"><strong>The audience must match the env var byte-for-byte, per tier.</strong> Each subscription's <code>--push-auth-token-audience</code> must equal that tier's <code>PUBSUB_AUDIENCE</code> exactly (scheme, host, path, no trailing slash). A mismatch → every push 401s.</div>
+      <div class="callout warn"><strong>Don't gate either webhook path behind Cloudflare Access.</strong> If the tunnel applies an Access policy to <code>/api/gmail/webhook</code> on either host, Pub/Sub can't reach it. The route authenticates itself via the OIDC JWT — leave it open at the edge.</div>
+
+      <h3>G3 — env vars: topic shared, audience per-tier</h3>
+      <p>The topic is identical for both tiers (shared <code>.env</code>); only the audience differs (each tier's own public host, in its tier env file):</p>
+      <pre><code class="language-bash"># .env  (shared by both tiers)
+GMAIL_PUBSUB_TOPIC=projects/&lt;project&gt;/topics/gmail-push
+PUBSUB_SERVICE_ACCOUNT_EMAIL=pubsub-mc-publisher@&lt;project&gt;.iam.gserviceaccount.com
+# PUBSUB_WEBHOOK_SECRET — remove; unused by the OIDC route
+
+# .env.production
+PUBSUB_AUDIENCE=https://ms-prod.salsquared.xyz/api/gmail/webhook
+
+# .env.development
+PUBSUB_AUDIENCE=https://ms-dev.salsquared.xyz/api/gmail/webhook</code></pre>
+      <p>Then restart all four processes so both web tiers (webhooks) and both schedulers (renewal) pick them up:</p>
+      <pre><code class="language-bash">pm2 restart mission-control mission-control-dev \
+  mission-control-scheduler-prod mission-control-scheduler-dev --update-env</code></pre>
+      <div class="callout"><strong>Verify each scheduler sees the topic.</strong> The renewal job runs in both <code>mission-control-scheduler-dev</code> and <code>-prod</code> tsx processes — confirm <code>GMAIL_PUBSUB_TOPIC</code> + the Google OAuth client vars are visible in each (PM2 env-file loading), or that tier's daily re-arm silently no-ops.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="verify">Verification &amp; rollback</h2></summary>
+    <div class="section-body">
+      <h3>First-light checklist (per tier — verify dev first)</h3>
+      <ol style="list-style:decimal;padding-left:1.5rem;">
+        <li>After restart, each scheduler's startup tick (~10s) logs <code>[gmail-watch] armed …</code> with a <code>historyId</code> + <code>expiration</code> ~7 days out.</li>
+        <li><code>user.lastSyncedHistoryId</code> in that tier's DB flips from <code>null</code> to a real value.</li>
+        <li>Send yourself an application-shaped test email. Within seconds: a <code>[GMAIL WEBHOOK]</code> log line appears on <strong>both</strong> tiers (the topic fans out to both subscriptions), a <code>WebhookDelivery</code> row is created in each DB, and both kanbans update <strong>without pressing Scan Inbox</strong>.</li>
+        <li>Confirm only <strong>one</strong> notification email is sent (prod), not two — dev's <code>EMAIL_ENABLED=0</code> mutes it.</li>
+        <li>Watching the same email a second time (Pub/Sub at-least-once) logs <code>dedup hit</code> and returns 200 — no double-ingest.</li>
+      </ol>
+      <h3>Rollback</h3>
+      <p>Fully reversible and low-blast-radius, per tier: delete that tier's Pub/Sub subscription (its pushes stop) — or unset <code>GMAIL_PUBSUB_TOPIC</code> in shared <code>.env</code> to disarm both (renewals no-op, the watch lapses in ≤7d). The manual Scan Inbox path is exactly what it is today. No data migration to undo. To kill <em>only</em> dev pushes while keeping prod live, just delete the <code>gmail-push-dev</code> subscription.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="ops">Failure modes &amp; ops</h2></summary>
+    <div class="section-body">
+      <h3>Known edges</h3>
+      <table>
+        <thead><tr><th>Scenario</th><th>Effect</th><th>Recovery</th></tr></thead>
+        <tbody>
+          <tr><td>Scheduler down &gt; 7d</td><td>Watch lapses → pushes stop</td><td>Next scheduler tick re-arms; Scan Inbox covers the gap</td></tr>
+          <tr><td>Webhook down &gt; 7d</td><td><code>lastSyncedHistoryId</code> too old → <code>history.list</code> 404</td><td>C4 hardening (re-seed); meanwhile Scan Inbox recovers data</td></tr>
+          <tr><td>Pub/Sub redelivery</td><td>Same message delivered twice</td><td>Already handled — <code>WebhookDelivery</code> dedup</td></tr>
+          <tr><td>OAuth refresh token revoked</td><td><code>registerGmailWatch</code> throws</td><td>Renewal logs + counts it as failed; re-consent re-arms via C3</td></tr>
+        </tbody>
+      </table>
+      <h3>Schema migrations &amp; the dual-DB</h3>
+      <p>This feature needs <strong>no migration</strong> — the renewal job reads only the long-stable <code>Account</code> + <code>User</code> tables, and the Gmail <code>watch()</code> registration is entirely DB-independent. For <em>future</em> migrations generally, the existing dual-DB discipline already covers it:</p>
+      <ul>
+        <li><strong>Per-DB apply.</strong> <code>prisma migrate dev</code> against dev.db, then <code>DATABASE_URL="file:./prod.db" npx prisma migrate deploy</code> for prod, then <code>pm2 restart</code> the affected processes. dev and prod migrate independently — exactly why "works in both" is testable on dev first.</li>
+        <li><strong>Graceful lag.</strong> If a future migration adds a column the watch-renew job reads and one tier is behind, the scheduler's existing <strong>P2021 guard</strong> disables just that job on the lagging tier (one loud warning) until you migrate-deploy + restart. During that window the watch lapses within ≤7d and that tier falls back to the manual scan — no crash loop, and the other tier is unaffected.</li>
+        <li><strong>Watch survives DB lag.</strong> A schema lag only ever affects the ingest <em>write</em> on that tier, never the Gmail-side subscription — pushes keep arriving; a bad ingest is caught per-message and logged.</li>
+      </ul>
+
+      <h3>Doc upkeep on landing</h3>
+      <p>When this ships, add a "Gmail watch registration + renewal" note to CLAUDE.md's <em>Gmail webhook + ingest</em> section, log the new scheduler job in the same place the others live, and update <code>docs/next_steps.md</code> per the session protocol. (<code>docs/hosting.md</code> is stale — do not treat it as authoritative; supersede or delete it as part of this work.)</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="tasks">Task list</h2></summary>
+    <div class="section-body">
+      <h3>Phased plan</h3>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Code (I build, no live deps)</span>
+        </summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P1.1</span><span class="task-title">lib/gmail/watch.ts — registerGmailWatch (C1)</span></summary><div class="task-body"><p>INBOX-scoped watch; seed watermark only when null; no-op when topic unset.</p></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P1.2</span><span class="task-title">scheduler/jobs/gmail-watch-renew.ts + register in index.ts (C2)</span></summary><div class="task-body"><p>Daily stateless re-arm for every Google-linked user with a refresh token.</p></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P1.3</span><span class="task-title">Sign-in trigger in lib/auth.ts (C3)</span></summary><div class="task-body"><p>Best-effort arm on sign-in; never blocks auth.</p></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P1.4</span><span class="task-title">Hermetic smoke + live probe (C6)</span></summary><div class="task-body"><p>Smoke the renewal selection/error-isolation with a stubbed watch; probe the real account separately.</p></div></details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — GCP + env (you do)</span>
+        </summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">Create topic + grant Gmail publisher (G1)</span></summary><div class="task-body"><p><code>gmail-push</code> topic; bind <code>gmail-api-push@system.gserviceaccount.com</code>.</p></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Two subscriptions → ms-prod + ms-dev webhook URLs (G2)</span></summary><div class="task-body"><p>One sub per tier on the shared topic; OIDC service account; audience = each tier's endpoint; neither behind Cloudflare Access.</p></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Set env vars + restart all four processes (G3)</span></summary><div class="task-body"><p>Shared topic + signer in <code>.env</code>; per-tier <code>PUBSUB_AUDIENCE</code> in tier env files; confirm both schedulers see the topic.</p></div></details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Verify + harden + document</span>
+        </summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">First-light checklist (§5)</span></summary><div class="task-body"><p>Confirm a test email reaches the kanban with no Scan Inbox press.</p></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">Webhook 404 recovery (C4, optional)</span></summary><div class="task-body"><p>Re-seed watermark + 200 on stale-history 404.</p></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">CLAUDE.md + next_steps.md + supersede hosting.md</span></summary><div class="task-body"><p>Record the new job + watch lifecycle; retire the stale doc.</p></div></details>
+        </div>
+      </details>
+
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

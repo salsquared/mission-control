@@ -19,6 +19,7 @@ import { runDeadlineNudges } from './jobs/deadline-nudges';
 import { runPostingDigest } from './jobs/posting-digest';
 import { runWebhookDeliveryPrune } from './jobs/webhook-delivery-prune';
 import { runClassifyPendingEmploymentTypes } from './jobs/classify-pending-employment-types';
+import { runGmailWatchRenew } from './jobs/gmail-watch-renew';
 
 interface IntervalJob {
     name: string;
@@ -99,6 +100,21 @@ const JOBS: IntervalJob[] = [
             const r = await runClassifyPendingEmploymentTypes();
             if (r.distinct > 0) {
                 console.info(`[classify-pending-employment-types] swept ${r.distinct} distinct externalIds — ${r.classified} classified, ${r.rowsUpdated} rows updated`);
+            }
+        },
+    },
+    {
+        name: 'gmail-watch-renew',
+        // Daily — Gmail push-watch subscriptions expire after ~7 days, so a
+        // daily re-arm is a 7x safety margin; the 10s startup stagger also
+        // re-arms on every scheduler restart. Idempotent across tiers (both
+        // arm the same shared topic). Per-user no-op when GMAIL_PUBSUB_TOPIC is
+        // unset — see lib/gmail/watch.ts + docs/gmail-realtime-push.html.
+        intervalMs: 24 * 60 * 60 * 1000,
+        run: async () => {
+            const r = await runGmailWatchRenew();
+            if (r.processed > 0) {
+                console.info(`[gmail-watch-renew] ${r.renewed}/${r.processed} re-armed, ${r.failed} failed`);
             }
         },
     },

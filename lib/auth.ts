@@ -2,6 +2,7 @@ import { NextAuthOptions } from "next-auth";
 import GoogleProvider from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "./prisma";
+import { registerGmailWatch } from "./gmail/watch";
 
 export const authOptions: NextAuthOptions = {
     adapter: PrismaAdapter(prisma) as any,
@@ -56,6 +57,21 @@ export const authOptions: NextAuthOptions = {
                         },
                         data,
                     });
+                }
+
+                // Arm the Gmail push watch best-effort so a fresh connect /
+                // re-consent goes live immediately instead of waiting for the
+                // next daily scheduler tick. Never block (or fail) sign-in on a
+                // watch error; the scheduler is the primary keeper. No-ops when
+                // GMAIL_PUBSUB_TOPIC is unset. See docs/gmail-realtime-push.html.
+                try {
+                    const acct = await prisma.account.findFirst({
+                        where: { provider: "google", providerAccountId: account.providerAccountId },
+                        select: { userId: true },
+                    });
+                    if (acct) await registerGmailWatch(acct.userId);
+                } catch (e) {
+                    console.warn("[auth] gmail watch on sign-in failed:", (e as Error)?.message ?? e);
                 }
             }
             return true;
