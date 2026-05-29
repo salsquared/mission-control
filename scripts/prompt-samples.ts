@@ -54,11 +54,27 @@ export const SAMPLE_VARS: Record<PromptSlug, PromptVars> = {
         vocabulary: "\"TypeScript\", \"Go\", \"Postgres\", \"REST\", \"distributed-systems\"",
     },
     "scratchpad-synth": {
-        spine: "Software Engineer at Acme Corp",
-        scratchpad: "Migrated our data pipeline from MySQL to PostgreSQL — handled the schema reshape and the cutover. Rewrote the query layer in Go.",
-        postingKeywords: "  - PostgreSQL\n  - Go\n  - data pipeline\n  - schema migration",
-        uncoveredKeywords: "  - PostgreSQL\n  - Go",
-        maxBullets: "3",
+        // Batched (Tier 2b): the prompt now carries a shared posting-keyword
+        // list + a delimited per-entry `entriesBlock` (rendered by
+        // renderEntitiesBlock) instead of single spine/scratchpad/uncovered
+        // vars. Sample shows two entries so the {{entriesBlock}} render and the
+        // "Uncovered" required phrase are exercised.
+        postingKeywords: "  - PostgreSQL\n  - Go\n  - React\n  - caching",
+        entriesBlock: [
+            "### Entry 1 — up to 3 bullets",
+            "Spine: Software Engineer at Acme Corp",
+            "Scratchpad (this entry's own voice — match its cadence):",
+            "Migrated our data pipeline from MySQL to PostgreSQL — handled the schema reshape and the cutover. Rewrote the query layer in Go.",
+            "Uncovered posting keywords for this entry (high-value targets):",
+            "  - PostgreSQL\n  - Go",
+            "",
+            "### Entry 2 — up to 3 bullets",
+            "Spine: Project: metrics-dashboard",
+            "Scratchpad (this entry's own voice — match its cadence):",
+            "Built a React dashboard with an in-memory caching layer for the metrics views.",
+            "Uncovered posting keywords for this entry (high-value targets):",
+            "  - React\n  - caching",
+        ].join("\n"),
     },
     "tagline-draft": {
         mode: "Draft",

@@ -244,6 +244,18 @@ table {
   font-size: 0.95em;
 }
 
+/* Wrap a wide/many-column table in <div class="table-wrap"> so it scrolls
+   horizontally inside its section instead of overflowing the box. The wrapper
+   owns the vertical margin; the inner table drops its own so spacing matches a
+   bare table. */
+.table-wrap {
+  overflow-x: auto;
+  margin: 1.5rem 0;
+}
+.table-wrap > table {
+  margin: 0;
+}
+
 th, td {
   text-align: left;
   padding: 0.55rem 0.85rem;

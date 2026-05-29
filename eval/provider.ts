@@ -38,8 +38,9 @@ import {
     renderVocabulary,
 } from "@/lib/profile/bullet-tag-suggest";
 import {
-    synthesizeBulletsForEntity,
+    synthesizeBulletsForEntities,
     type ScratchpadSynthEntityKind,
+    type SynthesizeEntityInput,
 } from "@/lib/profile/scratchpad-synth";
 import { chatJSON, MODEL_LITE } from "@/lib/ai/gemini";
 import { loadPrompt } from "@/lib/ai/prompts";
@@ -320,43 +321,54 @@ const HANDLERS: Record<string, CallsiteHandler> = {
         return { tags, reason: response.reason };
     },
 
-    // M8.6.1 — Per-entity bullet synthesis from scratchpad + posting keywords.
-    // Provider handler calls the real caller, which goes through chatJSON +
-    // loadPrompt + the standard Bullet shape fill. Fixtures supply the
-    // entity spine + scratchpad inline (no DB load needed) so the suite is
-    // profile-agnostic — matches the `bullet-tags-from-profile` handler shape.
+    // M8.6.1 / Tier 2b (batched 2026-05-28) — bullet synthesis from
+    // scratchpad + posting keywords. Provider handler calls the real batched
+    // caller, which goes through chatJSON + loadPrompt + the standard Bullet
+    // shape fill. Two fixture styles, both profile-agnostic (spine + scratchpad
+    // supplied inline, no DB load):
+    //   • single-entity fixture (the common case) → returns { bullets } so the
+    //     existing per-entity quality assertions keep working through the new
+    //     batched prompt at N=1.
+    //   • multi-entity fixture (has `entities: [...]`) → returns { entries }
+    //     positionally, so a fixture can assert cross-entry isolation +
+    //     alignment against the real model.
     "scratchpad-synth": async (input) => {
         const args = input as {
-            entityKind: ScratchpadSynthEntityKind;
-            entityId: string;
-            entitySpine: {
-                company?: string | null;
-                title?: string | null;
-                name?: string | null;
-                institution?: string | null;
-                degree?: string | null;
-                field?: string | null;
-                location?: string | null;
-                startDate?: string | null;
-                endDate?: string | null;
-            };
-            scratchpad: string;
+            // multi-entity form
+            entities?: SynthesizeEntityInput[];
             postingKeywords: string[];
-            uncoveredKeywords: string[];
             maxBullets?: number;
+            // single-entity form
+            entityKind?: ScratchpadSynthEntityKind;
+            entityId?: string;
+            entitySpine?: SynthesizeEntityInput["entitySpine"];
+            scratchpad?: string;
+            uncoveredKeywords?: string[];
         };
-        const result = await synthesizeBulletsForEntity({
-            entityKind: args.entityKind,
-            entityId: args.entityId,
-            entitySpine: args.entitySpine,
-            scratchpad: args.scratchpad,
+
+        if (Array.isArray(args.entities)) {
+            const result = await synthesizeBulletsForEntities({
+                entities: args.entities,
+                postingKeywords: args.postingKeywords,
+                maxBullets: args.maxBullets,
+            });
+            return { entries: result.perEntity.map(e => ({ bullets: e.bullets })) };
+        }
+
+        const result = await synthesizeBulletsForEntities({
+            entities: [{
+                entityKind: args.entityKind!,
+                entityId: args.entityId!,
+                entitySpine: args.entitySpine!,
+                scratchpad: args.scratchpad!,
+                uncoveredKeywords: args.uncoveredKeywords ?? [],
+                maxBullets: args.maxBullets,
+            }],
             postingKeywords: args.postingKeywords,
-            uncoveredKeywords: args.uncoveredKeywords,
-            maxBullets: args.maxBullets,
         });
         // Return the bullets array directly. Promptfoo fixtures grade against
         // r.bullets[].text and r.bullets[].tags.
-        return { bullets: result.bullets };
+        return { bullets: result.perEntity[0]?.bullets ?? [] };
     },
 
     // M7.9.3 (story S7.14) — one-sentence profile tagline drafter.

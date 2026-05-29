@@ -87,7 +87,11 @@ const EXPECTATIONS: Record<PromptSlug, Expectation> = {
         expectSystem: true,
         expectModel: true,
         expectTemperature: true,
-        expectMaxTokens: true,
+        // Tier 2b: the batched caller computes maxOutputTokens dynamically from
+        // the entity count (min(8192, 512 + entries × 1536)), so the blob
+        // deliberately declares NO static value — a number here would override
+        // the dynamic budget (caller uses `prompt.maxOutputTokens ?? computed`).
+        expectMaxTokens: false,
         userByteBudget: 8_192,
         // System enforces no-fabrication + voice preservation + verbatim
         // keyword use + 3-7 tags per synthesized bullet.

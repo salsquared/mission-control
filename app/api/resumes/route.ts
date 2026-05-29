@@ -7,7 +7,7 @@ import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting } from "@/lib/resumes/posting";
 import { selectBullets, selectProfileExtras, flattenSelections, entityIsPinned, type BulletSelection } from "@/lib/resumes/select";
 import { autoTagBullets } from "@/lib/profile/auto-tag";
-import { synthesizeBulletsForEntity, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
+import { synthesizeBulletsForEntities, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
 import { broadcastEvent } from "@/lib/events";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
 import { tailorResumeTagline, DEFAULT_SECTION_ORDER, type SectionKey } from "@/lib/resumes/tagline-tailor";
@@ -64,21 +64,26 @@ const FORMAT_CONTENT_TYPES = {
 
 /**
  * M8.6.3 — Scratchpad-synth pass. Iterates the entities in this resume's
- * selection and, for each one with a non-empty scratchpad + at least one
- * mentioned-in-scratchpad uncovered keyword, calls `synthesizeBulletsForEntity`
- * and appends the result back into the entity's bullet group in `selection`.
+ * selection and gathers the ones with a non-empty scratchpad + at least one
+ * mentioned-in-scratchpad uncovered keyword, then sends them ALL in a single
+ * `synthesizeBulletsForEntities` batch call, appending each entity's result
+ * back into its bullet group in `selection`.
  *
  * Mutates `selection` in place (the bullets[] array on each entity group)
  * and APPENDS to `flat` directly (the caller re-flattens after).
  *
- * Best-effort posture: any per-entity throw is logged + swallowed. One
- * entity's synthesis failure does not block the others. Total failure (every
- * entity throws) also returns cleanly — the resume still generates from the
- * select+rewrite path.
+ * Batched since 2026-05-28 (docs/llm-calls.html §6 Tier 2b): one call carries
+ * every gated entity instead of one call per entity — pays the system prompt
+ * once and takes one rate-limit slot. The old loop already ran in parallel, so
+ * the win is tokens + call count, not latency.
  *
- * Cross-entity isolation: this function only ever passes ONE entity's
- * scratchpad to `synthesizeBulletsForEntity` per call. A sibling entity's
- * notes never leak into another entity's synthesis prompt.
+ * Best-effort posture: a batch throw is logged + swallowed and the resume
+ * still generates from the select+rewrite path (the synthesis step is
+ * all-or-nothing now, but never a blocker).
+ *
+ * Cross-entity isolation: each entity is a delimited, numbered block in the
+ * batch prompt (a sibling's scratchpad never appears inside another's block)
+ * and the system prompt forbids cross-entity borrowing — see scratchpad-synth.
  */
 async function runScratchpadSynth(
     selection: import("@/lib/resumes/select").ResumeSelection,
@@ -180,27 +185,35 @@ async function runScratchpadSynth(
         return;
     }
 
-    // Run synthesis in parallel — one entity's call can't depend on another's.
-    const results = await Promise.allSettled(targets.map(t =>
-        synthesizeBulletsForEntity({
-            entityKind: t.kind,
-            entityId: t.entityId,
-            entitySpine: t.spine,
-            scratchpad: t.scratchpad,
+    // ONE batched call carrying every gated entity as an isolated block.
+    // Best-effort: a throw drops every entity's candidates but the resume
+    // still generates from select+rewrite. Maps positional results back by
+    // entityId.
+    let perEntity: Awaited<ReturnType<typeof synthesizeBulletsForEntities>>["perEntity"] = [];
+    try {
+        const batch = await synthesizeBulletsForEntities({
+            entities: targets.map(t => ({
+                entityKind: t.kind,
+                entityId: t.entityId,
+                entitySpine: t.spine,
+                scratchpad: t.scratchpad,
+                uncoveredKeywords: t.relevant,
+            })),
             postingKeywords,
-            uncoveredKeywords: t.relevant,
-        }).then(r => ({ target: t, bullets: r.bullets })),
-    ));
+        });
+        perEntity = batch.perEntity;
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.warn(`[scratchpad-synth] batch synthesis failed: ${msg}`);
+        return;
+    }
 
+    const targetById = new Map(targets.map(t => [t.entityId, t]));
     let totalSynth = 0;
-    for (const r of results) {
-        if (r.status !== "fulfilled") {
-            const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
-            console.warn(`[scratchpad-synth] entity synthesis failed: ${msg}`);
-            continue;
-        }
-        const { target, bullets } = r.value;
+    for (const { entityId, bullets } of perEntity) {
         if (bullets.length === 0) continue;
+        const target = targetById.get(entityId);
+        if (!target) continue;
 
         // Locate the entity group in `selection` and append synthesized
         // bullets to its bullets[] array. Mutating in place — composeResumeProps
@@ -236,7 +249,7 @@ async function runScratchpadSynth(
     }
 
     const durationMs = Date.now() - t0;
-    console.info(`[scratchpad-synth] +${totalSynth} bullets across ${targets.length} entities (uncovered=${uncovered.length}, ${durationMs}ms)`);
+    console.info(`[scratchpad-synth] +${totalSynth} bullets across ${targets.length} entities in 1 batched call (uncovered=${uncovered.length}, ${durationMs}ms)`);
 }
 
 function userIdFromGuard(guard: { session: { user?: unknown } }): string | null {
@@ -511,9 +524,36 @@ export async function POST(req: NextRequest) {
         // (rewrite + skills-gap + trace surface all consume flat).
         flat = flattenSelections(selection);
 
-        // 4. Rewrite via LLM
+        // 4 + 4c. Rewrite (FLASH) and the posting-tailored tagline (LITE) are
+        // two independent LLM calls: the tagline reads `selection`, rewrite
+        // reads `flat`, and neither consumes the other's output (entityOrder is
+        // applied below, after both resolve). So fire them CONCURRENTLY instead
+        // of back-to-back. Rewrite stays fatal-on-throw (the outer handler maps
+        // it to a 500 with stage); the tagline keeps its best-effort posture —
+        // a throw falls back to profile.tagline + DEFAULT_SECTION_ORDER + the
+        // empty entity order, exactly as the prior sequential try/catch did.
+        // Parallelizing rather than merging into one FLASH call keeps the
+        // tagline's multi-KB profile input on the cheaper LITE model — see
+        // docs/llm-calls.html §6 Tier 2a.
         stage = "rewrite";
-        const rewrites = await rewriteBullets(flat, posting);
+        let tailoredTagline: string | null = null;
+        let sectionOrder: SectionKey[] = [...DEFAULT_SECTION_ORDER];
+        let entityOrder: { experience: string[]; projects: string[]; education: string[] } = {
+            experience: [], projects: [], education: [],
+        };
+        const [rewrites, taglineResult] = await Promise.all([
+            rewriteBullets(flat, posting),
+            tailorResumeTagline({ profile, posting, selection }).catch((e) => {
+                const msg = e instanceof Error ? e.message : String(e);
+                console.warn(`[resume-tagline] skipped: ${msg}`);
+                return null;
+            }),
+        ]);
+        if (taglineResult) {
+            tailoredTagline = taglineResult.tagline;
+            sectionOrder = taglineResult.sectionOrder;
+            entityOrder = taglineResult.entityOrder;
+        }
 
         // 4b. Skills gap (story S8.8) — pure, no LLM. Compute against the
         // FULL profile, not just the selected bullets: even an unselected
@@ -539,29 +579,6 @@ export async function POST(req: NextRequest) {
                       ...rawSkillsGap.missing.filter(k => synthCoveredKeywords.has(k.toLowerCase())),
                   ],
               };
-
-        // 4c. Posting-tailored tagline. Best-effort — if Gemini errors,
-        // fall back to the user's default profile.tagline (or no tagline).
-        // The whole point of this callsite is that profile.tagline is
-        // posting-agnostic; the posting-aware version reads the user's
-        // candidacy through the lens of THIS job (e.g. an applied-math
-        // student framing for a security-guard posting even when the
-        // profile.tagline is SWE-coded).
-        stage = "rewrite";
-        let tailoredTagline: string | null = null;
-        let sectionOrder: SectionKey[] = [...DEFAULT_SECTION_ORDER];
-        let entityOrder: { experience: string[]; projects: string[]; education: string[] } = {
-            experience: [], projects: [], education: [],
-        };
-        try {
-            const r = await tailorResumeTagline({ profile, posting, selection });
-            tailoredTagline = r.tagline;
-            sectionOrder = r.sectionOrder;
-            entityOrder = r.entityOrder;
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            console.warn(`[resume-tagline] skipped: ${msg}`);
-        }
 
         // 4d. Posting-relevance filter for top-level Profile fields (skills /
         // languages / hobbies). Deterministic, no LLM — items that don't match

@@ -1,7 +1,12 @@
-# Suite for `scratchpad-synth` — per-entity bullet synthesis from scratchpad
-# notes at resume-gen time. Provider handler in eval/provider.ts calls the
-# real synthesizeBulletsForEntity function so the Promptfoo run grades both
-# the prompt template and the caller's post-processing.
+# Suite for `scratchpad-synth` — bullet synthesis from scratchpad notes at
+# resume-gen time. Provider handler in eval/provider.ts calls the real
+# (batched, Tier 2b) synthesizeBulletsForEntities function so the Promptfoo run
+# grades both the prompt template and the caller's post-processing.
+#
+# Single-entity fixtures exercise the batched prompt at N=1 and grade per-entry
+# output quality (return shape { bullets }). The final multi-entity fixture
+# (input has `entities: [...]`) exercises positional alignment + cross-entry
+# isolation (return shape { entries }).
 
 - description: "Positive coverage — scratchpad mentions PostgreSQL, posting needs PostgreSQL"
   vars:
@@ -98,3 +103,48 @@
         4. The bullets read as professional resume content but reflect the SCRATCHPAD'S specific details (LRU, TTL, in-process, ~50k ops/sec, ~200 lines). Generic resume-speak that drops the user's specifics is a FAIL.
         5. No invented metrics — the only number the scratchpad supports is "~50k ops/sec" and "~200 lines"; the model may use those (or omit them), but must not invent others.
         6. "TypeScript" appears verbatim (it's a posting keyword + scratchpad-supported).
+
+- description: "Batch scratchpad-synth alignment + isolation — two entries, neither borrows the other's tech"
+  vars:
+    callsite: scratchpad-synth
+    input:
+      postingKeywords:
+        - "PostgreSQL"
+        - "Go"
+        - "React"
+        - "caching"
+      entities:
+        - entityKind: "work-role"
+          entityId: "wr_batch_1"
+          entitySpine:
+            company: "Acme Corp"
+            title: "Backend Engineer"
+          scratchpad: "Migrated the data pipeline onto PostgreSQL and rewrote the query layer in Go with prepared statements. Owned the dual-write cutover."
+          uncoveredKeywords:
+            - "PostgreSQL"
+            - "Go"
+        - entityKind: "project"
+          entityId: "pr_batch_1"
+          entitySpine:
+            name: "metrics-dashboard"
+          scratchpad: "Built a React dashboard for the metrics views with an in-memory caching layer so repeat loads stayed snappy."
+          uncoveredKeywords:
+            - "React"
+            - "caching"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        // Positional alignment: one entry per input entity, in order.
+        // entries[0] = the Go/PostgreSQL backend role; entries[1] = the React
+        // project. Cross-entry isolation (system rule 8) means neither entry's
+        // bullets may borrow the OTHER entry's distinctive technology.
+        const r = JSON.parse(output);
+        if (!Array.isArray(r.entries) || r.entries.length !== 2) return false;
+        const e0 = r.entries[0].bullets, e1 = r.entries[1].bullets;
+        if (!Array.isArray(e0) || !Array.isArray(e1)) return false;
+        // Backend entry must not mention React (belongs to the project entry).
+        const e0clean = e0.every(b => !/React/i.test(b.text) && !b.tags.some(t => /^React$/i.test(t)));
+        // Project entry must not mention PostgreSQL (belongs to the backend entry).
+        const e1clean = e1.every(b => !/PostgreSQL/i.test(b.text) && !b.tags.some(t => /^PostgreSQL$/i.test(t)));
+        return e0clean && e1clean;

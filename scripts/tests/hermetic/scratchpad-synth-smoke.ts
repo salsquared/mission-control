@@ -1,27 +1,28 @@
 /**
  * Hermetic smoke for M8.6 — resume-gen scratchpad synthesis pass.
+ * Updated for Tier 2b (2026-05-28): synthesis is now ONE batched call carrying
+ * every gated entity, with positional output.
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/scratchpad-synth-smoke.ts
  *
  * Drives the full POST /api/resumes pipeline with mocked chatJSON to verify:
  *   - Synthesis fires for entities with non-empty scratchpad + mentioned
- *     uncovered posting keywords.
- *   - Synthesis SKIPS entities with empty scratchpad (no LLM call recorded
- *     for them).
- *   - Synthesis SKIPS entities whose scratchpad doesn't mention any
- *     uncovered keyword (no LLM call for them either).
+ *     uncovered posting keywords; SKIPS empty / no-overlap scratchpads.
+ *   - BATCHING: two gated entities produce exactly ONE scratchpad-synth
+ *     chatJSON call (not one per entity) — the Tier 2b win.
+ *   - Positional attribution: entity A's synthesized bullets map to A and
+ *     entity B's map to B (the batch result is keyed back by entityId).
+ *   - The batched prompt renders each entity as its own delimited "Entry N"
+ *     block carrying only that entity's scratchpad (structural isolation).
  *   - Synthesized rows land in GeneratedResume.selections with
  *     synthSource="scratchpad".
- *   - Cross-entity isolation: each chatJSON call sees ONLY its own entity's
- *     scratchpad. A sibling entity's notes never appear in another entity's
- *     prompt body.
- *   - Synthesis throw → resume still generates (best-effort posture).
+ *   - Batch throw → resume still generates (best-effort posture).
  *   - Skills-gap counts synthesized matchedKeywords as covered.
  *
  * Mocks NextAuth, parsePosting, selectBullets, rewriteBullets, render-pdf
  * via require.cache injection (same pattern as resume-from-application-smoke).
  * chatJSON is mocked but inspects each call's prompt body so we can assert
- * on cross-entity isolation. Cleans up scratch user + profile in finally.
+ * on batch shape + isolation. Cleans up scratch user + profile in finally.
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -38,7 +39,7 @@ function fail(msg: string, detail?: unknown): void {
 // ─── Mocked module state ───────────────────────────────────────────────────
 let mockSessionUser: { id: string; email: string } | null = null;
 
-// Per-call capture for chatJSON. Each entry: { name, system, user, response }.
+// Per-call capture for chatJSON. Each entry: { name, system, user }.
 interface ChatJSONCall {
     name: string;
     system: string;
@@ -46,20 +47,27 @@ interface ChatJSONCall {
 }
 const chatJSONCalls: ChatJSONCall[] = [];
 
-// Per-call canned response for scratchpad-synth, keyed by which entity the
-// caller is asking about. Detected via the entityId substring in the user
-// prompt — the prompt includes spine text which contains entity-specific
-// values like "Acme Corp" vs "Beta Labs".
+// Canned per-entity synth responses, keyed by an entity-specific keyword
+// (the company tag, which appears in that entity's spine line in the prompt).
+// The batched call returns ONE { entries } array; we build it by detecting
+// which entities appear in the (single) prompt and in what order, then
+// aligning their canned bullets positionally. A `__throw` entity makes the
+// whole batch call throw (batch synthesis is all-or-nothing).
 type SynthResponse = { bullets: Array<{ text: string; tags: string[] }> } | { __throw: string };
 const cannedByEntityKeyword: Record<string, SynthResponse> = {};
 let cannedByEntityKeywordOrder: string[] = [];
 
-function cannedResponseFor(name: string, userPrompt: string): SynthResponse | null {
-    if (name !== "scratchpad-synth") return null;
-    for (const kw of cannedByEntityKeywordOrder) {
-        if (userPrompt.includes(kw)) return cannedByEntityKeyword[kw];
-    }
-    return { bullets: [] };
+function batchedSynthResponse(userPrompt: string): { entries: Array<{ bullets: Array<{ text: string; tags: string[] }> }> } {
+    const present = cannedByEntityKeywordOrder
+        .map(kw => ({ kw, idx: userPrompt.indexOf(kw) }))
+        .filter(x => x.idx >= 0)
+        .sort((a, b) => a.idx - b.idx);
+    const entries = present.map(({ kw }) => {
+        const canned = cannedByEntityKeyword[kw];
+        if (canned && "__throw" in canned) throw new Error(canned.__throw);
+        return { bullets: canned && "bullets" in canned ? canned.bullets : [] };
+    });
+    return { entries };
 }
 
 const cache = (require as unknown as { cache: Record<string, unknown> }).cache;
@@ -90,10 +98,10 @@ injectCacheEntry("@/lib/ai/gemini", {
             return { proposals: [] };
         }
         if (opts.name === "scratchpad-synth") {
-            const canned = cannedResponseFor(opts.name, opts.user);
-            if (canned && "__throw" in canned) throw new Error(canned.__throw);
-            return canned ?? { bullets: [] };
+            return batchedSynthResponse(opts.user);
         }
+        // resume-tagline runs concurrently with rewrite (Tier 2a) and is
+        // best-effort in the route — throwing here exercises its fallback.
         throw new Error(`unexpected chatJSON name in this smoke: ${opts.name}`);
     },
     AIError,
@@ -176,12 +184,13 @@ async function main(): Promise<void> {
         profileId = profile.id;
 
         // Three WorkRoles with different scratchpad states:
-        //   A: scratchpad mentions "PostgreSQL" (matches an uncovered keyword)
-        //   B: scratchpad mentions "Redis" (NOT in the posting → no relevant uncovered)
-        //   C: empty scratchpad
+        //   A: scratchpad mentions "PostgreSQL" + "Go" (both uncovered) → target
+        //   B: scratchpad mentions "Go" (uncovered)                     → target
+        //   C: empty scratchpad                                         → skip
         // Each gets one existing bullet so select returns something. Posting
         // keywords are ["TypeScript", "PostgreSQL", "Go"]. The existing bullets
-        // cover "TypeScript" only — PostgreSQL + Go are uncovered.
+        // cover "TypeScript" only — PostgreSQL + Go are uncovered. A + B are
+        // BOTH targets → they must batch into ONE scratchpad-synth call.
         const wrA = await prisma.workRole.create({
             data: {
                 profileId,
@@ -202,7 +211,7 @@ async function main(): Promise<void> {
                 title: "Engineer",
                 startDate: new Date("2021-01-01"),
                 bullets: JSON.stringify([{ id: `b-b-${tag}`, text: "Built a TypeScript dashboard", tags: ["TypeScript"], autoTags: [], removedTags: [], pinnedTags: [], locked: false, excluded: false }]),
-                scratchpad: "Worked on Redis caching layer. Lots of LRU tuning.",
+                scratchpad: "Owned the billing service rewrite in Go — idempotency keys, exactly-once webhook handling.",
                 position: 1,
             },
         });
@@ -224,11 +233,7 @@ async function main(): Promise<void> {
         mockSessionUser = { id: userId, email: `ss-${tag}@example.invalid` };
         cannedPostingKeywords = ["TypeScript", "PostgreSQL", "Go"];
 
-        // ─── Test 1: synthesis fires for entity A only ────────────────────
-        // A's scratchpad mentions "PostgreSQL" + "Go" (both uncovered).
-        // B's scratchpad mentions "Redis" only — no overlap with uncovered.
-        // C has null scratchpad.
-        // ⇒ exactly ONE scratchpad-synth chatJSON call (for entity A).
+        // ─── Test 1: synthesis fires for A + B (batched), C skipped ────────
         chatJSONCalls.length = 0;
         cannedByEntityKeyword[`Acme Corp-${tag}`] = {
             bullets: [
@@ -236,7 +241,12 @@ async function main(): Promise<void> {
                 { text: "Built a Go query layer using prepared statements", tags: ["Go", "PostgreSQL", "performance"] },
             ],
         };
-        cannedByEntityKeywordOrder = [`Acme Corp-${tag}`];
+        cannedByEntityKeyword[`Beta Labs-${tag}`] = {
+            bullets: [
+                { text: "Rewrote the billing service in Go with idempotency keys", tags: ["Go", "billing", "idempotency"] },
+            ],
+        };
+        cannedByEntityKeywordOrder = [`Acme Corp-${tag}`, `Beta Labs-${tag}`];
 
         const res = await POST(buildPostRequest({ posting: { url: "https://example.invalid/job" } }));
 
@@ -257,52 +267,58 @@ async function main(): Promise<void> {
             } else {
                 const selections = JSON.parse(row.selections) as Array<{ bulletId: string; synthSource?: string; sourceId: string }>;
                 const synthRows = selections.filter(s => s.synthSource === "scratchpad");
-                if (synthRows.length !== 2) {
-                    fail(`Test 1: expected 2 synthesized rows in selections, got ${synthRows.length}`, synthRows);
+                if (synthRows.length !== 3) {
+                    fail(`Test 1: expected 3 synthesized rows (2 from A + 1 from B), got ${synthRows.length}`, synthRows);
                 } else {
-                    pass(`Test 1: ${synthRows.length} synthesized rows landed in GeneratedResume.selections with synthSource="scratchpad"`);
+                    pass(`Test 1: ${synthRows.length} synthesized rows landed with synthSource="scratchpad"`);
                 }
-                if (synthRows.some(s => s.sourceId !== workRoleAId)) {
-                    fail("Test 1: synthesized rows should ONLY map to entity A", synthRows.map(s => s.sourceId));
+                // Positional attribution — A's two bullets map to A, B's one to B.
+                const fromA = synthRows.filter(s => s.sourceId === workRoleAId).length;
+                const fromB = synthRows.filter(s => s.sourceId === workRoleBId).length;
+                if (fromA !== 2 || fromB !== 1) {
+                    fail(`Test 1: attribution wrong — expected A=2 B=1, got A=${fromA} B=${fromB}`, synthRows.map(s => s.sourceId));
                 } else {
-                    pass("Test 1: synthesized rows all map to entity A (correct entity)");
+                    pass("Test 1: synthesized rows attributed to the correct entities (A=2, B=1)");
                 }
             }
         }
 
-        // ─── Test 2: only one scratchpad-synth call fired ────────────────
+        // ─── Test 2: exactly ONE scratchpad-synth call (the batch) ─────────
+        // Two gated entities (A + B) → ONE call, not two. The Tier 2b win.
         const synthCalls = chatJSONCalls.filter(c => c.name === "scratchpad-synth");
         if (synthCalls.length !== 1) {
-            fail(`Test 2: expected exactly 1 scratchpad-synth call (entity A only), got ${synthCalls.length}`,
+            fail(`Test 2: expected exactly 1 batched scratchpad-synth call for 2 entities, got ${synthCalls.length}`,
                 synthCalls.map(c => c.user.slice(0, 60)));
         } else {
-            pass("Test 2: exactly 1 scratchpad-synth call (entity A — B/C correctly skipped)");
+            pass("Test 2: 2 gated entities → exactly 1 batched scratchpad-synth call");
         }
 
-        // ─── Test 3: cross-entity isolation — A's prompt has A's scratchpad
-        // only; B's "Redis caching" notes NEVER appear in A's prompt.
+        // ─── Test 3: batch structure — both entities present as delimited
+        // "Entry N" blocks, each carrying its OWN scratchpad ───────────────
         if (synthCalls.length === 1) {
             const userPrompt = synthCalls[0].user;
-            if (!userPrompt.includes("migrating data pipeline to PostgreSQL")) {
-                fail("Test 3: A's prompt should contain A's scratchpad text");
+            const hasA = userPrompt.includes("migrating data pipeline to PostgreSQL");
+            const hasB = userPrompt.includes("billing service rewrite in Go");
+            if (!hasA || !hasB) {
+                fail("Test 3: batched prompt should contain BOTH entities' scratchpads", { hasA, hasB });
             } else {
-                pass("Test 3: A's prompt contains A's own scratchpad");
+                pass("Test 3: batched prompt contains both A's and B's scratchpad");
             }
-            if (userPrompt.includes("Redis caching")) {
-                fail("Test 3: A's prompt CONTAINS B's scratchpad — cross-entity leak detected");
+            if (!/Entry 1/.test(userPrompt) || !/Entry 2/.test(userPrompt)) {
+                fail("Test 3: batched prompt missing delimited 'Entry N' blocks", userPrompt.slice(0, 400));
             } else {
-                pass("Test 3: A's prompt does NOT contain B's scratchpad (cross-entity isolation)");
+                pass("Test 3: entities rendered as delimited 'Entry 1' / 'Entry 2' blocks");
             }
         }
 
-        // ─── Test 4: synthesis throw → resume still generates ─────────────
+        // ─── Test 4: batch throw → resume still generates ──────────────────
         chatJSONCalls.length = 0;
         cannedByEntityKeyword[`Acme Corp-${tag}`] = { __throw: "scratchpad-synth simulated failure" };
         const res2 = await POST(buildPostRequest({ posting: { url: "https://example.invalid/job" } }));
         if (res2.status !== 200) {
-            fail(`Test 4: synthesis throw should not block resume — expected 200, got ${res2.status}`);
+            fail(`Test 4: batch throw should not block resume — expected 200, got ${res2.status}`);
         } else {
-            pass("Test 4: synthesis throw still yields 200 (best-effort posture)");
+            pass("Test 4: batch throw still yields 200 (best-effort posture)");
             const resumeId2 = res2.headers.get("X-Resume-Id");
             if (resumeId2) {
                 resumeIds.push(resumeId2);
@@ -311,9 +327,9 @@ async function main(): Promise<void> {
                     const selections = JSON.parse(row.selections) as Array<{ synthSource?: string }>;
                     const synthRows = selections.filter(s => s.synthSource === "scratchpad");
                     if (synthRows.length !== 0) {
-                        fail(`Test 4: expected 0 synthesized rows after throw, got ${synthRows.length}`);
+                        fail(`Test 4: expected 0 synthesized rows after batch throw, got ${synthRows.length}`);
                     } else {
-                        pass("Test 4: zero synthesized rows in selections after throw");
+                        pass("Test 4: zero synthesized rows in selections after batch throw");
                     }
                 }
             }
@@ -321,9 +337,9 @@ async function main(): Promise<void> {
 
         // ─── Test 5: skills-gap excludes synthesized coverage ─────────────
         // The route persists skillsGap as JSON.stringify(skillsGap.missing) —
-        // i.e. just the array of uncovered keywords (the format the existing
-        // skills-gap UI expects). A's scratchpad-synth covers "PostgreSQL"
-        // post-M8.6.4, so it should NOT appear in the persisted missing array.
+        // i.e. just the array of uncovered keywords. A's scratchpad-synth
+        // covers "PostgreSQL" post-M8.6.4, so it should NOT appear in the
+        // persisted missing array.
         chatJSONCalls.length = 0;
         cannedByEntityKeyword[`Acme Corp-${tag}`] = {
             bullets: [

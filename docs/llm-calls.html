@@ -58,6 +58,7 @@
     <div class="section-body">
       <h3>The 14 callsites</h3>
       <p>One row per Gemini callsite. The <strong>Lunary slug</strong> is the value passed to <code>chatJSON({ name: ... })</code> (or to <code>lunary.trackEvent</code> for email-parser) — required since LOP-2, TypeScript-enforced. The same kebab-case slug names the prompt blob in <a href="./llm-prompts/">llm-prompts/</a> and the Promptfoo suite in <code>eval/suites/</code>. <strong>Migrated?</strong> ✅ = the code calls <code>loadPrompt(slug, vars)</code> (Lunary-preferred, disk-fallback); all 10 <code>chatJSON</code> callsites cut over by 2026-05-25. The per-callsite detail below each row's load-bearing facts lives in the linked prompt blob.</p>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr><th>Callsite</th><th>Slug</th><th>Model</th><th>maxOut</th><th>Input cap</th><th>Migrated?</th><th>Role / note</th></tr>
@@ -133,7 +134,7 @@
             <td><code>lib/resumes/tagline-tailor.ts</code></td>
             <td><a href="./llm-prompts/resume-tagline.md">resume-tagline</a></td>
             <td>LITE</td><td><strong>1024</strong></td><td>~4 KB + posting + evidence</td><td>✅</td>
-            <td>Posting-tailored subtitle + (since M8.7.3) the posting-aware section + entity ordering. One call per generate, two responsibilities. Best-effort — falls back to <code>profile.tagline</code> + <code>DEFAULT_SECTION_ORDER</code>. Sibling of <code>tagline-draft</code> (posting-agnostic, profile dash).</td>
+            <td>Posting-tailored subtitle + (since M8.7.3) the posting-aware section + entity ordering. One call per generate, two responsibilities. <strong>Runs concurrently with <code>resume-rewrite</code> since 2026-05-28</strong> (Tier 2a §6 — parallelized, not merged, so it stays on cheap LITE). Best-effort — falls back to <code>profile.tagline</code> + <code>DEFAULT_SECTION_ORDER</code>. Sibling of <code>tagline-draft</code> (posting-agnostic, profile dash).</td>
           </tr>
           <tr>
             <td><code>lib/profile/tagline-draft.ts</code></td>
@@ -144,11 +145,12 @@
           <tr>
             <td><code>lib/profile/scratchpad-synth.ts</code></td>
             <td><a href="./llm-prompts/scratchpad-synth.md">scratchpad-synth</a></td>
-            <td>LITE</td><td>2048</td><td>~2 KB scratchpad + keywords</td><td>✅</td>
-            <td>Resume-gen — synthesizes fresh bullet candidates from the entity's scratchpad + posting keywords. <strong>One call per entity</strong> (the N-multiplier), gated on scratchpad presence + uncovered keywords (§4). Batching candidate (Tier 2, §6).</td>
+            <td>LITE</td><td><strong>512+N×1536 (≤8192)</strong></td><td>~2 KB scratchpad × N + keywords</td><td>✅</td>
+            <td>Resume-gen — synthesizes fresh bullet candidates from each entity's scratchpad + posting keywords. <strong>ONE batched call per generate</strong> carrying every gated entity as a delimited, positionally-aligned block (was one-call-per-entity, the N-multiplier, until 2026-05-28 — Tier 2b §6). Gated on scratchpad presence + uncovered keywords (§4); output budget scales with entity count.</td>
           </tr>
         </tbody>
       </table>
+      </div>
       <div class="callout"><strong>Count check.</strong> 14 callsites: 13 through <code>chatJSON</code> + <code>email-parser</code> via the Vercel AI SDK. (<code>tagline-draft</code> and <code>scratchpad-synth</code> were the 11th/12th–14th to land after the initial LOP-6 batch of 10.)</div>
     </div>
   </details>
@@ -240,24 +242,26 @@
     <summary><h2 id="pipeline">The resume-gen pipeline (the hot path)</h2></summary>
     <div class="section-body">
       <h3>Call sequence for one generate</h3>
-      <p>A single <code>POST /api/resumes</code> runs this sequence. Calls in best-effort steps are wrapped in try/catch — a failure degrades but never blocks the generate. The scratchpad-synth step is the N-multiplier.</p>
+      <p>A single <code>POST /api/resumes</code> runs this sequence. Calls in best-effort steps are wrapped in try/catch — a failure degrades but never blocks the generate. Post-Tier-2: <code>scratchpad-synth</code> is ONE batched call regardless of entity count, and <code>resume-rewrite</code> ∥ <code>resume-tagline</code> run concurrently.</p>
       <pre class="mermaid">
 flowchart TB
   parse["posting-parse<br/>(LITE) — keywords + importance"]
   autotag["bullet-tags-from-posting<br/>(LITE, best-effort)"]
   select["selectBullets()<br/>deterministic — no LLM"]
-  synth["scratchpad-synth<br/>(LITE, best-effort)<br/>ONE CALL PER ENTITY"]
+  synth["scratchpad-synth<br/>(LITE, best-effort)<br/>ONE BATCHED CALL (all entities)"]
   rewrite["resume-rewrite<br/>(FLASH) — ships to employer"]
   tagline["resume-tagline<br/>(LITE, best-effort)<br/>tagline + section/entity order"]
-  parse --> autotag --> select --> synth --> rewrite --> tagline
+  parse --> autotag --> select --> synth
+  synth --> rewrite
+  synth --> tagline
       </pre>
-      <p>Deterministic floor is 2 calls (<code>posting-parse</code> + <code>resume-rewrite</code>); the usual case is 4 plus one per scratchpad-bearing entity. A heavy generate (fresh posting, 6 scratchpad'd entities) is ~10 calls.</p>
+      <p>Deterministic floor is 2 calls (<code>posting-parse</code> + <code>resume-rewrite</code>). The usual case is ~5: <code>posting-parse</code>, <code>bullet-tags-from-posting</code>, one batched <code>scratchpad-synth</code> (when any entity is gated in), then <code>resume-rewrite</code> ∥ <code>resume-tagline</code> concurrently. A heavy generate (fresh posting, 6 scratchpad'd entities) is now <strong>~5 calls — down from ~10</strong> before Tier 2 collapsed the per-entity synth loop into one batched call.</p>
 
-      <h3>Why this is the target</h3>
+      <h3>Why this was the target</h3>
       <ul>
-        <li><code>posting-parse</code> is a <strong>pure function of the posting content</strong>, yet was re-run on every generate. (Fixed — Tier 1, §6.)</li>
-        <li><code>scratchpad-synth</code> is a <strong>per-entity loop</strong>, each iteration re-paying its ~250-token system prompt. (Batching candidate — Tier 2, §6.)</li>
-        <li><code>resume-tagline</code> and <code>resume-rewrite</code> are <strong>both post-selection, both posting-aware, both over the same selected entities</strong> — two calls doing adjacent work. (Merge candidate — Tier 2, §6.)</li>
+        <li><code>posting-parse</code> was a <strong>pure function of the posting content</strong>, yet re-run on every generate. (Fixed — Tier 1 ✅, §6.)</li>
+        <li><code>scratchpad-synth</code> was a <strong>per-entity loop</strong>, each iteration re-paying its ~250-token system prompt. (Fixed — batched into one positional call, Tier 2b ✅, §6.)</li>
+        <li><code>resume-tagline</code> and <code>resume-rewrite</code> were <strong>two sequential post-selection calls</strong> with no data dependency. (Fixed — run concurrently, Tier 2a ✅, §6. Merging them into one FLASH call was rejected: it would move the tagline's multi-KB input onto FLASH pricing.)</li>
       </ul>
     </div>
   </details>
@@ -265,18 +269,20 @@ flowchart TB
   <details class="section">
     <summary><h2 id="opportunities">Opportunities (Tier 1–4)</h2></summary>
     <div class="section-body">
-      <h3>Tier 1 — eliminate redundant calls (shipped 2026-05-28)</h3>
-      <p>Clean wins, low risk, no quality tradeoff. Both landed.</p>
+      <div class="callout tip"><strong>Tier 1 + 2 shipped 2026-05-28 ✅.</strong> Tier 1 (posting-parse cache + synthesize skip-guard) and Tier 2 (2a: run <code>resume-rewrite</code> ∥ <code>resume-tagline</code> concurrently; 2b: batch <code>scratchpad-synth</code> N→1) are shipped and verified — hermetic 79/79 green, <code>tsc</code> clean, and the batched scratchpad-synth prompt passes Promptfoo 4/4 (incl. a multi-entity isolation fixture). <strong>Tiers 3–4 remain open.</strong> Note 2a was implemented as a <em>parallelize</em>, not the originally-proposed merge — see the rationale below.</div>
+      <h3>Tier 1 — eliminate redundant calls ✅ (shipped 2026-05-28)</h3>
+      <p>Clean wins, low risk, no quality tradeoff. Both landed — re-verified against the code on 2026-05-28.</p>
       <ul>
-        <li><strong>Cache <code>posting-parse</code> per posting content.</strong> <code>lib/resumes/posting.ts:parsePosting</code> memoizes keyed on content: pasted text → <code>sha256</code> of cleaned+capped text (never stale); URL-only → keyed on URL, computed before the fetch so a hit skips both the scrape <em>and</em> the LLM. 30-min TTL bounds URL staleness; 200-entry LRU cap; clones on read/write. Eliminates N−1 parses across N variants of one job. Smoke: <code>posting-parse-cache-smoke.ts</code>.</li>
-        <li><strong>Skip <code>profile-synthesize</code> for single-file + empty-profile imports.</strong> <code>lib/profile/synthesize.ts:canSkipSynthesis</code> short-circuits the FLASH call when there's exactly one draft and no existing entities — the extraction <em>is</em> the canonical master (nothing to consolidate cross-file, nothing existing to reconcile, and <code>profile-import</code> already ran the same project-vs-role classification). Eliminates the priciest call on the common first-import path. Deliberately narrow: ≥2 files or a non-empty profile still runs the pass. Smoke: <code>synthesize-skip-guard-smoke.ts</code>.</li>
+        <li><strong>✅ Cache <code>posting-parse</code> per posting content.</strong> <code>lib/resumes/posting.ts:parsePosting</code> memoizes keyed on content: pasted text → <code>sha256</code> of cleaned+capped text (never stale); URL-only → keyed on URL, computed before the fetch so a hit skips both the scrape <em>and</em> the LLM. 30-min TTL bounds URL staleness; 200-entry LRU cap; clones on read/write. Eliminates N−1 parses across N variants of one job. Smoke: <code>posting-parse-cache-smoke.ts</code>.</li>
+        <li><strong>✅ Skip <code>profile-synthesize</code> for single-file + empty-profile imports.</strong> <code>lib/profile/synthesize.ts:canSkipSynthesis</code> short-circuits the FLASH call when there's exactly one draft and no existing entities — the extraction <em>is</em> the canonical master (nothing to consolidate cross-file, nothing existing to reconcile, and <code>profile-import</code> already ran the same project-vs-role classification). Eliminates the priciest call on the common first-import path. Deliberately narrow: ≥2 files or a non-empty profile still runs the pass. Smoke: <code>synthesize-skip-guard-smoke.ts</code>.</li>
       </ul>
 
-      <h3>Tier 2 — merge calls (proposed)</h3>
+      <h3>Tier 2 — collapse the rewrite/tagline pair + the synth loop ✅ (shipped 2026-05-28)</h3>
       <ul>
-        <li><strong>Fold <code>resume-tagline</code> into <code>resume-rewrite</code>.</strong> One FLASH call returns <code>{ bullets[], tagline, sectionOrder, entityOrder }</code> instead of a FLASH rewrite + a separate LITE tagline call. Saves one call per generate; the tagline inherits FLASH quality. <strong>Tradeoff:</strong> today a tagline failure degrades independently (own try/catch + fallback); merged, a rewrite failure takes the tagline too — though both fall back to defaults. Watch the combined output against the 4096 cap.</li>
-        <li><strong>Batch <code>scratchpad-synth</code> N → 1.</strong> Replace the per-entity loop with one call carrying all entities as delimited blocks + positional output (the <code>employment-type-classifier</code> pattern). Saves (N−1) repeated system prompts and (N−1) calls per generate. <strong>Tradeoff:</strong> the per-entity isolation ("a sibling's notes never reach this prompt") is deliberate — a batched prompt must firewall entities structurally. Latency is already fine (parallel <code>Promise.allSettled</code>), so the win is tokens + call count.</li>
+        <li><strong>✅ 2a — run <code>resume-rewrite</code> ∥ <code>resume-tagline</code> concurrently</strong> (<code>Promise.all</code> in <code>app/api/resumes/route.ts</code>). The two calls have no data dependency (<code>entityOrder</code> is applied after both resolve), so firing them together captures the latency win. <strong>Implemented as a parallelize, NOT the originally-proposed merge.</strong> The merge (one FLASH call returning <code>{ bullets, tagline, sectionOrder, entityOrder }</code>) looked like a call-count win but is a likely <em>cost</em> loss: the tagline's input is a <em>superset</em> of rewrite's (it carries a multi-KB <code>profileSummary</code> + per-entity evidence the rewrite doesn't need), so merging would move all of that onto FLASH pricing to save only a ~250-token system prompt + one slot — and the §7 non-goals already note the rate-limit slot isn't the bottleneck. Parallelizing keeps the tagline on cheap LITE, keeps its independent try/catch fallback, and leaves the employer-facing rewrite prompt untouched. Rewrite stays fatal-on-throw; the tagline stays best-effort.</li>
+        <li><strong>✅ 2b — batched <code>scratchpad-synth</code> N → 1.</strong> One call carries every gated entity as a delimited, numbered block with positional output (<code>{ entries: [...] }</code> aligned by index), replacing the former per-entity <code>Promise.allSettled</code> loop. Saves (N−1) repeated ~250-token system prompts + (N−1) rate-limit slots per generate; output budget scales with entity count (<code>min(8192, 512 + N×1536)</code>). Per-entity isolation is enforced structurally (each entity is its own block; a sibling's scratchpad never enters another's block) + instructionally (system rule 8). Count drift is tolerated (align by index; missing → empty, extra → ignored). Latency was already 1× (the old loop ran in parallel), so the win is tokens + call count. New hermetic coverage proves 2 entities → 1 call with correct attribution; Promptfoo adds a multi-entity isolation fixture.</li>
       </ul>
+      <div class="callout warn"><strong>Deploy coupling (2b).</strong> 2b changed the <code>scratchpad-synth</code> output shape (<code>{ bullets }</code> → <code>{ entries }</code>), so the new code REQUIRES the new prompt. When <code>LUNARY_PUBLIC_KEY</code> is set (dev + prod), <code>loadPrompt</code> serves the Lunary template, so the new code must ship together with <code>ONLY=scratchpad-synth npx tsx scripts/sync-lunary-templates.ts</code> (pushes the new non-draft version) + a <code>pm2 restart</code>. Until synced, the new code hits the stale single-entity template and every synth call fails its schema → best-effort degrade to no synthesized bullets. The hermetic gate forces the disk fallback (<code>LUNARY_PUBLIC_KEY=""</code>) so it stays green either way.</div>
 
       <h3>Tier 3 — prompt-text consolidation (proposed)</h3>
       <p>Cuts per-call tokens + drift, not call count. Can't merge the calls (different surfaces), but the text overlaps.</p>
@@ -290,7 +296,7 @@ flowchart TB
         <li><strong><code>bullet-tags-from-posting</code> overlaps the deterministic scorer.</strong> <code>lib/resumes/select.ts</code> already does substring + tag matching for free; the LLM auto-tag's only marginal value is <em>conceptual</em> matching ("Built a Python API" ⇒ "Python"). Measure whether gating it to keywords the substring scorer missed (or dropping it) changes selection. <strong>Caution:</strong> it also writes the UI "pending review" tag badges, so dropping it has a UX cost beyond selection.</li>
       </ul>
 
-      <div class="callout"><strong>Rough impact.</strong> A heavy generate (~10 calls today) drops to ~4 with Tier 1+2; a re-generate against the same posting drops another (Tier 1 cache). Tier 3/4 trim per-call tokens on top.</div>
+      <div class="callout"><strong>Rough impact (Tier 1 + 2 shipped).</strong> A heavy generate dropped from ~10 calls to <strong>~5</strong> — Tier 2b collapsed the per-entity synth loop into one batched call, and Tier 2a overlaps rewrite + tagline so they no longer serialize. A re-generate against the same posting drops another via the Tier 1 cache. Tier 3/4 (still open) would trim per-call tokens on top.</div>
     </div>
   </details>
 
@@ -317,7 +323,7 @@ flowchart TB
       <p><code>lib/ai/gemini.ts</code> wraps the inner <code>generateContent</code> call with <code>lunary.wrapModel</code> at module-init, <strong>gated on <code>LUNARY_PUBLIC_KEY</code></strong> — unset (dev / CI / fresh clones) ⇒ <code>tracedGenerate === rawGenerate</code> and Lunary code never executes. Set ⇒ every call lands in Lunary's dashboard with name, model, input messages, output, prompt+completion tokens, latency. <code>lib/email-parser.ts</code> bypasses <code>chatJSON</code>, so it tracks manually via <code>lunary.trackEvent</code> inside a defensive <code>safeTrack</code> helper — a Lunary failure logs a warn but never disrupts Gmail ingest. Init lives in <code>instrumentation.ts</code> next to <code>initLogger()</code>. Activate: drop <code>LUNARY_PUBLIC_KEY</code> into <code>.env</code> → <code>pm2 restart mission-control-{dev,scheduler-dev,scheduler-prod} --update-env</code>.</p>
 
       <h3>Prompt registry — Lunary templates</h3>
-      <p>All 10 <code>chatJSON</code> callsites (plus the later <code>tagline-draft</code> / <code>scratchpad-synth</code>) route through <code>lib/ai/prompts.ts:loadPrompt(slug, vars)</code>. It prefers Lunary's <code>renderTemplate</code> (versioned, dashboard-editable) when <code>LUNARY_PUBLIC_KEY</code> is set, else falls back to parsing <code>docs/llm-prompts/&lt;slug&gt;.md</code> from disk — the path that makes hermetic smokes + Lunary-less dev work, and protects prod through Lunary blips. Editing: dashboard edits publish a new version instantly (mirror back to the <code>.md</code> same-day); code edits to the <code>.md</code> push via <code>npx tsx scripts/sync-lunary-templates.ts</code> (idempotent; needs <code>LUNARY_SECRET_KEY</code>, distinct from the public key).</p>
+      <p>Prompt loading is uniform across <strong>all 14 callsites</strong>: each loads its prompt through <code>lib/ai/prompts.ts:loadPrompt(slug, vars)</code> — the 13 <code>chatJSON</code> callsites <em>and</em> <code>email-parser</code> (which loads its prompt the same way even though it makes the Gemini call via the Vercel AI SDK's <code>generateObject</code>, not <code>chatJSON</code>). Only the model-call package differs — Gemini SDK via <code>chatJSON</code> for the 13, Vercel AI SDK for the lone <code>email-parser</code>; the prompt-registry path is shared by all. <code>loadPrompt</code> prefers Lunary's <code>renderTemplate</code> (versioned, dashboard-editable) when <code>LUNARY_PUBLIC_KEY</code> is set, else falls back to parsing <code>docs/llm-prompts/&lt;slug&gt;.md</code> from disk — the path that makes hermetic smokes + Lunary-less dev work, and protects prod through Lunary blips. Editing: dashboard edits publish a new version instantly (mirror back to the <code>.md</code> same-day); code edits to the <code>.md</code> push via <code>npx tsx scripts/sync-lunary-templates.ts</code> (idempotent; needs <code>LUNARY_SECRET_KEY</code>, distinct from the public key).</p>
       <div class="callout warn"><strong>Dashboard caveat.</strong> Lunary's model picker only knows its built-in OpenAI/Anthropic SKUs, so our Gemini 3.x strings show as "gpt-5.5" or similar in the dropdown. The actual <code>extra.model</code> is stored correctly and surfaces through <code>renderTemplate</code> — the dropdown is cosmetic. The playground / built-in eval is unusable for our fleet; Promptfoo is the eval path.</div>
 
       <h3>Eval harness — Promptfoo (manual trigger only)</h3>
@@ -372,6 +378,7 @@ flowchart TB
     <div class="section-body">
       <h3>History</h3>
       <ul>
+        <li><strong>2026-05-28</strong> — Tier 2 shipped (validation pass first confirmed Tier 1 + the still-open premises). <strong>2a:</strong> <code>resume-rewrite</code> (FLASH) and <code>resume-tagline</code> (LITE) now run concurrently via <code>Promise.all</code> in <code>app/api/resumes/route.ts</code> — chosen over the originally-proposed merge, which would have moved the tagline's multi-KB superset input onto FLASH pricing for only a system-prompt-sized saving. Rewrite stays fatal-on-throw; tagline keeps its independent fallback. <strong>2b:</strong> <code>scratchpad-synth</code> batched N→1 — one call carries every gated entity as a delimited, positionally-aligned block (<code>synthesizeBulletsForEntities</code> replaces <code>synthesizeBulletsForEntity</code>), output budget <code>min(8192, 512 + N×1536)</code>, structural + instructional cross-entity isolation. Output shape <code>{ bullets }</code> → <code>{ entries }</code>; prompt blob rewritten, <code>eval/provider.ts</code> + suite updated (multi-entity isolation fixture added, Promptfoo 4/4), <code>scratchpad-synth-smoke.ts</code> rewritten to prove 2 entities → 1 call. A heavy generate drops ~10 → ~5 calls. <strong>Deploy:</strong> requires a Lunary template sync (<code>ONLY=scratchpad-synth</code>) shipped with the code — see §6 Tier 2 deploy-coupling note.</li>
         <li><strong>2026-05-28</strong> — Cost-optimization pass + doc merge. Tier 1 shipped: (a) <code>posting-parse</code> result cache (content-keyed, 30-min TTL, 200-entry LRU) in <code>lib/resumes/posting.ts</code> — repeat generates against the same posting no longer re-call Gemini; <code>posting-parse-cache-smoke.ts</code>. (b) <code>profile-synthesize</code> skip-guard (<code>canSkipSynthesis</code>) — single-file + empty-profile imports return the extraction verbatim, eliminating the priciest FLASH call on first import; <code>synthesize-skip-guard-smoke.ts</code>. This doc absorbed the former <code>llm-cost-optimization.html</code> and converted from <code>llm-calls.md</code> → <code>llm-calls.html</code> (cost model, patterns-in-place, resume-gen pipeline, Tier 1–4 opportunities, non-goals, cost checklist).</li>
         <li><strong>2026-05-26</strong> — M8.7 resume relevance pipeline overhaul. <code>posting-parse</code>: output → <code>Array&lt;{keyword, importance(1-5)}&gt;</code>, <code>maxOutputTokens</code> 2048→3072, per-tier importance rubric added. <code>resume-tagline</code>: extended to also return <code>sectionOrder</code> + <code>entityOrder</code> from a per-entity evidence block; <code>maxOutputTokens</code> 256→1024. <code>resume-rewrite</code>: pre-filters to bullets with a matched tag/keyword before the LLM call (~30% token savings). <code>bullet-tags-from-posting</code>: per-bullet line trimmed (<code>removedTags</code> omitted when empty).</li>
         <li><strong>2026-05-26</strong> — Tag case-sensitivity bug class fixed across <code>auto-tag.ts</code>, <code>bullet-tag-suggest.ts</code>, <code>select.ts</code>; lowercase-dedup added everywhere; one-shot backfill cleaned dev.db.</li>
