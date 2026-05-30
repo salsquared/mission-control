@@ -118,14 +118,30 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         setEditValue("");
     };
 
+    // The overlay can be opened for an app on either the career or the side
+    // kanban, which React Query keeps in two separate caches. Optimistic writes
+    // (and their rollbacks) must target whichever cache actually holds this app
+    // — otherwise a side-track edit silently patches the empty career cache and
+    // the UI never reflects it.
+    const careerKey = queryKeys.applications;
+    const sideKey = [...queryKeys.applications, 'side'] as const;
+    const locateAppCache = () => {
+        const career = queryClient.getQueryData<ApplicationsCache>(careerKey);
+        if ((career?.applications ?? []).some((a) => a.id === applicationId)) return careerKey;
+        return sideKey;
+    };
+
+    // Returns a rollback() that restores the pre-patch snapshot of the cache it
+    // touched, so callers don't have to track which key it was.
     const optimisticPatch = (patch: Partial<Application>) => {
-        const prev = queryClient.getQueryData<ApplicationsCache>(queryKeys.applications);
-        queryClient.setQueryData<ApplicationsCache>(queryKeys.applications, (old) => ({
+        const key = locateAppCache();
+        const prev = queryClient.getQueryData<ApplicationsCache>(key);
+        queryClient.setQueryData<ApplicationsCache>(key, (old) => ({
             applications: (old?.applications ?? []).map((a) =>
                 a.id === applicationId ? { ...a, ...patch, lastUpdateAt: new Date().toISOString() } : a
             ),
         }));
-        return prev;
+        return () => queryClient.setQueryData<ApplicationsCache>(key, prev);
     };
 
     const saveEdit = async () => {
@@ -137,23 +153,23 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         if (editingField === 'company') patch.company = val;
         if (editingField === 'role') patch.role = val || null;
         if (editingField === 'nextSteps') patch.nextSteps = val || null;
-        const prev = optimisticPatch(patch);
+        const rollback = optimisticPatch(patch);
         cancelEdit();
         try {
             await api.applications.update(patch);
         } catch (e) {
-            queryClient.setQueryData(queryKeys.applications, prev);
+            rollback();
             toastStore.push({ message: `Save failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
 
     const handleKindChange = async (newKind: typeof APPLICATION_KINDS[number] | null) => {
         if (!app) return;
-        const prev = optimisticPatch({ kind: newKind });
+        const rollback = optimisticPatch({ kind: newKind });
         try {
             await api.applications.update({ id: applicationId, kind: newKind });
         } catch (e) {
-            queryClient.setQueryData(queryKeys.applications, prev);
+            rollback();
             toastStore.push({ message: `Update failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
@@ -164,7 +180,7 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
     // keys so React Query refetches both lists.
     const handleTrackChange = async (newTrack: typeof APPLICATION_TRACKS[number]) => {
         if (!app || app.track === newTrack) return;
-        const prev = optimisticPatch({ track: newTrack });
+        const rollback = optimisticPatch({ track: newTrack });
         try {
             await api.applications.update({ id: applicationId, track: newTrack });
             // The career-track list still has this row cached as track=career;
@@ -174,16 +190,36 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                 predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'applications',
             });
         } catch (e) {
-            queryClient.setQueryData(queryKeys.applications, prev);
+            rollback();
             toastStore.push({ message: `Track move failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
 
-    const { data: appsData } = useQuery({
-        queryKey: queryKeys.applications,
-        queryFn: () => api.applications.list(),
+    // Match the EXACT (queryKey, queryFn) pairs ApplicationsView uses for each
+    // track. This overlay used to share the `['applications']` key with the
+    // parent's career query but pass a different queryFn (no track filter).
+    // React Query caches by key alone, so the two fought over one entry and
+    // whichever queryFn last ran won — when the career-only dataset won, a
+    // clicked side-track app was never in the cache and the header stuck on
+    // "Loading…" forever (and which dataset won was timing-dependent → flaky).
+    // Reusing the parent's queries means we read its warm cache for both tracks
+    // and resolve the app instantly regardless of which kanban it lives on.
+    const { data: careerData } = useQuery({
+        queryKey: careerKey,
+        queryFn: () => api.applications.list({ track: 'career' }),
     });
-    const app: Application | undefined = (appsData?.applications ?? []).find((a) => a.id === applicationId);
+    const { data: sideData } = useQuery({
+        queryKey: sideKey,
+        queryFn: () => api.applications.list({ track: 'side' }),
+    });
+    const app: Application | undefined = useMemo(
+        () =>
+            [
+                ...(careerData?.applications ?? []),
+                ...(sideData?.applications ?? []),
+            ].find((a) => a.id === applicationId),
+        [careerData, sideData, applicationId],
+    );
 
     const eventsKey = queryKeys.applicationEvents({ applicationId });
     const { data: eventsData, isLoading: eventsLoading } = useQuery({
@@ -203,17 +239,12 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
 
     const handleStatusChange = async (newStatus: typeof APPLICATION_STATUSES[number]) => {
         if (!app || newStatus === app.status) return;
-        const prev = queryClient.getQueryData<ApplicationsCache>(queryKeys.applications);
-        queryClient.setQueryData<ApplicationsCache>(queryKeys.applications, (old) => ({
-            applications: (old?.applications ?? []).map((a) =>
-                a.id === applicationId ? { ...a, status: newStatus, lastUpdateAt: new Date().toISOString() } : a
-            ),
-        }));
+        const rollback = optimisticPatch({ status: newStatus });
         try {
             await api.applications.update({ id: applicationId, status: newStatus });
             queryClient.invalidateQueries({ queryKey: eventsKey });
         } catch (e) {
-            queryClient.setQueryData(queryKeys.applications, prev);
+            rollback();
             toastStore.push({ message: `Status update failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
         }
     };
@@ -248,7 +279,9 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         try {
             await api.applications.delete(applicationId);
             toastStore.push({ message: `Deleted ${app.company}`, type: 'info' });
-            queryClient.invalidateQueries({ queryKey: queryKeys.applications });
+            queryClient.invalidateQueries({
+                predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'applications',
+            });
             onClose();
         } catch (e) {
             toastStore.push({ message: `Delete failed: ${e instanceof Error ? e.message : String(e)}`, type: 'error' });
@@ -366,12 +399,14 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                                     <DecisionDeadlineEditor
                                         value={app.decisionDeadline ?? null}
                                         onChange={async (iso) => {
-                                            const prev = optimisticPatch({ decisionDeadline: iso });
+                                            const rollback = optimisticPatch({ decisionDeadline: iso });
                                             try {
                                                 await api.applications.update({ id: applicationId, decisionDeadline: iso });
-                                                queryClient.invalidateQueries({ queryKey: queryKeys.applications });
+                                                queryClient.invalidateQueries({
+                                                    predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'applications',
+                                                });
                                             } catch (e) {
-                                                if (prev) queryClient.setQueryData<ApplicationsCache>(queryKeys.applications, prev);
+                                                rollback();
                                                 toastStore.push({ message: `Deadline save failed: ${e instanceof Error ? e.message : String(e)}`, type: "error" });
                                             }
                                         }}
@@ -879,6 +914,7 @@ const ApplicationResumesSection: React.FC<{ applicationId: string; company: stri
     const { data, isLoading } = useQuery({
         queryKey: queryKeys.resumes({ applicationId }),
         queryFn: () => api.resumes.list({ applicationId }),
+        enabled: open,
     });
     const resumes = data?.resumes ?? [];
 
