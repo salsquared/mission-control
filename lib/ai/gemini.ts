@@ -101,7 +101,7 @@ interface ChatJSONOptions<T> {
      */
     maxOutputTokens?: number;
     /**
-     * Cross-tier dedup (docs/cross-tier-llm-dedup.html). Default `true`: the
+     * Cross-tier dedup (docs/archive/cross-tier-llm-dedup.html). Default `true`: the
      * call is content-addressed (model + rendered prompt + schema) and shared
      * with the other tier via the SQLite store, so Gemini is hit once per
      * unique input. Set `false` for intentionally-generative callsites meant to
@@ -257,7 +257,7 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
     // The real (rate-limited) model call + parse + validate. Runs only when WE
     // lead the reservation (or on the cache's best-effort fallback). The rate
     // slot lives INSIDE here so a cache hit / follower spends no token and
-    // makes no API call. See docs/cross-tier-llm-dedup.html §5.
+    // makes no API call. See docs/archive/cross-tier-llm-dedup.html §5.
     const compute = async (): Promise<T> => {
         const response = await withRetry(async () => {
             // PC-6: block on the token bucket BEFORE each attempt — retries
@@ -335,7 +335,7 @@ export async function chatJSON<T>(opts: ChatJSONOptions<T>): Promise<T> {
 
     // Opt-out: generative callsites (suggest / draft) re-roll on identical
     // input and must NOT be frozen. Everything else is content-addressed and
-    // shared cross-tier. See docs/cross-tier-llm-dedup.html §6.
+    // shared cross-tier. See docs/archive/cross-tier-llm-dedup.html §6.
     if (opts.cache === false) return compute();
 
     const key = cacheKey({

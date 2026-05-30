@@ -9,7 +9,7 @@
  * path — a GaxiosError exposes `.code`, `.status`, and/or `.response.status`, as
  * a number or (occasionally) a string — so we check all three.
  *
- * Used by app/api/gmail/webhook/route.ts (C4 recovery, docs/gmail-realtime-push.html
+ * Used by app/api/gmail/webhook/route.ts (C4 recovery, docs/archive/gmail-realtime-push.html
  * §3): on a stale-history 404 the webhook re-seeds `lastSyncedHistoryId` from the
  * push envelope and acks 200 instead of 500-ing. The next push then resumes
  * cleanly from the re-seeded point; the manual Scan Inbox backfill recovers the

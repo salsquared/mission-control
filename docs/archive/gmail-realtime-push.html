@@ -7,13 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./assets/style.css">
+<link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
 
   <h4 class="kicker">mission-control</h4>
   <h1>Gmail real-time push — wiring plan</h1>
-  <p class="subtitle">The Applications dash claims it "auto-syncs via Gmail &amp; Pub/Sub", but new mail only lands when you press <strong>Scan Inbox</strong>. The receive-side plumbing (OIDC verify → dedup → <code>history.list</code> resume → ingest) is fully built and has <em>never run</em>. This plan wires the two missing ends — registering the Gmail <code>watch()</code> and keeping it alive — so arrival → kanban becomes real-time. <strong>Plan only; no code is changed yet.</strong></p>
+  <p class="subtitle">The Applications dash claims it "auto-syncs via Gmail &amp; Pub/Sub", but new mail only lands when you press <strong>Scan Inbox</strong>. The receive-side plumbing (OIDC verify → dedup → <code>history.list</code> resume → ingest) is fully built and has <em>never run</em>. This plan wires the two missing ends — registering the Gmail <code>watch()</code> and keeping it alive — so arrival → kanban becomes real-time.</p>
+
+  <div class="callout tip"><strong>✅ SHIPPED 2026-05-29 — archived.</strong> Wired end-to-end as planned: <code>lib/gmail/watch.ts:registerGmailWatch</code> (C1), the daily <code>gmail-watch-renew</code> scheduler job + startup re-arm (C2), the best-effort sign-in arm in <code>lib/auth.ts</code> (C3), and the C4 stale-history 404 recovery (<code>lib/gmail/history-errors.ts:isStaleHistoryError</code> + the webhook's re-seed-from-envelope + ack-200). GCP (project <code>crypto-lexicon-490719-q9</code>): topic <code>gmail-push</code>, two per-tier push subscriptions, and the OIDC signer SA <code>pubsub-mc-publisher@…</code> with the <code>roles/iam.serviceAccountTokenCreator</code> prereq the original §4.2 omitted; env split (<code>GMAIL_PUBSUB_TOPIC</code> + <code>PUBSUB_SERVICE_ACCOUNT_EMAIL</code> shared, <code>PUBSUB_AUDIENCE</code> per-tier). Verified live: both tiers armed the watch (<code>historyId=5413959</code>, ~7d expiry) and a self-sent test email tripped <code>[GMAIL WEBHOOK]</code> on both within ~3s with no Scan-Inbox press. Hermetic <code>gmail-watch-renew-smoke</code> + <code>gmail-webhook-404-recovery-smoke</code> are wired into <code>pre-push.sh</code>. The canonical operational record now lives in CLAUDE.md's <em>Gmail webhook + ingest</em> section; this doc is retained for design reference.</div>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -91,7 +93,7 @@ sequenceDiagram
       <h3 id="both-tiers">Both tiers, one mailbox — the fan-out</h3>
       <p>dev.db and prod.db are both linked to the <strong>same Google account</strong> (<code>salsalcedo4321@gmail.com</code>, refresh token present in both). Gmail permits exactly <strong>one active <code>watch()</code> per mailbox</strong> — calling <code>watch()</code> again replaces the prior registration (that's how renewal works). So dev and prod <em>cannot</em> each point at their own topic; the daily renewals would clobber each other and only the last-armed tier would receive pushes.</p>
       <p>The standard fix is <strong>one topic, two push subscriptions</strong>. Gmail publishes each change once to the single topic; Pub/Sub fans it out to both tier webhooks. Each tier walks history from its own per-DB <code>lastSyncedHistoryId</code> and ingests into its own DB. Dev's <code>EMAIL_ENABLED=0</code> keeps notification emails from firing twice.</p>
-      <div class="callout"><strong>This doubles email LLM classification</strong> (each tier parses the same email once). That's a deliberate, separate concern — see <code>docs/cross-tier-llm-dedup.html</code>, which makes Gemini fire once per unique input across both tiers. The two efforts are parallel-safe; until dedup lands, the 2× email cost is harmless and temporary.</div>
+      <div class="callout"><strong>This doubles email LLM classification</strong> (each tier parses the same email once). That's a deliberate, separate concern — see <code>docs/archive/cross-tier-llm-dedup.html</code>, which makes Gemini fire once per unique input across both tiers. The two efforts are parallel-safe; until dedup lands, the 2× email cost is harmless and temporary.</div>
       <pre class="mermaid">
 flowchart LR
   gmail["Gmail mailbox<br/>(one account)"] -->|"single watch()"| topic["Pub/Sub topic<br/>gmail-push"]
@@ -348,14 +350,14 @@ PUBSUB_AUDIENCE=https://ms-dev.salsquared.xyz/api/gmail/webhook</code></pre>
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P3</span>
-          <span class="task-title">Phase 3 — Verify + harden + document</span>
+          <span class="task-title">Phase 3 — Verify + harden + document (done 2026-05-29)</span>
         </summary>
         <div class="task-body">
           <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.1</span><span class="task-title">First-light checklist (§5)</span></summary><div class="task-body"><p><strong>Steps 1–2 verified 2026-05-29</strong> (watch armed both tiers, <code>lastSyncedHistoryId</code>=<code>5413959</code>, ~7d expiry). <strong>Receive path verified 2026-05-29</strong> via the new <code>scripts/tests/probes/gmail-push-receive-probe.ts</code> — <strong>10/10 on both tiers</strong>: reachable through the tunnel, <em>not</em> behind Cloudflare Access (unauth POST + bad-token both 401), and a real OIDC token minted by impersonating the signer SA is accepted (404 at the unknown-mailbox lookup, <em>before</em> any <code>history.list</code>/ingest) with redelivery deduped (200). <strong>End-to-end CONFIRMED 2026-05-29</strong> via <code>scripts/tests/probes/gmail-push-roundtrip-probe.ts</code>: a self-sent test email tripped <code>[GMAIL WEBHOOK] history=5414135</code> on BOTH tiers within ~3s, no Scan-Inbox press (<code>skipped:1</code> — the deliberately non-application probe mail was classified out, so no junk kanban row). The watch had in fact been delivering real pushes for the prior hour (<code>lastSyncedHistoryId</code> advanced 5413959→5414104; 18 webhook lines per tier before the test). <strong>Not separately exercised:</strong> the single-notification-email assertion (step 4) — the probe mail isn't application-shaped so no notification fired; the notify-dedup + dev <code>EMAIL_ENABLED=0</code> mute are covered by hermetic tests + config.</p></div></details>
           <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.2</span><span class="task-title">Webhook 404 recovery (C4) — built 2026-05-29</span></summary><div class="task-body"><p><strong>Built 2026-05-29.</strong> <code>isStaleHistoryError</code> (<code>lib/gmail/history-errors.ts</code>) + the route's stale-history 404 → re-seed-from-envelope + ack-200 recovery. Hermetic <code>gmail-webhook-404-recovery-smoke.ts</code> 16/16, wired into pre-push.</p></div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">CLAUDE.md + next_steps.md + supersede hosting.md</span></summary><div class="task-body"><p>Record the new job + watch lifecycle; retire the stale doc.</p></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.3</span><span class="task-title">CLAUDE.md + next_steps.md + supersede hosting.md — done 2026-05-29</span></summary><div class="task-body"><p><strong>Done 2026-05-29.</strong> CLAUDE.md's <em>Gmail webhook + ingest</em> section gained the "Watch registration + renewal" note (watch lifecycle + the new <code>gmail-watch-renew</code> scheduler job + the shared-topic/per-tier-subscription fan-out); <code>docs/hosting.md</code> §1 carries a "Superseded (2026-05-29)" banner pointing here; <code>docs/next_steps.md</code> updated per the session protocol.</p></div></details>
         </div>
       </details>
 

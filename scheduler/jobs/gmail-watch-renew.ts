@@ -7,7 +7,7 @@
  *
  * Stateless sweep (no schema state). Idempotent — re-arming points at the same
  * shared topic, so running it in both tiers is safe (see lib/gmail/watch.ts +
- * docs/gmail-realtime-push.html).
+ * docs/archive/gmail-realtime-push.html).
  *
  * `register` is injectable so the hermetic smoke can exercise account selection
  * + per-user error isolation without touching the live Gmail API.

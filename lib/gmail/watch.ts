@@ -7,7 +7,7 @@ import { prisma } from "@/lib/prisma";
  * Gmail at the Pub/Sub topic in GMAIL_PUBSUB_TOPIC. The webhook
  * (app/api/gmail/webhook/route.ts) receives the resulting pushes; this is the
  * registration half that was never wired up. Full design + GCP setup live in
- * docs/gmail-realtime-push.html.
+ * docs/archive/gmail-realtime-push.html.
  *
  * Invariants:
  *  - Gmail permits exactly ONE watch per mailbox and it expires after ~7 days,

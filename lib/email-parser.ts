@@ -180,7 +180,7 @@ export async function parseApplicationEmail(
     }));
   }
 
-  // Cross-tier dedup (docs/cross-tier-llm-dedup.html): the same email is
+  // Cross-tier dedup (docs/archive/cross-tier-llm-dedup.html): the same email is
   // delivered to BOTH webhooks by the Gmail push fan-out within ~the same
   // second — this makes exactly one tier call Gemini, the other reuses. The
   // anchor (sentAt) is part of the rendered prompt, so the key is stable

@@ -1,5 +1,5 @@
 /**
- * C4 webhook 404-recovery hermetic smoke (docs/gmail-realtime-push.html §3 C4).
+ * C4 webhook 404-recovery hermetic smoke (docs/archive/gmail-realtime-push.html §3 C4).
  * No HTTP, no Gmail. Two parts:
  *
  *   A. isStaleHistoryError() correctly classifies the stale-history 404 across

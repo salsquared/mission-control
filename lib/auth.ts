@@ -63,7 +63,7 @@ export const authOptions: NextAuthOptions = {
                 // re-consent goes live immediately instead of waiting for the
                 // next daily scheduler tick. Never block (or fail) sign-in on a
                 // watch error; the scheduler is the primary keeper. No-ops when
-                // GMAIL_PUBSUB_TOPIC is unset. See docs/gmail-realtime-push.html.
+                // GMAIL_PUBSUB_TOPIC is unset. See docs/archive/gmail-realtime-push.html.
                 try {
                     const acct = await prisma.account.findFirst({
                         where: { provider: "google", providerAccountId: account.providerAccountId },

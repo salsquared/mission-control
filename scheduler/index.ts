@@ -110,7 +110,7 @@ const JOBS: IntervalJob[] = [
         // daily re-arm is a 7x safety margin; the 10s startup stagger also
         // re-arms on every scheduler restart. Idempotent across tiers (both
         // arm the same shared topic). Per-user no-op when GMAIL_PUBSUB_TOPIC is
-        // unset — see lib/gmail/watch.ts + docs/gmail-realtime-push.html.
+        // unset — see lib/gmail/watch.ts + docs/archive/gmail-realtime-push.html.
         intervalMs: 24 * 60 * 60 * 1000,
         run: async () => {
             const r = await runGmailWatchRenew();
@@ -126,7 +126,7 @@ const JOBS: IntervalJob[] = [
         // (a pruned entry just recomputes on next recurrence). Both tiers run
         // this against the same file; the deletes are idempotent. No-op when
         // the cache failed to init on this tier (best-effort). See
-        // docs/cross-tier-llm-dedup.html.
+        // docs/archive/cross-tier-llm-dedup.html.
         intervalMs: 24 * 60 * 60 * 1000,
         run: async () => {
             const r = await runLlmCachePrune();

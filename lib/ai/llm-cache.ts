@@ -1,5 +1,5 @@
 /**
- * Cross-tier LLM call deduplication (design: docs/cross-tier-llm-dedup.html).
+ * Cross-tier LLM call deduplication (design: docs/archive/cross-tier-llm-dedup.html).
  *
  * dev (:4101 / dev.db) and prod (:3101 / prod.db) — plus their two schedulers
  * — run the SAME code on the SAME box against the SAME data, so every

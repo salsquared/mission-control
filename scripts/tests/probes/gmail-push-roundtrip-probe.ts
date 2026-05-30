@@ -1,7 +1,7 @@
 /**
  * scripts/tests/probes/gmail-push-roundtrip-probe.ts
  *
- * Live END-TO-END probe for Gmail real-time push (docs/gmail-realtime-push.html §5,
+ * Live END-TO-END probe for Gmail real-time push (docs/archive/gmail-realtime-push.html §5,
  * first-light steps 3-5) — the one hop the receive-path probe can't cover.
  *
  * Sends a benign "please ignore" email FROM the linked account TO itself, so it

@@ -2,7 +2,7 @@
  * scripts/tests/probes/gmail-push-receive-probe.ts
  *
  * Live probe for the Gmail real-time push RECEIVE path
- * (docs/gmail-realtime-push.html §5, first-light steps 3-5).
+ * (docs/archive/gmail-realtime-push.html §5, first-light steps 3-5).
  *
  * Confirms, PER TIER, that Google Pub/Sub can actually deliver a push to the
  * public webhook — i.e. the endpoint is reachable through the cloudflared
@@ -33,7 +33,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
-// The OIDC signer SA + project created in docs/gmail-realtime-push.html §4.2.
+// The OIDC signer SA + project created in docs/archive/gmail-realtime-push.html §4.2.
 // Must equal PUBSUB_SERVICE_ACCOUNT_EMAIL (the route asserts the token's `email`
 // claim == this; app/api/gmail/webhook/route.ts:33).
 const SIGNER_SA = "pubsub-mc-publisher@crypto-lexicon-490719-q9.iam.gserviceaccount.com";
@@ -196,7 +196,7 @@ async function checkTier(name: string, url: string) {
 }
 
 (async () => {
-  console.log(bold("Gmail push receive-path probe") + dim("  (docs/gmail-realtime-push.html §5)"));
+  console.log(bold("Gmail push receive-path probe") + dim("  (docs/archive/gmail-realtime-push.html §5)"));
   const tiers = tierArg ? { [tierArg]: TIERS[tierArg] } : TIERS;
   let mintFailed = false;
   for (const [name, url] of Object.entries(tiers)) {

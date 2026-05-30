@@ -30,7 +30,7 @@ const nextConfig: NextConfig = {
   // (Phase A1 OIDC); `googleapis` was already pulling undici in.
   // `better-sqlite3` is a native module (a .node binding); webpack can't bundle
   // it. It backs the cross-tier LLM cache (lib/ai/llm-cache.ts) — loaded via a
-  // guarded dynamic import at runtime. See docs/cross-tier-llm-dedup.html.
+  // guarded dynamic import at runtime. See docs/archive/cross-tier-llm-dedup.html.
   serverExternalPackages: ['jose', 'googleapis', 'googleapis-common', 'pdf-parse', 'mammoth', 'puppeteer-core', 'html-to-docx', 'better-sqlite3'],
   // Transform barrel imports (`import { Foo, Bar } from 'lucide-react'`) into
   // per-icon path imports at compile time so the dev worker doesn't have to

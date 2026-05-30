@@ -1,5 +1,5 @@
 /**
- * Cross-tier LLM dedup (docs/cross-tier-llm-dedup.html §10): bound the growth
+ * Cross-tier LLM dedup (docs/archive/cross-tier-llm-dedup.html §10): bound the growth
  * of the shared `data/llm-cache.db` store.
  *
  * The cache key is content-addressed (model + rendered prompt + output schema),

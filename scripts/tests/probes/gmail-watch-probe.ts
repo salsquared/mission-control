@@ -2,7 +2,7 @@
  * Live probe for Gmail push-watch registration. Calls registerGmailWatch
  * against the real account and prints what Gmail returned — use for first-light
  * verification once the GCP side (topic + subscriptions + GMAIL_PUBSUB_TOPIC)
- * is configured per docs/gmail-realtime-push.html.
+ * is configured per docs/archive/gmail-realtime-push.html.
  *
  * Diagnostic only — exit-zero is NOT a contract. With GMAIL_PUBSUB_TOPIC unset
  * this no-ops (prints the skip) and is harmless; with it set it ARMS a real

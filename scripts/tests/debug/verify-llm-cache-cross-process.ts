@@ -1,5 +1,5 @@
 /**
- * Manual live verification for cross-tier LLM dedup (docs/cross-tier-llm-dedup.html).
+ * Manual live verification for cross-tier LLM dedup (docs/archive/cross-tier-llm-dedup.html).
  *
  * Proves that two SEPARATE processes (standing in for the dev + prod tiers)
  * sharing the REAL data/llm-cache.db call `compute()` only ONCE for the same

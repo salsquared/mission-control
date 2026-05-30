@@ -1,5 +1,5 @@
 /**
- * Hermetic smoke for the cross-tier LLM dedup cache (docs/cross-tier-llm-dedup.html).
+ * Hermetic smoke for the cross-tier LLM dedup cache (docs/archive/cross-tier-llm-dedup.html).
  *
  * Fully hermetic: no real Gemini (a fake `compute` increments a counter), no
  * PM2, no network, and it uses its OWN temp LLM_CACHE_PATH — never touches
