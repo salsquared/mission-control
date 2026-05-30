@@ -8,6 +8,11 @@ import { z } from 'zod';
 // of track. See lib/repositories/settings.ts for the legacy-shape migration.
 export const NegativeFiltersListSchema = z.array(z.string().max(200)).max(40);
 
+// Watchlist IDs hidden from the postings feed. Cuids (~25 chars); cap is
+// generous (a user could watch hundreds of companies). Defaulted in the GET
+// shape below so a response from a server that predates the column still parses.
+export const HiddenWatchlistIdsSchema = z.array(z.string().max(100)).max(1000);
+
 export const SettingsDataSchema = z.object({
     isDarkMode: z.boolean(),
     viewHuesEnabled: z.boolean(),
@@ -15,6 +20,7 @@ export const SettingsDataSchema = z.object({
     dashOrder: z.array(z.string()),
     dashTitles: z.record(z.string(), z.string()),
     negativeFilters: NegativeFiltersListSchema,
+    hiddenWatchlistIds: HiddenWatchlistIdsSchema.default([]),
     version: z.number().int(),
 });
 
@@ -43,4 +49,5 @@ export const SettingsPostSchema = z.object({
     dashOrder: z.array(z.string()).optional(),
     dashTitles: z.record(z.string(), z.string()).optional(),
     negativeFilters: NegativeFiltersListSchema.optional(),
+    hiddenWatchlistIds: HiddenWatchlistIdsSchema.optional(),
 });

@@ -150,6 +150,21 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
     // when data is undefined.
     const postings = useMemo(() => data?.postings ?? [], [data?.postings]);
 
+    // Cross-device "hide this watchlist's postings" toggle (synced via
+    // /api/settings), set by the eye button on each WatchlistsCard row. Drop
+    // postings whose parent watchlist is
+    // hidden before any partition/pagination so counts + paging reflect what's
+    // actually shown. (Cross-watchlist dedup in /api/postings keeps the
+    // freshest row per job, so a job that lives on both a hidden and a visible
+    // watchlist is hidden only when its surviving row belongs to the hidden
+    // one — acceptable for a discovery-feed convenience.)
+    const hiddenWatchlistIds = useAppStore(s => s.hiddenWatchlistIds);
+    const visiblePostings = useMemo(() => {
+        if (hiddenWatchlistIds.length === 0) return postings;
+        const hidden = new Set(hiddenWatchlistIds);
+        return postings.filter(p => !hidden.has(p.watchlistId));
+    }, [postings, hiddenWatchlistIds]);
+
     const companyOptions = useMemo(() => {
         const byKey = new Map<string, string>(); // lowercased → display
         for (const w of watchlistsData?.watchlists ?? []) {
@@ -207,23 +222,23 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
     );
     const trimmedTitleSearch = titleSearch.trim().toLowerCase();
     const { onList, offList } = useMemo(() => {
-        if (!watchlistsLoaded) return { onList: postings, offList: [] as typeof postings };
+        if (!watchlistsLoaded) return { onList: visiblePostings, offList: [] as typeof visiblePostings };
         if (!hasCompanyWatchlists) {
             // Keyword-only feed: skip partitioning entirely.
             const main = trimmedTitleSearch
-                ? postings.filter(p => p.title.toLowerCase().includes(trimmedTitleSearch))
-                : postings;
-            return { onList: main, offList: [] as typeof postings };
+                ? visiblePostings.filter(p => p.title.toLowerCase().includes(trimmedTitleSearch))
+                : visiblePostings;
+            return { onList: main, offList: [] as typeof visiblePostings };
         }
-        const on: typeof postings = [];
-        const off: typeof postings = [];
-        for (const p of postings) {
+        const on: typeof visiblePostings = [];
+        const off: typeof visiblePostings = [];
+        for (const p of visiblePostings) {
             if (trimmedTitleSearch && !p.title.toLowerCase().includes(trimmedTitleSearch)) continue;
             if (watchlistCompaniesLower.has(p.company.toLowerCase())) on.push(p);
             else off.push(p);
         }
         return { onList: on, offList: off };
-    }, [postings, watchlistCompaniesLower, watchlistsLoaded, hasCompanyWatchlists, trimmedTitleSearch]);
+    }, [visiblePostings, watchlistCompaniesLower, watchlistsLoaded, hasCompanyWatchlists, trimmedTitleSearch]);
 
     // Bounce back to page 1 when filters change — toggling a chip on page 3 of
     // unfiltered results shouldn't land on an empty page 3 of the filtered slice.
@@ -466,7 +481,12 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
                     <Loader2 className="w-4 h-4 animate-spin" />
                 </div>
             ) : onList.length === 0 && offList.length === 0 ? (
-                activeFilterCount > 0 || trimmedTitleSearch ? (
+                postings.length > 0 && visiblePostings.length === 0 ? (
+                    <p className="text-xs text-white/40 italic">
+                        All matching postings are from hidden watchlists. Click a watchlist&apos;s eye in{" "}
+                        {track === "side" ? "Side Watchlists" : "Watchlists"} to show them again.
+                    </p>
+                ) : activeFilterCount > 0 || trimmedTitleSearch ? (
                     <p className="text-xs text-white/40 italic">
                         No new postings match your {trimmedTitleSearch && activeFilterCount > 0 ? "search and filters" : trimmedTitleSearch ? "search" : "filters"}.{" "}
                         <button

@@ -54,6 +54,7 @@ model GlobalSetting {
   dashOrder             String   @default("[]") // JSON: string[]
   dashTitles            String   @default("{}") // JSON: Record<string, string>
   globalNegativeFilters String   @default("[]") // JSON: string[] — regex patterns merged into every watchlist's filter on read
+  hiddenWatchlistIds    String   @default("[]") // JSON: string[] — watchlist IDs whose postings the user hid from the New/Side postings feed (synced cross-device)
   // Story S6.4 — quiet hours for email delivery. When both Start and End are
   // set, dispatchNotification strips "email" from the channels of any
   // dispatch that lands within the window (in-app surface stays unaffected).

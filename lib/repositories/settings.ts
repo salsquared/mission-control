@@ -21,7 +21,19 @@ export interface GlobalSettingData {
     dashOrder: string[];
     dashTitles: Record<string, string>;
     negativeFilters: string[];
+    // Watchlist IDs the user hid from the New/Side postings feed (eye toggle in
+    // WatchlistsCard). Synced cross-device so every device shows the same feed.
+    hiddenWatchlistIds: string[];
     version: number;
+}
+
+// Parse a JSON string[] column, dropping non-strings. Returns [] on any
+// malformed input so a corrupt column never throws the whole settings read.
+function parseStringArray(raw: string | null | undefined): string[] {
+    if (!raw) return [];
+    let parsed: unknown;
+    try { parsed = JSON.parse(raw); } catch { return []; }
+    return Array.isArray(parsed) ? parsed.filter((p): p is string => typeof p === "string") : [];
 }
 
 export type UpsertResult =
@@ -97,6 +109,7 @@ export function parseGlobalSetting(row: {
     dashOrder: string;
     dashTitles: string;
     globalNegativeFilters: string;
+    hiddenWatchlistIds: string;
     version: number;
 }): GlobalSettingData {
     return {
@@ -106,6 +119,7 @@ export function parseGlobalSetting(row: {
         dashOrder: JSON.parse(row.dashOrder),
         dashTitles: JSON.parse(row.dashTitles),
         negativeFilters: parseNegativeFilters(row.globalNegativeFilters),
+        hiddenWatchlistIds: parseStringArray(row.hiddenWatchlistIds),
         version: row.version,
     };
 }
@@ -121,6 +135,10 @@ export function serializeGlobalSetting(data: Partial<GlobalSettingData>) {
         // Always write the flat array, even when empty — an explicit clear is
         // a meaningful state, not a default to drop.
         out.globalNegativeFilters = JSON.stringify(data.negativeFilters);
+    }
+    if (data.hiddenWatchlistIds !== undefined) {
+        // Empty is meaningful here too (the user un-hid everything).
+        out.hiddenWatchlistIds = JSON.stringify(data.hiddenWatchlistIds);
     }
     return out;
 }

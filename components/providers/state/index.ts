@@ -27,6 +27,12 @@ interface ThemeSlice {
     // One shared list applied to every watchlist regardless of track — a
     // company blocked here is blocked everywhere.
     negativeFilters: string[];
+    // Cross-device watchlist visibility: IDs of watchlists whose postings are
+    // hidden from the New/Side postings feed. Synced via /api/settings (one
+    // user, many devices → identical feed everywhere) alongside negativeFilters
+    // and, like it, excluded from ThemeProvider's auto-sync diff because the
+    // eye toggle in WatchlistsCard saves explicitly. Empty = show all.
+    hiddenWatchlistIds: string[];
     // Optimistic-concurrency counter. Hydrated from /api/settings GET, sent
     // back as If-Match on POST, bumped on successful save. Deliberately
     // excluded from the synced-state diff so updating it doesn't trigger a
@@ -140,6 +146,7 @@ export const useAppStore = create<AppState>()(
             defaultDashTitles: DEFAULT_DASH_TITLES,
             viewScreenshots: {},
             negativeFilters: [],
+            hiddenWatchlistIds: [],
             version: 0,
 
             setViewHuesEnabled: (viewHuesEnabled) => set({ viewHuesEnabled }),

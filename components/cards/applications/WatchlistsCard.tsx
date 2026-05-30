@@ -1,7 +1,7 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Briefcase, Pencil, Sparkles } from "lucide-react";
+import { Eye, EyeOff, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Briefcase, Pencil, Sparkles } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
@@ -41,6 +41,17 @@ type TrackKey = keyof typeof TRACK_PRESETS;
 
 function errMessage(e: unknown): string {
     return e instanceof Error ? e.message : String(e);
+}
+
+// Local debounce (parity with ThemeProvider's) — coalesces rapid eye toggles
+// into a single settings write so the optimistic-concurrency version never
+// races with itself.
+function debounce<A extends unknown[]>(fn: (...args: A) => void, ms: number): (...args: A) => void {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    return (...args: A) => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => fn(...args), ms);
+    };
 }
 
 function fmtRelative(iso: string | null): string {
@@ -117,6 +128,49 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
     // cards edit the same shared list.
     const [filtersOpen, setFiltersOpen] = useState(false);
     const filterCount = useAppStore(s => s.negativeFilters?.length ?? 0);
+
+    // "Hide this watchlist's postings from the feed" toggle (the eye button on
+    // each row). NewPostingsCard reads the same set to filter out postings whose
+    // watchlistId is hidden. Synced cross-device via /api/settings (one user,
+    // many devices → identical feed). A find-roles group is "hidden" only when
+    // ALL its member sources are hidden (mirrors the all-active pause semantics);
+    // toggling fans out across every member.
+    const hiddenWatchlistIds = useAppStore(s => s.hiddenWatchlistIds);
+    const hiddenSet = useMemo(() => new Set(hiddenWatchlistIds), [hiddenWatchlistIds]);
+
+    // Optimistically flip the store immediately (snappy eye), then push to the
+    // server. Debounced so a flurry of toggles coalesces into one write whose
+    // If-Match version can't race against an earlier in-flight save of the same
+    // field. On version conflict / failure we refetch and reconcile, matching
+    // GlobalNegativeFiltersEditor + ThemeProvider's settings-sync behavior.
+    const saveHiddenWatchlists = useRef(
+        debounce(async () => {
+            const { hiddenWatchlistIds: next, version } = useAppStore.getState();
+            try {
+                const result = await api.settings.update({ hiddenWatchlistIds: next }, version);
+                if (result.ok) {
+                    useAppStore.setState({ version: result.version });
+                } else {
+                    const fresh = await api.settings.get();
+                    if (fresh.data) useAppStore.setState(fresh.data);
+                    toastStore.push({ message: "Settings updated elsewhere — reloaded.", type: "warning" });
+                }
+            } catch (e) {
+                // Restore server truth so the eye never lies about what's saved.
+                const fresh = await api.settings.get().catch(() => null);
+                if (fresh?.data) useAppStore.setState(fresh.data);
+                toastStore.push({ message: `Visibility sync failed: ${errMessage(e)}`, type: "error" });
+            }
+        }, 400),
+    ).current;
+
+    const setWatchlistHidden = (ids: string[], hidden: boolean) => {
+        const set = new Set(useAppStore.getState().hiddenWatchlistIds);
+        if (hidden) for (const id of ids) set.add(id);
+        else for (const id of ids) set.delete(id);
+        useAppStore.setState({ hiddenWatchlistIds: Array.from(set) });
+        saveHiddenWatchlists();
+    };
 
     // MB Phase 4: per-track cache scoping. Career uses the original key
     // [queryKeys.watchlists] so existing useServerEvents listeners + manual
@@ -409,6 +463,8 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
                                 key={item.groupKey}
                                 group={item}
                                 anyBusy={item.members.some(m => isBusy(m.id))}
+                                hidden={item.members.every(m => hiddenSet.has(m.id))}
+                                onToggleHidden={(nextHidden) => setWatchlistHidden(item.members.map(m => m.id), nextHidden)}
                                 onEdit={() => setEditingGroup(item)}
                                 onRun={() => runGroup(item)}
                                 onPauseToggle={(nextActive) => pauseGroup(item, nextActive)}
@@ -419,6 +475,8 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
                                 key={item.watchlist.id}
                                 w={item.watchlist}
                                 busy={isBusy(item.watchlist.id)}
+                                hidden={hiddenSet.has(item.watchlist.id)}
+                                onToggleHidden={(nextHidden) => setWatchlistHidden([item.watchlist.id], nextHidden)}
                                 onRunNow={runNow}
                                 onTogglePause={togglePause}
                                 onRemove={remove}
@@ -525,9 +583,43 @@ const SOURCE_LABEL: Record<"linkedin" | "indeed", string> = {
     indeed: "Indeed",
 };
 
+// Eye toggle shared by the single-watchlist row and the find-roles group row.
+// Open eye = this watchlist's postings show in the New/Side postings feed
+// (the default); closed eye (EyeOff, dimmed) = filtered out client-side. State
+// is the cross-device hiddenWatchlistIds set (useAppStore, synced via
+// /api/settings).
+function VisibilityToggle({
+    hidden,
+    disabled,
+    onToggle,
+}: {
+    hidden: boolean;
+    disabled: boolean;
+    onToggle: (nextHidden: boolean) => void;
+}) {
+    return (
+        <button
+            onClick={() => onToggle(!hidden)}
+            disabled={disabled}
+            title={hidden ? "Hidden from the postings feed — click to show" : "Showing in the postings feed — click to hide"}
+            aria-pressed={hidden}
+            className={[
+                "p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed",
+                hidden
+                    ? "text-white/30 hover:text-white/60 hover:bg-white/10"
+                    : "text-white/50 hover:text-white/90 hover:bg-white/10",
+            ].join(" ")}
+        >
+            {hidden ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+        </button>
+    );
+}
+
 function FindRolesGroupRow({
     group,
     anyBusy,
+    hidden,
+    onToggleHidden,
     onEdit,
     onRun,
     onPauseToggle,
@@ -535,6 +627,8 @@ function FindRolesGroupRow({
 }: {
     group: FindRolesGroup;
     anyBusy: boolean;
+    hidden: boolean;
+    onToggleHidden: (nextHidden: boolean) => void;
     onEdit: () => void;
     onRun: () => void;
     onPauseToggle: (nextActive: boolean) => void;
@@ -607,6 +701,7 @@ function FindRolesGroupRow({
                     </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
+                    <VisibilityToggle hidden={hidden} disabled={anyBusy} onToggle={onToggleHidden} />
                     <button
                         onClick={onEdit}
                         disabled={anyBusy}
@@ -648,6 +743,8 @@ function FindRolesGroupRow({
 function WatchlistRow({
     w,
     busy,
+    hidden,
+    onToggleHidden,
     onRunNow,
     onTogglePause,
     onRemove,
@@ -656,6 +753,8 @@ function WatchlistRow({
 }: {
     w: WatchlistWire;
     busy: boolean;
+    hidden: boolean;
+    onToggleHidden: (nextHidden: boolean) => void;
     onRunNow: (id: string) => void;
     onTogglePause: (id: string, currentlyActive: boolean) => void;
     onRemove: (id: string, name: string) => void;
@@ -694,6 +793,7 @@ function WatchlistRow({
                         {w.kind}
                     </span>
                     <div className="flex items-center gap-1">
+                        <VisibilityToggle hidden={hidden} disabled={busy} onToggle={onToggleHidden} />
                         <NotificationModeToggle
                             mode={(w.notificationMode as "each" | "digest" | "silent") ?? "each"}
                             busy={busy}
