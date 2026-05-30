@@ -1,7 +1,7 @@
 "use client";
 import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search, Briefcase } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search } from "lucide-react";
 import { api, queryKeys, type PostingsListFilter } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
@@ -55,17 +55,24 @@ const EMPLOYMENT_TYPE_CHIPS: ReadonlyArray<{ id: PostingEmploymentType; label: s
     { id: "temporary",   label: "Temporary" },
 ] as const;
 
-// MB Phase 4. Per-track presentation.
+// MB Phase 4. Per-track presentation. Title + icon are FIXED across tracks
+// ("Postings" / newspaper) — only the COLOR diverges, so the track switch
+// recolors the card instead of relabeling it.
 const TRACK_PRESETS = {
     career: {
-        title: "New postings",
+        title: "Postings",
         icon: Newspaper,
         iconColorClass: "text-cyan-300",
+        // Top-right count subtitle, tinted to the track (see the `action` slot).
+        subtitleClass: "text-cyan-300/80",
+        subtitleMutedClass: "text-cyan-300/50",
     },
     side: {
-        title: "Side postings",
-        icon: Briefcase,
+        title: "Postings",
+        icon: Newspaper,
         iconColorClass: "text-amber-300",
+        subtitleClass: "text-amber-300/80",
+        subtitleMutedClass: "text-amber-300/50",
     },
 } as const;
 type TrackKey = keyof typeof TRACK_PRESETS;
@@ -320,10 +327,10 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
                         count={activeFilterCount}
                         onClick={() => setFiltersOpen(o => !o)}
                     />
-                    <span className="text-[11px] text-white/40 tabular-nums">
+                    <span className={`text-[11px] ${preset.subtitleClass} tabular-nums`}>
                         {onList.length}{postings.length === LIMIT ? "+" : ""} {activeFilterCount > 0 || trimmedTitleSearch ? "matching" : "new"}
                         {offList.length > 0 && (
-                            <span className="ml-1 text-white/30">· {offList.length} other</span>
+                            <span className={`ml-1 ${preset.subtitleMutedClass}`}>· {offList.length} other</span>
                         )}
                     </span>
                 </div>
@@ -484,7 +491,7 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
                 postings.length > 0 && visiblePostings.length === 0 ? (
                     <p className="text-xs text-white/40 italic">
                         All matching postings are from hidden watchlists. Click a watchlist&apos;s eye in{" "}
-                        {track === "side" ? "Side Watchlists" : "Watchlists"} to show them again.
+                        Watchlists to show them again.
                     </p>
                 ) : activeFilterCount > 0 || trimmedTitleSearch ? (
                     <p className="text-xs text-white/40 italic">

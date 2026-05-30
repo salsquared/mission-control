@@ -12,6 +12,10 @@ export interface CardItem {
     rowSpan?: number;
     hFit?: boolean; // If true, avoids stretching height to match grid rows
     className?: string;
+    /** Inline style for the card's outer wrapper — e.g. a per-card
+     *  radial-gradient glow that can't be a static Tailwind class. Layers over
+     *  the canonical `bg-black/40` (background-color) as a background-image. */
+    wrapperStyle?: React.CSSProperties;
 }
 
 interface CardGridProps {
@@ -50,6 +54,7 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
                 >
                     <Card
                         wrapperClassName="bg-black/40 rounded-lg border border-white/5 hover:border-cyan-500/30 transition-colors h-full"
+                        wrapperStyle={item.wrapperStyle}
                         contentClassName={cn("w-full p-4 flex flex-col", item.hFit ? "" : "h-full")}
                     >
                         {item.content}

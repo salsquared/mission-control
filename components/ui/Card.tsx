@@ -11,6 +11,11 @@ interface CardProps {
     children: React.ReactNode;
     contentClassName?: string;
     wrapperClassName?: string;
+    /** Inline style on the outer wrapper — used for per-card backgrounds that
+     *  can't be a static Tailwind class (e.g. a seeded radial-gradient glow).
+     *  Coexists with `wrapperClassName`'s background-color (this sets
+     *  background-image). */
+    wrapperStyle?: React.CSSProperties;
     withInnerContainer?: boolean;
     loading?: boolean;
     collapsible?: boolean;
@@ -25,6 +30,7 @@ export const Card: React.FC<CardProps> = ({
     children,
     contentClassName,
     wrapperClassName,
+    wrapperStyle,
     withInnerContainer = false,
     loading = false,
     collapsible = false,
@@ -35,7 +41,7 @@ export const Card: React.FC<CardProps> = ({
     const Chevron = collapsed ? ChevronRight : ChevronDown;
     const toggle = () => setCollapsed((c) => !c);
     return (
-        <div className={cn("flex flex-col h-full w-full", wrapperClassName)}>
+        <div className={cn("flex flex-col h-full w-full", wrapperClassName)} style={wrapperStyle}>
             {showHeader && (
                 <div className={cn("flex items-center justify-between shrink-0", collapsed ? "mb-0" : "mb-4", iconColorClass)}>
                     {collapsible ? (

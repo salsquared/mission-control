@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Applications View — Single-Track Switch Redo</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Applications View — Single-Track Switch Redo</h1>
+  <p class="subtitle">The Applications dash currently renders <strong>two full copies</strong> of the same UI — one per track (<code>career</code> / <code>side</code>) — stacked down the page across four section headers. This redo collapses them into <strong>one set of cards driven by a track switch</strong> at the top. Pure presentation change: the data layer, the API, and the three cards (already <code>track</code>-aware) are untouched. The only new asset is the switch; the only new state is which track is active.</p>
+
+  <div class="callout tip"><strong>✅ SHIPPED 2026-05-29 — archived.</strong> Built as designed: the four sections collapsed to one "Applications Pipeline" section with a config-driven <code>TRACKS</code> segmented switch, a single <code>&lt;CardGrid columns={2}&gt;</code> stack (Interviews → Kanban → New Postings · Watchlists → Account Status), and the new device-local <code>applicationsTrack</code> store field (persist v8→9). <strong>Refinements added during review, beyond this plan:</strong> (1) per-track presentation is now <strong>color-only</strong> — title + icon are FIXED across tracks (Kanban = suitcase "Pipeline Kanban", New Postings = newspaper "Postings", Watchlists = eye "Watchlists"), since the title/icon swap on toggle read as jarring; (2) the Kanban career accent moved blue → <strong>cyan</strong> to match the other two cards; (3) a <strong>random-per-card track-colored radial glow</strong> on the three switchable cards — origin seeded by card id (stable across reloads), cyan (career) / amber (side) — added via a new <code>wrapperStyle</code> passthrough on <code>Card</code> + <code>CardGrid.CardItem</code> (a background-image layered over the canonical <code>bg-black/40</code>); (4) <code>NewPostingsCard</code>'s top-right count subtitle tinted to the track color. Verified <code>tsc --noEmit</code> clean; live on dev :4101. Prod (:3101, compiled) needs <code>npm run build</code> + restart to pick it up.</div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#why">Why — the doubling problem</a></li>
+      <li><a href="#target">Target layout</a></li>
+      <li><a href="#switch">The track switch</a></li>
+      <li><a href="#state">State &amp; data flow</a></li>
+      <li><a href="#tasks">Implementation tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="why">Why — the doubling problem</h2></summary>
+    <div class="section-body">
+      <h3>Current shape</h3>
+      <p>Today <code>components/views/ApplicationsView.tsx</code> mounts <strong>four</strong> <code>&lt;Section&gt;</code>s and both tracks' cards simultaneously. The kanban, watchlists, and new-postings cards each appear twice (once per track), and the page reads as two near-identical halves. The shared cards — Upcoming Interviews and Account Status — live up top inside the career section, far from where the side user is looking.</p>
+      <pre class="mermaid">
+flowchart TB
+  s1["Section: Applications Pipeline"] --> k1["Kanban — career"]
+  s1 --> cal1["Upcoming Interviews — shared"]
+  s1 --> acc1["Account Status — shared"]
+  s2["Section: Job Discovery"] --> wl1["Watchlists — career"]
+  s2 --> np1["New Postings — career"]
+  s3["Section: Side Pipeline"] --> k2["Kanban — side"]
+  s4["Section: Side Discovery"] --> wl2["Watchlists — side"]
+  s4 --> np2["New Postings — side"]
+      </pre>
+      <p>Everything needed for the merge already exists: <code>ApplicationsKanbanCard</code>, <code>NewPostingsCard</code>, and <code>WatchlistsCard</code> each take an optional <code>track</code> prop and carry per-track <code>TRACK_PRESETS</code> (title / icon / color / empty copy). The view just renders each one twice instead of once-with-a-toggle.</p>
+      <div class="callout"><strong>Scope.</strong> No card component, schema, repository, or API route changes. The redo lives almost entirely in <code>ApplicationsView.tsx</code>, plus one device-local field in the Zustand store. <em>(As shipped, two shared primitives also gained a tiny optional <code>wrapperStyle</code> passthrough — see the SHIPPED banner.)</em></div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="target">Target layout</h2></summary>
+    <div class="section-body">
+      <h3>One section, a switch, a single card stack</h3>
+      <p>Keep the single <strong>“Applications Pipeline”</strong> section header. Drop the <em>Job Discovery</em>, <em>Side Pipeline</em>, and <em>Side Discovery</em> headers entirely. Directly under the title sits the <strong>track switch</strong>; under that, one stack of cards that re-points to the active track when the switch flips.</p>
+      <pre class="mermaid">
+flowchart TB
+  hdr["Header — Applications Pipeline"] --> sw{"Track Switch:  Career  |  Side"}
+  sw --> cal["Upcoming Interviews — shared · full width"]
+  cal --> kan["Pipeline Kanban — active track · full width"]
+  kan --> np["New Postings — active track · half"]
+  kan --> wl["Watchlists — active track · half"]
+  np --> acc["Account Status — shared · full width · bottom"]
+  wl --> acc
+      </pre>
+      <p>Card order, top to bottom (the user-specified sequence):</p>
+      <ol>
+        <li><strong>Upcoming Interviews</strong> — shared across tracks (interviews are interviews; one Gmail account). First thing under the switch, full width.</li>
+        <li><strong>Pipeline Kanban</strong> — active track, full width (8 status columns want the room).</li>
+        <li><strong>New Postings</strong> + <strong>Watchlists</strong> — active track, sitting side-by-side 50/50 (matching today's discovery grid; collapses to stacked on mobile).</li>
+        <li><strong>Account Status</strong> — shared, full width, pinned at the very bottom.</li>
+      </ol>
+      <h3>Grid mechanics</h3>
+      <p>The whole stack is one <code>&lt;CardGrid columns={2}&gt;</code>. In a 2-column grid, <code>colSpan: 2</code> = full width and <code>colSpan: 1</code> = half; with <code>grid-flow-row-dense</code> the order resolves to <em>full → full → [half · half] → full</em> without manual row math:</p>
+      <pre><code class="language-typescript">const cards: CardItem[] = [
+  { id: "calendar",     colSpan: 2, className: "max-h-[40vh]", content: /* Upcoming Interviews */ },
+  { id: "kanban",       colSpan: 2, className: "max-h-[50vh]", wrapperStyle: trackGlow("kanban", activeTrack),       content: /* Kanban  track={activeTrack} */ },
+  { id: "new-postings", colSpan: 1,                            wrapperStyle: trackGlow("new-postings", activeTrack), content: <NewPostingsCard key={activeTrack} track={activeTrack} /> },
+  { id: "watchlists",   colSpan: 1,                            wrapperStyle: trackGlow("watchlists", activeTrack),   content: <WatchlistsCard  key={activeTrack} track={activeTrack} /> },
+  { id: "conn-status",  colSpan: 2,                            content: /* Account Status */ },
+];</code></pre>
+      <div class="callout tip"><strong>Why <code>key={activeTrack}</code>.</strong> The card frame (the <code>CardItem.id</code>-keyed wrapper) stays mounted across a switch, but the inner card remounts — so per-card UI state (page number, search box, filter panel, bulk-select mode) resets cleanly instead of carrying “career” search text over onto the side feed.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="switch">The track switch</h2></summary>
+    <div class="section-body">
+      <h3>Config-driven segmented control</h3>
+      <p>The switch is the one new asset: a segmented pill control rendered between the section header and the grid. It is driven by a single <code>TRACKS</code> array so that <em>renaming</em> a track or <em>adding</em> a third is a one-line edit, not a UI rewrite (the user flagged “potentially more or renamed tracks”).</p>
+      <pre><code class="language-typescript">const TRACKS = [
+  { id: "career", label: "Career", icon: Mail,      activeClass: "bg-blue-500/20  text-blue-200  border-blue-400/40" },
+  { id: "side",   label: "Side",   icon: Briefcase, activeClass: "bg-amber-500/20 text-amber-200 border-amber-400/40" },
+] as const;</code></pre>
+      <pre class="mermaid">
+flowchart LR
+  sw["Track switch click"] -->|"setApplicationsTrack(id)"| store["useAppStore.applicationsTrack"]
+  store -->|"track"| kan["ApplicationsKanbanCard"]
+  store -->|"track"| np["NewPostingsCard"]
+  store -->|"track"| wl["WatchlistsCard"]
+      </pre>
+      <p>Active pill takes the track's <code>activeClass</code>; inactive pills are muted (<code>bg-black/30 border-white/10 text-white/50</code>) with a hover lift. Each pill shows the track's lucide icon + label.</p>
+      <div class="callout"><strong>Adding / renaming a track later</strong> touches: <code>APPLICATION_TRACKS</code> (the Zod enum in <code>lib/schemas/applications.ts</code>) → <code>PostingsTrackKey</code> + <code>DEFAULT_POSTING_FILTERS_BY_TRACK</code> (store) → the <code>TRACK_PRESETS</code> map in each of the three cards → the <code>TRACKS</code> array here. The switch and layout pick it up for free.</div>
+      <div class="callout tip"><strong>As shipped: color-only presets.</strong> The per-card <code>TRACK_PRESETS</code> now keep <code>title</code> + <code>icon</code> identical across tracks; only color fields (<code>iconColorClass</code> / <code>addBtnClass</code> / subtitle tint) diverge. Plus a seeded radial-gradient glow (<code>trackGlow(cardId, track)</code>) and the track-tinted Postings count subtitle — so a switch <em>recolors</em> the cards rather than relabeling them.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="state">State &amp; data flow</h2></summary>
+    <div class="section-body">
+      <h3>One new device-local field</h3>
+      <p>Add <code>applicationsTrack</code> to the <code>DevicePrefsSlice</code> in <code>components/providers/state/index.ts</code> — per-device, persisted to <code>localStorage</code> alongside <code>activeViewId</code> / <code>postingFilters</code> (a switch preference, not cross-device truth). Default <code>"career"</code>.</p>
+      <pre><code class="language-typescript">// DevicePrefsSlice
+applicationsTrack: PostingsTrackKey;            // default "career"
+setApplicationsTrack: (t: PostingsTrackKey) => void;
+
+// persist partialize  → add  applicationsTrack: state.applicationsTrack
+// version 8 → 9        → migrate returns  applicationsTrack: persisted.applicationsTrack === "side" ? "side" : "career"</code></pre>
+      <h3>Queries stay as-is</h3>
+      <p>The view keeps <strong>both</strong> apps queries (<code>career</code> + <code>side</code>) enabled. That preserves the existing dual-cache optimistic <code>handleStatusChange</code> and the kanban's “move to other track” bulk action without a rewrite — the kanban simply reads whichever cache matches <code>activeTrack</code>. The discovery cards already fetch their own per-track data internally, so they go from <em>two instances mounted</em> to <em>one</em> — strictly fewer live queries than today.</p>
+      <p>The two <code>AddApplicationModal</code> instances (career + side) collapse to one with <code>defaultTrack={activeTrack}</code>.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Implementation tasks</h2></summary>
+    <div class="section-body">
+    <h3>Checklist</h3>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox" checked>
+        <span class="task-id">P1</span>
+        <span class="task-title">Store — add the active-track field</span>
+      </summary>
+      <div class="task-body">
+        <p><code>components/providers/state/index.ts</code>: add <code>applicationsTrack</code> + <code>setApplicationsTrack</code> to <code>DevicePrefsSlice</code>, default <code>"career"</code>; include it in <code>partialize</code>; bump persist <code>version</code> 8 → 9 and add the migrate line. Additive — does not touch the in-flight <code>hiddenWatchlistIds</code> work in <code>ThemeSlice</code>.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox" checked>
+        <span class="task-id">P2</span>
+        <span class="task-title">View — switch + single card stack</span>
+      </summary>
+      <div class="task-body">
+        <p><code>components/views/ApplicationsView.tsx</code>: read <code>applicationsTrack</code>; render the <code>TRACKS</code> segmented control under the section title; replace the four sections with one <code>&lt;CardGrid columns={2}&gt;</code> in the target order; pass <code>track={activeTrack}</code> (and <code>key={activeTrack}</code>) to the kanban / new-postings / watchlists cards; collapse the two add-application modals into one with <code>defaultTrack={activeTrack}</code>. Import <code>Briefcase</code> for the side pill.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox" checked>
+        <span class="task-id">P3</span>
+        <span class="task-title">Verify</span>
+      </summary>
+      <div class="task-body">
+        <p><code>tsc --noEmit</code> clean; visually confirm in <code>mission-control-dev</code> (:4101, Turbopack HMR) that the switch flips all three cards together, Interviews + Account Status stay put, and switching resets per-card search/page state. No hermetic test covers this view (pure presentation), so no <code>pre-push.sh</code> change.</p>
+      </div>
+    </details>
+
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

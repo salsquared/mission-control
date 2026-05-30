@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useCallback, useMemo } from "react";
-import { Mail, Briefcase, Plus, CheckSquare, X, ArrowRightLeft, Loader2 } from "lucide-react";
+import { Briefcase, Plus, CheckSquare, X, ArrowRightLeft, Loader2 } from "lucide-react";
 import { Card } from "../../ui/Card";
 import { KanbanWidget, KanbanColumnDef } from "../../widgets/KanbanWidget";
 import { api } from "@/lib/api-client";
@@ -16,19 +16,19 @@ export interface AppRecord {
 }
 
 // MB Phase 4. Per-track presentation. The kanban columns (status flow) are
-// identical across tracks — only the card chrome and empty-state copy diverge,
-// since a side application moves through the same Interested → Applied → ...
-// pipeline as a career one.
+// identical across tracks. Title + icon are FIXED across tracks ("Pipeline
+// Kanban" / suitcase) — only the COLOR (and the empty-state copy) diverges, so
+// flipping the track switch recolors the card instead of relabeling it.
 const TRACK_PRESETS = {
     career: {
         title: "Pipeline Kanban",
-        icon: Mail,
-        iconColorClass: "text-blue-400",
-        addBtnClass: "bg-blue-500/10 hover:bg-blue-500/20 text-blue-400",
+        icon: Briefcase,
+        iconColorClass: "text-cyan-300",
+        addBtnClass: "bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300",
         emptyText: "No applications",
     },
     side: {
-        title: "Side Pipeline",
+        title: "Pipeline Kanban",
         icon: Briefcase,
         iconColorClass: "text-amber-400",
         addBtnClass: "bg-amber-500/10 hover:bg-amber-500/20 text-amber-400",

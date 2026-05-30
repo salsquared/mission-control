@@ -1,7 +1,7 @@
 import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Section } from "../Section";
-import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, RotateCw, Pencil } from "lucide-react";
+import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, RotateCw, Pencil, Briefcase } from "lucide-react";
 import { useSession, signIn } from "next-auth/react";
 import { CalendarWidget } from "../widgets/CalendarWidget";
 import { CardGrid, CardItem } from "../grids/CardGrid";
@@ -15,6 +15,42 @@ import { ApplicationDetailOverlay } from "../overlays/ApplicationDetailOverlay";
 import { WatchlistsCard } from "../cards/applications/WatchlistsCard";
 import { NewPostingsCard } from "../cards/applications/NewPostingsCard";
 import { ApplicationsKanbanCard, AppRecord } from "../cards/applications/ApplicationsKanbanCard";
+import { useAppStore, type PostingsTrackKey } from "../providers/state";
+
+// The track switch (the one new asset of the single-track redo, see
+// docs/archive/applications-view-redo.html). Config-driven so renaming a track or
+// adding a third is a one-line edit here — the switch + layout pick it up for
+// free. `id` must stay in lockstep with APPLICATION_TRACKS (lib/schemas/
+// applications.ts) and the per-card TRACK_PRESETS maps.
+const TRACKS: ReadonlyArray<{
+    id: PostingsTrackKey;
+    label: string;
+    icon: typeof Mail;
+    activeClass: string;
+}> = [
+    { id: "career", label: "Career", icon: Mail, activeClass: "bg-blue-500/20 text-blue-200 border-blue-400/40" },
+    { id: "side", label: "Side", icon: Briefcase, activeClass: "bg-amber-500/20 text-amber-200 border-amber-400/40" },
+] as const;
+
+// Track-colored glow rgb — cyan-400 (career) / amber-500 (side).
+const TRACK_GLOW_RGB: Record<PostingsTrackKey, string> = {
+    career: "34, 211, 238",
+    side: "245, 158, 11",
+};
+
+// Seeded radial-gradient glow for the three switchable cards. The origin is
+// pseudo-random but STABLE per card id (hash → fixed x/y, so it never shuffles
+// on reload), and the color follows the active track. Rendered as a
+// background-image so it layers over the card's bg-black/40 background-color.
+function trackGlow(cardId: string, track: PostingsTrackKey): React.CSSProperties {
+    let h = 0;
+    for (let i = 0; i < cardId.length; i++) h = (h * 31 + cardId.charCodeAt(i)) >>> 0;
+    const x = 12 + (h % 76);            // 12–88%
+    const y = 12 + ((h >>> 8) % 76);    // 12–88%
+    return {
+        backgroundImage: `radial-gradient(circle at ${x}% ${y}%, rgba(${TRACK_GLOW_RGB[track]}, 0.20) 0%, transparent 62%)`,
+    };
+}
 
 export const ApplicationsView: React.FC = () => {
     const { data: session, status } = useSession();
@@ -23,8 +59,13 @@ export const ApplicationsView: React.FC = () => {
     const [isScanning, setIsScanning] = useState(false);
     const [isSyncing, setIsSyncing] = useState(false);
     const [isAdding, setIsAdding] = useState(false);
-    const [isAddingSide, setIsAddingSide] = useState(false);
     const [detailAppId, setDetailAppId] = useState<string | null>(null);
+
+    // Single-track switch selection (per-device, persisted). The kanban + the
+    // two discovery cards all re-point to this track; Upcoming Interviews and
+    // Account Status stay shared across tracks.
+    const activeTrack = useAppStore(s => s.applicationsTrack);
+    const setApplicationsTrack = useAppStore(s => s.setApplicationsTrack);
 
     // Track first-time authentication so background session revalidations
     // (window focus, periodic refetch, cross-device signin) don't unmount
@@ -33,14 +74,16 @@ export const ApplicationsView: React.FC = () => {
     if (status === "authenticated") hasEverAuthedRef.current = true;
 
     const queryClient = useQueryClient();
+    // Both tracks' apps stay queried even though only one renders at a time:
+    // it keeps the dual-cache optimistic handleStatusChange and the kanban's
+    // "move to other track" bulk action working without a rewrite, and the
+    // switch flips instantly (no refetch flash). The discovery cards fetch
+    // their own per-track data internally and now mount once, not twice.
     const { data: appsData, isLoading: loading } = useQuery({
         queryKey: queryKeys.applications,
         queryFn: () => api.applications.list({ track: 'career' }),
         enabled: Boolean(session),
     });
-    // MB Phase 4: separate query for the side-track kanban. Both queries hit
-    // the same /api/applications endpoint with ?track=, so React Query keeps
-    // them partitioned in cache.
     const { data: sideAppsData, isLoading: sideLoading } = useQuery({
         queryKey: [...queryKeys.applications, 'side'] as const,
         queryFn: () => api.applications.list({ track: 'side' }),
@@ -48,6 +91,8 @@ export const ApplicationsView: React.FC = () => {
     });
     const apps: AppRecord[] = (appsData?.applications ?? []) as unknown as AppRecord[];
     const sideApps: AppRecord[] = (sideAppsData?.applications ?? []) as unknown as AppRecord[];
+    const activeApps = activeTrack === 'side' ? sideApps : apps;
+    const activeLoading = activeTrack === 'side' ? sideLoading : loading;
 
     // Predicate-based invalidation covers both `['applications']` and
     // `['applications', 'side']` so a single Application SSE event refreshes
@@ -63,10 +108,9 @@ export const ApplicationsView: React.FC = () => {
     useServerEvents('CalendarEvent', invalidateApps);
 
     const handleStatusChange = useCallback(async (id: string, newStatus: string) => {
-        // MB Phase 4: the dragged row could be in either the career or the side
-        // cache. Locate it and patch the matching cache optimistically so the
-        // kanban reflects the new status before the server round-trip
-        // completes.
+        // The dragged row could be in either the career or the side cache.
+        // Locate it and patch the matching cache optimistically so the kanban
+        // reflects the new status before the server round-trip completes.
         const careerKey = queryKeys.applications;
         const sideKey = [...queryKeys.applications, 'side'] as const;
         const careerPrev = queryClient.getQueryData<{ applications: AppRecord[] }>(careerKey);
@@ -155,22 +199,13 @@ export const ApplicationsView: React.FC = () => {
         );
     }
 
+    // Single card stack for the active track. In a 2-column CardGrid,
+    // colSpan:2 = full width and colSpan:1 = half; grid-flow-row-dense resolves
+    // the order to: Interviews (full) → Kanban (full) → [New Postings · Watchlists]
+    // → Account Status (full). The kanban + discovery cards carry key={activeTrack}
+    // so flipping the switch remounts them (resets page / search / select state)
+    // while the CardItem-keyed frame stays put.
     const pipelineCards: CardItem[] = [
-        {
-            id: "kanban",
-            colSpan: 3,
-            className: "max-h-[50vh]",
-            content: (
-                <ApplicationsKanbanCard
-                    apps={apps}
-                    loading={loading}
-                    onAdd={() => setIsAdding(true)}
-                    onStatusChange={handleStatusChange}
-                    onItemClick={setDetailAppId}
-                    onBulkMoved={() => invalidateApps()}
-                />
-            )
-        },
         {
             id: "calendar",
             colSpan: 2,
@@ -205,8 +240,38 @@ export const ApplicationsView: React.FC = () => {
             )
         },
         {
-            id: "conn-status",
+            id: "kanban",
+            colSpan: 2,
+            className: "max-h-[50vh]",
+            wrapperStyle: trackGlow("kanban", activeTrack),
+            content: (
+                <ApplicationsKanbanCard
+                    key={activeTrack}
+                    track={activeTrack}
+                    apps={activeApps}
+                    loading={activeLoading}
+                    onAdd={() => setIsAdding(true)}
+                    onStatusChange={handleStatusChange}
+                    onItemClick={setDetailAppId}
+                    onBulkMoved={() => invalidateApps()}
+                />
+            )
+        },
+        {
+            id: "new-postings",
             colSpan: 1,
+            wrapperStyle: trackGlow("new-postings", activeTrack),
+            content: <NewPostingsCard key={activeTrack} track={activeTrack} />
+        },
+        {
+            id: "watchlists",
+            colSpan: 1,
+            wrapperStyle: trackGlow("watchlists", activeTrack),
+            content: <WatchlistsCard key={activeTrack} track={activeTrack} />
+        },
+        {
+            id: "conn-status",
+            colSpan: 2,
             content: (
                 <Card
                     title="Account Status"
@@ -234,47 +299,14 @@ export const ApplicationsView: React.FC = () => {
                             <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
                                 <RotateCw className={`w-3.5 h-3.5 shrink-0 ${isSyncing ? "animate-spin" : ""}`} /> <span className="truncate">{isSyncing ? "Syncing…" : "Sync Gcal"}</span>
                             </button>
-                            <button onClick={() => invalidateApps()} disabled={loading} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50" title="Refresh application list">
-                                <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${loading ? "animate-spin" : ""}`} /> <span className="truncate">Ping Status</span>
+                            <button onClick={() => invalidateApps()} disabled={activeLoading} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50" title="Refresh application list">
+                                <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${activeLoading ? "animate-spin" : ""}`} /> <span className="truncate">Ping Status</span>
                             </button>
                         </div>
                     </div>
                 </Card>
             )
         }
-    ];
-
-    const discoveryCards: CardItem[] = [
-        { id: "watchlists", content: <WatchlistsCard /> },
-        { id: "new-postings", content: <NewPostingsCard /> },
-    ];
-
-    // MB Phase 4. Side pipeline kanban: same status columns as career, just
-    // bound to track="side". Calendar + Account Status stay shared across
-    // both tracks above — interviews are interviews and there's only one
-    // Gmail account.
-    const sidePipelineCards: CardItem[] = [
-        {
-            id: "side-kanban",
-            colSpan: 3,
-            className: "max-h-[50vh]",
-            content: (
-                <ApplicationsKanbanCard
-                    track="side"
-                    apps={sideApps}
-                    loading={sideLoading}
-                    onAdd={() => setIsAddingSide(true)}
-                    onStatusChange={handleStatusChange}
-                    onItemClick={setDetailAppId}
-                    onBulkMoved={() => invalidateApps()}
-                />
-            )
-        }
-    ];
-
-    const sideDiscoveryCards: CardItem[] = [
-        { id: "side-watchlists", content: <WatchlistsCard track="side" /> },
-        { id: "side-new-postings", content: <NewPostingsCard track="side" /> },
     ];
 
     return (
@@ -297,43 +329,38 @@ export const ApplicationsView: React.FC = () => {
                         </button>
                     </div>
                 ) : (
-                    <div className="mt-4">
-                        <CardGrid items={pipelineCards} />
-                    </div>
+                    <>
+                        {/* Track switch — flips the kanban + discovery cards between
+                            tracks. Interviews + Account Status below are shared. */}
+                        <div className="px-6 mt-4 flex items-center gap-2" role="tablist" aria-label="Application track">
+                            {TRACKS.map(t => {
+                                const isActive = t.id === activeTrack;
+                                const Icon = t.icon;
+                                return (
+                                    <button
+                                        key={t.id}
+                                        role="tab"
+                                        aria-selected={isActive}
+                                        onClick={() => setApplicationsTrack(t.id)}
+                                        className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${isActive ? t.activeClass : "bg-black/30 border-white/10 text-white/50 hover:text-white/80 hover:border-white/20"}`}
+                                    >
+                                        <Icon className="w-4 h-4" />
+                                        {t.label}
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="mt-4">
+                            <CardGrid items={pipelineCards} columns={2} />
+                        </div>
+                    </>
                 )}
             </Section>
-            {session && (
-                <Section title="Job Discovery" description="Watchlists + new postings — scheduler ticks every 10 min; each watchlist crawls on its own cadence">
-                    <div className="mt-4">
-                        <CardGrid items={discoveryCards} columns={2} />
-                    </div>
-                </Section>
-            )}
-            {session && (
-                <Section title="Side Pipeline" description="Pay-the-bills work — gig / blue-collar / short-term. Same status columns; separate kanban so career leads aren't diluted.">
-                    <div className="mt-4">
-                        <CardGrid items={sidePipelineCards} />
-                    </div>
-                </Section>
-            )}
-            {session && (
-                <Section title="Side Discovery" description="Keyword watchlists for job types (barista, warehouse, delivery, security). Shares the same crawler + 10-min scheduler tick as career watchlists.">
-                    <div className="mt-4">
-                        <CardGrid items={sideDiscoveryCards} columns={2} />
-                    </div>
-                </Section>
-            )}
             <AddApplicationModal
                 open={isAdding}
                 onClose={() => setIsAdding(false)}
                 onCreated={() => invalidateApps()}
-                defaultTrack="career"
-            />
-            <AddApplicationModal
-                open={isAddingSide}
-                onClose={() => setIsAddingSide(false)}
-                onCreated={() => invalidateApps()}
-                defaultTrack="side"
+                defaultTrack={activeTrack}
             />
             {detailAppId && (
                 <ApplicationDetailOverlay

@@ -112,11 +112,17 @@ interface DevicePrefsSlice {
     aiCompanionEnabled: boolean;
     postingFilters: Record<PostingsTrackKey, PostingFilters>;
     mobileLayoutPreference: MobileLayoutPreference;
+    // Which track ApplicationsView's single-track switch is currently showing.
+    // Per-device (a view preference, not cross-device truth) — persists so a
+    // reload keeps the user on the track they were last looking at. Default
+    // "career". See docs/archive/applications-view-redo.html.
+    applicationsTrack: PostingsTrackKey;
 
     setAutoResearch: (v: boolean) => void;
     setAiCompanionEnabled: (v: boolean) => void;
     setPostingFilters: (track: PostingsTrackKey, next: PostingFilters) => void;
     setMobileLayoutPreference: (v: MobileLayoutPreference) => void;
+    setApplicationsTrack: (t: PostingsTrackKey) => void;
 }
 
 // ---------- Combined store ----------
@@ -178,11 +184,13 @@ export const useAppStore = create<AppState>()(
             aiCompanionEnabled: false,
             postingFilters: DEFAULT_POSTING_FILTERS_BY_TRACK,
             mobileLayoutPreference: "auto",
+            applicationsTrack: "career",
             setAutoResearch: (autoResearch) => set({ autoResearch }),
             setAiCompanionEnabled: (aiCompanionEnabled) => set({ aiCompanionEnabled }),
             setPostingFilters: (track, next) =>
                 set((s) => ({ postingFilters: { ...s.postingFilters, [track]: next } })),
             setMobileLayoutPreference: (mobileLayoutPreference) => set({ mobileLayoutPreference }),
+            setApplicationsTrack: (applicationsTrack) => set({ applicationsTrack }),
         }),
         {
             name: 'app-state',
@@ -194,8 +202,9 @@ export const useAppStore = create<AppState>()(
                 viewScreenshots: state.viewScreenshots,
                 postingFilters: state.postingFilters,
                 mobileLayoutPreference: state.mobileLayoutPreference,
+                applicationsTrack: state.applicationsTrack,
             }),
-            version: 8,
+            version: 9,
             migrate: (persisted: any, fromVersion: number) => {
                 // v2 → v3: flip includeUnspecified to false. Existing users
                 // would otherwise inherit the old `true` default and the
@@ -215,6 +224,8 @@ export const useAppStore = create<AppState>()(
                 // v7 → v8 (MD-1 / Track D): introduce `mobileLayoutPreference`
                 //          (default 'auto'). Existing users get auto-detection
                 //          on first reload after the mobile shell ships.
+                // v8 → v9: introduce `applicationsTrack` (ApplicationsView's
+                //          single-track switch selection; default 'career').
                 const pf = persisted.postingFilters;
                 // Normalize whatever's at persisted.postingFilters into the
                 // current PostingFilters shape. Handles either an old single-
@@ -268,6 +279,7 @@ export const useAppStore = create<AppState>()(
                     viewScreenshots: persisted.viewScreenshots ?? {},
                     postingFilters,
                     mobileLayoutPreference,
+                    applicationsTrack: persisted.applicationsTrack === 'side' ? 'side' : 'career',
                 };
             },
         }

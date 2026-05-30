@@ -1,7 +1,7 @@
 "use client";
 import React, { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, EyeOff, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Briefcase, Pencil, Sparkles } from "lucide-react";
+import { Eye, EyeOff, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Pencil, Sparkles } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
@@ -20,7 +20,10 @@ import {
 } from "@/lib/watchlists/find-roles-grouping";
 
 // MB Phase 4. Per-track presentation. Crawl mechanism is identical between
-// tracks (same fetcher fleet, same schedule loop) — only the surfaces differ.
+// tracks (same fetcher fleet, same schedule loop). Title + icon are FIXED
+// across tracks ("Watchlists" / eye) — only the COLOR (and the empty-state
+// copy) diverges, so the track switch recolors the card instead of relabeling
+// it.
 const TRACK_PRESETS = {
     career: {
         title: "Watchlists",
@@ -30,8 +33,8 @@ const TRACK_PRESETS = {
         emptyText: "No watchlists yet. Add one above to start hunting on your behalf.",
     },
     side: {
-        title: "Side Watchlists",
-        icon: Briefcase,
+        title: "Watchlists",
+        icon: Eye,
         iconColorClass: "text-amber-300",
         addBtnClass: "bg-amber-500/20 hover:bg-amber-500/30 border-amber-400/30 text-amber-100",
         emptyText: "No side watchlists. Add a keyword search (e.g. \"warehouse Los Angeles\") to find gig listings.",

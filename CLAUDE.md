@@ -165,6 +165,7 @@ Full rules + the touch list for adding a selection-affecting field live in [`doc
 - **Stay markdown — don't convert:**
   - `README.md` (anywhere) — GitHub renders markdown; HTML support there is poor and inconsistent.
   - `docs/llm-prompts/*.md` — these are **machine-read prompt blobs** loaded by `lib/ai/prompts.ts:loadPrompt` as the Lunary disk fallback. Converting them would break the loader.
+  - `docs/next_steps.md` — **machine-read session memory**, loaded in full into context at the start of every session (per the session protocol at the top of this file). It's an append-only reverse-chronological log of dated entries with no section structure, so HTML's value-add (collapsible `<details>` sections, Mermaid, syntax highlighting, pan/zoom) is human-UI sugar wasted on an LLM reader — and the markup wrapping only inflates the per-session token load on the single heaviest auto-loaded doc. Same exception logic as `llm-prompts/*.md`: the reader is a model, not a human.
 - **Converting a doc:** rename `.md` → `.html`, port the content using the template + cheat-sheet, then grep for the old `.md` path and update inbound links — including from `CLAUDE.md` itself and any other doc that referenced the old path.
 
 ## Conventions and gotchas
