@@ -573,30 +573,84 @@ export async function runWatchlist(id: string): Promise<RunResult> {
     return processOne(id, { broadcast: true });
 }
 
+// Scraped aggregators (LinkedIn, Indeed) bot-detect on bursts; their fetchers
+// hit guest HTML endpoints with no auth. ATS APIs (greenhouse, lever, ashby,
+// workday, …) are first-party JSON endpoints that don't care about cadence, so
+// they're NOT spaced. `runDueWatchlists` inserts a jittered gap between
+// consecutive crawls to fragile sources within a single tick.
+const FRAGILE_SOURCES = new Set<string>(["linkedin", "indeed"]);
+export function isFragileSource(kind: string): boolean {
+    return FRAGILE_SOURCES.has(kind);
+}
+
+const INTER_CRAWL_JITTER_MIN_MS = 3_000;
+const INTER_CRAWL_JITTER_MAX_MS = 10_000;
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const defaultJitterMs = () =>
+    INTER_CRAWL_JITTER_MIN_MS + Math.floor(Math.random() * (INTER_CRAWL_JITTER_MAX_MS - INTER_CRAWL_JITTER_MIN_MS));
+
 /**
- * Scheduler tick — invoked by setInterval in scheduler/index.ts. Loops over
- * every active watchlist whose lastRunAt is older than `scheduleMinutes`.
- * Doesn't broadcast (different process).
+ * Injectable seams for `runDueWatchlists`. The scheduler calls it with no args
+ * (all defaults); the hermetic smoke injects all four so it can assert the
+ * inter-crawl pacing without a DB, network, or real timer.
  */
-export async function runDueWatchlists(): Promise<{ processed: number; results: RunResult[] }> {
+export interface RunDueDeps {
+    /** Resolve the due watchlists (id + source kind). Default = active rows
+     *  whose lastRunAt is older than scheduleMinutes, read from the DB. */
+    loadDue?: () => Promise<Array<{ id: string; kind: string }>>;
+    /** Crawl one watchlist. Default = processOne(id, { broadcast: false }). */
+    processFn?: (id: string) => Promise<RunResult>;
+    /** Sleep between consecutive fragile-source crawls. Default = real timer. */
+    sleepFn?: (ms: number) => Promise<void>;
+    /** Jitter duration per gap, ms. Default = random in [3s, 10s). */
+    jitterMs?: () => number;
+}
+
+async function defaultLoadDue(): Promise<Array<{ id: string; kind: string }>> {
     const now = Date.now();
     const candidates = await prisma.watchlist.findMany({
         where: { active: true },
-        select: { id: true, scheduleMinutes: true, lastRunAt: true },
+        select: { id: true, kind: true, scheduleMinutes: true, lastRunAt: true },
     });
-    const due = candidates.filter(c => {
-        if (!c.lastRunAt) return true;
-        return now - c.lastRunAt.getTime() >= c.scheduleMinutes * 60_000;
-    });
+    return candidates
+        .filter((c) => !c.lastRunAt || now - c.lastRunAt.getTime() >= c.scheduleMinutes * 60_000)
+        .map((c) => ({ id: c.id, kind: c.kind }));
+}
+
+/**
+ * Scheduler tick — invoked by setInterval in scheduler/index.ts. Loops over
+ * every active watchlist whose lastRunAt is older than `scheduleMinutes`,
+ * crawling serially. Doesn't broadcast (different process).
+ *
+ * Burst control: a jittered gap (3–10s) is inserted BEFORE the 2nd, 3rd, …
+ * crawl to a fragile scraped source (LinkedIn/Indeed) in the same tick — never
+ * before the first, never after the last, never around ATS-API sources. This
+ * matters most after a >cadence scheduler downtime, when every overdue
+ * watchlist comes due on the first tick back and would otherwise crawl LinkedIn
+ * back-to-back with zero delay. A throw still counts as a fragile attempt, so
+ * the following fragile crawl is still spaced.
+ */
+export async function runDueWatchlists(deps: RunDueDeps = {}): Promise<{ processed: number; results: RunResult[] }> {
+    const loadDue = deps.loadDue ?? defaultLoadDue;
+    const processFn = deps.processFn ?? ((id: string) => processOne(id, { broadcast: false }));
+    const sleepFn = deps.sleepFn ?? sleep;
+    const jitterMs = deps.jitterMs ?? defaultJitterMs;
+
+    const due = await loadDue();
     const results: RunResult[] = [];
+    let fragileProcessed = false;
     for (const c of due) {
+        if (isFragileSource(c.kind) && fragileProcessed) {
+            await sleepFn(jitterMs());
+        }
         try {
-            results.push(await processOne(c.id, { broadcast: false }));
+            results.push(await processFn(c.id));
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             console.error(`[job-watcher] processOne(${c.id}) threw:`, e);
             results.push({ watchlistId: c.id, newPostings: 0, seenAgain: 0, closed: 0, refreshedAlive: 0, error: msg });
         }
+        if (isFragileSource(c.kind)) fragileProcessed = true;
     }
     return { processed: due.length, results };
 }
