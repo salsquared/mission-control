@@ -113,6 +113,11 @@ injectCacheEntry("@/lib/resumes/select", {
     flattenSelections: () => flatSelections,
     selectProfileExtras: () => ({ skills: [], languages: [], hobbies: [] }),
     entityIsPinned: () => false,
+    // a7ebd7f added the current-education guarantee (route step 4e.2); this stub
+    // doubles select, so it must expose mostRecentEducationId too. education is
+    // [] here, so null (matches the real fn's empty-list result) → route skips
+    // the reorder block, which is irrelevant to this smoke's assertions.
+    mostRecentEducationId: () => null,
 });
 
 injectCacheEntry("@/lib/resumes/rewrite", {
