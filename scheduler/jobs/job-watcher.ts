@@ -428,7 +428,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     }
 
     // Closed-posting detection (story S5.7, probe-gated as of 2026-05-25 —
-    // see docs/close-detection-probe.md).
+    // see docs/archive/close-detection-probe.md).
     //
     // Stale candidates = postings on this watchlist that were NOT in this
     // run's fetch AND haven't been seen in 6h+. Pre-probe-gate (bug-C era),

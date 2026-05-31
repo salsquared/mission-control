@@ -21,7 +21,7 @@ import { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
 
 process.env.MC_ALLOW_PRIVATE_FETCH = "1";
-// Probe gate (docs/close-detection-probe.md) would otherwise cap the close
+// Probe gate (docs/archive/close-detection-probe.md) would otherwise cap the close
 // path at the per-kind maxPerTick (50 for careers-page) — but this test
 // exists specifically to verify the close UPDATE handles >999 ids without
 // Prisma P2029, which requires actually attempting to close all 1100 rows

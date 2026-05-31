@@ -1,7 +1,7 @@
 /**
  * Closed-posting probe gate.
  *
- * Design + rationale: docs/close-detection-probe.md.
+ * Design + rationale: docs/archive/close-detection-probe.md.
  *
  * Job-watcher previously decided a posting was closed purely on "the fetcher
  * hasn't returned this externalId in 6h." That's a false-positive whenever the
@@ -51,7 +51,7 @@ export interface ProbeProfile {
 /**
  * Per-ATS probe budgets. Tuned for: (a) source server politeness, (b) how
  * aggressively that source bot-detects, (c) realistic backlog sizes in the
- * current dataset. See docs/close-detection-probe.md §Per-ATS probe profiles
+ * current dataset. See docs/archive/close-detection-probe.md §Per-ATS probe profiles
  * for the spreadsheet.
  */
 export const PROBE_PROFILES: Record<WatchlistKind, ProbeProfile> = {

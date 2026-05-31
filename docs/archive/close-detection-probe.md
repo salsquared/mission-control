@@ -1,9 +1,14 @@
 # Close-detection probe gate
 
-**Status:** Plan, not yet implemented.
+> ✅ **SHIPPED — archived 2026-05-30.** This is the design doc; the feature is fully landed and live on both tiers. The runtime code is permanent (see the **Cleanup** section): `lib/postings/liveness.ts`, the `scheduler/jobs/job-watcher.ts` probe-gate, the `liveness-probe-smoke.ts` regression net, and the `recover-false-closed.ts` recovery tool. The durable, maintained reference now lives in `CLAUDE.md` ("Closed-posting detection is probe-gated") and `docs/implementation.md` (MB-2.4 + the cross-cutting table row); this file is retained as the historical design/rationale record.
+>
+> **What landed:** probe-gate across all 11 ATS kinds (commits `9fcd6df` `0deef8e` `9e29040` `98c57b0`), shipped to dev + prod 2026-05-25. The recovery script reopened **921 dev + 629 prod** false-closed postings.
+>
+> **Why archived 2 days before the literal soak window closed:** the doc's "≥7 days without regression" criterion ran 2026-05-25 → 2026-06-01 and was 2 days shy at archival. But 5 days of live logs on both tiers showed thousands of clean probe-gate runs, zero errors, and — decisively — the targeted failure modes confirmed handled: LinkedIn 24h-filtered and Workday page-capped candidates return `unknown`/`alive` and are **preserved**, never false-closed (e.g. `candidates=177 closed=1 alive=29 unknown=147`). Archived on that evidence.
+
+**Status:** ✅ Shipped + live on both tiers. Archived 2026-05-30.
 **Owner:** Sal.
-**Filed:** 2026-05-25.
-**Lifecycle:** Lives in `docs/` while in flight. Move to `docs/archive/` once the recovery script has been run against prod + dev, the new probe-gated logic has run for ≥7 days without regression, and the `next_steps.md` "in-flight" mention is cleared.
+**Filed:** 2026-05-25. **Landed:** 2026-05-25 (commits `9fcd6df` `0deef8e` `9e29040` `98c57b0`).
 
 ## TL;DR
 

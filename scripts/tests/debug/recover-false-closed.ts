@@ -2,7 +2,7 @@
  * One-shot recovery for JobPostings that were incorrectly auto-closed by the
  * pre-probe close-detection logic.
  *
- * Design + rationale: docs/close-detection-probe.md.
+ * Design + rationale: docs/archive/close-detection-probe.md.
  *
  * Probes every `status="closed"` posting against its source URL using the
  * same per-kind profiles in `lib/postings/liveness.ts`. For each "alive"

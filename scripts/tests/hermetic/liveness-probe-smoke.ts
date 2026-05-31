@@ -1,7 +1,7 @@
 /**
  * Hermetic smoke for the close-detection probe gate.
  *
- * Design + rationale: docs/close-detection-probe.md.
+ * Design + rationale: docs/archive/close-detection-probe.md.
  *
  * Stubs globalThis.fetch with per-test fixture handlers and asserts:
  *   - Each ATS kind routes through its dedicated probe.

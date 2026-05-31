@@ -22,7 +22,7 @@
  * 24h / 25-per-page × 2 pages = 50/crawl mean the returned set is a
  * snapshot of what Indeed surfaces today, NOT the full live-posting universe.
  * Older / off-page postings still live on Indeed; the probe gate in
- * scheduler/jobs/job-watcher.ts (docs/close-detection-probe.md) prevents
+ * scheduler/jobs/job-watcher.ts (docs/archive/close-detection-probe.md) prevents
  * those from being false-closed.
  */
 import * as cheerio from "cheerio";

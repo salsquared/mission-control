@@ -333,7 +333,7 @@ export const WatchlistRunResponseSchema = z.object({
     newPostings: z.number().int(),
     seenAgain: z.number().int(),
     closed: z.number().int(),
-    // Stale candidates that the probe gate (docs/close-detection-probe.md)
+    // Stale candidates that the probe gate (docs/archive/close-detection-probe.md)
     // re-confirmed alive on the source — their lastSeenAt was bumped instead
     // of flipping to "closed". Defaulted on the wire so older clients keep
     // parsing responses cleanly.

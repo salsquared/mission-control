@@ -20,7 +20,7 @@
  * the returned set is a snapshot of what LinkedIn surfaces today, NOT the
  * full live-posting universe. Postings older than 24h or past slot 50 fall
  * out — they're still live on LinkedIn, but we don't see them. The probe
- * gate in scheduler/jobs/job-watcher.ts (docs/close-detection-probe.md)
+ * gate in scheduler/jobs/job-watcher.ts (docs/archive/close-detection-probe.md)
  * stops these from being false-closed: stale candidates get GET-probed
  * against their sourceUrl, and only positive-evidence-of-removal flips
  * the row.
