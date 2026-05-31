@@ -141,6 +141,7 @@ SUITES=(
     "scripts/tests/hermetic/canon-keyword-split-smoke.ts"
     "scripts/tests/hermetic/canon-crud-smoke.ts"
     "scripts/tests/hermetic/canon-staleness-smoke.ts"
+    "scripts/tests/hermetic/canon-specialize-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

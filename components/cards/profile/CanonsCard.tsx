@@ -11,6 +11,8 @@ import {
     Check,
     X,
     AlertTriangle,
+    Sparkles,
+    Search,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
@@ -54,6 +56,8 @@ export function CanonsCard() {
 
     // Which canon row is currently mid-regenerate (so we only spin that one).
     const [regenId, setRegenId] = useState<string | null>(null);
+    // Which canon row is currently mid-specialize (single-flight, like regenId).
+    const [specializeId, setSpecializeId] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
 
     async function handleRegenerate(canon: CanonWire) {
@@ -99,6 +103,44 @@ export function CanonsCard() {
             `/api/resumes/${encodeURIComponent(canon.currentResumeId)}/download`,
             "_blank",
         );
+    }
+
+    // Specialize the canon's base resume for a specific Interested job — same
+    // bullets, re-worded by the backend, returns a PDF blob we open in a tab.
+    // Single-flight via specializeId, mirroring the Regenerate flow.
+    async function handleSpecialize(canon: CanonWire, applicationId: string) {
+        if (specializeId) return;
+        setSpecializeId(canon.id);
+        try {
+            const res = await fetch("/api/resumes/specialize", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ canonId: canon.id, applicationId }),
+            });
+            if (!res.ok) {
+                let detail = "";
+                try {
+                    const j = await res.json();
+                    const msg = j.error
+                        ? (typeof j.error === "string" ? j.error : JSON.stringify(j.error))
+                        : "";
+                    detail = j.stage ? `${msg} (${j.stage})` : msg;
+                } catch {
+                    /* non-JSON body */
+                }
+                throw new Error(detail || `HTTP ${res.status}`);
+            }
+            const blob = await res.blob();
+            const objectUrl = URL.createObjectURL(blob);
+            window.open(objectUrl, "_blank");
+            // Pick up the new per-job child resume in the version count.
+            invalidate();
+            toastStore.push({ message: `“${canon.name}” specialized for this job`, type: "info" });
+        } catch (e) {
+            toastStore.push({ message: `Specialize failed: ${errMessage(e)}`, type: "error" });
+        } finally {
+            setSpecializeId(null);
+        }
     }
 
     async function handleDelete(canon: CanonWire) {
@@ -158,8 +200,11 @@ export function CanonsCard() {
                                         canon={canon}
                                         regenerating={regenId === canon.id}
                                         anyRegenerating={regenId !== null}
+                                        specializing={specializeId === canon.id}
+                                        anySpecializing={specializeId !== null}
                                         onRegenerate={() => handleRegenerate(canon)}
                                         onDownload={() => handleDownload(canon)}
+                                        onSpecialize={(applicationId) => handleSpecialize(canon, applicationId)}
                                         onDelete={() => handleDelete(canon)}
                                         onSaved={invalidate}
                                     />
@@ -197,12 +242,27 @@ const CanonRow: React.FC<{
     canon: CanonWire;
     regenerating: boolean;
     anyRegenerating: boolean;
+    specializing: boolean;
+    anySpecializing: boolean;
     onRegenerate: () => void;
     onDownload: () => void;
+    onSpecialize: (applicationId: string) => void;
     onDelete: () => void;
     onSaved: () => void;
-}> = ({ canon, regenerating, anyRegenerating, onRegenerate, onDownload, onDelete, onSaved }) => {
+}> = ({
+    canon,
+    regenerating,
+    anyRegenerating,
+    specializing,
+    anySpecializing,
+    onRegenerate,
+    onDownload,
+    onSpecialize,
+    onDelete,
+    onSaved,
+}) => {
     const [editing, setEditing] = useState(false);
+    const [pickingJob, setPickingJob] = useState(false);
 
     if (editing) {
         return (
@@ -274,6 +334,25 @@ const CanonRow: React.FC<{
                 </button>
                 <button
                     type="button"
+                    onClick={() => setPickingJob((v) => !v)}
+                    disabled={!canon.currentResumeId || anySpecializing}
+                    aria-expanded={pickingJob}
+                    title={
+                        canon.currentResumeId
+                            ? "Re-word this canon's resume for a specific Interested job"
+                            : "Regenerate the base resume first — nothing to specialize yet"
+                    }
+                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-purple-400/30 text-[11px] font-semibold text-purple-100 bg-purple-500/10 hover:bg-purple-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                >
+                    {specializing ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                    ) : (
+                        <Sparkles className="w-3 h-3" />
+                    )}
+                    {specializing ? "Specializing…" : "Specialize…"}
+                </button>
+                <button
+                    type="button"
                     onClick={() => setEditing(true)}
                     className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] transition-colors"
                 >
@@ -289,6 +368,105 @@ const CanonRow: React.FC<{
                     Delete
                 </button>
             </div>
+
+            {pickingJob && canon.currentResumeId && (
+                <SpecializeJobPicker
+                    busy={specializing}
+                    onPick={(applicationId) => {
+                        setPickingJob(false);
+                        onSpecialize(applicationId);
+                    }}
+                    onClose={() => setPickingJob(false)}
+                />
+            )}
+        </div>
+    );
+};
+
+// ─── Specialize-for-a-job picker (Interested apps) ──────────────────────────
+// The pipeline-picker endpoint already filters server-side to INTERESTED apps
+// that carry a posting URL, so every returned item is eligible to specialize.
+
+const SpecializeJobPicker: React.FC<{
+    busy: boolean;
+    onPick: (applicationId: string) => void;
+    onClose: () => void;
+}> = ({ busy, onPick, onClose }) => {
+    const { data, isLoading, error } = useQuery({
+        queryKey: queryKeys.pipelinePicker,
+        queryFn: () => api.applications.pipelinePicker(),
+    });
+    const items = data?.items ?? [];
+
+    return (
+        <div className="mt-2 rounded-lg bg-purple-500/[0.04] border border-purple-400/20 p-2">
+            <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-purple-200/70">
+                    Specialize for an Interested job
+                </span>
+                <button
+                    type="button"
+                    onClick={onClose}
+                    className="inline-flex items-center gap-1 text-[10px] text-white/40 hover:text-white/80 transition-colors"
+                >
+                    <X className="w-3 h-3" />
+                </button>
+            </div>
+
+            {isLoading ? (
+                <div className="flex items-center gap-2 px-3 py-3 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white/40">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Loading interested applications…
+                </div>
+            ) : error ? (
+                <div className="px-3 py-2 rounded-lg bg-rose-500/10 border border-rose-400/30 text-[11px] text-rose-200">
+                    Failed to load: {errMessage(error)}
+                </div>
+            ) : items.length === 0 ? (
+                <div className="flex items-center gap-2 px-3 py-3 rounded-lg bg-black/40 border border-white/10 text-[11px] text-white/40">
+                    <Search className="w-3.5 h-3.5 shrink-0" />
+                    <span>
+                        No Interested applications with a posting URL yet. Track a posting from the
+                        New Postings feed to specialize this resume for it.
+                    </span>
+                </div>
+            ) : (
+                <div className="max-h-[12rem] overflow-y-auto rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
+                    {items.map((it) => {
+                        let host = "";
+                        try {
+                            host = new URL(it.postingUrl).host;
+                        } catch {
+                            host = it.postingUrl;
+                        }
+                        return (
+                            <button
+                                key={it.id}
+                                type="button"
+                                onClick={() => onPick(it.id)}
+                                disabled={busy}
+                                className={[
+                                    "w-full text-left px-3 py-2 transition-colors",
+                                    busy ? "opacity-50 cursor-not-allowed" : "hover:bg-white/[0.03] cursor-pointer",
+                                ].join(" ")}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs font-semibold text-white/90 truncate">{it.company}</span>
+                                    <span className="text-white/30">·</span>
+                                    <span className="text-xs text-white/70 truncate">
+                                        {it.postingTitle || it.role || "—"}
+                                    </span>
+                                    <span
+                                        className={`text-[9px] uppercase tracking-wide px-1 rounded ${TRACK_PILL_CLASSES[it.track] ?? TRACK_PILL_FALLBACK}`}
+                                    >
+                                        {it.track}
+                                    </span>
+                                </div>
+                                <div className="text-[10px] text-white/30 truncate mt-0.5">{host}</div>
+                            </button>
+                        );
+                    })}
+                </div>
+            )}
         </div>
     );
 };

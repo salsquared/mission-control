@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-05-31 · 63/63 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-05-31 · 64/64 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -2982,6 +2982,14 @@
   <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
   <p class="api-purpose">Computes the diff between two of the session user's generated resumes (passed as ?a and ?b), comparing their bullet selections, keywords, and skills gaps.</p>
   <p class="api-src"><code>app/api/resumes/diff/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/resumes/specialize">
+  <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/resumes/specialize</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gemini</span></div>
+  <p class="api-purpose">Opt-in: re-word a canon's resume for a specific job (same selection, new wording) and save it as a per-job child.</p>
+  <p class="api-schema-label">POST body — <code>BodySchema</code> <span class="api-muted">(schema unavailable)</span></p>
+  <p class="api-src"><code>app/api/resumes/specialize/route.ts</code></p>
 </div>
     </div>
   </details>
