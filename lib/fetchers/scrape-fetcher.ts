@@ -23,13 +23,17 @@ export async function fetchScrape(config: CompanyFeedConfig): Promise<NewsArticl
         throw new Error(`[SCRAPE] Missing scrapeUrl or scrapeConfig for ${name}`);
     }
 
+    // record: false — we own the outcome below so one scrape = one row. A page
+    // that 200s but parses 0 articles is `broken`, not `ok` (recording both
+    // would read as 50% health for a fully-broken scraper).
     const res = await loggedFetch(scrapeUrl, {
         headers: {
             'User-Agent': scrapeConfig.userAgent || DEFAULT_USER_AGENT
         }
-    });
+    }, { record: false });
 
     if (!res.ok) {
+        recordFetchOutcome(hostOf(scrapeUrl), 'error');
         throw new Error(`Failed to fetch ${name} news page: ${res.status}`);
     }
 
@@ -91,11 +95,16 @@ export async function fetchScrape(config: CompanyFeedConfig): Promise<NewsArticl
     }
 
     if (articles.length === 0 && html.length > 0) {
-        // Reached the page (loggedFetch already recorded `ok`) but parsed nothing
-        // — record `broken` against the same host so the card co-locates them.
+        // Reached the page (HTTP 200) but parsed nothing — the scraper is broken
+        // (stale regex / changed markup). One outcome per attempt: `broken`, not
+        // an `ok`+`broken` pair (which would read as 50% health for a dead scraper).
         recordFetchOutcome(hostOf(scrapeUrl), 'broken');
         throw new ScraperBrokenError(name, html.length);
     }
+
+    // Parsed ≥1 article (or an empty page that didn't trip the broken guard) →
+    // the scraper is working. Record the single `ok` outcome for this attempt.
+    recordFetchOutcome(hostOf(scrapeUrl), 'ok');
 
     // Limit to MAX_NEWS_ARTICLES and enrich with OGS metadata
     const topArticles = articles.slice(0, MAX_NEWS_ARTICLES);

@@ -43,17 +43,26 @@ export function hostOf(urlStr: string): string {
  * the recording is best-effort and never alters the returned Response or thrown
  * error.
  */
-export async function loggedFetch(url: string | URL, init?: RequestInit): Promise<Response> {
+export async function loggedFetch(
+    url: string | URL,
+    init?: RequestInit,
+    opts?: { record?: boolean },
+): Promise<Response> {
     const method = (init?.method ?? 'GET').toUpperCase();
     const urlStr = typeof url === 'string' ? url : url.toString();
     console.info(`[EXTERNAL API] ${method} ${urlStr}`);
     const host = hostOf(urlStr);
+    // `record: false` lets a caller defer the outcome to a higher layer that
+    // knows more than HTTP status — e.g. a scraper that 200s but parses 0 items
+    // is `broken`, not `ok`. Such callers record exactly one outcome themselves
+    // (see lib/fetchers/scrape-fetcher.ts) so one attempt = one row.
+    const record = opts?.record ?? true;
     try {
         const res = await fetch(url, init);
-        recordFetchOutcome(host, res.status < 400 ? 'ok' : 'error');
+        if (record) recordFetchOutcome(host, res.status < 400 ? 'ok' : 'error');
         return res;
     } catch (e) {
-        recordFetchOutcome(host, 'error');
+        if (record) recordFetchOutcome(host, 'error');
         throw e;
     }
 }
@@ -68,7 +77,9 @@ export async function loggedFetch(url: string | URL, init?: RequestInit): Promis
  * SDK marker can't observe the response, so it can't distinguish 2xx from 500.
  * Callers that want true failure attribution can record `error` themselves.
  */
-export function logExternalCall(url: string, method: string = 'GET'): void {
+export function logExternalCall(url: string, method: string = 'GET', opts?: { record?: boolean }): void {
     console.info(`[EXTERNAL API] ${method.toUpperCase()} ${url}`);
-    recordFetchOutcome(hostOf(url), 'ok');
+    // `record: false` — defer to a caller that knows the real outcome (e.g. an
+    // RSS fetch that parses 0 items is `broken`, not `ok`).
+    if (opts?.record ?? true) recordFetchOutcome(hostOf(url), 'ok');
 }

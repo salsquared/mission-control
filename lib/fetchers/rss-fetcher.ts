@@ -18,15 +18,22 @@ const parser = new Parser();
  * then enrich with Open Graph images.
  */
 export async function fetchRSS(name: string, rssUrl: string): Promise<NewsArticle[]> {
-    logExternalCall(rssUrl);
-    const feed = await parser.parseURL(rssUrl);
+    // record: false — own the outcome below so one fetch = one row (a feed that
+    // parses 0 items is `broken`, not `ok`; a parse/network throw is `error`).
+    logExternalCall(rssUrl, 'GET', { record: false });
+    const feed = await parser.parseURL(rssUrl).catch((e) => {
+        recordFetchOutcome(hostOf(rssUrl), 'error');
+        throw e;
+    });
 
     if (feed.items.length === 0) {
-        // Fetched the feed (logExternalCall recorded `ok`) but it was empty —
-        // record `broken` against the same host.
+        // Fetched the feed but it was empty — the scraper is broken.
         recordFetchOutcome(hostOf(rssUrl), 'broken');
         throw new ScraperBrokenError(name, 0);
     }
+
+    // Parsed ≥1 item → working. Single `ok` outcome for this attempt.
+    recordFetchOutcome(hostOf(rssUrl), 'ok');
 
     let items: NewsArticle[] = feed.items.slice(0, MAX_NEWS_ARTICLES).map(item => ({
         id: item.guid || item.link || Math.random().toString(),

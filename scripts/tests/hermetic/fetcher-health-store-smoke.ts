@@ -122,6 +122,9 @@ async function main() {
                 await loggedFetch("https://ok.smoke.example-host.io/x");
                 // A local fetch IS counted, keyed by host:port (non-default port).
                 await loggedFetch("http://localhost:7777/x");
+                // record:false defers the outcome to the caller (scraper paths) —
+                // loggedFetch itself records nothing, so no ok+broken double-count.
+                await loggedFetch("https://norecord.smoke.io/x", undefined, { record: false });
             } finally {
                 globalThis.fetch = origFetch;
             }
@@ -129,6 +132,7 @@ async function main() {
             check("loggedFetch: 500 → error", health["err.smoke.example-host.io"]?.error === 1, JSON.stringify(health["err.smoke.example-host.io"]));
             check("loggedFetch: 200 → ok (standard port → no :443 suffix)", health["ok.smoke.example-host.io"]?.ok === 1, JSON.stringify(health["ok.smoke.example-host.io"]));
             check("loggedFetch: local fetch counted as host:port", health["localhost:7777"]?.ok === 1, JSON.stringify(health["localhost:7777"]));
+            check("loggedFetch: record:false records nothing", !health["norecord.smoke.io"], JSON.stringify(health["norecord.smoke.io"]));
         }
 
         // ---- 6. Prune — drops the >48h row, keeps recent ------------------
