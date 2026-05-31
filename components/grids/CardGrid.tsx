@@ -12,10 +12,15 @@ export interface CardItem {
     rowSpan?: number;
     hFit?: boolean; // If true, avoids stretching height to match grid rows
     className?: string;
-    /** Inline style for the card's outer wrapper — e.g. a per-card
-     *  radial-gradient glow that can't be a static Tailwind class. Layers over
-     *  the canonical `bg-black/40` (background-color) as a background-image. */
+    /** Inline style for the card's wrapper — e.g. a per-card radial-gradient
+     *  glow that can't be a static Tailwind class. Applied to the inner Card
+     *  wrapper so a background-image layers over the canonical `bg-black/40`
+     *  background-color. */
     wrapperStyle?: React.CSSProperties;
+    /** Inline style for the card's outermost frame (the motion.div) — e.g. a
+     *  colored box-shadow glow. Applied here, not the inner Card, so the
+     *  frame's overflow-hidden doesn't clip the outer shadow. */
+    frameStyle?: React.CSSProperties;
 }
 
 interface CardGridProps {
@@ -40,6 +45,7 @@ export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "
             {items.map((item) => (
                 <motion.div
                     key={item.id}
+                    style={item.frameStyle}
                     className={cn(
                         "relative rounded-lg overflow-hidden backdrop-blur-sm break-inside-avoid group z-0 hover:z-10",
                         layout === "masonry" ? "mb-4 inline-block w-full" : "",

@@ -11,10 +11,10 @@ interface CardProps {
     children: React.ReactNode;
     contentClassName?: string;
     wrapperClassName?: string;
-    /** Inline style on the outer wrapper — used for per-card backgrounds that
-     *  can't be a static Tailwind class (e.g. a seeded radial-gradient glow).
-     *  Coexists with `wrapperClassName`'s background-color (this sets
-     *  background-image). */
+    /** Inline style on the outer wrapper — for a per-card background that can't
+     *  be a static Tailwind class (e.g. a track-colored radial-gradient glow).
+     *  Sets background-image, so it coexists with `wrapperClassName`'s
+     *  background-color. */
     wrapperStyle?: React.CSSProperties;
     withInnerContainer?: boolean;
     loading?: boolean;

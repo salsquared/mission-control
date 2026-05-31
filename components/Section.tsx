@@ -17,9 +17,13 @@ interface SectionProps {
 }
 
 export const Section: React.FC<SectionProps> = ({ title, description, children, groups, groupLayout = "grid" }) => {
+    // Horizontal inset lives on this outer container (not the header / children
+    // individually) so the whole section — header + cards — gets a consistent
+    // gutter. It sits INSIDE each view's scroll container, so the scrollbar
+    // stays flush to the frame's right edge while content is inset.
     return (
-        <div className="mb-8 last:mb-0">
-            <div className="mb-4 px-6">
+        <div className="mb-8 last:mb-0 px-6">
+            <div className="mb-4">
                 <h2 className="text-2xl font-bold text-white tracking-tight">{title}</h2>
                 {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}
             </div>
@@ -29,7 +33,7 @@ export const Section: React.FC<SectionProps> = ({ title, description, children, 
                     {groups.map((group) => (
                         group.items.length > 0 && (
                             <div key={group.label}>
-                                <div className="px-6 pt-3 pb-1">
+                                <div className="pt-3 pb-1">
                                     <span className="text-[11px] uppercase tracking-widest font-bold text-white/40">
                                         {group.label}
                                     </span>

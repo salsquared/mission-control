@@ -38,17 +38,22 @@ const TRACK_GLOW_RGB: Record<PostingsTrackKey, string> = {
     side: "245, 158, 11",
 };
 
-// Seeded radial-gradient glow for the three switchable cards. The origin is
-// pseudo-random but STABLE per card id (hash → fixed x/y, so it never shuffles
-// on reload), and the color follows the active track. Rendered as a
-// background-image so it layers over the card's bg-black/40 background-color.
-function trackGlow(cardId: string, track: PostingsTrackKey): React.CSSProperties {
-    let h = 0;
-    for (let i = 0; i < cardId.length; i++) h = (h * 31 + cardId.charCodeAt(i)) >>> 0;
-    const x = 12 + (h % 76);            // 12–88%
-    const y = 12 + ((h >>> 8) % 76);    // 12–88%
+// Track-colored accent for the three switchable cards, in two layers:
+//   trackGradient — a large radial wash blooming from center that covers most
+//     of the card before fading at the edges. A background-image (on the inner
+//     Card wrapper) so it layers over the card's bg-black/40 background-color.
+//   trackShadow   — a very faint colored drop-shadow. A box-shadow on the outer
+//     frame (CardGrid's motion.div) so its overflow-hidden doesn't clip it.
+// Both follow the active track (cyan career / amber side).
+function trackGradient(track: PostingsTrackKey): React.CSSProperties {
+    const rgb = TRACK_GLOW_RGB[track];
     return {
-        backgroundImage: `radial-gradient(circle at ${x}% ${y}%, rgba(${TRACK_GLOW_RGB[track]}, 0.20) 0%, transparent 62%)`,
+        backgroundImage: `radial-gradient(ellipse at center, rgba(${rgb}, 0.18) 0%, rgba(${rgb}, 0.08) 55%, transparent 100%)`,
+    };
+}
+function trackShadow(track: PostingsTrackKey): React.CSSProperties {
+    return {
+        boxShadow: `0 0 16px -6px rgba(${TRACK_GLOW_RGB[track]}, 0.28)`,
     };
 }
 
@@ -243,7 +248,8 @@ export const ApplicationsView: React.FC = () => {
             id: "kanban",
             colSpan: 2,
             className: "max-h-[50vh]",
-            wrapperStyle: trackGlow("kanban", activeTrack),
+            wrapperStyle: trackGradient(activeTrack),
+            frameStyle: trackShadow(activeTrack),
             content: (
                 <ApplicationsKanbanCard
                     key={activeTrack}
@@ -260,13 +266,15 @@ export const ApplicationsView: React.FC = () => {
         {
             id: "new-postings",
             colSpan: 1,
-            wrapperStyle: trackGlow("new-postings", activeTrack),
+            wrapperStyle: trackGradient(activeTrack),
+            frameStyle: trackShadow(activeTrack),
             content: <NewPostingsCard key={activeTrack} track={activeTrack} />
         },
         {
             id: "watchlists",
             colSpan: 1,
-            wrapperStyle: trackGlow("watchlists", activeTrack),
+            wrapperStyle: trackGradient(activeTrack),
+            frameStyle: trackShadow(activeTrack),
             content: <WatchlistsCard key={activeTrack} track={activeTrack} />
         },
         {
@@ -332,7 +340,7 @@ export const ApplicationsView: React.FC = () => {
                     <>
                         {/* Track switch — flips the kanban + discovery cards between
                             tracks. Interviews + Account Status below are shared. */}
-                        <div className="px-6 mt-4 flex items-center gap-2" role="tablist" aria-label="Application track">
+                        <div className="mt-4 flex items-center gap-2" role="tablist" aria-label="Application track">
                             {TRACKS.map(t => {
                                 const isActive = t.id === activeTrack;
                                 const Icon = t.icon;
