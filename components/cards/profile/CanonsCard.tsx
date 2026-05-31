@@ -300,7 +300,8 @@ const CanonRow: React.FC<{
 
     return (
         <div className="px-3 py-2.5">
-            <div className="flex items-start gap-2">
+            <div className="flex items-start gap-3">
+                {/* LEFT — title + track, keywords */}
                 <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                         <span className="text-xs font-semibold text-white/90 truncate">{canon.name}</span>
@@ -309,6 +310,19 @@ const CanonRow: React.FC<{
                         >
                             {canon.track}
                         </span>
+                    </div>
+                    {canon.keywords.trim() ? (
+                        <div className="text-[11px] text-white/50 mt-0.5 break-words leading-snug">
+                            {canon.keywords}
+                        </div>
+                    ) : (
+                        <div className="text-[11px] text-white/30 italic mt-0.5">No keywords yet</div>
+                    )}
+                </div>
+
+                {/* RIGHT — stale, versions, regenerate, download, specialize, edit, delete */}
+                <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
                         {canon.resumeStale && (
                             <span
                                 className="inline-flex items-center gap-1 text-[9px] uppercase tracking-wide text-amber-300 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded"
@@ -332,75 +346,67 @@ const CanonRow: React.FC<{
                             </span>
                         )}
                     </div>
-                    {canon.keywords.trim() ? (
-                        <div className="text-[11px] text-white/50 mt-0.5 break-words leading-snug">
-                            {canon.keywords}
-                        </div>
-                    ) : (
-                        <div className="text-[11px] text-white/30 italic mt-0.5">No keywords yet</div>
-                    )}
+                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                        <button
+                            type="button"
+                            onClick={onRegenerate}
+                            disabled={anyRegenerating}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 text-[11px] font-semibold text-purple-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                            {regenerating ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                                <RefreshCw className="w-3 h-3" />
+                            )}
+                            {regenerating ? "Generating…" : "Regenerate"}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onDownload}
+                            disabled={!canon.currentResumeId}
+                            title={canon.currentResumeId ? "Download the current resume" : "Regenerate first — no resume yet"}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                            <Download className="w-3 h-3" />
+                            Download
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setPickingJob((v) => !v)}
+                            disabled={!canon.currentResumeId || anySpecializing}
+                            aria-expanded={pickingJob}
+                            title={
+                                canon.currentResumeId
+                                    ? "Re-word this canon's resume for a specific Interested job"
+                                    : "Regenerate the base resume first — nothing to specialize yet"
+                            }
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-purple-400/30 text-[11px] font-semibold text-purple-100 bg-purple-500/10 hover:bg-purple-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                        >
+                            {specializing ? (
+                                <Loader2 className="w-3 h-3 animate-spin" />
+                            ) : (
+                                <Sparkles className="w-3 h-3" />
+                            )}
+                            {specializing ? "Specializing…" : "Specialize…"}
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setEditing(true)}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] transition-colors"
+                        >
+                            <Pencil className="w-3 h-3" />
+                            Edit
+                        </button>
+                        <button
+                            type="button"
+                            onClick={onDelete}
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-rose-300/70 hover:text-rose-200 hover:bg-rose-500/10 transition-colors"
+                        >
+                            <Trash2 className="w-3 h-3" />
+                            Delete
+                        </button>
+                    </div>
                 </div>
-            </div>
-
-            <div className="flex items-center gap-1.5 mt-2 flex-wrap">
-                <button
-                    type="button"
-                    onClick={onRegenerate}
-                    disabled={anyRegenerating}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 text-[11px] font-semibold text-purple-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                    {regenerating ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                        <RefreshCw className="w-3 h-3" />
-                    )}
-                    {regenerating ? "Generating…" : "Regenerate"}
-                </button>
-                <button
-                    type="button"
-                    onClick={onDownload}
-                    disabled={!canon.currentResumeId}
-                    title={canon.currentResumeId ? "Download the current resume" : "Regenerate first — no resume yet"}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                    <Download className="w-3 h-3" />
-                    Download
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setPickingJob((v) => !v)}
-                    disabled={!canon.currentResumeId || anySpecializing}
-                    aria-expanded={pickingJob}
-                    title={
-                        canon.currentResumeId
-                            ? "Re-word this canon's resume for a specific Interested job"
-                            : "Regenerate the base resume first — nothing to specialize yet"
-                    }
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-purple-400/30 text-[11px] font-semibold text-purple-100 bg-purple-500/10 hover:bg-purple-500/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-                >
-                    {specializing ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                        <Sparkles className="w-3 h-3" />
-                    )}
-                    {specializing ? "Specializing…" : "Specialize…"}
-                </button>
-                <button
-                    type="button"
-                    onClick={() => setEditing(true)}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] transition-colors"
-                >
-                    <Pencil className="w-3 h-3" />
-                    Edit
-                </button>
-                <button
-                    type="button"
-                    onClick={onDelete}
-                    className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-rose-300/70 hover:text-rose-200 hover:bg-rose-500/10 transition-colors"
-                >
-                    <Trash2 className="w-3 h-3" />
-                    Delete
-                </button>
             </div>
 
             {pickingJob && canon.currentResumeId && (

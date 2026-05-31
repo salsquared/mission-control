@@ -535,7 +535,7 @@ const LanguagesEditor: React.FC<{
                     key={`${e.name}-${idx}`}
                     className="flex items-center gap-2 p-2 rounded bg-black/20 border border-white/5"
                 >
-                    <span className="text-sm text-white/90 font-medium truncate min-w-0" title={e.name}>{e.name}</span>
+                    <span className="text-sm text-white/90 font-bold truncate min-w-0" title={e.name}>{e.name}</span>
                     <div className="flex-1 min-w-0">
                         <ProficiencyRadio
                             value={e.proficiency}
