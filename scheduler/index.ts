@@ -21,6 +21,7 @@ import { runWebhookDeliveryPrune } from './jobs/webhook-delivery-prune';
 import { runClassifyPendingEmploymentTypes } from './jobs/classify-pending-employment-types';
 import { runGmailWatchRenew } from './jobs/gmail-watch-renew';
 import { runLlmCachePrune } from './jobs/llm-cache-prune';
+import { runFetcherHealthPrune } from './jobs/fetcher-health-prune';
 
 interface IntervalJob {
     name: string;
@@ -135,7 +136,22 @@ const JOBS: IntervalJob[] = [
             }
         },
     },
-    // Future: weekly-paper-pick (Mon 09:00), fetcher-health-roll (1 min).
+    {
+        name: 'fetcher-health-prune',
+        // Daily — bound the per-tier fetcher-health store (data/fetcher-health.db)
+        // to 48h. The card only queries 24h, so this is pure housekeeping; no
+        // roll-up job is needed (the route aggregates raw events on read). No-op
+        // when the store failed to init on this tier (best-effort). See
+        // docs/fetcher-health-store.html.
+        intervalMs: 24 * 60 * 60 * 1000,
+        run: async () => {
+            const r = await runFetcherHealthPrune();
+            if (r.deleted > 0) {
+                console.info(`[fetcher-health-prune] deleted ${r.deleted} rows (older than ${r.cutoff.toISOString()})`);
+            }
+        },
+    },
+    // Future: weekly-paper-pick (Mon 09:00).
     // Add cron-based scheduling when the first cron job lands.
 ];
 

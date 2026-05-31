@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { loggedFetch } from '@/lib/external-fetch';
 
 const SPAM_COIN_IDS = new Set([
     'figure-heloc', 'whitebit', 'whitebit-coin', 'eutbl', 'canton-network',
@@ -30,10 +31,10 @@ async function getHandler() {
 
     // Pulsar's mempool source uses three CRYPTO assetIds. Fees fetched per asset.
     const [pricesRes, btcFastRes, btc30Res, btcEcoRes] = await Promise.all([
-        fetch(`${pulsarUrl}/api/prices/latest?class=CRYPTO`),
-        fetch(`${pulsarUrl}/api/prices/btc-fee-fast`).catch(() => null),
-        fetch(`${pulsarUrl}/api/prices/btc-fee-30min`).catch(() => null),
-        fetch(`${pulsarUrl}/api/prices/btc-fee-eco`).catch(() => null),
+        loggedFetch(`${pulsarUrl}/api/prices/latest?class=CRYPTO`),
+        loggedFetch(`${pulsarUrl}/api/prices/btc-fee-fast`).catch(() => null),
+        loggedFetch(`${pulsarUrl}/api/prices/btc-fee-30min`).catch(() => null),
+        loggedFetch(`${pulsarUrl}/api/prices/btc-fee-eco`).catch(() => null),
     ]);
 
     if (!pricesRes.ok) {

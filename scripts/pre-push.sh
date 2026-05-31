@@ -33,6 +33,14 @@ export EMAIL_ENABLED=0
 # Without this, smokes that fetch (e.g. discovery-suggest-smoke) see an
 # extra Lunary HTTP call slip through their fetch mocks.
 export LUNARY_PUBLIC_KEY=""
+# Isolate the fetcher-health store: loggedFetch / serveStale / the fetchers all
+# record fetch outcomes to data/fetcher-health.db now, and many smokes exercise
+# those helpers with test fixtures (example.com URLs, local test servers). Point
+# the store at a throwaway file so the hermetic gate never pollutes the real
+# per-tier telemetry the FetcherHealthCard reads. (The fetcher-health smoke
+# overrides this with its own temp path internally — harmless.)
+export FETCHER_HEALTH_PATH="${TMPDIR:-/tmp}/fh-prepush-$$.db"
+trap 'rm -f "$FETCHER_HEALTH_PATH" "$FETCHER_HEALTH_PATH"-wal "$FETCHER_HEALTH_PATH"-shm' EXIT
 
 # Suites are listed in dependency order: pure ones first so they fail fast.
 # All entries live under scripts/tests/hermetic/ — no PM2, no real network.
@@ -90,6 +98,7 @@ SUITES=(
     "scripts/tests/hermetic/app-race-dedup-smoke.ts"
     "scripts/tests/hermetic/gemini-rate-limit-smoke.ts"
     "scripts/tests/hermetic/llm-cache-smoke.ts"
+    "scripts/tests/hermetic/fetcher-health-store-smoke.ts"
     "scripts/tests/hermetic/cache-smoke.ts"
     "scripts/tests/hermetic/classify-employment-type-smoke.ts"
     "scripts/tests/hermetic/classify-pending-sweep-smoke.ts"

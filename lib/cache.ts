@@ -8,6 +8,7 @@ import {
     listFreshCacheEntries,
 } from '@/lib/repositories/cache-entries';
 import { broadcastEvent } from '@/lib/events';
+import { recordFetchOutcome } from '@/lib/fetcher-health/store';
 
 interface L1Entry {
     data: any;
@@ -412,6 +413,11 @@ function buildCacheControl(_ttlSeconds: number): string {
 function serveStale(cacheKey: string, entry: L1Entry, retryTtl: number, host: string | null = null): NextResponse {
     const hostTag = host ? `${host} ` : '';
     console.info(`[CACHE FALLBACK] ${hostTag}${cacheKey} - Returning stale data`);
+    // Record the stale-fallback to the fetcher-health store (best-effort). Only
+    // when an upstreamHost is known — a bare cacheKey isn't a host. Cache HITS
+    // are intentionally NOT recorded (a hit isn't an upstream touch; cacheStats
+    // owns hit/miss). See docs/fetcher-health-store.html.
+    if (host) recordFetchOutcome(host, 'fallback');
     const expiry = Date.now() + retryTtl * 1000;
     globalCache.set(cacheKey, { data: entry.data, expiry });
     if (useSQLite()) l2Write(cacheKey, entry.data, expiry).catch(() => {});

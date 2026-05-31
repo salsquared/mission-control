@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { loggedFetch } from '@/lib/external-fetch';
 
 function getPulsarUrl() {
     const url = process.env.PULSAR_URL;
@@ -23,7 +24,7 @@ async function getHandler(request: Request) {
             ? new Date(0).toISOString()
             : new Date(Date.now() - rangeDays * 86_400_000).toISOString();
 
-        const res = await fetch(`${pulsarUrl}/api/history/${coin}/summary?from=${fromDate}`);
+        const res = await loggedFetch(`${pulsarUrl}/api/history/${coin}/summary?from=${fromDate}`);
         if (!res.ok) throw new Error(`Pulsar /api/history/${coin}/summary returned ${res.status}`);
 
         const env = await res.json();
@@ -48,7 +49,7 @@ async function getHandler(request: Request) {
     // Short-range: hourly OHLCV bars via /history/:id?interval=1h
     const from = new Date(Date.now() - rangeDays * 86_400_000).toISOString();
     const to = new Date().toISOString();
-    const res = await fetch(`${pulsarUrl}/api/history/${coin}?from=${from}&to=${to}&interval=1h`);
+    const res = await loggedFetch(`${pulsarUrl}/api/history/${coin}?from=${from}&to=${to}&interval=1h`);
 
     if (!res.ok) throw new Error(`Pulsar /api/history/${coin} returned ${res.status}`);
 

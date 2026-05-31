@@ -168,7 +168,8 @@ export const queryKeys = {
     applications: ['applications'] as const,
     settings: ['settings'] as const,
     system: ['system'] as const,
-    fetcherHealth: ['fetcher-health'] as const,
+    fetcherHealth: (params?: { source?: string; window?: string }) =>
+        ['fetcher-health', params ?? {}] as const,
     calendarEvents: ['calendar-events'] as const,
     applicationEvents: (filter?: { applicationId?: string | null; upcoming?: boolean; kinds?: readonly string[] }) =>
         ['application-events', filter ?? {}] as const,
@@ -404,7 +405,13 @@ export const api = {
         get: () => jsonFetch('/api/system', SystemTelemetryResponseSchema),
         invalidateCache: (input: z.infer<typeof CacheInvalidatePostSchema>) =>
             jsonFetch('/api/system/cache/invalidate', CacheInvalidateResponseSchema, jsonBody('POST', input)),
-        fetcherHealth: () => jsonFetch('/api/system/fetcher-health', FetcherHealthResponseSchema),
+        fetcherHealth: (params?: { source?: 'web' | 'scheduler'; window?: '1h' | '6h' | '1d' }) => {
+            const q = new URLSearchParams();
+            if (params?.source) q.set('source', params.source);
+            if (params?.window) q.set('window', params.window);
+            const qs = q.toString();
+            return jsonFetch(`/api/system/fetcher-health${qs ? `?${qs}` : ''}`, FetcherHealthResponseSchema);
+        },
     },
 
     calendarEvents: {

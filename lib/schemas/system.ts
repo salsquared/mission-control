@@ -22,9 +22,13 @@ export const SystemTelemetryResponseSchema = z.object({
     cache: CacheStatsSchema,
 });
 
-// Per-host counts over the past hour. Drives the FetcherHealthCard.
+// Per-host outcome counts over the selected window. Drives the FetcherHealthCard.
+// `error` = upstream returned non-2xx or the request threw (a 500 is an error,
+// not an ok) — recorded from the real loggedFetch response. See
+// docs/fetcher-health-store.html.
 const FetcherHealthEntrySchema = z.object({
     ok: z.number().int(),
+    error: z.number().int(),
     fallback: z.number().int(),
     broken: z.number().int(),
 });

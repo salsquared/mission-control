@@ -3492,7 +3492,7 @@
 
 <div class="api-route" id="/api/system/fetcher-health">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system/fetcher-health</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip cache">cache 3600s</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip cache">cache 30s</span></div>
   <p class="api-purpose">Parses the PM2 log file for cache/external-API/scraper log lines and aggregates per-upstream-host ok/fallback/broken counts over 1h/6h/1d windows for the Fetcher Health card.</p>
   <p class="api-notes">Reads the per-tier PM2 out.log (dev vs prod chosen by NODE_ENV; overridable via PM2_LOG_PATH).</p>
   <p class="api-src"><code>app/api/system/fetcher-health/route.ts</code></p>

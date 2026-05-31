@@ -98,6 +98,14 @@ public/swe-worker-*.js
 /data/llm-cache.db-wal
 /data/llm-cache.db-shm
 
+# Fetcher-health telemetry store (lib/fetcher-health/store.ts) + WAL/shm sidecars.
+# Ephemeral per-tier fetch outcomes (48h retention), not state. Also matched by
+# the global *.db globs above; listed explicitly for clarity. See
+# docs/fetcher-health-store.html.
+/data/fetcher-health.db
+/data/fetcher-health.db-wal
+/data/fetcher-health.db-shm
+
 # Promptfoo eval output — JSON results + per-run dirs from `npm run test:prompts`.
 # LOP-9. The fixtures themselves (eval/fixtures/, eval/suites/) ARE checked in;
 # results are not.

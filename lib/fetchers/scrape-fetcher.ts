@@ -8,7 +8,8 @@ import ogs from 'open-graph-scraper';
 import { MAX_NEWS_ARTICLES } from '../constants';
 import { ScraperBrokenError } from './errors';
 import type { NewsArticle, CompanyFeedConfig } from './types';
-import { loggedFetch } from '../external-fetch';
+import { loggedFetch, hostOf } from '../external-fetch';
+import { recordFetchOutcome } from '../fetcher-health/store';
 
 const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36';
 
@@ -90,6 +91,9 @@ export async function fetchScrape(config: CompanyFeedConfig): Promise<NewsArticl
     }
 
     if (articles.length === 0 && html.length > 0) {
+        // Reached the page (loggedFetch already recorded `ok`) but parsed nothing
+        // — record `broken` against the same host so the card co-locates them.
+        recordFetchOutcome(hostOf(scrapeUrl), 'broken');
         throw new ScraperBrokenError(name, html.length);
     }
 

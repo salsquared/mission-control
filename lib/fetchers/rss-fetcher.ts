@@ -8,7 +8,8 @@ import ogs from 'open-graph-scraper';
 import { MAX_NEWS_ARTICLES } from '../constants';
 import { ScraperBrokenError } from './errors';
 import type { NewsArticle } from './types';
-import { logExternalCall } from '../external-fetch';
+import { logExternalCall, hostOf } from '../external-fetch';
+import { recordFetchOutcome } from '../fetcher-health/store';
 
 const parser = new Parser();
 
@@ -21,6 +22,9 @@ export async function fetchRSS(name: string, rssUrl: string): Promise<NewsArticl
     const feed = await parser.parseURL(rssUrl);
 
     if (feed.items.length === 0) {
+        // Fetched the feed (logExternalCall recorded `ok`) but it was empty —
+        // record `broken` against the same host.
+        recordFetchOutcome(hostOf(rssUrl), 'broken');
         throw new ScraperBrokenError(name, 0);
     }
 
