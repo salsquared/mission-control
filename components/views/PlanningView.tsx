@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KanbanColumnDef } from "../widgets/KanbanWidget";
 import { TaskItem } from "../ui/TaskItem";
 import { Section } from "../Section";
+import { CardGrid, type CardItem } from "../grids/CardGrid";
 import { GoalCard, LifeGoal } from "../cards/planning/GoalCard";
 import { ToDoCard } from "../cards/ToDoCard";
 import { Scrollbar } from "../ui/Scrollbar";
@@ -134,9 +135,16 @@ export const PlanningView: React.FC = () => {
         }
     };
 
-    return (
-        <Scrollbar className="flex flex-col h-full w-full pb-6 pt-6 gap-2">
-            <Section title="Goals">
+    // Each section holds a single full-width card, rendered through CardGrid so
+    // it inherits the canonical chrome + gutter exactly like every other dash.
+    // Height caps live here on the CardItem (not the card), mirroring
+    // ApplicationsView's kanban (`className: "max-h-[50vh]"`).
+    const goalsCards: CardItem[] = [
+        {
+            id: "goals",
+            colSpan: 3,
+            className: "max-h-[35vh]",
+            content: (
                 <GoalCard
                     lifeGoals={lifeGoals}
                     newGoalText={newGoalText}
@@ -149,9 +157,16 @@ export const PlanningView: React.FC = () => {
                     handleDeleteGoal={handleDeleteGoal}
                     loading={loading}
                 />
-            </Section>
+            ),
+        },
+    ];
 
-            <Section title="To-Do">
+    const todoCards: CardItem[] = [
+        {
+            id: "todo",
+            colSpan: 3,
+            className: "max-h-[65vh]",
+            content: (
                 <ToDoCard
                     tasks={augmentedTasks}
                     loading={loading}
@@ -165,6 +180,18 @@ export const PlanningView: React.FC = () => {
                     kanbanColumns={KANBAN_COLUMNS}
                     handleReload={() => invalidateTasks()}
                 />
+            ),
+        },
+    ];
+
+    return (
+        <Scrollbar className="w-full h-full pb-8">
+            <Section title="Goals">
+                <CardGrid items={goalsCards} />
+            </Section>
+
+            <Section title="To-Do">
+                <CardGrid items={todoCards} />
             </Section>
         </Scrollbar>
     );

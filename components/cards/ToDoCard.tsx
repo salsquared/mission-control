@@ -20,6 +20,11 @@ export interface ToDoCardProps {
     handleReload?: () => void;
 }
 
+// Rendered as a CardGrid item (see PlanningView), so the canonical card chrome
+// (bg-black/40 / rounded-lg / border / p-4) comes from CardGrid's wrapping Card.
+// This inner Card supplies only the header slot + content — no wrapperClassName,
+// no manual inset — matching ApplicationsKanbanCard. The board's height cap lives
+// on the CardItem; the content is flex-1 so the board fills/scrolls within it.
 export const ToDoCard: React.FC<ToDoCardProps> = ({
     tasks,
     loading,
@@ -34,90 +39,87 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
     handleReload
 }) => {
     return (
-        <div className="px-2 flex flex-col h-[65vh]">
-            <Card
-                title="Task Board"
-                icon={CheckSquare}
-                iconColorClass="text-emerald-400"
-                wrapperClassName="bg-black/40 rounded-2xl border border-white/5 hover:border-cyan-500/30 transition-colors p-5 h-full overflow-hidden"
-                contentClassName="pt-2 overflow-hidden"
-                loading={loading}
-                action={
-                    <div className="flex items-center gap-4">
-                        <div className="flex items-center gap-3 w-64">
-                            <input 
-                                value={newTaskText}
-                                onChange={(e) => setNewTaskText(e.target.value)}
-                                onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTask(newTaskText); }}
-                                placeholder="Add a new task..."
-                                className="bg-black/40 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500/50 w-full transition-all"
-                            />
-                            <button 
-                                onClick={() => handleCreateTask(newTaskText)}
-                                disabled={isCreatingTask || !newTaskText.trim()}
-                                className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-2 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 shrink-0"
-                                title="Create Task"
-                            >
-                                {isCreatingTask ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
-                            </button>
-                        </div>
-
-                        <div className="flex bg-black/40 p-1 rounded-lg border border-white/5 w-fit">
-                            <button
-                                onClick={() => setViewMode("kanban")}
-                                className={cn(
-                                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer",
-                                    viewMode === "kanban" ? "bg-white/10 text-white shadow-sm" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-                                )}
-                            >
-                                <LayoutList className="w-3 h-3" />
-                                Board
-                            </button>
-                            <button
-                                onClick={() => setViewMode("calendar")}
-                                className={cn(
-                                    "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer",
-                                    viewMode === "calendar" ? "bg-white/10 text-white shadow-sm" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
-                                )}
-                            >
-                                <CalendarIcon className="w-3 h-3" />
-                                Calendar
-                            </button>
-                        </div>
-                        
-                        {handleReload && (
-                            <button
-                                onClick={handleReload}
-                                disabled={loading}
-                                className="flex items-center justify-center p-1.5 rounded-md border border-white/5 bg-black/40 text-slate-500 hover:text-white hover:bg-white/10 transition-all cursor-pointer disabled:opacity-50 h-[30px]"
-                                title="Force sync tasks from file"
-                            >
-                                <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
-                            </button>
-                        )}
-                    </div>
-                }
-            >
-                <div className="flex-1 overflow-hidden">
-                    {viewMode === "kanban" ? (
-                        <KanbanWidget
-                            items={tasks}
-                            columns={kanbanColumns}
-                            getStatus={(t) => t.status}
-                            getItemId={(t) => t.id}
-                            onStatusChange={handleStatusChange}
-                            renderItem={(task) => <TaskItemComponent task={task} />}
+        <Card
+            title="Task Board"
+            icon={CheckSquare}
+            iconColorClass="text-emerald-400"
+            contentClassName="pt-2 overflow-hidden"
+            loading={loading}
+            action={
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-3 w-64">
+                        <input
+                            value={newTaskText}
+                            onChange={(e) => setNewTaskText(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === 'Enter') handleCreateTask(newTaskText); }}
+                            placeholder="Add a new task..."
+                            className="bg-black/40 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-200 focus:outline-none focus:border-emerald-500/50 w-full transition-all"
                         />
-                    ) : (
-                        <div className="h-full overflow-y-auto custom-scrollbar p-6">
-                            <CalendarWidget
-                                isAdding={false}
-                                setIsAdding={() => {}}
-                            />
-                        </div>
+                        <button
+                            onClick={() => handleCreateTask(newTaskText)}
+                            disabled={isCreatingTask || !newTaskText.trim()}
+                            className="bg-emerald-500/20 text-emerald-400 hover:bg-emerald-500/30 px-2 py-1.5 rounded-lg text-xs font-medium transition-all disabled:opacity-50 shrink-0"
+                            title="Create Task"
+                        >
+                            {isCreatingTask ? <Loader2 className="w-3 h-3 animate-spin" /> : <Plus className="w-3 h-3" />}
+                        </button>
+                    </div>
+
+                    <div className="flex bg-black/40 p-1 rounded-lg border border-white/5 w-fit">
+                        <button
+                            onClick={() => setViewMode("kanban")}
+                            className={cn(
+                                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer",
+                                viewMode === "kanban" ? "bg-white/10 text-white shadow-sm" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                            )}
+                        >
+                            <LayoutList className="w-3 h-3" />
+                            Board
+                        </button>
+                        <button
+                            onClick={() => setViewMode("calendar")}
+                            className={cn(
+                                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all cursor-pointer",
+                                viewMode === "calendar" ? "bg-white/10 text-white shadow-sm" : "text-slate-500 hover:text-slate-300 hover:bg-white/5"
+                            )}
+                        >
+                            <CalendarIcon className="w-3 h-3" />
+                            Calendar
+                        </button>
+                    </div>
+
+                    {handleReload && (
+                        <button
+                            onClick={handleReload}
+                            disabled={loading}
+                            className="flex items-center justify-center p-1.5 rounded-md border border-white/5 bg-black/40 text-slate-500 hover:text-white hover:bg-white/10 transition-all cursor-pointer disabled:opacity-50 h-[30px]"
+                            title="Force sync tasks from file"
+                        >
+                            <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
+                        </button>
                     )}
                 </div>
-            </Card>
-        </div>
+            }
+        >
+            <div className="flex-1 overflow-hidden">
+                {viewMode === "kanban" ? (
+                    <KanbanWidget
+                        items={tasks}
+                        columns={kanbanColumns}
+                        getStatus={(t) => t.status}
+                        getItemId={(t) => t.id}
+                        onStatusChange={handleStatusChange}
+                        renderItem={(task) => <TaskItemComponent task={task} />}
+                    />
+                ) : (
+                    <div className="h-full overflow-y-auto custom-scrollbar p-6">
+                        <CalendarWidget
+                            isAdding={false}
+                            setIsAdding={() => {}}
+                        />
+                    </div>
+                )}
+            </div>
+        </Card>
     );
 };

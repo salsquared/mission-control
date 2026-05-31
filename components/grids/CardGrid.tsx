@@ -33,13 +33,17 @@ interface CardGridProps {
 export const CardGrid: React.FC<CardGridProps> = ({ items, className, layout = "grid", columns = 3 }) => {
     return (
         <div className={cn(
+            // py-2 (not p-2): keep the 8px vertical breathing room for hover
+            // glow but drop the horizontal inset. Section's px-6 owns the gutter,
+            // so cards align flush to the same line as the section title — a
+            // horizontal p-2 here pushed cards ~8px further in than the title.
             layout === "grid"
                 ? columns === 3
-                    ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-2 grid-flow-row-dense"
-                    : "grid grid-cols-1 md:grid-cols-2 gap-4 p-2 grid-flow-row-dense"
+                    ? "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 py-2 grid-flow-row-dense"
+                    : "grid grid-cols-1 md:grid-cols-2 gap-4 py-2 grid-flow-row-dense"
                 : columns === 3
-                    ? "columns-1 md:columns-2 lg:columns-3 gap-4 p-2"
-                    : "columns-1 md:columns-2 gap-4 p-2",
+                    ? "columns-1 md:columns-2 lg:columns-3 gap-4 py-2"
+                    : "columns-1 md:columns-2 gap-4 py-2",
             className
         )}>
             {items.map((item) => (
