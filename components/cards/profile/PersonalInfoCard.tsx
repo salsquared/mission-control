@@ -533,24 +533,24 @@ const LanguagesEditor: React.FC<{
             {entries.map((e, idx) => (
                 <div
                     key={`${e.name}-${idx}`}
-                    className="flex flex-col gap-2 p-2 rounded bg-black/20 border border-white/5"
+                    className="flex items-center gap-2 p-2 rounded bg-black/20 border border-white/5"
                 >
-                    <div className="flex items-center justify-between gap-2">
-                        <span className="text-sm text-white/90 font-medium truncate">{e.name}</span>
-                        <button
-                            type="button"
-                            onClick={() => deleteEntry(idx)}
-                            className="text-white/30 hover:text-red-400 transition-colors p-1 shrink-0"
-                            title="Remove language"
-                        >
-                            <Trash2 className="w-3.5 h-3.5" />
-                        </button>
+                    <span className="text-sm text-white/90 font-medium truncate min-w-0" title={e.name}>{e.name}</span>
+                    <div className="flex-1 min-w-0">
+                        <ProficiencyRadio
+                            value={e.proficiency}
+                            onChange={(next) => updateEntry(idx, { proficiency: next })}
+                            theme="amber"
+                        />
                     </div>
-                    <ProficiencyRadio
-                        value={e.proficiency}
-                        onChange={(next) => updateEntry(idx, { proficiency: next })}
-                        theme="amber"
-                    />
+                    <button
+                        type="button"
+                        onClick={() => deleteEntry(idx)}
+                        className="text-white/30 hover:text-red-400 transition-colors p-1 shrink-0"
+                        title="Remove language"
+                    >
+                        <Trash2 className="w-3.5 h-3.5" />
+                    </button>
                 </div>
             ))}
             {adding ? (
@@ -591,22 +591,66 @@ export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
             collapsible
         >
             <div className="flex flex-col gap-8">
-                {/* Identity essentials — headline / summary / contact */}
+                {/* Identity essentials — name + contact, then tagline */}
                 <section className="flex flex-col gap-3">
-                    <div>
-                        {/* The backing schema field is still `profile.headline` (used as
-                            the resume template's H1 per the M8.4 canonical-naming work)
-                            but the UI label reads "Name" since that's how the user
-                            actually populates it. Renaming the schema column would
-                            cascade through too many consumers; UI label is the cheap
-                            fix. */}
-                        <span className="text-[10px] uppercase tracking-wider text-white/30">Name</span>
-                        <EditableField
-                            value={headline}
-                            onSave={(v) => onSave({ headline: v })}
-                            placeholder="Your full name (e.g. 'Salvador Salcedo')"
-                            readClassName="text-lg font-semibold text-white"
-                        />
+                    {/* Name + Location / Email / Phone share one row to save
+                        vertical space. Each gets the same `text-[10px] uppercase`
+                        title treatment as Name/Tagline; the contact fields keep
+                        their icon as a secondary cue.
+                        Note: the backing schema field is still `profile.headline`
+                        (the resume template's H1 per the M8.4 canonical-naming
+                        work) but the UI label reads "Name" since that's how the
+                        user actually populates it. Renaming the schema column
+                        would cascade through too many consumers; UI label is the
+                        cheap fix. */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                        <div>
+                            <span className="text-[10px] uppercase tracking-wider text-white/30">Name</span>
+                            <EditableField
+                                value={headline}
+                                onSave={(v) => onSave({ headline: v })}
+                                placeholder="Your full name (e.g. 'Salvador Salcedo')"
+                                readClassName="text-lg font-semibold text-white"
+                            />
+                        </div>
+                        <div>
+                            <span className="text-[10px] uppercase tracking-wider text-white/30">Location</span>
+                            <div className="flex items-center gap-2">
+                                <MapPin className="w-3.5 h-3.5 text-white/40 shrink-0" />
+                                <EditableField
+                                    value={location}
+                                    onSave={(v) => onSave({ location: v })}
+                                    placeholder="Location"
+                                    readClassName="text-sm text-white/80"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <span className="text-[10px] uppercase tracking-wider text-white/30">Email</span>
+                            <div className="flex items-center gap-2">
+                                <Mail className="w-3.5 h-3.5 text-white/40 shrink-0" />
+                                <EditableField
+                                    value={email}
+                                    onSave={(v) => onSave({ email: v })}
+                                    placeholder="Email"
+                                    type="email"
+                                    readClassName="text-sm text-white/80"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <span className="text-[10px] uppercase tracking-wider text-white/30">Phone</span>
+                            <div className="flex items-center gap-2">
+                                <Phone className="w-3.5 h-3.5 text-white/40 shrink-0" />
+                                <EditableField
+                                    value={phone}
+                                    onSave={(v) => onSave({ phone: v })}
+                                    placeholder="Phone"
+                                    type="tel"
+                                    readClassName="text-sm text-white/80"
+                                />
+                            </div>
+                        </div>
                     </div>
                     {/* M7.9.6 (story S7.14) — one-sentence subtitle for the resume
                         with AI-draft button. Sits directly under Name since it
@@ -615,41 +659,10 @@ export const PersonalInfoCard: React.FC<PersonalInfoCardProps> = ({
                         line Summary field was dropped — tagline is the only
                         one-line pitch now. */}
                     <TaglineRow tagline={tagline} onSave={(v) => onSave({ tagline: v })} />
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
-                        <div className="flex items-center gap-2">
-                            <MapPin className="w-3.5 h-3.5 text-white/40 shrink-0" />
-                            <EditableField
-                                value={location}
-                                onSave={(v) => onSave({ location: v })}
-                                placeholder="Location"
-                                readClassName="text-sm text-white/80"
-                            />
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Mail className="w-3.5 h-3.5 text-white/40 shrink-0" />
-                            <EditableField
-                                value={email}
-                                onSave={(v) => onSave({ email: v })}
-                                placeholder="Email"
-                                type="email"
-                                readClassName="text-sm text-white/80"
-                            />
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <Phone className="w-3.5 h-3.5 text-white/40 shrink-0" />
-                            <EditableField
-                                value={phone}
-                                onSave={(v) => onSave({ phone: v })}
-                                placeholder="Phone"
-                                type="tel"
-                                readClassName="text-sm text-white/80"
-                            />
-                        </div>
-                    </div>
                 </section>
 
                 {/* Skills · Hobbies · Languages — 3-column row */}
-                <section className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <section className="grid grid-cols-1 md:grid-cols-[3fr_3fr_4fr] gap-6">
                     <div className="flex flex-col gap-3 min-w-0">
                         <SubsectionHeader icon={Sparkles} title="Skills" colorClass="text-purple-400" />
                         <SkillsEditor
