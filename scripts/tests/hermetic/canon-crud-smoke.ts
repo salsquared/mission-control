@@ -63,7 +63,7 @@ async function main() {
         // duplicate slug → P2002
         let dupThrew = false;
         try {
-            const d = await createCanon(userId, { name: `Smoke Renamed ${stamp}`, track: "side" });
+            const d = await createCanon(userId, { name: `Smoke Renamed ${stamp}`, track: "side", keywords: "" });
             created.push(d.id);
         } catch (e) {
             dupThrew = (e as { code?: string }).code === "P2002";

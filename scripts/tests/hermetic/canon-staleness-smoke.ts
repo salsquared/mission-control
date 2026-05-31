@@ -28,8 +28,8 @@ async function main() {
 
     try {
         // Two canons, both "fresh" with distinct dependency sets.
-        const a = await createCanon(userId, { name: `Stale A ${stamp}`, track: "career" });
-        const b = await createCanon(userId, { name: `Stale B ${stamp}`, track: "side" });
+        const a = await createCanon(userId, { name: `Stale A ${stamp}`, track: "career", keywords: "" });
+        const b = await createCanon(userId, { name: `Stale B ${stamp}`, track: "side", keywords: "" });
         ids.push(a.id, b.id);
         await finalizeCanonGeneration(a.id, "res-a", ["entA1", "entA2"]);
         await finalizeCanonGeneration(b.id, "res-b", ["entB1"]);
