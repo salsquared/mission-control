@@ -8,7 +8,7 @@ import { parsePosting, type ParsedPosting } from "@/lib/resumes/posting";
 import { getCanonRow, nextCanonVersion, finalizeCanonGeneration } from "@/lib/repositories/canons";
 import { splitCanonKeywords } from "@/lib/canons/keywords";
 import type { Canon } from "@prisma/client";
-import { selectBullets, selectProfileExtras, flattenSelections, entityIsPinned, type BulletSelection } from "@/lib/resumes/select";
+import { selectBullets, selectProfileExtras, flattenSelections, entityIsPinned, mostRecentEducationId, type BulletSelection } from "@/lib/resumes/select";
 import { autoTagBullets } from "@/lib/profile/auto-tag";
 import { synthesizeBulletsForEntities, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
 import { broadcastEvent } from "@/lib/events";
@@ -287,6 +287,10 @@ interface GeneratedResumeRow {
     // same name printed on the artifact itself, even if the user later
     // edits their profile.
     profileSnapshot: string;
+    // Canon linkage — surfaced so the Canons UI can list a canon's versions.
+    canonId: string | null;
+    isCanonical: boolean;
+    canonVersion: number | null;
 }
 
 // Derive a short user-facing label from the original postingInput JSON.
@@ -358,6 +362,9 @@ function summarizeResumeRow(r: GeneratedResumeRow) {
         postingCompany: r.postingCompany,
         postingInputSummary: summarizePostingInput(r.postingInput),
         userDisplayName: extractDisplayName(r.profileSnapshot),
+        canonId: r.canonId,
+        isCanonical: r.isCanonical,
+        canonVersion: r.canonVersion,
     };
 }
 
@@ -369,6 +376,9 @@ export async function GET(req: NextRequest) {
 
     const url = new URL(req.url);
     const applicationId = url.searchParams.get("applicationId");
+    // Canon version history (§7) — `?canonId=` lists that canon's canonical
+    // VERSIONS (isCanonical=true), newest version first.
+    const canonId = url.searchParams.get("canonId");
     const limitParam = url.searchParams.get("limit");
     // M8.4.3 — coerce + clamp via zod. Bad input falls back to the default
     // (100) rather than 400'ing the request — the dropdown still needs to
@@ -378,11 +388,12 @@ export async function GET(req: NextRequest) {
 
     const where: Record<string, unknown> = { userId };
     if (applicationId) where.applicationId = applicationId;
+    if (canonId) { where.canonId = canonId; where.isCanonical = true; }
 
     try {
         const rows = await prisma.generatedResume.findMany({
             where,
-            orderBy: { createdAt: "desc" },
+            orderBy: canonId ? { canonVersion: "desc" } : { createdAt: "desc" },
             take: limit,
         });
         return NextResponse.json({ resumes: rows.map(summarizeResumeRow) }, { status: 200 });
@@ -654,6 +665,20 @@ export async function POST(req: NextRequest) {
         selection.workRoles = pinFront(selection.workRoles);
         selection.projects = pinFront(selection.projects);
         selection.education = pinFront(selection.education);
+
+        // 4e.2. Current-education guarantee (resume-pipeline.md). The most-recent
+        // / currently-enrolled school ALWAYS leads its section — a current
+        // school must never sit below (or be pruned in favor of) an older,
+        // higher-scoring degree that the LLM relevance-reorder floated up. Runs
+        // after the LLM reorder + pin-front so it has the final say on
+        // education[0]; getUnremovableEntityIds protects the same entity.
+        const primaryEduId = mostRecentEducationId(selection.education.map(g => g.entity));
+        if (primaryEduId) {
+            selection.education = [
+                ...selection.education.filter(g => g.entity.id === primaryEduId),
+                ...selection.education.filter(g => g.entity.id !== primaryEduId),
+            ];
+        }
 
         // 5. Render
         stage = "render";

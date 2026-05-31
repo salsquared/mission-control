@@ -194,6 +194,9 @@ export const queryKeys = {
     // Canons — keep stable; CanonsCard invalidates by this key on SSE + mutation.
     canons: (filter?: { track?: string }) =>
         ['canons', filter ?? {}] as const,
+    // Per-canon retained resume versions — drives the version-history dropdown
+    // on each canon row. Invalidated alongside `canons` after a regenerate.
+    canonVersions: (canonId: string) => ['canon-versions', canonId] as const,
 };
 
 // ─── Canon wire shape ──────────────────────────────────────────────────────
@@ -623,10 +626,15 @@ export const api = {
     },
 
     resumes: {
-        // Lightweight list (no selections / no snapshot).
-        list: (filter?: { applicationId?: string; limit?: number }) => {
+        // Lightweight list (no selections / no snapshot). Pass `canonId` to get
+        // that canon's canonical VERSIONS (newest version first) — the version
+        // dropdown on CanonsCard relies on the `canonVersion` / `isCanonical`
+        // fields the server adds in that mode (optional/nullable here since the
+        // general list omits them).
+        list: (filter?: { applicationId?: string; canonId?: string; limit?: number }) => {
             const params = new URLSearchParams();
             if (filter?.applicationId) params.set('applicationId', filter.applicationId);
+            if (filter?.canonId) params.set('canonId', filter.canonId);
             if (filter?.limit) params.set('limit', String(filter.limit));
             const qs = params.toString();
             return jsonFetch(
@@ -654,6 +662,11 @@ export const api = {
                         // what's printed on the artifact even if the user
                         // later edits their profile).
                         userDisplayName: z.string().nullable(),
+                        // Present only in `?canonId=` mode — the canon version
+                        // dropdown reads these. Optional/nullable since the
+                        // general list omits them.
+                        canonVersion: z.number().nullable().optional(),
+                        isCanonical: z.boolean().optional(),
                     })),
                 }),
             );

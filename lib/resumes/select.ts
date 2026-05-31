@@ -400,3 +400,34 @@ export function flattenSelections(sel: ResumeSelection): BulletSelection[] {
         ...sel.education.flatMap(e => e.bullets),
     ];
 }
+
+// The "most-recent" / current education — the one a resume must ALWAYS include
+// (a currently-enrolled school must never be pruned in favor of an older,
+// higher-scoring degree, nor demoted below it by the LLM's relevance reorder).
+// Rank: currently-enrolled (no endDate) first, then latest endDate, then latest
+// startDate, then the user's profile order (lowest position). Robust to missing
+// dates — falls back to position, so the school the user lists first wins.
+// Returns null for an empty list.
+export function mostRecentEducationId(
+    education: { id: string; startDate?: string | null; endDate?: string | null; position?: number }[],
+): string | null {
+    if (education.length === 0) return null;
+    const ms = (d?: string | null): number => (d ? new Date(d).getTime() : 0);
+    const pos = (p?: number): number => (typeof p === "number" ? p : Number.MAX_SAFE_INTEGER);
+    let best = education[0];
+    for (let i = 1; i < education.length; i++) {
+        const e = education[i];
+        const eOngoing = e.endDate == null ? 1 : 0;
+        const bOngoing = best.endDate == null ? 1 : 0;
+        const better =
+            eOngoing > bOngoing ||
+            (eOngoing === bOngoing && ms(e.endDate) > ms(best.endDate)) ||
+            (eOngoing === bOngoing && ms(e.endDate) === ms(best.endDate) && ms(e.startDate) > ms(best.startDate)) ||
+            (eOngoing === bOngoing &&
+                ms(e.endDate) === ms(best.endDate) &&
+                ms(e.startDate) === ms(best.startDate) &&
+                pos(e.position) < pos(best.position));
+        if (better) best = e;
+    }
+    return best.id;
+}

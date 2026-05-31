@@ -1,5 +1,6 @@
 "use client";
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
     Layers,
     Loader2,
@@ -13,12 +14,30 @@ import {
     AlertTriangle,
     Sparkles,
     Search,
+    History,
+    ChevronDown,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys, type CanonWire } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { Card } from "../../ui/Card";
+
+// Relative-time helper — mirrors GenerateResumeCard's formatRelative so the
+// version-history dropdown reads timestamps the same way the resume archive does.
+function formatRelative(iso: string): string {
+    const then = new Date(iso).getTime();
+    const now = Date.now();
+    const delta = Math.max(0, now - then);
+    const m = Math.round(delta / 60_000);
+    if (m < 1) return "just now";
+    if (m < 60) return `${m}m ago`;
+    const h = Math.round(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.round(h / 24);
+    if (d < 30) return `${d}d ago`;
+    return new Date(iso).toLocaleDateString();
+}
 
 type Track = "career" | "side";
 
@@ -87,8 +106,10 @@ export function CanonsCard() {
             const blob = await res.blob();
             const objectUrl = URL.createObjectURL(blob);
             window.open(objectUrl, "_blank");
-            // Clear the stale badge + pick up the new version count.
+            // Clear the stale badge + pick up the new version count, and refresh
+            // this canon's version-history dropdown so the new version shows.
             invalidate();
+            queryClient.invalidateQueries({ queryKey: queryKeys.canonVersions(canon.id) });
             toastStore.push({ message: `“${canon.name}” resume regenerated`, type: "info" });
         } catch (e) {
             toastStore.push({ message: `Regenerate failed: ${errMessage(e)}`, type: "error" });
@@ -133,8 +154,10 @@ export function CanonsCard() {
             const blob = await res.blob();
             const objectUrl = URL.createObjectURL(blob);
             window.open(objectUrl, "_blank");
-            // Pick up the new per-job child resume in the version count.
+            // Pick up the new per-job child resume in the version count, and
+            // refresh this canon's version-history dropdown.
             invalidate();
+            queryClient.invalidateQueries({ queryKey: queryKeys.canonVersions(canon.id) });
             toastStore.push({ message: `“${canon.name}” specialized for this job`, type: "info" });
         } catch (e) {
             toastStore.push({ message: `Specialize failed: ${errMessage(e)}`, type: "error" });
@@ -263,6 +286,7 @@ const CanonRow: React.FC<{
 }) => {
     const [editing, setEditing] = useState(false);
     const [pickingJob, setPickingJob] = useState(false);
+    const [showVersions, setShowVersions] = useState(false);
 
     if (editing) {
         return (
@@ -294,9 +318,19 @@ const CanonRow: React.FC<{
                                 stale
                             </span>
                         )}
-                        <span className="text-[10px] text-white/30">
-                            {canon.versionCount} version{canon.versionCount === 1 ? "" : "s"}
-                        </span>
+                        {canon.versionCount > 0 ? (
+                            <CanonVersionsDropdown
+                                canonId={canon.id}
+                                versionCount={canon.versionCount}
+                                open={showVersions}
+                                onToggle={() => setShowVersions((v) => !v)}
+                                onClose={() => setShowVersions(false)}
+                            />
+                        ) : (
+                            <span className="text-[10px] text-white/30">
+                                {canon.versionCount} version{canon.versionCount === 1 ? "" : "s"}
+                            </span>
+                        )}
                     </div>
                     {canon.keywords.trim() ? (
                         <div className="text-[11px] text-white/50 mt-0.5 break-words leading-snug">
@@ -380,6 +414,139 @@ const CanonRow: React.FC<{
                 />
             )}
         </div>
+    );
+};
+
+// ─── Per-canon version-history dropdown (popover-style) ─────────────────────
+// Mirrors GenerateResumeCard's PreviousResumesDropdown: a trigger button + a
+// portalled popover anchored to the trigger's bounding rect. The portal is
+// required because the enclosing CardGrid wrapper has `overflow-hidden` —
+// an `absolute`-positioned popover would clip to the card. The query is lazy
+// (`enabled: open`) so we only fetch a canon's versions when its dropdown opens.
+
+const CanonVersionsDropdown: React.FC<{
+    canonId: string;
+    versionCount: number;
+    open: boolean;
+    onToggle: () => void;
+    onClose: () => void;
+}> = ({ canonId, versionCount, open, onToggle, onClose }) => {
+    const triggerRef = useRef<HTMLButtonElement>(null);
+    const popoverRef = useRef<HTMLDivElement>(null);
+    const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+
+    // Lazy fetch — only enabled while the popover is open. `staleTime: 0` +
+    // the regenerate-time invalidation keep a freshly-generated version showing
+    // when the dropdown is reopened.
+    const { data, isLoading, error } = useQuery({
+        queryKey: queryKeys.canonVersions(canonId),
+        queryFn: () => api.resumes.list({ canonId }),
+        enabled: open,
+        staleTime: 0,
+    });
+    const versions = data?.resumes ?? [];
+
+    const recompute = useCallback(() => {
+        if (!triggerRef.current) return;
+        const rect = triggerRef.current.getBoundingClientRect();
+        // Left-anchor to the trigger, clamped so the popover never spills off
+        // the right edge of the viewport.
+        const width = Math.min(360, window.innerWidth - 16);
+        const left = Math.min(rect.left, window.innerWidth - width - 8);
+        setPos({ top: rect.bottom + 4, left: Math.max(8, left) });
+    }, []);
+
+    // Position on open + reposition on viewport changes so the popover tracks
+    // the trigger if the user scrolls the dash or resizes.
+    useLayoutEffect(() => {
+        if (!open) { setPos(null); return; }
+        recompute();
+        window.addEventListener("resize", recompute);
+        window.addEventListener("scroll", recompute, true);
+        return () => {
+            window.removeEventListener("resize", recompute);
+            window.removeEventListener("scroll", recompute, true);
+        };
+    }, [open, recompute]);
+
+    // Click-outside checks BOTH the trigger and the portalled popover since
+    // they live in different DOM subtrees.
+    useEffect(() => {
+        if (!open) return;
+        function handle(e: MouseEvent) {
+            const target = e.target as Node;
+            if (triggerRef.current?.contains(target)) return;
+            if (popoverRef.current?.contains(target)) return;
+            onClose();
+        }
+        document.addEventListener("mousedown", handle);
+        return () => document.removeEventListener("mousedown", handle);
+    }, [open, onClose]);
+
+    function handleDownload(id: string) {
+        window.open(`/api/resumes/${encodeURIComponent(id)}/download`, "_blank");
+    }
+
+    return (
+        <>
+            <button
+                ref={triggerRef}
+                type="button"
+                onClick={onToggle}
+                className="inline-flex items-center gap-1 text-[10px] text-purple-300/80 hover:text-purple-200 transition-colors"
+                title="View and download prior versions"
+            >
+                <History className="w-2.5 h-2.5" />
+                <span>{versionCount} version{versionCount === 1 ? "" : "s"}</span>
+                <ChevronDown className={`w-2.5 h-2.5 transition-transform ${open ? "rotate-180" : ""}`} />
+            </button>
+            {open && pos && typeof document !== "undefined" && createPortal(
+                <div
+                    ref={popoverRef}
+                    className="fixed z-50 w-[22rem] max-w-[90vw] rounded-lg bg-slate-900/95 backdrop-blur border border-white/10 shadow-xl"
+                    style={{ top: pos.top, left: pos.left }}
+                >
+                    {isLoading ? (
+                        <div className="flex items-center gap-2 px-3 py-3 text-[11px] text-white/40">
+                            <Loader2 className="w-3 h-3 animate-spin" /> Loading versions…
+                        </div>
+                    ) : error ? (
+                        <div className="px-3 py-2 text-[11px] text-rose-200">
+                            Failed to load: {errMessage(error)}
+                        </div>
+                    ) : versions.length === 0 ? (
+                        <div className="px-3 py-3 text-[11px] text-white/40">No versions yet.</div>
+                    ) : (
+                        <div className="max-h-[20rem] overflow-y-auto divide-y divide-white/5">
+                            {versions.map((v) => (
+                                <button
+                                    key={v.id}
+                                    type="button"
+                                    onClick={() => { handleDownload(v.id); onClose(); }}
+                                    disabled={!v.hasArtifact}
+                                    title={v.hasArtifact ? "Download this version" : "No file for this version"}
+                                    className="w-full text-left px-3 py-2 hover:bg-white/[0.04] transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-start gap-3"
+                                >
+                                    <div className="flex-1 min-w-0">
+                                        <div className="text-xs text-white/90 font-semibold">
+                                            v{v.canonVersion ?? "?"}
+                                        </div>
+                                        <div className="text-[10px] text-white/40 mt-0.5">
+                                            {formatRelative(v.createdAt)}
+                                        </div>
+                                    </div>
+                                    <span className="mt-0.5 text-[10px] uppercase tracking-wide text-purple-300/80 bg-purple-500/10 border border-purple-500/20 px-1.5 py-0.5 rounded flex-shrink-0">
+                                        {v.format}
+                                    </span>
+                                    <Download className="mt-1 w-3 h-3 text-white/40 flex-shrink-0" />
+                                </button>
+                            ))}
+                        </div>
+                    )}
+                </div>,
+                document.body,
+            )}
+        </>
     );
 };
 

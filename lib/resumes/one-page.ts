@@ -26,7 +26,7 @@
 import { renderResumePDF } from "./render-pdf";
 import { composeResumeProps } from "./templates/ats-plain";
 import type { ResumeSelection, BulletSelection, EntitySelection, ExtrasSelection } from "./select";
-import { entityIsPinned } from "./select";
+import { entityIsPinned, mostRecentEducationId } from "./select";
 import type { RewrittenBullet } from "./rewrite";
 import type { ProfileWire, WorkRoleWire, ProjectWire, EducationWire } from "@/lib/schemas/profile";
 import type { SectionKey } from "./tagline-tailor";
@@ -61,7 +61,12 @@ export function getUnremovableEntityIds(
     const ids = new Set<string>();
     if (selection.workRoles.length > 0) ids.add(selection.workRoles[0].entity.id);
     if (selection.projects.length > 0) ids.add(selection.projects[0].entity.id);
-    if (selection.education.length > 0) ids.add(selection.education[0].entity.id);
+    // Education: protect the most-recent / current school by date (not just
+    // selection.education[0], which is post-LLM-reorder = relevance-ranked) so a
+    // currently-enrolled school is never dropped for an older, higher-scoring
+    // one. See resume-pipeline.md + lib/resumes/select.ts:mostRecentEducationId.
+    const primaryEduId = mostRecentEducationId(selection.education.map(g => g.entity));
+    if (primaryEduId) ids.add(primaryEduId);
     if (postingKeywords.length > 0) {
         for (const g of selection.workRoles) {
             if (entityIsPinned(g.entity.pinKeywords, postingKeywords)) ids.add(g.entity.id);
