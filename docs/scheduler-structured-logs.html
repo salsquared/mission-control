@@ -13,20 +13,20 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>Scheduler Logs — Structured Output + In-App Visibility</h1>
-  <p class="subtitle">The two scheduler processes (<code>mission-control-scheduler-{dev,prod}</code>) do all the continuous background work — watchlist crawls, classification sweeps, digests, prunes — but their logs are <strong>plain text, untimestamped, and invisible to the in-app log viewer</strong>. The Internal Systems dash shows only the web process's logs, because the logger monkey-patch lives in a Next.js-only startup hook the scheduler never runs, and the log viewer reads a per-process ring buffer + the web PM2 file. This plan gives the scheduler <strong>structured JSON log output</strong> (the easy, high-value half) and lays out options for <strong>surfacing scheduler logs in the in-app viewer</strong> (the cross-process half).</p>
+  <p class="subtitle">The two scheduler processes (<code>mission-control-scheduler-{dev,prod}</code>) do all the continuous background work — watchlist crawls, classification sweeps, digests, prunes — but their logs are <strong>plain text, untimestamped, and invisible to the in-app log viewer</strong>. The Internal Systems dash shows only the web process's logs, because the logger monkey-patch lives in a Next.js-only startup hook the scheduler never runs, and the log viewer reads a per-process ring buffer + the web PM2 file. This plan gives the scheduler <strong>structured JSON log output</strong> (with a per-line <code>source</code>/<code>tier</code> field), <strong>mutes its per-query verbose noise</strong>, and bridges its logs into the in-app viewer — live (near-real-time) and historical — via a per-tier shared SQLite store, the same cross-process pattern as <code>llm-cache.db</code> / <code>fetcher-health.db</code>.</p>
 
-  <div class="callout"><strong>STATUS — PROPOSED, awaiting review.</strong> Spun out of the <a href="./fetcher-health-store.html">Fetcher Health store plan</a> (its OQ14): structured scheduler logging is orthogonal to that card but was surfaced by the same root cause. No code written. Ends in <a href="#questions">§5 open questions</a>.</div>
+  <div class="callout tip"><strong>STATUS — DECIDED, ready to implement (2026-05-31).</strong> All open questions resolved with the user this session (see <a href="#decisions">§5</a>). Spun out of the <a href="./fetcher-health-store.html">Fetcher Health store plan</a> (its OQ14): structured scheduler logging is orthogonal to that card but was surfaced by the same root cause. No code written yet; the firmed-up build plan is in <a href="#tasks">§6</a>.</div>
 
-  <div class="callout tip"><strong>Relationship to the Fetcher Health store.</strong> That plan makes fetcher health <em>independent</em> of scheduler log parsing (it records to a SQLite store instead). This doc is the <em>general</em> fix for scheduler observability — every other <code>[SCHEDULER:*]</code> line, not just fetches. They share a root cause but neither blocks the other.</div>
+  <div class="callout"><strong>Relationship to the Fetcher Health store + card.</strong> The <a href="./fetcher-health-store.html">Fetcher Health plan</a> makes fetcher <em>health</em> independent of log parsing (it records structured outcomes to <code>data/fetcher-health.db</code> and the <code>FetcherHealthCard</code> aggregates them). This doc is the <em>general</em> fix for scheduler observability — every other <code>[SCHEDULER:*]</code> line, not just fetches. They share a root cause but neither blocks the other. The <strong>view</strong> boundary between them is settled in <a href="#decisions">OQ9</a>: there is no separate “fetcher log” view — fetcher <em>monitoring</em> is the card; raw fetcher <em>log lines</em> live in this general viewer, source-filtered.</div>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
     <ol class="toc-list">
       <li><a href="#problem">The problem</a></li>
       <li><a href="#why">Why — from the code</a></li>
-      <li><a href="#easy">The easy win — structured stdout</a></li>
-      <li><a href="#hard">The hard part — in-app visibility</a></li>
-      <li><a href="#questions">Open Questions</a></li>
+      <li><a href="#foundation">Foundation — structured logger in the scheduler</a></li>
+      <li><a href="#architecture">Chosen architecture — the scheduler→web bridge</a></li>
+      <li><a href="#decisions">Decisions (resolved Open Questions)</a></li>
       <li><a href="#tasks">Implementation tasks</a></li>
     </ol>
   </details>
@@ -50,7 +50,7 @@
       <p>Two read paths, both web-scoped:</p>
       <ul>
         <li><strong>Live</strong> — <code>app/api/system/logs/route.ts</code> is an SSE stream over <code>getLogs()</code> + <code>subscribeToLogs()</code>. That ring buffer lives on the <strong>web process's</strong> <code>globalThis</code> — a different process from the scheduler, so even if the scheduler had its own buffer the web stream couldn't see it.</li>
-        <li><strong>Historical</strong> — <code>app/api/system/logs/historical/route.ts</code> reads a PM2 file hardcoded to <code>mission-control-out.log</code> (the prod <em>web</em> log). It never opens a scheduler file.</li>
+        <li><strong>Historical</strong> — <code>app/api/system/logs/historical/route.ts</code> reads a PM2 file hardcoded to <code>mission-control-out.log</code> (the prod <em>web</em> log). It never opens a scheduler file — and, because <code>PM2_LOG_PATH</code> is unset in both env files, it reads the <em>prod</em> web file even on the dev tier (the dev viewer's “load older” already shows prod's logs).</li>
       </ul>
       <pre class="mermaid">
 flowchart TB
@@ -65,84 +65,155 @@ flowchart TB
   hist --> viewer
   sfile -. "never read<br/>(plain text + wrong file)" .-> viewer
       </pre>
+
+      <h3>Two facts that shape the fix</h3>
+      <p>Surfacing scheduler logs naively would make the viewer worse, not better — two code facts force the design:</p>
+      <ul>
+        <li><strong>The prod scheduler is loud.</strong> It runs with <code>NODE_ENV=production</code> (<code>ecosystem.config.cjs</code>), and the verbose-log gates key off exactly that (<code>lib/prisma.ts:26</code>, <code>lib/cache.ts:40</code>). So it emits a <code>[DATABASE] Executing …</code> line for <em>every</em> Prisma query plus <code>[CACHE]</code>/<code>[API Request]</code> lines — the Fetcher-Health diagnosis counted <strong>2913 such markers in the prod scheduler log alone</strong>. Piping that into the viewer unfiltered drowns the signal. → muted in <a href="#decisions">OQ7</a>.</li>
+        <li><strong>The <code>[SCHEDULER:tier]</code> prefix covers almost nothing.</strong> Only ~6 lines emitted directly by <code>scheduler/index.ts</code> carry the tag (startup, <code>running &lt;job&gt;</code>, the P2021-disable warn, the generic fail, shutdown, ready). Every <em>content</em> line — <code>[job-watcher] processed …</code>, <code>[liveness]</code>, <code>[classify-pending…]</code>, <code>[DATABASE]</code> — is emitted from job code with no marker. Text-prefix filtering can't separate scheduler from web. → structured <code>source</code>/<code>tier</code> field in <a href="#decisions">OQ3</a>.</li>
+      </ul>
     </div>
   </details>
 
   <details class="section" open>
-    <summary><h2 id="easy">The easy win — structured stdout</h2></summary>
+    <summary><h2 id="foundation">Foundation — structured logger in the scheduler</h2></summary>
     <div class="section-body">
       <h3>Call <code>initLogger()</code> at scheduler startup</h3>
-      <p>The high-value, low-risk half: import and call <code>initLogger()</code> at the top of <code>scheduler/index.ts</code> (before the <code>JOBS</code> loop). Immediately the scheduler's every <code>console.*</code> gains the <code>{ts, level, msg}</code> JSON envelope on stdout — so its PM2 file becomes timestamped + machine-parseable, and any tool (including the Fetcher Health reader, if it ever wanted scheduler data) can consume it. This alone fixes the “unstructured, untimestamped” complaint.</p>
-      <div class="callout warn"><strong>Watch the double-emit.</strong> <code>initLogger</code>'s <code>addLog</code> writes the JSON line <em>and</em> calls the original <code>console.*</code> (the human-readable line) — so each scheduler log becomes <strong>two</strong> file lines (JSON + plain), the same as the web process today. That doubles scheduler log volume; pm2-logrotate handles size, but it's worth a deliberate choice (see <a href="#questions">OQ4</a>: keep both, or JSON-only for the scheduler).</div>
+      <p>Layer one: import and call <code>initLogger()</code> at the top of <code>scheduler/index.ts</code> (before the <code>JOBS</code> loop). Immediately the scheduler's every <code>console.*</code> gains the JSON envelope on stdout — so its PM2 file becomes timestamped + machine-parseable, and (critically) it grows the <strong>ring buffer + listener fan-out</strong> that the bridge in <a href="#architecture">§4</a> drains. We call the <em>full</em> <code>initLogger()</code>, not a lite emit-only variant: the live tail needs the ring buffer anyway, so a second logging code path would be dead weight to maintain (resolved in <a href="#decisions">OQ8</a>'s reasoning).</p>
       <div class="callout"><strong>Scope the call narrowly.</strong> Call <em>only</em> <code>initLogger()</code> — not the rest of <code>instrumentation.ts</code>'s <code>register()</code>, which does web-only setup (Lunary, the Pulsar WS relay, shutdown drains). The scheduler has its own lifecycle; we only want the logging patch.</div>
-    </div>
-  </details>
 
-  <details class="section">
-    <summary><h2 id="hard">The hard part — in-app visibility</h2></summary>
-    <div class="section-body">
-      <h3>Cross-process is the real work</h3>
-      <p>Structured stdout (above) does <strong>not</strong> put scheduler logs in the in-app viewer — the ring buffer is per-process and the historical route reads only the web file. Bridging that gap needs cross-process transport. Options, cheapest first:</p>
-      <ul>
-        <li><strong>(A) Historical-merge</strong> — generalize <code>logs/historical</code> to read + merge the scheduler PM2 files alongside the web file (sorted by <code>ts</code>, tagged by source). Cheap; depends on the easy-win JSON format. <em>Historical only — no live tail of scheduler activity.</em></li>
-        <li><strong>(B) Shared-store ring buffer</strong> — the scheduler writes log entries to a shared SQLite (the <code>llm-cache.db</code> / fetcher-health pattern); the web live + historical routes merge from it. Gives near-live cross-process tail; more moving parts + a prune.</li>
-        <li><strong>(C) Push to web</strong> — the scheduler POSTs (or IPC-streams) entries to the web process, which injects them into its existing ring buffer + SSE. True live tail; couples the two processes at runtime.</li>
-      </ul>
-      <pre class="mermaid">
-flowchart LR
-  sched["Scheduler initLogger()"] -->|"(A) JSON file"| merge["logs/historical merges files"]
-  sched -->|"(B) shared SQLite"| store[("logs.db")] --> webread["web reads + merges"]
-  sched -->|"(C) HTTP/IPC push"| webring["web ring buffer + SSE"]
-  merge --> viewer["In-app viewer"]
-  webread --> viewer
-  webring --> viewer
-      </pre>
-      <div class="callout tip"><strong>Recommended split.</strong> Ship the easy win + <strong>(A) historical-merge</strong> as v1 (covers “let me see what the scheduler did” with minimal risk), and treat live cross-process tail (B/C) as a follow-up only if you actually want to watch scheduler activity stream in real time. See <a href="#questions">OQ2</a>.</div>
+      <h3>Stamp <code>source</code> + <code>tier</code> at init</h3>
+      <p><code>initLogger()</code> auto-derives a process identity once and stamps it on every line, so the viewer can filter cleanly without parsing message text. The discriminator is <code>process.env.MC_SCHEDULER_TIER</code> (set only in the two scheduler processes):</p>
+      <pre><code class="language-typescript">const schedTier = process.env.MC_SCHEDULER_TIER;            // 'dev' | 'prod' | undefined
+const source = schedTier ? 'scheduler' : 'web';
+const tier   = schedTier ?? (process.env.NODE_ENV === 'production' ? 'prod' : 'dev');</code></pre>
+      <p>The JSON envelope (<code>logger.ts:83</code>) and the <code>LogEntry</code> type both gain <code>source</code> + <code>tier</code>; <code>addRawLog</code> stamps them too. Old lines without the fields still parse (back-compat default). This gives the viewer an <strong>All · Web · Scheduler</strong> filter that mirrors the one chosen for the Fetcher-Health card.</p>
+
+      <h3>Mute the scheduler's verbose noise</h3>
+      <p>So the bridge carries signal, the scheduler must stop <em>generating</em> per-query spam — not just hide it downstream. Add <code>&amp;&amp; !process.env.MC_SCHEDULER_TIER</code> to the two verbose gates so the scheduler never emits <code>[DATABASE]</code>/<code>[CACHE]</code>/<code>[API Request]</code>, regardless of its <code>NODE_ENV</code>:</p>
+      <pre><code class="language-typescript">// lib/prisma.ts:26  &  lib/cache.ts:40
+const verbose =
+  (process.env.NODE_ENV === 'production' &amp;&amp; !process.env.MC_SCHEDULER_TIER)
+  || process.env.DEBUG_PRISMA === '1';        // (DEBUG_VERBOSE_LOG for cache.ts)</code></pre>
+      <p>Web tiers are untouched. <code>DEBUG_PRISMA</code> / <code>DEBUG_VERBOSE_LOG</code> remain the opt-in escape hatch when you do want to see the scheduler's queries. The job-level summaries (<code>[job-watcher] processed …</code>, <code>[liveness]</code> verdicts, errors) are <em>not</em> gated — those are the signal we want.</p>
     </div>
   </details>
 
   <details class="section" open>
-    <summary><h2 id="questions">Open Questions</h2></summary>
+    <summary><h2 id="architecture">Chosen architecture — the scheduler→web bridge</h2></summary>
     <div class="section-body">
-      <p>Defaults given; all yours to redirect.</p>
-
-      <div class="callout"><strong>OQ1 — Scope: structured stdout only, or also in-app visibility?</strong> <em>Options:</em> (a) just the easy win — scheduler logs become structured/timestamped in PM2 files, parseable but still terminal-only; (b) also surface them in the in-app viewer. <strong>My take: (b)</strong> — the whole point is the in-app surface, and (A) historical-merge is cheap. But (a) alone is a legitimate 20-minute fix if you only care about parseability.</div>
-
-      <div class="callout"><strong>OQ2 — If surfacing: which transport?</strong> (A) historical-file-merge, (B) shared SQLite, or (C) push-to-web (per §4). <strong>My take: (A) for v1</strong> — historical merge of the scheduler PM2 files, no live tail. Add (B/C) later only if real-time scheduler tailing earns its keep. Want live tail from day one?</div>
-
-      <div class="callout"><strong>OQ3 — Tag log lines by source/tier?</strong> Scheduler lines already self-prefix <code>[SCHEDULER:dev]</code> / <code>[SCHEDULER:prod]</code>, but a structured <code>source</code>/<code>tier</code> field (vs. parsing the prefix) makes filtering in the viewer clean. <em>Options:</em> (a) rely on the existing text prefix; (b) add a structured field to the JSON envelope. <strong>My take: (a) for v1</strong> — the prefix is already there and the viewer can filter on it; structured fields are a refinement.</div>
-
-      <div class="callout"><strong>OQ4 — Double-emit: keep both lines, or JSON-only for the scheduler?</strong> <code>initLogger</code> emits JSON + the original plain line. <em>Options:</em> (a) keep both (matches web; human-readable <code>pm2 logs</code> still works); (b) a scheduler-only mode that emits JSON only (halves volume, but raw <code>pm2 logs</code> reads as JSON). <strong>My take: (a)</strong> — consistency with the web process and readable terminal output beats the volume saving; pm2-logrotate already bounds size.</div>
-
-      <div class="callout"><strong>OQ5 — Historical route hardcodes the prod web file.</strong> <code>logs/historical/route.ts:12</code> always reads <code>mission-control-out.log</code> — so even the <em>web</em> historical view is wrong on the dev tier (and the “fix” here would inherit that). <em>Options:</em> (a) fix it to pick the file by <code>NODE_ENV</code> (like the fetcher-health route does) as part of this work; (b) leave it, separate bug. <strong>My take: (a)</strong> — it's in the blast radius and a one-line fix; do it here.</div>
-
-      <div class="callout"><strong>OQ6 — Relationship to a future notification system.</strong> You mentioned a broader notification system coming. Scheduler errors (a job throwing, a tier disabling a job on <code>P2021</code>) are prime alert candidates. <em>Options:</em> (a) keep this purely about visibility, hook alerts later; (b) emit a structured error signal now for the future system to consume. <strong>My take: (a)</strong> — visibility first; the structured logs become the substrate that future system reads.</div>
+      <h3>Plan B, scheduler-only sink</h3>
+      <p>Structured stdout alone does <strong>not</strong> put scheduler logs in the viewer — the ring buffer is per-process. The bridge is a <strong>per-tier shared SQLite store</strong>, <code>data/logs.db</code> (gitignored, WAL, best-effort), the same cross-process pattern as <code>data/llm-cache.db</code> and <code>data/fetcher-health.db</code>. Three properties of the chosen shape:</p>
+      <ul>
+        <li><strong>Scheduler-only sink.</strong> Only the scheduler writes to <code>logs.db</code> (via a <code>subscribeToLogs()</code> listener registered in the scheduler — <em>not</em> inside the shared <code>initLogger</code>, so web never writes). The web in-memory ring + SSE stay exactly as they are: instant, battle-tested, zero new risk to the working path.</li>
+        <li><strong>Live = near-live poll.</strong> The web SSE route keeps streaming its own ring (web rows, instant) and additionally polls <code>logs.db</code> every ~1s for rows past a monotonic cursor (<code>id &gt; lastSeenId</code>), pushing each into the same SSE stream, source-tagged. ~1s lag is invisible for a log tail.</li>
+        <li><strong>Historical = file + store.</strong> The historical route reads web rows from the (per-tier-corrected) PM2 file and scheduler rows from <code>logs.db</code> (a time-window query, ~48h), merges by <code>ts</code>, source-tagged. The scheduler's own PM2 file stays JSON-structured for terminal <code>pm2 logs</code> but is <em>not</em> parsed by the route — <code>logs.db</code> is its in-app source.</li>
+      </ul>
+      <p>Plan C (push-to-web HTTP) was rejected: it couples the two processes at runtime (web must be up; logs vanish on a web rebuild; no persistence), against the best-effort philosophy of the existing shared-SQLite stores. Single-source-of-truth (both processes write <code>logs.db</code>, web reads it for everything) was rejected too — it would put the <em>un-muted</em> web firehose through a synchronous SQLite insert on the request path and add ~1s latency to web logs (full rationale in <a href="#decisions">OQ8</a>).</p>
+      <pre class="mermaid">
+flowchart TB
+  subgraph sched["Scheduler process (MC_SCHEDULER_TIER set)"]
+    smute["verbose gate OFF<br/>no DATABASE / CACHE spam"] --> si["initLogger()<br/>source=scheduler, tier"]
+    si --> sring["ring buffer + listeners"]
+    sring --> sfile["JSON line to PM2 file<br/>(terminal pm2 logs)"]
+    sring --> sdb[("data/logs.db<br/>scheduler-only sink")]
+  end
+  subgraph web["Web process (no MC_SCHEDULER_TIER)"]
+    wi["initLogger()<br/>source=web, tier"] --> wring["ring buffer (in-memory)"]
+    wring --> wsse["/api/system/logs (SSE)"]
+    wi --> wfile["PM2 file"] --> whist["/api/system/logs/historical"]
+  end
+  sdb -->|"~1s poll"| wsse
+  sdb -->|"window query"| whist
+  wsse --> viewer["In-app viewer<br/>All / Web / Scheduler filter"]
+  whist --> viewer
+      </pre>
+      <div class="callout"><strong>Retention.</strong> A daily <code>logs-prune</code> job trims <code>logs.db</code> to 48h, mirroring <code>fetcher-health-prune</code> (slots into <code>scheduler/index.ts</code> JOBS next to it). 48h is a default, easily tunable — post-mute the scheduler's write volume is modest, so a longer window is cheap if “what did the scheduler do this week” turns out to matter.</div>
     </div>
   </details>
 
-  <details class="section">
+  <details class="section" open>
+    <summary><h2 id="decisions">Decisions (resolved Open Questions)</h2></summary>
+    <div class="section-body">
+      <h3>Decision log</h3>
+      <p>All resolved with the user 2026-05-31. OQ1–OQ6 carry over from the proposal (their answers below); OQ7–OQ9 were surfaced during review. Recorded here as the decision log.</p>
+
+      <div class="callout tip"><strong>OQ1 — Scope → in-app visibility, not terminal-only.</strong> Structured PM2 files alone (a legitimate 20-min fix) aren't the goal; the in-app viewer is the whole point. Structured stdout is the <em>foundation</em> (<a href="#foundation">§3</a>), not the deliverable.</div>
+
+      <div class="callout tip"><strong>OQ2 — Transport → live tail via Plan B (shared SQLite).</strong> Not historical-only. <code>data/logs.db</code> bridges scheduler→web; the web SSE route polls it (~1s) for live, the historical route reads a window from it. Matches the house cross-process pattern (<code>llm-cache.db</code>, <code>fetcher-health.db</code>): best-effort, no runtime coupling, survives either process restarting. Plan A (file-merge) is folded in as the historical half; Plan C (push-to-web) rejected.</div>
+
+      <div class="callout tip"><strong>OQ3 — Source tagging → structured <code>source</code> + <code>tier</code> field.</strong> Auto-derived in <code>initLogger</code> from <code>MC_SCHEDULER_TIER</code> (absent ⇒ <code>source=web</code>, tier from <code>NODE_ENV</code>). Text-prefix parsing rejected: only ~6 lines/process carry <code>[SCHEDULER:tier]</code>; all job-body lines are unprefixed (see <a href="#why">§2</a>). The field also feeds the viewer's All · Web · Scheduler filter and is required for the live path (no file boundary to infer source from).</div>
+
+      <div class="callout tip"><strong>OQ4 — Double-emit → keep both lines.</strong> <code>initLogger</code> emits the JSON line <em>and</em> the original plain line; keep both in the PM2 file for readable terminal <code>pm2 logs</code>. The in-app surface no longer depends on the scheduler's <em>file</em> (its in-app source is <code>logs.db</code>), and post-mute (OQ7) the volume is modest — pm2-logrotate already bounds size.</div>
+
+      <div class="callout tip"><strong>OQ5 — Historical hardcoded path → fix in-scope.</strong> <code>historical/route.ts:12</code> always reads the prod web <code>mission-control-out.log</code>; correct it to pick <code>mission-control{,-dev}-out.log</code> by <code>NODE_ENV</code>/tier so the dev viewer reads dev. (The original draft pointed at the old fetcher-health route's <code>NODE_ENV</code> file-selection as the pattern — dropped: that log-parsing route has since been <em>deleted</em> by the now-shipped Fetcher-Health store work. Reuse the per-tier helper that work established, e.g. <code>currentTier()</code> in <code>lib/fetcher-health</code>.)</div>
+
+      <div class="callout tip"><strong>OQ6 — Notification relationship → visibility first.</strong> No alerting in this plan. The structured <code>source</code>/<code>tier</code>/<code>level</code> logs become the <em>substrate</em> a future notification system reads (scheduler errors, a tier disabling a job on <code>P2021</code> are prime alert candidates) — hook that later.</div>
+
+      <div class="callout tip"><strong>OQ7 — Verbose noise in the scheduler → mute at the gate.</strong> (New.) Add <code>&amp;&amp; !MC_SCHEDULER_TIER</code> to the verbose gates in <code>lib/prisma.ts</code> + <code>lib/cache.ts</code> so the scheduler never generates <code>[DATABASE]</code>/<code>[CACHE]</code>/<code>[API Request]</code> (it runs <code>NODE_ENV=production</code> on prod, which would otherwise turn them on — 2913 markers in one log). Web unchanged; <code>DEBUG_PRISMA</code>/<code>DEBUG_VERBOSE_LOG</code> remain the opt-in.</div>
+
+      <div class="callout tip"><strong>OQ8 — <code>logs.db</code> scope → scheduler-only bridge.</strong> (New.) The web ring + SSE stay untouched; <code>logs.db</code> carries only scheduler rows. Single-source rejected: it would route the un-muted web <code>[DATABASE]</code>-per-query firehose through a synchronous <code>better-sqlite3</code> insert on the request path, add ~1s latency to web logs, and widen the best-effort blast radius (a <code>logs.db</code> failure would take down the web tail too). Scheduler-only is the surgical choice and doesn't rebuild a working layer.</div>
+
+      <div class="callout tip"><strong>OQ9 — Fetcher-view boundary → no separate fetcher log view.</strong> (New.) Fetcher <em>monitoring</em> = the <code>FetcherHealthCard</code> (aggregated ok/error/fallback/broken per host, from <code>fetcher-health.db</code>). Raw fetcher <em>log lines</em> = this general viewer, filtered by <code>source=scheduler</code> + free-text. A dedicated fetcher-log view would re-introduce the log-parsing the fetcher-health store exists to retire. Optional future affordance (not v1): a drill-down link from a red host in the card → the logger pre-filtered to that host.</div>
+    </div>
+  </details>
+
+  <details class="section" open>
     <summary><h2 id="tasks">Implementation tasks</h2></summary>
     <div class="section-body">
-    <h3>Checklist (sketch — firms up after §5)</h3>
+    <h3>Build checklist</h3>
 
     <details class="task">
-      <summary><input type="checkbox"><span class="task-id">P1</span><span class="task-title">Easy win — <code>initLogger()</code> in the scheduler</span></summary>
-      <div class="task-body"><p><code>scheduler/index.ts</code>: import + call <code>initLogger()</code> before the <code>JOBS</code> loop (only the logger, not the rest of <code>register()</code>). Restart both scheduler tiers; confirm JSON <code>{ts,msg}</code> lines appear in <code>mission-control-scheduler-{dev,prod}-out.log</code>.</p></div>
+      <summary><input type="checkbox"><span class="task-id">P1</span><span class="task-title">Structured logger in the scheduler + <code>source</code>/<code>tier</code> + mute</span></summary>
+      <div class="task-body">
+        <p><strong>(a)</strong> <code>lib/logger.ts</code>: add <code>source</code> + <code>tier</code> to <code>LogEntry</code> and the JSON envelope (<code>addLog</code> @ <code>:83</code> and <code>addRawLog</code>); auto-derive once at init from <code>MC_SCHEDULER_TIER</code> (fallback <code>NODE_ENV</code> → <code>{prod,dev}</code>). Old lines without the fields still parse.</p>
+        <p><strong>(b)</strong> <code>scheduler/index.ts</code>: <code>import { initLogger }</code> + call it before the <code>JOBS</code> loop — only <code>initLogger()</code>, not the rest of <code>register()</code>.</p>
+        <p><strong>(c)</strong> <code>lib/prisma.ts:26</code> + <code>lib/cache.ts:40</code>: add <code>&amp;&amp; !process.env.MC_SCHEDULER_TIER</code> to the verbose gate (OQ7); leave <code>DEBUG_*</code> overrides.</p>
+        <p><strong>Verify:</strong> restart both scheduler tiers; confirm <code>{ts,level,msg,source,tier}</code> lines and the <em>absence</em> of <code>[DATABASE]</code>/<code>[CACHE]</code> spam in <code>mission-control-scheduler-{dev,prod}-out.log</code>.</p>
+      </div>
     </details>
 
     <details class="task">
-      <summary><input type="checkbox"><span class="task-id">P2</span><span class="task-title">Historical-merge (if OQ1=b, OQ2=A)</span></summary>
-      <div class="task-body"><p><code>app/api/system/logs/historical/route.ts</code>: read + merge the scheduler PM2 file(s) with the web file, sorted by <code>ts</code>, source-tagged; fix the hardcoded prod-web path to pick by tier (OQ5).</p></div>
+      <summary><input type="checkbox"><span class="task-id">P2</span><span class="task-title">The <code>logs.db</code> store (scheduler-only sink)</span></summary>
+      <div class="task-body">
+        <p>New <code>lib/logs-store.ts</code>, modeled on <code>lib/ai/llm-cache.ts</code> / the fetcher-health store: guarded dynamic <code>better-sqlite3</code> import (in <code>serverExternalPackages</code>), WAL, <code>data/logs.db</code>, table <code>LogLine(id INTEGER PK AUTOINCREMENT, ts, level, source, tier, msg)</code>. Best-effort: any store failure degrades to a no-op (no throw on the logging path). Exposes <code>insert(entry)</code>, <code>since(cursorId, limit)</code>, <code>window(fromMs, toMs)</code>, <code>prune(cutoff)</code>.</p>
+        <p>Register a <code>subscribeToLogs(insert)</code> listener <strong>in the scheduler only</strong> (after <code>initLogger()</code> in <code>scheduler/index.ts</code>) — never inside the shared <code>initLogger</code>, so the web process never writes. Add <code>data/logs.db*</code> to <code>.gitignore</code>.</p>
+      </div>
     </details>
 
     <details class="task">
-      <summary><input type="checkbox"><span class="task-id">P3</span><span class="task-title">Live cross-process tail (deferred — OQ2 B/C)</span></summary>
-      <div class="task-body"><p>Only if real-time scheduler tailing is wanted: shared-SQLite ring buffer or push-to-web into the existing SSE stream.</p></div>
+      <summary><input type="checkbox"><span class="task-id">P3</span><span class="task-title">Live — web SSE merges scheduler rows</span></summary>
+      <div class="task-body">
+        <p><code>app/api/system/logs/route.ts</code>: keep the in-memory ring + <code>subscribeToLogs</code> (web rows, instant). Add a <code>setInterval(~1000ms)</code> poll of <code>logs.db</code> for <code>id &gt; cursor</code>, enqueueing each as a <code>'new'</code> SSE event (source-tagged); seed the cursor from the latest id at connect. Include recent <code>logs.db</code> rows in the <code>'initial'</code> payload, merged with the web ring and sorted by <code>ts</code>. Clear the interval on <code>req.signal</code> abort.</p>
+      </div>
     </details>
 
     <details class="task">
-      <summary><input type="checkbox"><span class="task-id">P4</span><span class="task-title">Verify</span></summary>
-      <div class="task-body"><p>Scheduler activity visible in the in-app viewer; both tiers correct; no double-counting; terminal <code>pm2 logs</code> still readable.</p></div>
+      <summary><input type="checkbox"><span class="task-id">P4</span><span class="task-title">Historical — per-tier web file + scheduler from <code>logs.db</code></span></summary>
+      <div class="task-body">
+        <p><code>app/api/system/logs/historical/route.ts</code>: fix <code>pm2LogPath()</code> to select <code>mission-control{,-dev}-out.log</code> by <code>NODE_ENV</code> (OQ5). Additionally query <code>logs.db</code> for the requested window, merge with the parsed web-file entries, sort by <code>ts</code>, keep the existing <code>level</code>/<code>from</code>/<code>to</code> filters + <code>.slice(-1000)</code>. Carry <code>source</code>/<code>tier</code> through.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary><input type="checkbox"><span class="task-id">P5</span><span class="task-title">Viewer — source/tier badge + All · Web · Scheduler filter</span></summary>
+      <div class="task-body">
+        <p><code>components/views/InternalView.tsx</code>: thread <code>source</code>/<code>tier</code> through the live (<code>sysLogs</code>) and historical (<code>historicalLogs</code>) state + types; render a small source/tier badge per row; add an <strong>All · Web · Scheduler</strong> segmented filter over the log card (mirrors the Fetcher-Health card filter). Preserve the existing reverse-order + “load older” behavior and the SSE reconnect/backoff.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary><input type="checkbox"><span class="task-id">P6</span><span class="task-title">Prune job</span></summary>
+      <div class="task-body">
+        <p>New <code>scheduler/jobs/logs-prune.ts</code>, modeled on <code>fetcher-health-prune.ts</code>: daily, delete <code>logs.db</code> rows older than 48h; no-op when the store failed to init on this tier. Register in <code>scheduler/index.ts</code> JOBS next to <code>fetcher-health-prune</code>.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary><input type="checkbox"><span class="task-id">P7</span><span class="task-title">Verify end-to-end</span></summary>
+      <div class="task-body">
+        <p>Both tiers: scheduler activity visible in the in-app viewer (live ~1s + historical); the All/Web/Scheduler filter works; no <code>[DATABASE]</code> spam from the scheduler; the <strong>web</strong> live tail unchanged (instant); terminal <code>pm2 logs</code> still readable; <code>logs.db</code> prunes at 48h. Add a hermetic smoke for the store (<code>insert</code> → <code>since</code>/<code>window</code> → <code>prune</code>) and wire it into <code>pre-push.sh</code>.</p>
+      </div>
     </details>
 
     </div>
