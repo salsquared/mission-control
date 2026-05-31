@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Fetcher Health — Dedicated Store</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Fetcher Health — Dedicated Store</h1>
+  <p class="subtitle">The <strong>Fetcher Health</strong> card on the Internal Systems dash is structurally unable to show what it claims to. It derives per-host counts by <strong>regex-parsing one PM2 log file on demand</strong> — the <em>web</em> process's — so it never sees the continuous background crawling (which runs in the <em>scheduler</em> processes), empties its per-host table after an hour of web quiet while the 1-day badge still reads 100%, and has broken repeatedly on log-format drift. This plan replaces the log-parsing with a small <strong>SQLite store every process writes to at the moment of fetch</strong> — reusing the best-effort cross-<em>process</em> pattern already proven by <code>data/llm-cache.db</code> (though, unlike that one, this store is per-<em>tier</em> by data — OQ5). Same plumbing, but a typed table you query instead of unstructured text you regex.</p>
+
+  <div class="callout tip"><strong>STATUS — FULLY SCOPED, ready to implement.</strong> No code written yet. <strong>All 16 open questions decided (2026-05-31) and folded throughout §4–§8 + §10.</strong> Headlines: cache hits don't count as health and there's no 5th bucket (OQ1/OQ3 — the existing <code>cacheStats</code> tracker owns hit/miss); record the real response <em>outcome</em>, a 500 is an <code>error</code>, four buckets <code>ok / error / fallback / broken</code> (OQ2/OQ3); per-tier store (OQ5) with a web/scheduler source filter on the card (OQ4); raw events, 48h retention, direct sync write (OQ7/OQ8/OQ9); hostname grouping (OQ6); near-live TTL + clickable window badges + Error column (OQ10/OQ2); start fresh, fully delete the old log-parsing path (OQ12/OQ13); drop the dead roll-up placeholder (OQ11); just-color, no notifications in v1 (OQ15); card scope confirmed (OQ16). Scheduler structured logging (OQ14) is broken out into <a href="./scheduler-structured-logs.html">its own doc</a>. <strong>Next:</strong> work the §10 checklist.</div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#symptom">The symptom</a></li>
+      <li><a href="#evidence">Why it's broken — from the code</a></li>
+      <li><a href="#decision">The decision — logs vs. a store</a></li>
+      <li><a href="#design">Proposed design — the shared store</a></li>
+      <li><a href="#chokepoints">Recording — the fetch chokepoints</a></li>
+      <li><a href="#route">The route + card rewrite</a></li>
+      <li><a href="#prune">Retention &amp; the prune job</a></li>
+      <li><a href="#testing">Testing</a></li>
+      <li><a href="#questions">Open Questions</a></li>
+      <li><a href="#tasks">Implementation tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="symptom">The symptom</h2></summary>
+    <div class="section-body">
+      <h3>What the user sees</h3>
+      <p>The card shows <strong>“No fetcher activity in the last hour”</strong> (and the 6h badge reads <code>—</code>), while the <strong>1d badge simultaneously reads 100%</strong>. Meanwhile the in-app log viewer shows fetches happening constantly. The card looks like it “was keeping track until something happened.”</p>
+      <p>Nothing happened. The card is doing exactly what it was built to do — it's just measuring the wrong process over the wrong window, off a stale snapshot. The contradiction is baked into the design, not a transient glitch.</p>
+      <div class="callout"><strong>Two distinct defects produce this.</strong> (1) <em>Wrong source</em> — it reads only the web process's log, never the scheduler's, where the continuous crawling lives. (2) <em>Window mismatch</em> — the per-host table is built from the last <strong>1 hour</strong> only, but the badges span 1h / 6h / 1d, so the table empties long before the 1d badge does. Both are confirmed against live logs in §2.</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="evidence">Why it's broken — from the code</h2></summary>
+    <div class="section-body">
+      <h3>How the card is computed today</h3>
+      <p><code>app/api/system/fetcher-health/route.ts</code> is <strong>lazy and log-derived</strong>. On each request (behind <code>withCache(handler, 3600)</code>) it:</p>
+      <ol>
+        <li>Picks <strong>one</strong> PM2 log file by <code>NODE_ENV</code> — <code>mission-control-out.log</code> (prod) or <code>mission-control-dev-out.log</code> (dev) — via <code>pm2LogPath()</code>.</li>
+        <li>Reads the whole file, <code>JSON.parse</code>s each line, keeps <code>{ts, msg}</code> entries within 24h.</li>
+        <li>Classifies by message prefix: <code>[EXTERNAL API]</code> / <code>[CACHE HIT]</code> / <code>[CACHE MISS]</code> → <strong>ok</strong>; <code>[CACHE FALLBACK]</code> → <strong>fallback</strong>; <code>[SCRAPER BROKEN]</code> → <strong>broken</strong>.</li>
+        <li>Extracts a host via <code>parseHostFromLog()</code> (a regex over the message).</li>
+        <li>Builds <code>totals</code> for 1h/6h/1d, but the per-host <code>map</code> <strong>only from entries in the last 1 hour</strong> (<code>route.ts:96</code>).</li>
+      </ol>
+      <p>The client (<code>FetcherHealthCard.tsx</code>) then caches that with <code>staleTime: 1h</code> + <code>gcTime: 1h</code> and <strong>no refetch on focus/reconnect</strong>. So a displayed snapshot can be <strong>~1–2h stale</strong> with nothing refreshing it.</p>
+
+      <h3>Defect 1 — it reads the wrong process</h3>
+      <p>The “continuous fetching” is watchlist crawls + news polling, and those run in the <strong>scheduler</strong> processes — not the web process the route reads. I reproduced the route's exact logic against every relevant log file (snapshot at 22:17 UTC, 2026-05-31):</p>
+      <table>
+        <thead><tr><th>Log file</th><th>Card reads it?</th><th>Fetch lines (24h)</th><th>What the card would show</th></tr></thead>
+        <tbody>
+          <tr><td><code>mission-control-out.log</code> (prod web, :3101)</td><td>✅ yes</td><td><strong>0</strong></td><td>all windows <code>—</code></td></tr>
+          <tr><td><code>mission-control-dev-out.log</code> (dev web, :4101)</td><td>✅ yes</td><td>315</td><td>1h/6h/1d all 100%, 30 hosts</td></tr>
+          <tr><td><code>mission-control-scheduler-prod-out.log</code></td><td>❌ no</td><td><strong>2913 markers</strong>, unparseable</td><td>—</td></tr>
+          <tr><td><code>mission-control-scheduler-dev-out.log</code></td><td>❌ no</td><td>many, unparseable</td><td>—</td></tr>
+        </tbody>
+      </table>
+      <p>The prod scheduler log alone holds <strong>2913</strong> <code>[EXTERNAL API]</code>/<code>[CACHE]</code> markers in the current file — all invisible to the card. And they're <em>doubly</em> invisible: the scheduler is a plain <code>tsx</code> process, so it never runs <code>initLogger()</code> (that monkey-patch lives in <code>instrumentation.ts</code>, the <strong>Next.js</strong>-only startup hook). Its lines are <strong>plain text with no per-line timestamp</strong> — the route's <code>JSON.parse</code> throws them all out. Even pointed at the scheduler log, the route would find zero parseable lines.</p>
+      <pre class="mermaid">
+flowchart TB
+  subgraph web["Web process (Next.js) — has initLogger()"]
+    wf["loggedFetch / withCache"] -->|"console.info JSON {ts,msg}"| wl["mission-control&#8209;out.log"]
+  end
+  subgraph sched["Scheduler process (tsx) — NO initLogger()"]
+    sf["watchlist crawls<br/>news polling"] -->|"plain text, no ts"| sl["scheduler&#8209;prod&#8209;out.log"]
+  end
+  route["/api/system/fetcher-health"] -->|"reads ONE file by NODE_ENV"| wl
+  route -. "never reads" .-> sl
+  route --> card["FetcherHealthCard"]
+  sl -. "2913 markers — unparseable, unread" .-> route
+      </pre>
+
+      <h3>Defect 2 — the table window is shorter than the badges</h3>
+      <p>The per-host table is gated on <code>tsMs &gt;= cutoffs['1h']</code> (<code>route.ts:96</code>); the badges aggregate 1h/6h/1d. So when the web process goes quiet for an hour, the table empties — firing the <strong>“No fetcher activity in the last hour”</strong> empty state (<code>FetcherHealthCard.tsx:155</code>) — while a 1d badge can still read 100% off older entries. That <em>is</em> the exact contradiction the user reported.</p>
+
+      <h3>Defect 3 — log fragility (the recurring tax)</h3>
+      <p>The route is layered with scar tissue from past breakage: <code>parseHostFromLog()</code> carries comments about the old loose <code>(\S+\.\S+)</code> regex matching <code>papers...</code>, <code>api...</code>, and arXiv IDs like <code>2506.13777</code> as bogus “hosts.” It also only reads the <strong>current</strong> <code>out.log</code> — PM2-logrotate rolls daily into dated files, so the “1d” window already collapses to near-empty at every midnight rotation. And a verbosity quirk means “ok” means different things per tier: <code>[CACHE HIT]</code>/<code>[CACHE MISS]</code> are gated off in dev (<code>cache.ts:38</code>), so the dev card counts only <code>[EXTERNAL API]</code> while prod also counts cache hits.</p>
+
+      <h3>Defect 4 — “ok” counts the attempt, not the outcome</h3>
+      <p><code>loggedFetch()</code> emits its <code>[EXTERNAL API]</code> line <strong>before</strong> the call (<code>external-fetch.ts:26</code> — <code>console.info(...)</code> then <code>return fetch(...)</code>), so the card counts a fetch as “ok” the instant it's <em>attempted</em> — regardless of whether the upstream returned 200, 429, 500, or the connection threw. A host that's down and returning 500s for everything still shows <strong>100% healthy</strong>. The card answers “did we try?” when the question is “did it work?” — and it conflates a true upstream touch with a cache hit (which never touched the upstream at all). <em>This is the defect the redesign's recording semantics (§5) exist to fix.</em></p>
+
+      <div class="callout"><strong>Note — there's already a placeholder for this.</strong> <code>scheduler/index.ts:138</code> reads <code>// Future: ... fetcher-health-roll (1 min).</code> A dedicated fetcher-health mechanism was always the intended direction; this plan is that mechanism (minus the roll-up job — see <a href="#questions">OQ11</a>).</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="decision">The decision — logs vs. a store</h2></summary>
+    <div class="section-body">
+      <h3>The reframe</h3>
+      <p>The real choice is <strong>not</strong> “logs vs. a new system.” The card <em>already</em> uses a shared store for cross-process aggregation — the PM2 log file is the only thing that lets the web route see the scheduler's fetches (and it can't even do that today). The question is just: <strong>should that shared store be unstructured text you regex, or a structured table you query?</strong></p>
+      <p>Framed that way, a store isn't extra architecture — it's the <em>same</em> architecture made reliable. And the overhead is small here, because the pattern is already running in prod:</p>
+      <ul>
+        <li><code>data/llm-cache.db</code> is a cross-tier, best-effort, WAL SQLite that <strong>both web tiers and both schedulers already open and write to</strong> (<code>lib/ai/llm-cache.ts</code>). The hard part — cross-process writes from the scheduler — is solved and live.</li>
+        <li><code>better-sqlite3</code> is already a dep, already in <code>serverExternalPackages</code>, already loaded via a guarded dynamic <code>import()</code> that degrades to a no-op on ABI mismatch.</li>
+        <li><code>scheduler/jobs/llm-cache-prune.ts</code> is the housekeeping precedent — a daily, idempotent, both-tiers prune.</li>
+      </ul>
+      <div class="callout tip"><strong>Why not just patch the logs (Option 1)?</strong> It would make the card <em>correct</em> (read scheduler + web, align windows) and reuse existing logging for free — a legitimate, cheaper choice. But it keeps monitoring permanently coupled to logging format, which is the documented source of every past bug here, and it can't cleanly fix the log-rotation window. Given the chokepoints are few and the SQLite plumbing is copy-paste-shaped, the store ends the fragility class rather than patching this instance. <strong>This doc proposes the store; Option 1 stays the fallback if §9 reveals the store isn't worth it.</strong></div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="design">Proposed design — the shared store</h2></summary>
+    <div class="section-body">
+      <h3>A dedicated SQLite file — not the Prisma app DB</h3>
+      <p>New module <code>lib/fetcher-health/store.ts</code>, structurally a sibling of <code>lib/ai/llm-cache.ts</code>: a memoized async <code>initStore()</code> opening <code>data/fetcher-health.db</code> (WAL, <code>busy_timeout</code>, <code>synchronous=NORMAL</code>) via guarded dynamic <code>import("better-sqlite3")</code>, with the same <strong>best-effort, never-load-bearing</strong> contract — any init/write failure degrades to a silent no-op, never throws on the fetch path.</p>
+      <div class="callout"><strong>Why a separate file and not a Prisma table in <code>dev.db</code>/<code>prod.db</code>.</strong> Per-fetch rows don't belong in the app DBs for two concrete reasons: (1) <code>lib/prisma.ts</code>'s <code>$allOperations</code> middleware <code>console.info</code>s <em>every</em> query (on in prod), so an insert per fetch would flood the in-app log viewer with thousands of <code>[DATABASE] Executing create on FetchEvent</code> lines/day; (2) <code>prisma/prod.db</code> is backed up as <strong>mailbox-equivalent</strong> (it holds the Gmail refresh token), and ephemeral 48h telemetry has no business in that encrypted, Drive-mirrored snapshot. A gitignored <code>data/*.db</code> sidesteps both and keeps best-effort isolation clean (a store hiccup can't break a fetch). We reuse the <code>llm-cache.db</code> <em>pattern</em> — cross-<em>process</em> best-effort better-sqlite3, written by the web <em>and</em> scheduler process of a tier — but this store is per-<em>tier</em> by data (OQ5): one file, a <code>tier</code> column, reads filtered to the serving tier — <strong>not</strong> cross-tier-merged like the LLM cache.</div>
+      <p><strong>What gets recorded (OQ1/OQ2/OQ3 decided):</strong> a row only for a <strong>real upstream touch</strong> and its <strong>outcome</strong> — never a cache hit. Four kinds:</p>
+      <ul>
+        <li><code>ok</code> — upstream returned 2xx/3xx.</li>
+        <li><code>error</code> — upstream returned non-2xx (a 500/429 is an error) <em>or</em> the request threw.</li>
+        <li><code>fallback</code> — served last-good stale data after the handler failed (<code>serveStale</code>).</li>
+        <li><code>broken</code> — a scraper returned 0 items (<code>ScraperBrokenError</code>).</li>
+      </ul>
+      <p>Cache <strong>hits</strong> are deliberately <em>not</em> stored — a hit never touched the upstream, so it isn't fetcher health, and hit/miss rate is already tracked by <code>cacheStats</code> in <code>lib/cache.ts</code> (surfaced on <code>/api/system</code>). No 5th <code>cache</code> bucket; if the card wants hit-rate for context it reads that existing surface (see <a href="#questions">OQ3</a>).</p>
+      <p><strong>Raw-event table</strong> (one row per fetch outcome — see <a href="#questions">OQ7</a> for raw-vs-bucketed):</p>
+      <pre><code class="language-typescript">CREATE TABLE IF NOT EXISTS fetch_event (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts     INTEGER NOT NULL,             -- Date.now() at the fetch
+    host   TEXT    NOT NULL,             -- e.g. "boards.greenhouse.io"
+    kind   TEXT    NOT NULL,             -- 'ok' | 'error' | 'fallback' | 'broken'  (cache HITS not recorded)
+    tier   TEXT    NOT NULL,             -- 'dev' | 'prod'  — card filters to the serving tier (OQ5 decided)
+    source TEXT                          -- process: 'web' | 'scheduler'  (OQ4: card defaults to union)
+);
+CREATE INDEX IF NOT EXISTS idx_fetch_event_ts ON fetch_event(ts);</code></pre>
+      <p>The public surface is two calls:</p>
+      <pre><code class="language-typescript">export type FetchKind = 'ok' | 'error' | 'fallback' | 'broken';
+
+// Hot path — fire-and-forget, swallows every error. tier/source read from env
+// (MC_SCHEDULER_TIER / NODE_ENV) inside the store, not passed by every caller.
+export function recordFetchOutcome(host: string, kind: FetchKind): void;
+
+// Read path — GROUP BY, called by the route. Filtered to the serving tier (OQ5),
+// optionally scoped to a source for the card's All/Web/Scheduler filter (OQ4).
+export type Source = 'web' | 'scheduler';
+export async function readFetcherHealth(nowMs: number, tier: Tier, source?: Source): Promise<{
+  health: Record&lt;string, HealthEntry&gt;;   // per-host, over the selected window
+  totals: Record&lt;WindowKey, HealthEntry&gt;; // 1h / 6h / 1d   — each {ok,error,fallback,broken}
+}>;</code></pre>
+      <pre class="mermaid">
+flowchart TB
+  subgraph webp["Web (dev + prod)"]
+    wf["loggedFetch · withCache · serveStale"]
+  end
+  subgraph schedp["Scheduler (dev + prod)"]
+    sf["job-watcher crawls · custom fetchers · liveness probes"]
+  end
+  wf -->|"recordFetchOutcome(host, kind)"| db[("data/fetcher-health.db<br/>(WAL, shared, best-effort)")]
+  sf -->|"recordFetchOutcome(host, kind)"| db
+  route["/api/system/fetcher-health"] -->|"readFetcherHealth() — GROUP BY"| db
+  route --> card["FetcherHealthCard"]
+      </pre>
+      <p>Reads are a windowed aggregate, cheap and rotation-proof:</p>
+      <pre><code class="language-sql">SELECT host, kind, ts
+FROM fetch_event
+WHERE ts &gt;= :cutoff1d AND tier = :servingTier;   -- per-tier (OQ5)
+-- The route buckets each row into 1h/6h/1d by its ts (so the four counts
+-- per window come from one read); the per-host table uses the user-selected
+-- window instead of a hard-coded 1h (fixes Defect 2). At a few thousand
+-- rows/24h this is trivially cheap; pre-aggregating in SQL is a later option.</code></pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="chokepoints">Recording — the fetch chokepoints</h2></summary>
+    <div class="section-body">
+      <h3>Where <code>recordFetchOutcome()</code> goes</h3>
+      <p>The same handful of places that already emit the log lines the route parses today — so this is re-pointing existing instrumentation, not scattering new calls:</p>
+      <table>
+        <thead><tr><th>Chokepoint</th><th>File</th><th>Records</th></tr></thead>
+        <tbody>
+          <tr><td><code>loggedFetch()</code> — await the response</td><td><code>lib/external-fetch.ts:23</code></td><td><code>ok</code> on 2xx/3xx, <code>error</code> on non-2xx <em>or</em> a thrown request (host from the URL). <strong>The single source of truth for upstream outcomes.</strong></td></tr>
+          <tr><td><code>logExternalCall()</code> — SDK pre-flight marker</td><td><code>lib/external-fetch.ts:36</code></td><td><code>ok</code> (attempt); SDK callers can report failures via a paired call — deferred (see note)</td></tr>
+          <tr><td>cache <strong>hit</strong></td><td><code>lib/cache.ts:320,341</code></td><td><strong>not recorded</strong> — not an upstream touch; <code>cacheStats</code> already owns hit-rate (OQ1)</td></tr>
+          <tr><td>cache <strong>miss</strong></td><td><code>lib/cache.ts:354</code></td><td><strong>not recorded here</strong> — the miss runs the handler, whose real upstream call is captured by <code>loggedFetch</code> (recording here too would double-count)</td></tr>
+          <tr><td><code>serveStale()</code></td><td><code>lib/cache.ts:414</code></td><td><code>fallback</code></td></tr>
+          <tr><td><code>ScraperBrokenError</code></td><td><code>lib/fetchers/errors.ts:3</code></td><td><code>broken</code></td></tr>
+        </tbody>
+      </table>
+      <p>Recording lives at <code>loggedFetch</code> (the real fetch, where the <code>Response</code> status is known) rather than the cache layer — so the per-call outcome is accurate and there's no double-counting. <code>loggedFetch</code> / <code>logExternalCall</code> already fan out across the fetchers (<code>rss</code>, <code>scrape</code>, <code>snapi</code>, <code>google-news</code>, custom), <code>lib/postings/liveness.ts</code>, and the research/space API routes — so wiring these two helpers covers both the web routes <em>and</em> the scheduler crawls in one place.</p>
+      <div class="callout warn"><strong>Gap to close — the finance routes bypass <code>loggedFetch</code>.</strong> <code>app/api/finance/route.ts:33-36</code> and <code>app/api/finance/history/route.ts</code> hit Pulsar with <strong>bare <code>fetch()</code></strong> and rely on <code>withCache</code>'s <code>upstreamHost</code> (the cache line) for host attribution. Since we stop recording cache lines (OQ1), those hosts would vanish from the card unless converted. <strong>Fix: route the finance fetches through <code>loggedFetch</code></strong> (a ~1-line swap per call) — added as task P2.1. <code>company-news</code> needs no change: it delegates to <code>adapter.fetch()</code>, and the registry fetchers (<code>lib/companies/*</code>, <code>lib/fetchers/*</code>) already use <code>loggedFetch</code>.</div>
+      <div class="callout"><strong>SDK markers (<code>logExternalCall</code>) record an attempt only.</strong> Unlike <code>loggedFetch</code>, the SDK-wrapping helper never sees a <code>Response</code>, so it can't know 2xx-vs-500. v1 records <code>ok</code> on the marker; a per-caller upgrade (wrap the SDK call, record <code>error</code> on throw) is a small follow-up, not v1. Most outcome-bearing traffic flows through <code>loggedFetch</code> anyway.</div>
+      <div class="callout tip"><strong>Host extraction moves to the source.</strong> Today the host is recovered by regex from a rendered log string (fragile — Defect 3). At the chokepoint we have the real <code>URL</code> in hand — so <code>recordFetchOutcome</code> takes a clean hostname and <code>parseHostFromLog()</code> is deleted entirely.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="route">The route + card rewrite</h2></summary>
+    <div class="section-body">
+      <h3>Route reads the store, not the log</h3>
+      <p><code>app/api/system/fetcher-health/route.ts</code> drops all file I/O + regex parsing and calls <code>readFetcherHealth(Date.now(), servingTier)</code> — <code>servingTier</code> from <code>NODE_ENV</code> so each tier's card shows only its own fetches (OQ5). The <code>withCache</code> wrapper can shrink dramatically (the store read is already &lt;1ms) — <a href="#questions">OQ9</a> covers the new TTL. The <code>ENOENT</code> “PM2 log file not found” branch is replaced by a “store disabled” note when init failed.</p>
+      <div class="callout warn"><strong>Response shape DOES change now (OQ3 → 4 buckets).</strong> <code>FetcherHealthEntrySchema</code> in <code>lib/schemas/system.ts</code> gains an <code>error</code> field (<code>{ ok, error, fallback, broken }</code>), so the <code>health</code> map + all three <code>totals</code> windows carry it. That's a contract change: regenerate <code>docs/apis.html</code> (the <code>api-docs-smoke</code> pre-push gate will fail otherwise), and the card grows an <strong>Error</strong> column. Earlier draft said “shape unchanged” — that was before the <code>error</code> bucket was decided.</div>
+      <h3>Card — source filter, error column, live window</h3>
+      <p>Three card changes, all decided:</p>
+      <ul>
+        <li><strong>Source filter (OQ4):</strong> a segmented <strong>All · Web · Scheduler</strong> control — the config-driven segmented-control pattern from <code>ApplicationsView</code> — scopes the badges + per-host table; flipping it refetches with a <code>source</code> param. So you can tell whether it's the live dashboard's fetches or the background crawls that are healthy/broken.</li>
+        <li><strong>Error column (OQ2):</strong> a red <strong>Error</strong> column beside Broken so 500s/timeouts are visible at a glance; the health-% denominator becomes <code>ok / (ok + error + fallback + broken)</code>.</li>
+        <li><strong>Live window (OQ10):</strong> the three badges (1h/6h/1d) become <em>clickable</em> and drive the per-host table window — killing the “table empty but 1d=100%” contradiction — and the client cache drops to near-live (~30s) with focus-refetch, so a fresh snapshot actually reflects recent fetches.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="prune">Retention &amp; the prune job</h2></summary>
+    <div class="section-body">
+      <h3>Self-bounding by a daily prune</h3>
+      <p>We only ever query the last 24h, so the table self-bounds: a new <code>scheduler/jobs/fetcher-health-prune.ts</code> (mirroring <code>llm-cache-prune.ts</code>) deletes <code>fetch_event</code> rows older than <strong>48h</strong> (OQ8 decided), registered in <code>scheduler/index.ts</code> <code>JOBS</code> as a daily, both-tiers, idempotent, best-effort job. At a few thousand fetches/day with a 2-day window, the table stays small (single-digit MB).</p>
+      <div class="callout tip"><strong>Best-effort all the way down.</strong> Like the LLM cache: if the store can't init on a tier (ABI mismatch, unwritable path), <code>recordFetchOutcome</code> is a no-op, <code>readFetcherHealth</code> returns empty with a note, and the prune reports <code>disabled: true</code>. The fetch path never sees an error from this subsystem.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="testing">Testing</h2></summary>
+    <div class="section-body">
+      <h3>Hermetic smoke</h3>
+      <p>A new <code>scripts/tests/hermetic/fetcher-health-store-smoke.ts</code> (modeled on <code>llm-cache-smoke.ts</code>, using a temp <code>FETCHER_HEALTH_PATH</code> + a reset seam): seed events across the 1h/6h/1d boundaries, assert per-host counts and window totals across <strong>all four buckets</strong> (<code>ok/error/fallback/broken</code>), assert the <strong>per-tier filter</strong> (a <code>dev</code> row never shows in a <code>prod</code> read), assert the prune drops only old rows, and assert a disabled store degrades to empty without throwing. Add a focused check that <code>loggedFetch</code> maps a 500 to <code>error</code> and a 200 to <code>ok</code> (the OQ2 contract). Wired into <code>pre-push.sh</code>'s <code>SUITES</code>.</p>
+      <div class="callout warn"><strong><code>docs/apis.html</code> MUST be regenerated</strong> (<code>npm run gen:api-docs</code>) because the <code>error</code> bucket changes the fetcher-health response schema — the <code>api-docs-smoke</code> hermetic gate fails on a stale <code>apis.html</code>. Commit the regenerated file alongside the schema change.</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <p>These shape the design before any code. Each has my recommendation, but they're genuinely yours to call — flag any you'd decide differently.</p>
+
+      <h3>Semantics — what does "healthy" even mean?</h3>
+
+      <div class="callout tip"><strong>OQ1 — ✓ DECIDED: cache hits do NOT count as health.</strong> A hit means we did <em>not</em> touch the upstream, so it isn't a health signal — record only real upstream touches. Hit/miss rate stays owned by the existing <code>cacheStats</code> tracker (<code>lib/cache.ts</code> → <code>/api/system</code>), so nothing is lost. <em>(Folded into §4, §5.)</em></div>
+
+      <div class="callout tip"><strong>OQ2 — ✓ DECIDED: record the real response outcome.</strong> A 500/429 is an <code>error</code>, not an <code>ok</code>. <code>loggedFetch</code> awaits the response and maps 2xx/3xx → <code>ok</code>, non-2xx or a thrown request → <code>error</code>. <em>(Clarification on your “is it just tracking whether we get a response at all?” — today it's worse than that: it logs <strong>before</strong> the call, so it counts the <em>attempt</em>, not even the response. The fix records the actual outcome. Folded into §2 Defect 4, §5.)</em></div>
+
+      <div class="callout tip"><strong>OQ3 — ✓ DECIDED: four buckets, no 5th <code>cache</code> bucket.</strong> <code>ok / error / fallback / broken</code> — error and broken stay distinct (upstream-returned-bad vs scraper-got-nothing). On your 5th-bucket idea: <strong>we don't store cache hits at all</strong> — the <code>cacheStats</code> tracker already counts hit/miss (so a stored <code>cache</code> bucket would double-book it), and a hit isn't a fetcher touch. <strong>Sub-decision ✓:</strong> cache hit-rate stays <em>off</em> this card (default) — it remains on the existing cache-telemetry surface, not duplicated here. <em>(Folded into §4, §6.)</em></div>
+
+      <h3>Scope &amp; granularity</h3>
+
+      <div class="callout tip"><strong>OQ4 — ✓ DECIDED: surface the web vs. scheduler distinction.</strong> The card gets a segmented filter <strong>All · Web · Scheduler</strong> (reusing the config-driven segmented-control pattern from <code>ApplicationsView</code>) that scopes the badges + per-host table; the <code>source</code> column (already in the §4 schema) drives it. Lets you see at a glance whether it's the live dashboard's fetches or the background crawls that are healthy/broken — they fail for different reasons. <em>(Folded into §4, §6, §10.)</em></div>
+
+      <div class="callout tip"><strong>OQ5 — ✓ DECIDED: per-tier.</strong> Record a <code>tier</code> column; each tier's card shows only its own fetches (prod card = prod fetches), avoiding the 2× inflation from both schedulers crawling the same sources. <em>(Folded into §4 schema, §6 route.)</em></div>
+
+      <div class="callout tip"><strong>OQ6 — ✓ DECIDED: group by hostname.</strong> Raw hostname (<code>boards.greenhouse.io</code>, <code>api.lever.co</code>) — unambiguous, zero extra wiring, same as today. Revisit a logical-label grouping (<code>greenhouse</code>, <code>linkedin</code>) only if the host list reads noisily. <em>(Not to be confused with the <code>source</code> = web/scheduler column from OQ4 — different axis.)</em></div>
+
+      <h3>Storage mechanics</h3>
+
+      <div class="callout tip"><strong>OQ7 — ✓ DECIDED: raw events.</strong> One row per fetch outcome — simple, flexible windows, pruned to 48h (OQ8). The §4 schema is this. <em>(Folded into §4.)</em></div>
+
+      <div class="callout tip"><strong>OQ8 — ✓ DECIDED: 48h retention.</strong> One day of slack past the 24h query window — survives a missed prune tick, trivial disk. <em>(Folded into §7.)</em></div>
+
+      <div class="callout tip"><strong>OQ9 — ✓ DECIDED: direct sync write.</strong> <code>recordFetchOutcome</code> writes each call straight through (matches <code>llm-cache</code>); negligible at our volume, and watchlist bursts are already 3–10s-paced. Revisit only if it surfaces in <code>perf-monitor</code>. <em>(Folded into §4, §5.)</em></div>
+
+      <h3>Rollout &amp; the route's cache</h3>
+
+      <div class="callout tip"><strong>OQ10 — ✓ DECIDED: near-live + clickable window.</strong> Drop to ~30–60s server <code>withCache</code> + ~30s client <code>staleTime</code> with refetch-on-focus (the store read is &lt;1ms, so the old hour-long caches were only there to avoid re-parsing a multi-MB log). The per-host table window follows the selected badge (clickable 1h/6h/1d) instead of a hard 1h. <em>(Folded into §6, §10.)</em></div>
+
+      <div class="callout tip"><strong>OQ11 — ✓ DECIDED (default applied): drop the roll-up idea.</strong> Here's what the reference was, since it was unclear: <code>scheduler/index.ts:138</code> carries a leftover comment — <code>// Future: weekly-paper-pick (Mon 09:00), fetcher-health-roll (1 min).</code> — a note-to-self that someone once imagined a scheduler job named <strong>fetcher-health-roll</strong> running <strong>every minute</strong> to periodically compute and store an aggregate (“roll up”) of fetcher health into a summary table. That made sense under the old log-parsing world, where reading health was expensive, so you'd precompute it on a timer. <strong>This design makes it unnecessary:</strong> we write one row per fetch <em>as it happens</em> (§4) and the route aggregates with a cheap <code>GROUP BY</code> on read — nothing to precompute, no timer job to add. So we drop the idea and delete that dead comment (the only scheduler job we add is the 48h <em>prune</em> in §7 — housekeeping, not a roll-up). The alternative — a periodic roll-up table for long-horizon trend history — is only worth it if OQ8 grows to 7d+ and you want sparklines; easy to veto back to that if you change your mind.</div>
+
+      <div class="callout tip"><strong>OQ12 — ✓ DECIDED: start fresh.</strong> No backfill — the card fills within minutes of deploy given crawl cadence; one-time log parsing would be throwaway code. Card is briefly empty right after deploy, then self-populates. <em>(Folded into §10 P6.)</em></div>
+
+      <div class="callout tip"><strong>OQ13 — ✓ DECIDED: fully delete the log-parsing path.</strong> Once the store is live, <code>pm2LogPath()</code> / <code>parseHostFromLog()</code> / the file read all go — no log fallback (keeping it would reintroduce the fragility we're removing). Clean replace. <em>(Folded into §6, §10 P3.)</em></div>
+
+      <h3>Adjacent / optional</h3>
+
+      <div class="callout tip"><strong>OQ14 — ✓ DECIDED: out of scope here — broken out into its own doc.</strong> Structured scheduler logs are orthogonal to this card (the store already frees the card from log parsing), but valuable on their own. Written up separately as <a href="./scheduler-structured-logs.html"><strong>Scheduler Logs — Structured Output + In-App Visibility</strong></a> (<code>docs/scheduler-structured-logs.html</code>), with its own open questions. This fetcher-health work stays tight to the card.</div>
+
+      <div class="callout tip"><strong>OQ15 — ✓ DECIDED: just color for now.</strong> v1 colors the card (red pill on broken/erroring hosts), no notifications. <strong>Context for later:</strong> a more extensive notification system is planned — when it lands, a persistently broken/erroring host is a natural alert (the store makes the threshold query — e.g. all-<code>error</code> for &gt;N attempts in 1h — trivial). The <code>error</code> bucket (OQ2) is the substrate that future system reads. <em>(No v1 work; noted as a forward hook.)</em></div>
+
+      <div class="callout tip"><strong>OQ16 — ✓ DECIDED: card scope confirmed.</strong> Everything looks good — the card keeps its host filter box + sortable columns, gains the All·Web·Scheduler source filter (OQ4) + the Error column (OQ2) + clickable window badges (OQ10), reading real data from the per-tier store. No sparklines/trends/history in v1.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Implementation tasks</h2></summary>
+    <div class="section-body">
+    <h3>Checklist (worked after §9 is answered)</h3>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox">
+        <span class="task-id">P1</span>
+        <span class="task-title">Store module — <code>lib/fetcher-health/store.ts</code></span>
+      </summary>
+      <div class="task-body">
+        <p>Mirror <code>lib/ai/llm-cache.ts</code>: memoized async <code>initStore()</code> opening <code>data/fetcher-health.db</code> (WAL, guarded dynamic <code>better-sqlite3</code> import, best-effort degrade-to-noop). <code>fetch_event(ts, host, kind, tier, source)</code> with <code>kind ∈ {ok, error, fallback, broken}</code> (no <code>cache</code>) and <code>tier ∈ {dev, prod}</code> read from <code>NODE_ENV</code>/<code>MC_SCHEDULER_TIER</code> inside the store. Export <code>recordFetchOutcome(host, kind)</code> (direct sync write — OQ9) + <code>readFetcherHealth(nowMs, tier)</code> + <code>pruneFetcherHealth()</code> + test seams (<code>FETCHER_HEALTH_PATH</code>, reset). (Raw events — OQ7; 48h retention — OQ8.)</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox">
+        <span class="task-id">P2</span>
+        <span class="task-title">Wire the chokepoints</span>
+      </summary>
+      <div class="task-body">
+        <p><code>lib/external-fetch.ts</code>: <code>loggedFetch</code> awaits the response → <code>ok</code> (2xx/3xx) / <code>error</code> (non-2xx or throw); <code>logExternalCall</code> → <code>ok</code> attempt. <code>lib/cache.ts</code>: <code>serveStale</code> → <code>fallback</code>; <strong>do NOT record cache hit/miss</strong> (OQ1). <code>lib/fetchers/errors.ts</code>: <code>ScraperBrokenError</code> → <code>broken</code>. All fire-and-forget. <code>data/fetcher-health.db</code> → <code>.gitignore</code>.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox">
+        <span class="task-id">P2.1</span>
+        <span class="task-title">Convert the finance routes to <code>loggedFetch</code></span>
+      </summary>
+      <div class="task-body">
+        <p><code>app/api/finance/route.ts:33-36</code> + <code>app/api/finance/history/route.ts:26,51</code> use bare <code>fetch()</code> to Pulsar and relied on the cache line for host attribution. Swap to <code>loggedFetch</code> so they record real outcomes once cache-line recording is gone (OQ1) — otherwise Pulsar disappears from the card. <code>company-news</code> needs no change (delegates to registry fetchers that already use <code>loggedFetch</code>).</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox">
+        <span class="task-id">P3</span>
+        <span class="task-title">Schema + route — read store, delete log parsing</span>
+      </summary>
+      <div class="task-body">
+        <p><code>lib/schemas/system.ts</code>: add <code>error</code> to <code>FetcherHealthEntrySchema</code> (<code>{ok, error, fallback, broken}</code>) — then <code>npm run gen:api-docs</code> + commit <code>docs/apis.html</code> (the <code>api-docs-smoke</code> gate fails on staleness). <code>app/api/system/fetcher-health/route.ts</code>: replace file I/O + <code>parseHostFromLog</code> with <code>readFetcherHealth(Date.now(), servingTier, sourceParam)</code> — reads an optional <code>?source=web|scheduler</code> query param (OQ4); <code>withCache</code> TTL ~30–60s (OQ10); “store disabled” note path.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox">
+        <span class="task-id">P4</span>
+        <span class="task-title">Card — error column + window fix + cache TTL</span>
+      </summary>
+      <div class="task-body">
+        <p><code>components/cards/FetcherHealthCard.tsx</code>: add the <strong>All · Web · Scheduler</strong> segmented control (OQ4) driving a <code>source</code> param; add a red <strong>Error</strong> column; health-% denominator → <code>ok / (ok+error+fallback+broken)</code>; clickable badges drive the table window (OQ10); drop <code>staleTime</code>/<code>gcTime</code> to near-live + re-enable focus refetch; honest empty-state copy.</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox">
+        <span class="task-id">P5</span>
+        <span class="task-title">Prune job</span>
+      </summary>
+      <div class="task-body">
+        <p><code>scheduler/jobs/fetcher-health-prune.ts</code> (mirror <code>llm-cache-prune.ts</code>) + register in <code>scheduler/index.ts</code> <code>JOBS</code> (daily, both tiers); remove the stale <code>fetcher-health-roll</code> placeholder comment (OQ11).</p>
+      </div>
+    </details>
+
+    <details class="task">
+      <summary>
+        <input type="checkbox">
+        <span class="task-id">P6</span>
+        <span class="task-title">Test + verify + deploy</span>
+      </summary>
+      <div class="task-body">
+        <p><code>scripts/tests/hermetic/fetcher-health-store-smoke.ts</code> → <code>pre-push.sh</code> SUITES. <code>tsc --noEmit</code> clean; full gate green. Restart all four PM2 processes so every tier opens the store; <code>npm run build</code> + restart prod web for the route/card. Confirm the card shows scheduler crawl activity live.</p>
+      </div>
+    </details>
+
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

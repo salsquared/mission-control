@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Scheduler Logs — Structured Output + In-App Visibility</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Scheduler Logs — Structured Output + In-App Visibility</h1>
+  <p class="subtitle">The two scheduler processes (<code>mission-control-scheduler-{dev,prod}</code>) do all the continuous background work — watchlist crawls, classification sweeps, digests, prunes — but their logs are <strong>plain text, untimestamped, and invisible to the in-app log viewer</strong>. The Internal Systems dash shows only the web process's logs, because the logger monkey-patch lives in a Next.js-only startup hook the scheduler never runs, and the log viewer reads a per-process ring buffer + the web PM2 file. This plan gives the scheduler <strong>structured JSON log output</strong> (the easy, high-value half) and lays out options for <strong>surfacing scheduler logs in the in-app viewer</strong> (the cross-process half).</p>
+
+  <div class="callout"><strong>STATUS — PROPOSED, awaiting review.</strong> Spun out of the <a href="./fetcher-health-store.html">Fetcher Health store plan</a> (its OQ14): structured scheduler logging is orthogonal to that card but was surfaced by the same root cause. No code written. Ends in <a href="#questions">§5 open questions</a>.</div>
+
+  <div class="callout tip"><strong>Relationship to the Fetcher Health store.</strong> That plan makes fetcher health <em>independent</em> of scheduler log parsing (it records to a SQLite store instead). This doc is the <em>general</em> fix for scheduler observability — every other <code>[SCHEDULER:*]</code> line, not just fetches. They share a root cause but neither blocks the other.</div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#problem">The problem</a></li>
+      <li><a href="#why">Why — from the code</a></li>
+      <li><a href="#easy">The easy win — structured stdout</a></li>
+      <li><a href="#hard">The hard part — in-app visibility</a></li>
+      <li><a href="#questions">Open Questions</a></li>
+      <li><a href="#tasks">Implementation tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="problem">The problem</h2></summary>
+    <div class="section-body">
+      <h3>Scheduler logs are a blind spot</h3>
+      <p>Open the Internal Systems dash's log viewer and you see the <strong>web</strong> process's activity — HTTP requests, cache events, Gmail webhooks. You do <strong>not</strong> see any of the scheduler's work: which watchlists crawled, what the classifier swept, whether a prune ran, why a job errored. To debug the scheduler today you have to <code>pm2 logs mission-control-scheduler-prod</code> from a terminal — the in-app surface, which CLAUDE.md calls “the canonical observability surface,” simply doesn't have it.</p>
+      <p>And even at the terminal, the scheduler's lines are <strong>plain text with no per-line timestamp</strong> (<code>[SCHEDULER:prod] running job-watcher</code>), so they can't be parsed, windowed, or correlated by any tool — which is exactly what made the Fetcher Health card unable to read them.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="why">Why — from the code</h2></summary>
+    <div class="section-body">
+      <h3>The logger only initializes in the web runtime</h3>
+      <p>The structured logger is armed by <code>instrumentation.ts</code> — Next.js's <code>register()</code> hook, gated on <code>NEXT_RUNTIME === 'nodejs'</code>. It calls <code>lib/logger.ts:initLogger()</code>, which monkey-patches <code>console.{log,info,warn,error}</code> + <code>process.stdout/stderr.write</code> to (1) push entries into a 50-deep ring buffer on <code>globalThis</code>, (2) fan out to SSE listeners, and (3) emit a structured <code>{ts, level, msg}</code> JSON line to stdout (<code>logger.ts:83</code>).</p>
+      <p>The scheduler (<code>scheduler/index.ts</code>) is a plain <code>tsx</code> process. It <strong>never imports <code>instrumentation.ts</code></strong> (that's a Next.js mechanism), so <code>initLogger()</code> never runs there. Result: its <code>console.*</code> calls go straight to stdout as plain text, no JSON envelope, no ring buffer, no SSE.</p>
+      <h3>The viewer reads per-process state + the web file</h3>
+      <p>Two read paths, both web-scoped:</p>
+      <ul>
+        <li><strong>Live</strong> — <code>app/api/system/logs/route.ts</code> is an SSE stream over <code>getLogs()</code> + <code>subscribeToLogs()</code>. That ring buffer lives on the <strong>web process's</strong> <code>globalThis</code> — a different process from the scheduler, so even if the scheduler had its own buffer the web stream couldn't see it.</li>
+        <li><strong>Historical</strong> — <code>app/api/system/logs/historical/route.ts</code> reads a PM2 file hardcoded to <code>mission-control-out.log</code> (the prod <em>web</em> log). It never opens a scheduler file.</li>
+      </ul>
+      <pre class="mermaid">
+flowchart TB
+  subgraph web["Web process — runs instrumentation.ts"]
+    wlog["initLogger() patch"] --> wring["ring buffer (globalThis)"] --> sse["/api/system/logs (SSE)"]
+    wlog --> wfile["mission-control&#8209;out.log"] --> hist["/api/system/logs/historical"]
+  end
+  subgraph sched["Scheduler process — NO instrumentation.ts"]
+    slog["console.* (plain text, no ts)"] --> sfile["scheduler&#8209;prod&#8209;out.log"]
+  end
+  sse --> viewer["In-app log viewer"]
+  hist --> viewer
+  sfile -. "never read<br/>(plain text + wrong file)" .-> viewer
+      </pre>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="easy">The easy win — structured stdout</h2></summary>
+    <div class="section-body">
+      <h3>Call <code>initLogger()</code> at scheduler startup</h3>
+      <p>The high-value, low-risk half: import and call <code>initLogger()</code> at the top of <code>scheduler/index.ts</code> (before the <code>JOBS</code> loop). Immediately the scheduler's every <code>console.*</code> gains the <code>{ts, level, msg}</code> JSON envelope on stdout — so its PM2 file becomes timestamped + machine-parseable, and any tool (including the Fetcher Health reader, if it ever wanted scheduler data) can consume it. This alone fixes the “unstructured, untimestamped” complaint.</p>
+      <div class="callout warn"><strong>Watch the double-emit.</strong> <code>initLogger</code>'s <code>addLog</code> writes the JSON line <em>and</em> calls the original <code>console.*</code> (the human-readable line) — so each scheduler log becomes <strong>two</strong> file lines (JSON + plain), the same as the web process today. That doubles scheduler log volume; pm2-logrotate handles size, but it's worth a deliberate choice (see <a href="#questions">OQ4</a>: keep both, or JSON-only for the scheduler).</div>
+      <div class="callout"><strong>Scope the call narrowly.</strong> Call <em>only</em> <code>initLogger()</code> — not the rest of <code>instrumentation.ts</code>'s <code>register()</code>, which does web-only setup (Lunary, the Pulsar WS relay, shutdown drains). The scheduler has its own lifecycle; we only want the logging patch.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="hard">The hard part — in-app visibility</h2></summary>
+    <div class="section-body">
+      <h3>Cross-process is the real work</h3>
+      <p>Structured stdout (above) does <strong>not</strong> put scheduler logs in the in-app viewer — the ring buffer is per-process and the historical route reads only the web file. Bridging that gap needs cross-process transport. Options, cheapest first:</p>
+      <ul>
+        <li><strong>(A) Historical-merge</strong> — generalize <code>logs/historical</code> to read + merge the scheduler PM2 files alongside the web file (sorted by <code>ts</code>, tagged by source). Cheap; depends on the easy-win JSON format. <em>Historical only — no live tail of scheduler activity.</em></li>
+        <li><strong>(B) Shared-store ring buffer</strong> — the scheduler writes log entries to a shared SQLite (the <code>llm-cache.db</code> / fetcher-health pattern); the web live + historical routes merge from it. Gives near-live cross-process tail; more moving parts + a prune.</li>
+        <li><strong>(C) Push to web</strong> — the scheduler POSTs (or IPC-streams) entries to the web process, which injects them into its existing ring buffer + SSE. True live tail; couples the two processes at runtime.</li>
+      </ul>
+      <pre class="mermaid">
+flowchart LR
+  sched["Scheduler initLogger()"] -->|"(A) JSON file"| merge["logs/historical merges files"]
+  sched -->|"(B) shared SQLite"| store[("logs.db")] --> webread["web reads + merges"]
+  sched -->|"(C) HTTP/IPC push"| webring["web ring buffer + SSE"]
+  merge --> viewer["In-app viewer"]
+  webread --> viewer
+  webring --> viewer
+      </pre>
+      <div class="callout tip"><strong>Recommended split.</strong> Ship the easy win + <strong>(A) historical-merge</strong> as v1 (covers “let me see what the scheduler did” with minimal risk), and treat live cross-process tail (B/C) as a follow-up only if you actually want to watch scheduler activity stream in real time. See <a href="#questions">OQ2</a>.</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <p>Defaults given; all yours to redirect.</p>
+
+      <div class="callout"><strong>OQ1 — Scope: structured stdout only, or also in-app visibility?</strong> <em>Options:</em> (a) just the easy win — scheduler logs become structured/timestamped in PM2 files, parseable but still terminal-only; (b) also surface them in the in-app viewer. <strong>My take: (b)</strong> — the whole point is the in-app surface, and (A) historical-merge is cheap. But (a) alone is a legitimate 20-minute fix if you only care about parseability.</div>
+
+      <div class="callout"><strong>OQ2 — If surfacing: which transport?</strong> (A) historical-file-merge, (B) shared SQLite, or (C) push-to-web (per §4). <strong>My take: (A) for v1</strong> — historical merge of the scheduler PM2 files, no live tail. Add (B/C) later only if real-time scheduler tailing earns its keep. Want live tail from day one?</div>
+
+      <div class="callout"><strong>OQ3 — Tag log lines by source/tier?</strong> Scheduler lines already self-prefix <code>[SCHEDULER:dev]</code> / <code>[SCHEDULER:prod]</code>, but a structured <code>source</code>/<code>tier</code> field (vs. parsing the prefix) makes filtering in the viewer clean. <em>Options:</em> (a) rely on the existing text prefix; (b) add a structured field to the JSON envelope. <strong>My take: (a) for v1</strong> — the prefix is already there and the viewer can filter on it; structured fields are a refinement.</div>
+
+      <div class="callout"><strong>OQ4 — Double-emit: keep both lines, or JSON-only for the scheduler?</strong> <code>initLogger</code> emits JSON + the original plain line. <em>Options:</em> (a) keep both (matches web; human-readable <code>pm2 logs</code> still works); (b) a scheduler-only mode that emits JSON only (halves volume, but raw <code>pm2 logs</code> reads as JSON). <strong>My take: (a)</strong> — consistency with the web process and readable terminal output beats the volume saving; pm2-logrotate already bounds size.</div>
+
+      <div class="callout"><strong>OQ5 — Historical route hardcodes the prod web file.</strong> <code>logs/historical/route.ts:12</code> always reads <code>mission-control-out.log</code> — so even the <em>web</em> historical view is wrong on the dev tier (and the “fix” here would inherit that). <em>Options:</em> (a) fix it to pick the file by <code>NODE_ENV</code> (like the fetcher-health route does) as part of this work; (b) leave it, separate bug. <strong>My take: (a)</strong> — it's in the blast radius and a one-line fix; do it here.</div>
+
+      <div class="callout"><strong>OQ6 — Relationship to a future notification system.</strong> You mentioned a broader notification system coming. Scheduler errors (a job throwing, a tier disabling a job on <code>P2021</code>) are prime alert candidates. <em>Options:</em> (a) keep this purely about visibility, hook alerts later; (b) emit a structured error signal now for the future system to consume. <strong>My take: (a)</strong> — visibility first; the structured logs become the substrate that future system reads.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Implementation tasks</h2></summary>
+    <div class="section-body">
+    <h3>Checklist (sketch — firms up after §5)</h3>
+
+    <details class="task">
+      <summary><input type="checkbox"><span class="task-id">P1</span><span class="task-title">Easy win — <code>initLogger()</code> in the scheduler</span></summary>
+      <div class="task-body"><p><code>scheduler/index.ts</code>: import + call <code>initLogger()</code> before the <code>JOBS</code> loop (only the logger, not the rest of <code>register()</code>). Restart both scheduler tiers; confirm JSON <code>{ts,msg}</code> lines appear in <code>mission-control-scheduler-{dev,prod}-out.log</code>.</p></div>
+    </details>
+
+    <details class="task">
+      <summary><input type="checkbox"><span class="task-id">P2</span><span class="task-title">Historical-merge (if OQ1=b, OQ2=A)</span></summary>
+      <div class="task-body"><p><code>app/api/system/logs/historical/route.ts</code>: read + merge the scheduler PM2 file(s) with the web file, sorted by <code>ts</code>, source-tagged; fix the hardcoded prod-web path to pick by tier (OQ5).</p></div>
+    </details>
+
+    <details class="task">
+      <summary><input type="checkbox"><span class="task-id">P3</span><span class="task-title">Live cross-process tail (deferred — OQ2 B/C)</span></summary>
+      <div class="task-body"><p>Only if real-time scheduler tailing is wanted: shared-SQLite ring buffer or push-to-web into the existing SSE stream.</p></div>
+    </details>
+
+    <details class="task">
+      <summary><input type="checkbox"><span class="task-id">P4</span><span class="task-title">Verify</span></summary>
+      <div class="task-body"><p>Scheduler activity visible in the in-app viewer; both tiers correct; no double-counting; terminal <code>pm2 logs</code> still readable.</p></div>
+    </details>
+
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
