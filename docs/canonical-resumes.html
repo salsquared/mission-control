@@ -54,7 +54,7 @@
       <li><a href="#fit">How a Canon fits the existing architecture</a></li>
       <li><a href="#strawman">Design (decided)</a></li>
       <li><a href="#cost">What this buys (cost model)</a></li>
-      <li><a href="#questions">Open questions &mdash; answer these</a></li>
+      <li><a href="#questions">Resolved questions (Q1&ndash;Q12)</a></li>
       <li><a href="#phasing">Implementation plan</a></li>
       <li><a href="#non-goals">Non-goals</a></li>
     </ol>
@@ -165,10 +165,11 @@ flowchart TB
   track         String              // "career" | "side" — every canon nests under a track
   description   String?             // optional user note
 
-  // The canon's "posting profile": the keyword set that replaces a single
-  // posting's keywords when generating. Same shape posting-parse emits.
-  keywords      String   @default("[]")     // JSON [{ keyword, importance }]
-  keywordSource String   @default("manual") // "manual" | "aggregated" | "llm"
+  // The canon's keyword profile — the user-provided text that replaces a
+  // single posting's keywords at gen time. RAW TEXT (not JSON): side = the
+  // feeding watchlist's keyword string; career = what the user types (§6 Q3).
+  // Split into a flat term array at gen time; no weights in v1 (§6 Q6).
+  keywords      String   @default("")
 
   // Per-canon framing (§6 Q8) — DEFERRED past v1: the existing pipeline
   // (selection spine + the resume-tagline LLM call) already orders sections/
@@ -224,10 +225,10 @@ flowchart LR
   fresh -->|"no (stale)"| regen["regenerate canon<br/>resume once — 2–3 calls"]
   regen --> serve
       </pre>
-      <p>An <em>optional</em> per-job touch-up (e.g. swapping a company name into the tagline) is a separate question &mdash; see §6 Q5. The strawman default is &ldquo;no per-job LLM at all.&rdquo;</p>
+      <p>The default is <strong>no per-job LLM at all</strong>. An <em>optional, opt-in</em> per-job <strong>specialization pass</strong> (decided in §6 Q5) re-words the canon's fixed selection for a specific posting and saves a per-job child resume &mdash; it runs only when you ask. See §7 P5.</p>
 
       <h3>Touch list (where the work lands)</h3>
-      <p>Following the <code>docs/resume-pipeline.md</code> touch-list discipline, a canon-aware change threads through: <code>prisma/schema.prisma</code> + migration &middot; <code>lib/schemas/*</code> (canon Zod) &middot; <code>lib/repositories/canons.ts</code> (new) &middot; <code>app/api/canons/route.ts</code> (new CRUD) &middot; the <code>{ canonId }</code> branch in <code>app/api/resumes/route.ts</code> &middot; a keyword-split helper (text &rarr; term array; weighting deferred, §6 Q6) &middot; a UI surface (§6 Q10) &middot; hermetic smokes. The selector/rewriter/pruner stay untouched &mdash; they already speak keywords.</p>
+      <p>Following the <code>docs/resume-pipeline.md</code> touch-list discipline, a canon-aware change threads through: <code>prisma/schema.prisma</code> + migration &middot; <code>lib/schemas/*</code> (canon Zod) &middot; <code>lib/repositories/canons.ts</code> (new) &middot; <code>app/api/canons/route.ts</code> (new CRUD) &middot; the <code>{ canonId }</code> branch in <code>app/api/resumes/route.ts</code> &middot; a keyword-split helper (text &rarr; term array; weighting deferred, §6 Q6) &middot; a UI surface (§6 Q10) &middot; hermetic smokes. The selector/rewriter/pruner stay untouched &mdash; they already speak keywords. (§7 breaks this into phased, checkable sub-tasks.)</p>
     </div>
   </details>
 
@@ -253,16 +254,16 @@ flowchart LR
 
   <!-- ───────────────────────── 6. OPEN QUESTIONS ───────────────────────── -->
   <details class="section" open>
-    <summary><h2 id="questions">Open questions &mdash; answer these</h2></summary>
+    <summary><h2 id="questions">Resolved questions (Q1&ndash;Q12)</h2></summary>
     <div class="section-body">
-      <p>Grouped by theme. Each has options and a <strong>tentative recommendation</strong> (the strawman default) so you can answer fast &mdash; just confirm, pick, or override. Reference them by number (Q1&hellip;Q12) when you reply. <strong>Q2 is now decided (2026-05-30)</strong>, and its answers (career canons in v1; canon &sub; exactly one track) plus the code findings <strong>reshaped Q3/Q4/Q6</strong> &mdash; those now split by track and ask different things than the first draft, so read them fresh. Q5/Q9 keep a short confirming &ldquo;From the code&rdquo; note.</p>
+      <p>All twelve are <strong>decided</strong> (2026-05-30) &mdash; the at-a-glance table lives in the Decisions summary up top; this section keeps each question's options + <strong>rationale</strong> for the record (why we landed where we did, and what got deferred). Several were reshaped mid-discussion when a code finding moved their premise (e.g. career-in-v1 collapsing Q3/Q4 onto a manual mechanism); those rewrites are preserved so the reasoning stays auditable.</p>
 
       <h3>Q1 — Granularity &amp; whether it's truly &ldquo;one resume&rdquo;</h3>
       <div class="callout tip"><strong>&check; Decided (2026-05-30).</strong>
         <ul>
           <li><strong>One resume per canon</strong>, reused verbatim, is the default &mdash; good for now.</li>
           <li><strong>Canons sit at the role-type level.</strong> Museum-rover vs mall-patrol vs studio-guard collapse into a single &ldquo;Security Officer&rdquo; canon &mdash; not different enough to matter on paper, and that collapse <em>is</em> the point.</li>
-          <li><strong>Count ≈ up to 10</strong>, roughly one per role-specific watchlist. Side ones are known (AI-coding Evaluator, Math/Test-prep Tutor, Bilingual CS/Interpreter, Junior Web Dev/QA, Security Officer); career role names TBD when you set them up.</li>
+          <li><strong>Count ≈ up to 10</strong>, roughly one per role-specific watchlist. Side ones (5): AI-coding Evaluator, Math/Test-prep Tutor, Bilingual CS/Interpreter, Junior Web Dev/QA, Security Officer. Career ones (3, chosen): Software Engineer, AI/ML Engineer, Aerospace/Avionics Engineer (priority).</li>
         </ul>
       </div>
       <div class="callout warn"><strong>One addition &mdash; an opt-in &ldquo;specialization pass&rdquo; (this reshapes Q5).</strong> Beyond the verbatim default, you want the <em>option</em> to push a canon resume through an LLM pass that re-tailors its language to a specific job's posting keywords (the way <code>resume-tagline</code> already tailors the tagline). So the model is <strong>verbatim by default, with an explicit per-job specialization as an opt-in</strong> &mdash; not the rarely-used escape hatch the first draft assumed. The scope of that pass is now the substance of Q5.</div>
@@ -327,7 +328,7 @@ flowchart LR
           <li><strong>Lazy + manual.</strong> Just tag it stale and show a badge; never auto-regenerate, never on a schedule. It rebuilds only when you click regenerate (or download a stale canon).</li>
         </ul>
       </div>
-      <div class="callout"><strong>Mechanism.</strong> &ldquo;Experiences in the canon&rdquo; = the distinct entity ids in the canon resume's stored <code>selections</code> (each row carries <code>sourceId</code>). Record that set at gen time (a <code>canon.resumeEntityIds</code> JSON snapshot, or a small <code>CanonEntity</code> join for an indexed lookup). The staleness hook sits on the profile-entity mutations &mdash; <code>app/api/profile/{work-roles,projects,education}</code> PATCH/DELETE + bullet/tag edits &mdash; each flips <code>resumeStale=true</code> on <em>only</em> the canons whose dependency set contains the touched entity.</div>
+      <div class="callout"><strong>Mechanism.</strong> &ldquo;Experiences in the canon&rdquo; = the distinct entity ids in the canon resume's stored <code>selections</code> (each row carries <code>sourceId</code>). Record that set at gen time as <code>canon.resumeEntityIds</code> (the JSON snapshot we go with &mdash; see §4; a <code>CanonEntity</code> join is the indexed-lookup alternative if the hook ever gets hot). The staleness hook sits on the profile-entity mutations &mdash; <code>app/api/profile/{work-roles,projects,education}</code> PATCH/DELETE + bullet/tag edits &mdash; each flips <code>resumeStale=true</code> on <em>only</em> the canons whose dependency set contains the touched entity.</div>
       <div class="callout warn"><strong>Wrinkles to accept/decide.</strong>
         <ul>
           <li><strong>Newly-relevant entities won't trigger it.</strong> If you beef up an experience that <em>wasn't</em> selected last time, the canon won't auto-mark stale (it's not in the dependency set) even though a regen might now include it. That's the intended tradeoff of the narrow rule &mdash; a manual regen always picks it up.</li>
@@ -378,69 +379,123 @@ flowchart LR
       <details class="task" open>
         <summary><input type="checkbox"><span class="task-id">P1</span><span class="task-title">Foundation — model, migration, CRUD, side seeding</span></summary>
         <div class="task-body">
-          <p><strong>Goal:</strong> the <code>Canon</code> data model + CRUD API + side-watchlist seeding. No generation, no UI.</p>
-          <p><strong>Touches:</strong></p>
-          <ul>
-            <li><code>prisma/schema.prisma</code> — new <code>Canon</code> (id, userId, name, <code>slug</code> = <code>normalizeRoleName(name)</code>, track, description?, <code>keywords</code> String [raw user text], <code>active</code>, <code>resumeStale</code> @default(true), <code>resumeEntityIds</code> String?, <code>currentResumeId</code> String?, <code>onePage</code> @default(true); deferred-nullable <code>pinnedEntityIds</code>/<code>sectionOrder</code>) + <code>@@unique([userId, slug])</code> + <code>@@index([userId, track, active])</code>. Nullable FKs: <code>Application.canonId</code>, <code>Watchlist.canonId</code>, <code>GeneratedResume.canonId</code> + <code>isCanonical</code> @default(false) + <code>canonVersion</code> Int?. Relations on User/Application/Watchlist/GeneratedResume.</li>
-            <li>Migration applied to <strong>both</strong> <code>dev.db</code> + <code>prod.db</code> (point <code>DATABASE_URL</code> per tier) + <code>prisma generate</code>.</li>
-            <li><code>lib/schemas/canons.ts</code> (new) — <code>CanonSchema</code> / <code>CanonPostSchema</code> / <code>CanonPatchSchema</code>.</li>
-            <li><code>lib/repositories/canons.ts</code> (new) — CRUD + slug derivation + parse/serialize (keywords text, <code>resumeEntityIds</code> JSON).</li>
-            <li><code>app/api/canons/route.ts</code> (GET/POST) + <code>app/api/canons/[id]/route.ts</code> (GET/PATCH/DELETE) + sibling <code>meta.ts</code> files; regen <code>docs/apis.html</code> (<code>npm run gen:api-docs</code>).</li>
-            <li><code>scripts/</code> one-time idempotent seeder — one <strong>side</strong> canon per side watchlist (name from the watchlist, <code>keywords</code> = <code>config.keywords</code>, set <code>watchlist.canonId</code>); idempotent on (userId, slug); run both DBs. Career canons added by hand in P4.</li>
-          </ul>
-          <p><strong>Tests:</strong> <code>canon-crud-smoke</code>, seeding-idempotency smoke, <code>api-docs-smoke</code> (apis.html fresh). <strong>Done when:</strong> CRUD round-trips on :4101, side canons seeded, both DBs migrated.</p>
+          <p><strong>Goal:</strong> the <code>Canon</code> data model + CRUD API + side-watchlist seeding. No generation, no UI. <strong>Done when:</strong> CRUD round-trips on :4101, side canons seeded, both DBs migrated, hermetic gate green.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.1</span><span class="task-title">Schema</span></summary>
+            <div class="task-body"><p><code>prisma/schema.prisma</code>: add the <code>Canon</code> model (id, userId, name, <code>slug</code>=<code>normalizeRoleName(name)</code>, track, description?, <code>keywords</code> String [raw text], <code>active</code>, <code>resumeStale</code> @default(true), <code>resumeEntityIds</code> String?, <code>currentResumeId</code> String?, <code>onePage</code> @default(true); deferred-nullable <code>pinnedEntityIds</code>/<code>sectionOrder</code>) + <code>@@unique([userId, slug])</code> + <code>@@index([userId, track, active])</code>. Add nullable FKs <code>Application.canonId</code>, <code>Watchlist.canonId</code>, <code>GeneratedResume.canonId</code> + <code>isCanonical</code> @default(false) + <code>canonVersion</code> Int?, plus the back-relations on <code>User</code>/<code>Application</code>/<code>Watchlist</code>/<code>GeneratedResume</code>.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.2</span><span class="task-title">Migration — both DBs</span></summary>
+            <div class="task-body"><p>Author with <code>prisma migrate dev</code>, then apply to <strong>both</strong> SQLite files (<code>DATABASE_URL="file:./dev.db"</code>, then the prod file via <code>migrate deploy</code>) + <code>prisma generate</code>. Every column is nullable/defaulted &rarr; additive, so the running old build keeps working before redeploy.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.3</span><span class="task-title">Zod schemas</span></summary>
+            <div class="task-body"><p><code>lib/schemas/canons.ts</code> (new): <code>CanonSchema</code> (wire), <code>CanonPostSchema</code> (name, track, keywords text, description?), <code>CanonPatchSchema</code> (partial + at-least-one-field <code>.refine</code>, mirroring <code>WatchlistPatchSchema</code>).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.4</span><span class="task-title">Repository</span></summary>
+            <div class="task-body"><p><code>lib/repositories/canons.ts</code> (new): <code>createCanon</code>/<code>listCanons</code>/<code>getCanon</code>/<code>updateCanon</code>/<code>deleteCanon</code> + parse/serialize (<code>resumeEntityIds</code> JSON ⇄ <code>string[]</code>); slug via <code>normalizeRoleName</code>; a P2002 on <code>(userId, slug)</code> the route surfaces as 409.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.5</span><span class="task-title">CRUD routes + api-docs</span></summary>
+            <div class="task-body"><p><code>app/api/canons/route.ts</code> (GET list, POST create) + <code>app/api/canons/[id]/route.ts</code> (GET, PATCH, DELETE), both behind <code>requireSession</code>. Sidecar <code>app/api/canons/meta.ts</code> (+ <code>[id]/meta.ts</code>) with <code>apiMeta</code> (per the api-docs convention &mdash; never in <code>route.ts</code>). Run <code>npm run gen:api-docs</code>, commit <code>docs/apis.html</code> (the <code>api-docs-smoke</code> gate enforces freshness).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.6</span><span class="task-title">Side-watchlist seeder</span></summary>
+            <div class="task-body"><p><code>scripts/</code> one-time idempotent seeder: for each <strong>side</strong> keyword watchlist (linkedin/indeed, which carry a <code>config.keywords</code> string), upsert a canon on <code>(userId, slug)</code> with <code>track="side"</code>, <code>keywords</code> = that string, and set the watchlist's <code>canonId</code>. Re-run = no-op. Run against both DBs (<code>MC_*_USER_ID</code> env, like the existing watchlist scripts). Career canons are <em>not</em> seeded.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.7</span><span class="task-title">Tests</span></summary>
+            <div class="task-body"><p><code>scripts/tests/hermetic/canon-crud-smoke.ts</code> (create/list/get/patch/delete + slug derivation + duplicate-slug 409) and <code>canon-seed-idempotency-smoke.ts</code> (seed twice &rarr; one canon per side watchlist, <code>watchlist.canonId</code> set). Append both to <code>scripts/pre-push.sh</code> SUITES; confirm <code>api-docs-smoke</code> still passes.</p></div>
+          </details>
         </div>
       </details>
       <details class="task">
         <summary><input type="checkbox"><span class="task-id">P2</span><span class="task-title">Canon-driven generation</span></summary>
         <div class="task-body">
-          <p><strong>Goal:</strong> generate a canon's resume by feeding the <em>unchanged</em> pipeline its keywords.</p>
-          <p><strong>Touches:</strong></p>
-          <ul>
-            <li><code>lib/canons/keywords.ts</code> (new) — <code>splitCanonKeywords(text)</code> &rarr; <code>string[]</code> (split on <code>OR</code>/commas/whitespace, dedupe). Flat, no weights (Q6).</li>
-            <li><code>app/api/resumes/route.ts</code> — add <code>{ canonId }</code> to <code>PostingInputSchema</code>; branch that <strong>skips <code>parsePosting</code></strong> and builds a synthetic <code>ParsedPosting</code> { title: canon.name, company: null, keywords: split, keywordWeights: {} }, then runs the existing select &rarr; synth &rarr; rewrite &rarr; tagline &rarr; render pipeline untouched. Persists a <code>GeneratedResume</code> with <code>canonId</code> + <code>isCanonical=true</code> + <code>canonVersion</code> = (max for canon)+1; sets <code>canon.currentResumeId</code>, records <code>resumeEntityIds</code> = distinct <code>sourceId</code>s from the selection, clears <code>resumeStale</code>. Render default = pdf + <code>canon.onePage</code> (Q9).</li>
-          </ul>
-          <p><strong>Tests:</strong> <code>canon-generate-smoke</code> (synthetic posting &rarr; pipeline &rarr; persisted row carries canonId/isCanonical/canonVersion/resumeEntityIds; resumeStale cleared). <strong>Done when:</strong> <code>POST /api/resumes {posting:{canonId}}</code> returns a pdf + persists a versioned canonical row.</p>
+          <p><strong>Goal:</strong> generate a canon's resume by feeding the <em>unchanged</em> pipeline its keywords. <strong>Done when:</strong> <code>POST /api/resumes {posting:{canonId}}</code> returns a pdf + persists a versioned canonical row with its dependency set.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">Keyword splitter</span></summary>
+            <div class="task-body"><p><code>lib/canons/keywords.ts</code> (new): <code>splitCanonKeywords(text)</code> &rarr; <code>string[]</code> &mdash; split on <code>OR</code> / commas / newlines, trim, drop empties, case-insensitive dedupe. Pure + unit-tested. No weights (Q6).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Input schema</span></summary>
+            <div class="task-body"><p><code>app/api/resumes/route.ts</code>: add <code>canonId</code> to <code>PostingInputSchema</code> (the <code>url</code>/<code>text</code>/<code>applicationId</code> union) and its &ldquo;provide one of&rdquo; <code>.refine</code>.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Synthetic-posting branch</span></summary>
+            <div class="task-body"><p>When <code>posting.canonId</code> is set: load + ownership-check the canon, then <strong>skip <code>parsePosting</code></strong> and build a <em>complete</em> <code>ParsedPosting</code> &mdash; <code>{ title: canon.name, company: null, location: null, seniority: null, sourceUrl: null, rawText: canon.keywords, keywords: splitCanonKeywords(canon.keywords), keywordWeights: {} }</code> (<code>rawText</code> is required by the interface). Everything downstream (auto-tag, select, scratchpad-synth, rewrite, tagline, extras, render) runs unchanged. Force <code>format=pdf</code> + <code>onePage=canon.onePage</code> as the stored default (Q9).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">Persist + version + dependency set</span></summary>
+            <div class="task-body"><p>Persist the <code>GeneratedResume</code> with <code>canonId</code>, <code>isCanonical=true</code>, <code>canonVersion</code> = <code>(max canonVersion for this canon) + 1</code>. Then in one canon update: set <code>currentResumeId</code> = the new row, <code>resumeEntityIds</code> = the distinct <code>sourceId</code>s from <code>flat</code> (the dependency set, Q7), and clear <code>resumeStale</code>. <strong>Order matters:</strong> clear <code>resumeStale</code> <em>last</em>, after the gen-time auto-tag write, so the canon can't self-stale (Q7 wrinkle).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.5</span><span class="task-title">Tests</span></summary>
+            <div class="task-body"><p><code>canon-generate-smoke.ts</code> &mdash; injected chat fn (like <code>posting-parse-cache-smoke</code>): assert no <code>parsePosting</code> fetch; the row carries canonId/isCanonical/<code>canonVersion=1</code>; <code>resumeEntityIds</code> = the selected sourceIds; <code>currentResumeId</code> set; <code>resumeStale=false</code>. A second gen &rarr; <code>canonVersion=2</code>, <code>currentResumeId</code> moves, the first version is retained. Wire into pre-push.</p></div>
+          </details>
         </div>
       </details>
       <details class="task">
         <summary><input type="checkbox"><span class="task-id">P3</span><span class="task-title">Assignment + verbatim reuse + staleness</span></summary>
         <div class="task-body">
-          <p><strong>Goal:</strong> tag jobs to canons, reuse the artifact with 0 LLM, keep canons honestly stale.</p>
-          <p><strong>Touches:</strong></p>
-          <ul>
-            <li><strong>Manual tag (Q4):</strong> write <code>Application.canonId</code> (kanban/track action) + <code>Watchlist.canonId</code> (watchlist row). Optional inherit: <code>trackAsApplication</code> copies a watchlist's <code>canonId</code> onto the new app (still &ldquo;manual&rdquo; &mdash; set once).</li>
-            <li><strong>Verbatim reuse (Q5/Q9):</strong> a &ldquo;download canon resume&rdquo; path serving <code>canon.currentResume</code>'s artifact (0 LLM); on-demand docx/full-length variants re-render from the stored <code>selections</code> (composeResumeProps + renderer, 0 Gemini).</li>
-            <li><strong>Staleness (Q7):</strong> <code>markCanonsStaleForEntity(userId, entityId)</code> in the canons repo, called from the profile-entity <em>route handlers</em> (<code>app/api/profile/{work-roles,projects,education}</code> PATCH/DELETE + bullet/tag edits) &mdash; <strong>not</strong> the repo layer, so gen-time auto-tag (which writes via the repo) can't self-stale. Flips <code>resumeStale=true</code> only on canons whose <code>resumeEntityIds</code> ∋ the touched entity. Canon PATCH that changes <code>keywords</code> also stales.</li>
-          </ul>
-          <p><strong>Tests:</strong> <code>canon-staleness-smoke</code> (entity in canon &rarr; stale; entity not in canon &rarr; fresh; canon keyword change &rarr; stale; gen-time auto-tag does NOT stale the just-generated canon). <strong>Done when:</strong> tagging works, downloading a fresh canon = 0 LLM, editing an in-canon bullet flips its badge.</p>
+          <p><strong>Goal:</strong> tag jobs to canons, reuse the artifact with 0 LLM, keep canons honestly stale. <strong>Done when:</strong> tagging works, downloading a fresh canon = 0 LLM, editing an in-canon bullet flips that canon's badge (and only that canon's).</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">Manual tagging</span></summary>
+            <div class="task-body"><p>Accept <code>canonId</code> on the Application PATCH (<code>app/api/applications/route.ts</code> &mdash; collection PATCH by id) and the Watchlist PATCH (<code>app/api/watchlists/[id]/route.ts</code>): add to their Zod patch schemas + repos, ownership-checked. Optional inherit: in <code>trackAsApplication</code>, when the source <code>posting.watchlist.canonId</code> is set, copy it onto the new Application (still &ldquo;manual&rdquo; &mdash; the link was set once).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">Verbatim reuse / download</span></summary>
+            <div class="task-body"><p>A &ldquo;download canon resume&rdquo; path: resolve <code>canon.currentResumeId</code> &rarr; stream its artifact via the existing <code>app/api/resumes/[id]/download/route.ts</code> (0 LLM). For a not-yet-rendered (format, one-page) variant, re-render from the row's stored <code>selections</code> + <code>profileSnapshot</code> (<code>composeResumeProps</code> + renderer) &mdash; still 0 Gemini (Q9).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">Staleness hook</span></summary>
+            <div class="task-body"><p><code>markCanonsStaleForEntity(userId, entityId)</code> in <code>lib/repositories/canons.ts</code> &mdash; sets <code>resumeStale=true</code> on canons whose <code>resumeEntityIds</code> ∋ entityId. Call it from the profile-entity <strong>route handlers</strong> (<code>app/api/profile/{work-roles,projects,education}/route.ts</code> PATCH + DELETE, which already exist), <strong>not</strong> the repository &mdash; so the gen-time auto-tag write (which goes through the repo) can't self-stale. A canon PATCH that changes <code>keywords</code> also sets its own <code>resumeStale</code>.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.4</span><span class="task-title">Tests</span></summary>
+            <div class="task-body"><p><code>canon-staleness-smoke.ts</code>: an entity in a canon's <code>resumeEntityIds</code> &rarr; that canon stales while a sibling without it stays fresh; a canon <code>keywords</code> PATCH &rarr; stales; a profile entity in <em>no</em> canon &rarr; nothing stales; a grep-guard that the hook lives in the route, not the repo. Wire into pre-push.</p></div>
+          </details>
         </div>
       </details>
       <details class="task">
         <summary><input type="checkbox"><span class="task-id">P4</span><span class="task-title">UI — Canons manager + tags + shortcut</span></summary>
         <div class="task-body">
-          <p><strong>Goal:</strong> surface it. This is where the career canons get hand-created &mdash; Software Engineer, AI/ML, and <strong>Avionics (priority focus)</strong>.</p>
-          <p><strong>Touches:</strong></p>
-          <ul>
-            <li><code>components/cards/profile/CanonsCard.tsx</code> (new) — list canons (name, track pill, keyword text, <strong>stale badge</strong>, version count); create/edit/delete; regenerate; download current + version history. Wraps <code>ui/Card</code>, canonical chrome (component-hierarchy rules).</li>
-            <li>Profile view — mount the card next to <code>GenerateResumeCard</code>.</li>
-            <li><code>GenerateResumeCard</code> — canon shortcut (&ldquo;use this canon's resume&rdquo; download).</li>
-            <li><code>ApplicationsKanbanCard</code> — per-app canon tag (set <code>Application.canonId</code>) + show the current canon.</li>
-            <li><code>WatchlistsCard</code> — optional per-watchlist canon link.</li>
-          </ul>
-          <p><strong>Tests:</strong> manual <code>/verify</code> on :4101. <strong>Done when:</strong> create / tag / regenerate / download all work from the dashboard.</p>
+          <p><strong>Goal:</strong> surface it &mdash; and hand-create the three career canons (Software Engineer, AI/ML, <strong>Avionics [priority]</strong>). <strong>Done when:</strong> create / tag / regenerate / download all work from the dashboard.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">CanonsCard</span></summary>
+            <div class="task-body"><p><code>components/cards/profile/CanonsCard.tsx</code> (new): per-canon row (name, track pill, keyword text, <strong>stale badge</strong>, version count) with create / edit (name + keyword text) / delete / <strong>regenerate</strong> (POST <code>{canonId}</code>) / download current + pick a prior version. Wraps <code>ui/Card</code>; canonical chrome per the component-hierarchy rules (no hand-rolled header/scroll).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Profile-view mount + picker shortcut</span></summary>
+            <div class="task-body"><p>Mount <code>CanonsCard</code> in the Profile view next to <code>GenerateResumeCard</code>. Add a canon shortcut to <code>GenerateResumeCard</code> (&ldquo;use this canon's resume&rdquo; &rarr; the P3.2 download).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.3</span><span class="task-title">Kanban + watchlist tagging UI</span></summary>
+            <div class="task-body"><p><code>ApplicationsKanbanCard</code> &mdash; a per-app canon picker (sets <code>Application.canonId</code>) + a current-canon chip. <code>WatchlistsCard</code> &mdash; an optional per-watchlist canon link (sets <code>Watchlist.canonId</code>).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.4</span><span class="task-title">Create the career canons</span></summary>
+            <div class="task-body"><p>Hand-create the 3 career canons through the new UI: <strong>Aerospace/Avionics Engineer (priority)</strong>, Software Engineer, AI/ML Engineer &mdash; each with its keyword text. Generate + eyeball each resume; tune the keyword text until the right experiences lead (for Avionics: Space Enterprise avionics + computational physics + C++/Matlab to the front). <code>/verify</code> on :4101.</p></div>
+          </details>
         </div>
       </details>
       <details class="task">
         <summary><input type="checkbox"><span class="task-id">P5</span><span class="task-title">Opt-in specialization pass (Q5)</span></summary>
         <div class="task-body">
-          <p><strong>Goal:</strong> per-job language tailoring off the canon's <em>fixed</em> selection &mdash; only when you ask.</p>
-          <p><strong>Touches:</strong></p>
-          <ul>
-            <li><code>app/api/resumes/route.ts</code> (or a sibling endpoint) — <code>{ canonId, specializeForApplicationId }</code>: load the canon's current <code>selections</code> + <code>parsePosting</code> the app's posting URL &rarr; re-run <code>rewriteBullets</code> (FLASH) + <code>tailorResumeTagline</code> over the FIXED selection &rarr; render &rarr; persist a <strong>new child</strong> <code>GeneratedResume</code> (canonId set, <code>isCanonical=false</code>, applicationId set). Canon resume untouched.</li>
-            <li>UI — &ldquo;Specialize for this job&rdquo; button on the kanban / picker.</li>
-          </ul>
-          <p><strong>Tests:</strong> <code>canon-specialize-smoke</code> (same bullet set, re-worded; child row linked to the app; canon's <code>currentResume</code> untouched). <strong>Done when:</strong> one click yields a job-tailored variant without disturbing the canon.</p>
+          <p><strong>Goal:</strong> per-job language tailoring off the canon's <em>fixed</em> selection &mdash; only when you ask. <strong>Done when:</strong> one click yields a job-tailored variant without disturbing the canon.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.1</span><span class="task-title">Specialize endpoint</span></summary>
+            <div class="task-body"><p><code>app/api/resumes/route.ts</code> (or a sibling) accepts <code>{ canonId, specializeForApplicationId }</code>: load the canon's current row's <code>selections</code> (the <em>fixed</em> bullet set) + <code>parsePosting</code> the app's posting URL, then re-run <code>rewriteBullets</code> (FLASH) + <code>tailorResumeTagline</code> over that selection &rarr; render. <strong>Selection is not recomputed</strong> &mdash; only wording + tagline change.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.2</span><span class="task-title">Persist as a child + UI</span></summary>
+            <div class="task-body"><p>Persist a <strong>new</strong> <code>GeneratedResume</code> with <code>canonId</code> set, <code>isCanonical=false</code> (so it isn't a version + doesn't move <code>currentResumeId</code>), <code>applicationId</code> = the job. The canon's version chain is untouched. Add a &ldquo;Specialize for this job&rdquo; button on the kanban card / pipeline picker.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.3</span><span class="task-title">Tests</span></summary>
+            <div class="task-body"><p><code>canon-specialize-smoke.ts</code>: the child's selected bullet set == the canon's (same <code>sourceId</code>/<code>bulletId</code> set), wording may differ; the child row has <code>isCanonical=false</code> + <code>applicationId</code>; the canon's <code>currentResumeId</code> + <code>canonVersion</code> chain unchanged. Wire into pre-push.</p></div>
+          </details>
         </div>
       </details>
       <details class="task">
