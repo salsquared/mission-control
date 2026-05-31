@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Canonical Resumes (Canons) — Plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Canonical Resumes (&ldquo;Canons&rdquo;)</h1>
+  <p class="subtitle">A plan for generating <strong>one resume per role-archetype</strong> instead of one per job &mdash; so near-identical postings (every &ldquo;security officer&rdquo; listing, every &ldquo;math tutor&rdquo; gig) reuse a single LLM-built resume rather than burning 2&ndash;3 Gemini calls each to re-derive the same thing. §1&ndash;§5 frame the idea + design; <strong>§6's decision list is now fully answered (2026-05-30)</strong> &mdash; the locked spec is the Decisions summary up top.</p>
+
+  <div class="callout"><strong>Status: design decided (2026-05-30) &mdash; no code yet.</strong> All 12 open questions in §6 are answered (✓ Decided callouts); the Decisions summary below is the locked spec, and §4's design + §7's phasing are updated to match. Companion refs: <code>docs/resume-pipeline.md</code> (the per-job pipeline this extends), <code>docs/llm-calls.html</code> (the cost model), <code>docs/user-stories.md</code> / <code>docs/implementation.md</code> (where this slots as a milestone).</div>
+
+  <details class="section no-count" open>
+    <summary><h2 id="decisions">Decisions (locked — 2026-05-30)</h2></summary>
+    <div class="section-body">
+      <h3>The resolved design at a glance</h3>
+      <p><strong>Net v1:</strong> a Canon is <strong>a saved keyword list + a manual tag + verbatim reuse + auto-versioning</strong>. Generation runs the <em>unchanged</em> existing resume pipeline fed the canon's keywords instead of a posting's. Anything not load-bearing for that is deferred.</p>
+      <table>
+        <thead><tr><th>#</th><th>Decision</th></tr></thead>
+        <tbody>
+          <tr><td>Q1</td><td>One verbatim resume per canon; canons at <strong>role-type grain</strong> (museum-rover / mall-patrol collapse into one &ldquo;Security Officer&rdquo;); ~up to 10 total.</td></tr>
+          <tr><td>Q2</td><td>Canon &sub; <strong>exactly one track</strong>; <strong>both career + side in v1</strong>; a canon is a subset-lens over the one master profile, never replaces track.</td></tr>
+          <tr><td>Q3</td><td>Keywords = <strong>user-provided text</strong> both tracks (side copies the watchlist string; career = manual entry).</td></tr>
+          <tr><td>Q4</td><td>Job&rarr;canon = <strong>manual tag</strong> (per-job <code>Application.canonId</code> + optional per-watchlist link). Auto-assign deferred.</td></tr>
+          <tr><td>Q5</td><td><strong>Verbatim by default</strong> (0 LLM/job, lossless); opt-in per-job <strong>specialization pass</strong> saved as a child resume.</td></tr>
+          <tr><td>Q6</td><td>Importance weights <strong>deferred</strong> &mdash; flat keywords (selector defaults importance to 1).</td></tr>
+          <tr><td>Q7</td><td><strong>Entity-scoped</strong> staleness (only when an experience <em>in</em> the canon changes); lazy + manual regen.</td></tr>
+          <tr><td>Q8</td><td>Per-canon framing pins <strong>deferred</strong> &mdash; pipeline + <code>resume-tagline</code> already order it.</td></tr>
+          <tr><td>Q9</td><td>Default render <strong>PDF + one-page</strong>; variants on demand (0 LLM); <strong>auto-versioning</strong>, no diff UI.</td></tr>
+          <tr><td>Q10</td><td>&ldquo;Canons&rdquo; manager in <strong>Profile view</strong> + picker shortcut + kanban tag + side-watchlist seeding.</td></tr>
+          <tr><td>Q11</td><td>Cover letters <strong>out of scope</strong> (P5 stretch follow-up).</td></tr>
+          <tr><td>Q12</td><td>Keep the user-facing name <strong>&ldquo;Canon.&rdquo;</strong></td></tr>
+        </tbody>
+      </table>
+      <h3>Deferred (explicitly out of v1)</h3>
+      <p>Keyword importance weighting (Q6) &middot; per-canon framing pins (Q8) &middot; auto-assignment / normalized-role / LLM-classify (Q4) &middot; keyword aggregation-from-postings (Q3/Q6) &middot; cover letters (Q11). Each is a later refinement, not needed for the core win.</p>
+      <h3>Open input still needed</h3>
+      <p>The <strong>career canon role names</strong> (Sal adds by hand), plus the two Q7 micro-wrinkles (sibling auto-tag on shared entities; whether skills/languages edits count) &mdash; both have safe defaults.</p>
+    </div>
+  </details>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#problem">The problem &mdash; per-job gen is wasteful</a></li>
+      <li><a href="#idea">The idea &mdash; a Canon</a></li>
+      <li><a href="#fit">How a Canon fits the existing architecture</a></li>
+      <li><a href="#strawman">Design (decided)</a></li>
+      <li><a href="#cost">What this buys (cost model)</a></li>
+      <li><a href="#questions">Open questions &mdash; answer these</a></li>
+      <li><a href="#phasing">Possible phasing</a></li>
+      <li><a href="#non-goals">Non-goals</a></li>
+    </ol>
+  </details>
+
+  <!-- ───────────────────────── 1. PROBLEM ───────────────────────── -->
+  <details class="section" open>
+    <summary><h2 id="problem">The problem</h2></summary>
+    <div class="section-body">
+      <h3>Per-job generation re-derives the same resume</h3>
+      <p>Today every resume is built <strong>per posting</strong>. <code>POST /api/resumes</code> takes one job (a Pipeline application, a URL, or pasted text), extracts that posting's keywords, then runs the full relevance pipeline: <code>select &rarr; scratchpad-synth &rarr; rewrite (FLASH) + tagline (LITE) &rarr; render</code>. Each generation is <strong>2&ndash;3 Gemini calls</strong> (per <code>docs/llm-calls.html</code>; the per-user rate limit even assumes &ldquo;1 generate = 2&ndash;3 Gemini calls&rdquo;).</p>
+      <p>But Sal's reality is that jobs cluster hard into a handful of <strong>role-types</strong> that draw on the <em>same</em> experience:</p>
+      <ul>
+        <li>Every <strong>security officer</strong> posting (Allied Universal &mdash; museum rover, mall patrol, studio, &hellip;) &rarr; same security history, same bullets, near-identical output.</li>
+        <li>The four no-degree <strong>side</strong> watchlists already <em>are</em> role-types: <em>AI coding evaluator</em>, <em>Math / test-prep tutor</em>, <em>Bilingual CS / interpreter</em>, <em>Junior web dev &amp; QA</em>.</li>
+      </ul>
+      <p>Generating a fresh resume for each of, say, five Interested security jobs means <strong>~10&ndash;15 Gemini calls to produce five PDFs that are practically the same document.</strong> The <a href="./archive/cross-tier-llm-dedup.html">cross-tier LLM cache</a> doesn't rescue this: it's content-addressed on the <em>exact</em> rendered prompt, so two <em>similar-but-not-identical</em> postings miss the cache and each pay full price.</p>
+      <blockquote>Sal's framing: &ldquo;it doesn't make sense to create resumes per job but per canon or type of job &mdash; we really only need one resume for security-type jobs.&rdquo;</blockquote>
+    </div>
+  </details>
+
+  <!-- ───────────────────────── 2. IDEA ───────────────────────── -->
+  <details class="section" open>
+    <summary><h2 id="idea">The idea</h2></summary>
+    <div class="section-body">
+      <h3>A Canon = a named role-archetype with one reusable resume</h3>
+      <p>Introduce a <strong>Canon</strong>: a user-named role category (&ldquo;Security Officer&rdquo;, &ldquo;Math Tutor&rdquo;, &ldquo;Junior Web Dev&rdquo;) that owns <strong>one canonical resume</strong>. Instead of feeding the pipeline a single posting, we feed it the canon's <strong>keyword profile</strong> (a representative keyword set standing in for &ldquo;what postings of this type ask for&rdquo;), generate the resume <strong>once</strong>, and <strong>reuse</strong> it for every job in that canon.</p>
+      <p>Concretely, <strong>a canon's resume is a curated <em>subset</em> of your full profile</strong> &mdash; the experiences and bullets relevant to that role-type, selected (and re-worded) out of the one master profile. The profile stays the single source of truth; each canon is a lens that picks the slice of it that speaks to that role. (This is why staleness is entity-scoped &mdash; §6 Q7.)</p>
+      <p>A Canon is a new granularity level that nests between the two we already have:</p>
+      <table>
+        <thead><tr><th>Level</th><th>Example</th><th>Exists?</th><th>Resume relationship</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Track</strong></td><td><code>career</code> / <code>side</code></td><td>Yes (<code>Application.track</code>, <code>Watchlist.track</code>)</td><td>Too coarse &mdash; one resume can't serve all of &ldquo;side&rdquo;</td></tr>
+          <tr><td><strong>Canon</strong> &larr; <em>new</em></td><td>&ldquo;Security Officer&rdquo;, &ldquo;Math Tutor&rdquo;</td><td><strong>No &mdash; this proposal</strong></td><td><strong>One reusable resume per canon</strong></td></tr>
+          <tr><td><strong>Job</strong></td><td>&ldquo;Allied Universal &mdash; Museum Rover&rdquo;</td><td>Yes (<code>Application</code>)</td><td>Too fine &mdash; the wasteful status quo</td></tr>
+        </tbody>
+      </table>
+      <p>So the mental model is <strong>track &supe; canon &supe; job</strong>: a track holds several canons; a canon holds many jobs; a canon has exactly one resume that all its jobs share.</p>
+      <div class="callout tip"><strong>Why &ldquo;Canon&rdquo; is the right unit.</strong> It matches how Sal actually applies &mdash; the same bullets, ordering, and framing across a whole role-type &mdash; and it's the level at which the expensive LLM work is genuinely <em>shared</em>. The content-hash cache captures &ldquo;identical input&rdquo;; the Canon captures &ldquo;same role, different listing,&rdquo; which is where the real duplication lives.</div>
+    </div>
+  </details>
+
+  <!-- ───────────────────────── 3. FIT ───────────────────────── -->
+  <details class="section">
+    <summary><h2 id="fit">How a Canon fits the existing architecture</h2></summary>
+    <div class="section-body">
+      <h3>Hooks that already exist</h3>
+      <p>Most of the machinery a Canon needs is already present &mdash; the proposal is largely about <em>where the posting input comes from</em> and <em>reuse</em>, not a new pipeline:</p>
+      <ul>
+        <li><strong>The pipeline is keyword-driven, not posting-object-driven.</strong> <code>selectBullets(profile, keywords, {}, keywordWeights)</code> and <code>rewriteBullets(flat, posting)</code> consume a <em>keyword list + weights</em>. A canon just supplies those from its own keyword set instead of one posting &mdash; the selector, scorer, one-page pruner, and skills-gap don't need to know the difference.</li>
+        <li><strong>Side watchlists already partition into role-types.</strong> The four side watchlists map ~1:1 to canons, and each carries a keyword string. Career watchlists are company-shaped rather than role-shaped, so career canons would need a different source (see §6).</li>
+        <li><strong><code>pinKeywords</code> is a posting-conditional pin.</strong> Per-entity <code>pinKeywords</code> (on <code>WorkRole</code>/<code>Project</code>/<code>Education</code>) already force an entity to lead its section when a posting matches. A canon could drive this deterministically (&ldquo;the security canon always leads with the security role&rdquo;).</li>
+        <li><strong><code>GeneratedResume</code> already stores a frozen artifact + selection trace.</strong> A canonical resume is a <code>GeneratedResume</code> that is keyed to a canon rather than a single posting, and is <em>reused</em> rather than regenerated.</li>
+        <li><strong>The Pipeline picker already filters by track.</strong> The <code>GenerateResumeCard</code> Interested-app picker has a career/side/both filter &mdash; a natural place to surface &ldquo;use this canon's resume.&rdquo;</li>
+      </ul>
+
+      <h3>The hierarchy, drawn</h3>
+      <pre class="mermaid">
+flowchart TB
+  career["TRACK: career"]
+  side["TRACK: side"]
+  cEng["CANON: Software Engineer"]
+  cSec["CANON: Security Officer"]
+  cTutor["CANON: Math Tutor"]
+  cSWE["CANON: Junior Web Dev"]
+  rEng["1 canonical resume"]
+  rSec["1 canonical resume"]
+  rTutor["1 canonical resume"]
+  rSWE["1 canonical resume"]
+  j6["job: Stripe — Backend Eng"]
+  j1["job: Allied — Museum Rover"]
+  j2["job: Allied — Mall Patrol"]
+  j3["job: Universal — Studio Guard"]
+  j4["job: Kumon — Tutor"]
+  j5["job: Acme — QA Intern"]
+
+  career --> cEng
+  side --> cSec
+  side --> cTutor
+  side --> cSWE
+  cEng --> rEng
+  cSec --> rSec
+  cTutor --> rTutor
+  cSWE --> rSWE
+  cEng -.->|reuses rEng| j6
+  cSec -.->|reuses rSec| j1
+  cSec -.->|reuses rSec| j2
+  cSec -.->|reuses rSec| j3
+  cTutor -.->|reuses rTutor| j4
+  cSWE -.->|reuses rSWE| j5
+      </pre>
+    </div>
+  </details>
+
+  <!-- ───────────────────────── 4. STRAWMAN ───────────────────────── -->
+  <details class="section">
+    <summary><h2 id="strawman">Design (decided)</h2></summary>
+    <div class="section-body">
+      <div class="callout"><strong>Updated to the locked decisions (2026-05-30).</strong> This was the strawman that made the §6 questions concrete; it's now reworked to match the answers. Where a field is deferred (framing pins, weights) it's marked inline.</div>
+
+      <h3>Data model</h3>
+      <p>A new <code>Canon</code> model, plus a nullable <code>canonId</code> on the three things that point at it. A canonical resume is a <code>GeneratedResume</code> tagged with <code>canonId</code> and an <code>isCanonical</code> flag.</p>
+      <pre><code class="language-typescript">model Canon {
+  id            String   @id @default(cuid())
+  userId        String
+  name          String              // "Security Officer" — user-facing label
+  slug          String              // normalizeRoleName(name) — match key
+  track         String              // "career" | "side" — every canon nests under a track
+  description   String?             // optional user note
+
+  // The canon's "posting profile": the keyword set that replaces a single
+  // posting's keywords when generating. Same shape posting-parse emits.
+  keywords      String   @default("[]")     // JSON [{ keyword, importance }]
+  keywordSource String   @default("manual") // "manual" | "aggregated" | "llm"
+
+  // Per-canon framing (§6 Q8) — DEFERRED past v1: the existing pipeline
+  // (selection spine + the resume-tagline LLM call) already orders sections/
+  // entities, so v1 leaves these null. Kept nullable for the later "lock a
+  // fixed layout" refinement.
+  pinnedEntityIds String?  // JSON string[] — entities forced to lead (deferred)
+  sectionOrder    String?  // JSON SectionKey[] (deferred)
+  onePage         Boolean  @default(true)   // default render = PDF + one-page (§6 Q9);
+                                            // full-length + docx render on demand
+  currentResumeId String?                   // active (latest) canon resume version
+
+  active        Boolean  @default(true)
+  // Demand-driven, entity-scoped staleness (§6 Q7). resumeStale flips true only
+  // when an entity the current canon resume DEPENDS ON changes — its bullets,
+  // tags/pinKeywords, or deletion — or when the canon's own keywords/framing
+  // change. Edits to profile entities NOT in resumeEntityIds leave it fresh.
+  resumeStale     Boolean  @default(true)
+  resumeEntityIds String?  // JSON string[] — profile entity ids in the current
+                           // canon resume's selection; the staleness dependency set.
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user          User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumes       GeneratedResume[] // the canonical resume(s)
+  applications  Application[]     // jobs assigned to this canon
+  watchlists    Watchlist[]       // watchlists that feed this canon
+
+  @@unique([userId, slug])
+  @@index([userId, track, active])
+}
+
+// Added FKs (all nullable, additive):
+//   Application.canonId  String?   — which canon a tracked job belongs to (manual tag, §6 Q4)
+//   Watchlist.canonId    String?   — optional manual link: a role-watchlist feeds a canon; its jobs inherit
+//   GeneratedResume.canonId   String?
+//   GeneratedResume.isCanonical Boolean @default(false)
+//   GeneratedResume.canonVersion Int?    — auto-incremented per canon; prior
+//      versions are retained + downloadable (auto-versioning, no diff/rollback
+//      UI — §6 Q9). Canon.currentResumeId points at the active version.</code></pre>
+
+      <h3>Generating a canon resume</h3>
+      <p>Reuse <code>POST /api/resumes</code> almost verbatim. Add a fourth posting-input variant <code>{ canonId }</code> alongside <code>url</code>/<code>text</code>/<code>applicationId</code>. When present, the route builds a synthetic <code>ParsedPosting</code> from <code>canon.keywords</code> (title = canon name, company = null, keywords = the canon's term list) and runs the <strong>unchanged pipeline</strong> &mdash; selection, rewrite, and the <code>resume-tagline</code> framing call all work as-is on canon keywords. v1 passes the keywords <em>flat</em> (no <code>keywordWeights</code>); the selector treats missing weights as importance 1, which is fine (§6 Q6). The result is persisted as a <code>GeneratedResume</code> with <code>isCanonical = true</code> (+ <code>canonVersion</code>), and <code>canon.resumeStale</code> is cleared. (Per-canon framing overrides and keyword weighting are deferred refinements &mdash; §6 Q8 / Q6.)</p>
+
+      <h3>Reusing it for a specific job</h3>
+      <p>The default reuse is <strong>verbatim</strong> &mdash; downloading a job's resume just streams the canon's already-rendered artifact, zero LLM:</p>
+      <pre class="mermaid">
+flowchart LR
+  want["Need resume<br/>for job J"] --> hasCanon{"J has a<br/>canon?"}
+  hasCanon -->|yes| fresh{"canon resume<br/>fresh?"}
+  hasCanon -->|no| assign["assign / create<br/>a canon (§6 Q4)"]
+  assign --> fresh
+  fresh -->|yes| serve["stream the canon's<br/>artifact — 0 LLM"]
+  fresh -->|"no (stale)"| regen["regenerate canon<br/>resume once — 2–3 calls"]
+  regen --> serve
+      </pre>
+      <p>An <em>optional</em> per-job touch-up (e.g. swapping a company name into the tagline) is a separate question &mdash; see §6 Q5. The strawman default is &ldquo;no per-job LLM at all.&rdquo;</p>
+
+      <h3>Touch list (where the work lands)</h3>
+      <p>Following the <code>docs/resume-pipeline.md</code> touch-list discipline, a canon-aware change threads through: <code>prisma/schema.prisma</code> + migration &middot; <code>lib/schemas/*</code> (canon Zod) &middot; <code>lib/repositories/canons.ts</code> (new) &middot; <code>app/api/canons/route.ts</code> (new CRUD) &middot; the <code>{ canonId }</code> branch in <code>app/api/resumes/route.ts</code> &middot; a keyword-split helper (text &rarr; term array; weighting deferred, §6 Q6) &middot; a UI surface (§6 Q10) &middot; hermetic smokes. The selector/rewriter/pruner stay untouched &mdash; they already speak keywords.</p>
+    </div>
+  </details>
+
+  <!-- ───────────────────────── 5. COST ───────────────────────── -->
+  <details class="section">
+    <summary><h2 id="cost">What this buys (cost model)</h2></summary>
+    <div class="section-body">
+      <h3>Calls scale with canons, not jobs</h3>
+      <p>Let a canon hold <em>N</em> Interested jobs. Per-job gen costs <code>N &times; (2&ndash;3)</code> Gemini calls and produces <em>N</em> near-identical PDFs. Canon gen costs <code>1 &times; (2&ndash;3)</code> calls, reused <em>N</em> times.</p>
+      <table>
+        <thead><tr><th>Scenario</th><th>Status quo (per-job)</th><th>With Canons</th></tr></thead>
+        <tbody>
+          <tr><td>5 security jobs</td><td>10&ndash;15 calls, 5 PDFs</td><td>2&ndash;3 calls, 1 reused PDF</td></tr>
+          <tr><td>Re-apply to a 6th security job</td><td>+2&ndash;3 calls</td><td>0 calls (serve artifact)</td></tr>
+          <tr><td>Profile bullet edited &rarr; all 5 need refresh</td><td>10&ndash;15 calls</td><td>2&ndash;3 calls (regen the canon once)</td></tr>
+        </tbody>
+      </table>
+      <p>The win compounds because cost becomes a function of <strong>how many role-types Sal pursues</strong> (a handful, stable) instead of <strong>how many jobs he applies to</strong> (many, growing). It also stacks <em>on top of</em> the cross-tier cache rather than replacing it.</p>
+      <div class="callout"><strong>From the code &mdash; what one generate actually spends.</strong> A per-job generate today fires up to four Gemini calls in <code>app/api/resumes/route.ts</code>: <code>posting-parse</code> (LITE), a best-effort <code>bullet-tags-from-posting</code> auto-tag (LITE), the <code>resume-rewrite</code> (FLASH &mdash; the only FLASH path in the app), and <code>resume-tagline</code> (LITE, which also decides section/entity order) &mdash; plus an optional <code>scratchpad-synth</code> call when posting keywords are left uncovered. With canons those costs move from <em>per job</em> to <em>per canon-regen</em>: v1 feeds the pipeline the canon's flat keyword text (no <code>posting-parse</code> &mdash; §6 Q6) and otherwise runs the <em>same</em> stages as a per-job gen. So a canon regen is roughly the usual auto-tag + <code>resume-rewrite</code> + <code>resume-tagline</code> &mdash; paid <strong>once per canon</strong>, and every verbatim reuse after that is <strong>zero</strong>. (Later refinements could weight keywords (Q6) or store framing to drop <code>resume-tagline</code> (Q8), but neither is needed for the core win &mdash; cost already scales with canons, not jobs.)</div>
+      <div class="callout"><strong>The real cost question is regeneration cadence, not generation.</strong> A canon resume is cheap to make once; the spend is in <em>how often it's rebuilt</em> (profile edits, keyword drift, staleness policy). That's §6 Q7 &mdash; and it's where a careless &ldquo;regen on every profile save&rdquo; could quietly undo the savings.</div>
+    </div>
+  </details>
+
+  <!-- ───────────────────────── 6. OPEN QUESTIONS ───────────────────────── -->
+  <details class="section" open>
+    <summary><h2 id="questions">Open questions &mdash; answer these</h2></summary>
+    <div class="section-body">
+      <p>Grouped by theme. Each has options and a <strong>tentative recommendation</strong> (the strawman default) so you can answer fast &mdash; just confirm, pick, or override. Reference them by number (Q1&hellip;Q12) when you reply. <strong>Q2 is now decided (2026-05-30)</strong>, and its answers (career canons in v1; canon &sub; exactly one track) plus the code findings <strong>reshaped Q3/Q4/Q6</strong> &mdash; those now split by track and ask different things than the first draft, so read them fresh. Q5/Q9 keep a short confirming &ldquo;From the code&rdquo; note.</p>
+
+      <h3>Q1 — Granularity &amp; whether it's truly &ldquo;one resume&rdquo;</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30).</strong>
+        <ul>
+          <li><strong>One resume per canon</strong>, reused verbatim, is the default &mdash; good for now.</li>
+          <li><strong>Canons sit at the role-type level.</strong> Museum-rover vs mall-patrol vs studio-guard collapse into a single &ldquo;Security Officer&rdquo; canon &mdash; not different enough to matter on paper, and that collapse <em>is</em> the point.</li>
+          <li><strong>Count ≈ up to 10</strong>, roughly one per role-specific watchlist. Side ones are known (AI-coding Evaluator, Math/Test-prep Tutor, Bilingual CS/Interpreter, Junior Web Dev/QA, Security Officer); career role names TBD when you set them up.</li>
+        </ul>
+      </div>
+      <div class="callout warn"><strong>One addition &mdash; an opt-in &ldquo;specialization pass&rdquo; (this reshapes Q5).</strong> Beyond the verbatim default, you want the <em>option</em> to push a canon resume through an LLM pass that re-tailors its language to a specific job's posting keywords (the way <code>resume-tagline</code> already tailors the tagline). So the model is <strong>verbatim by default, with an explicit per-job specialization as an opt-in</strong> &mdash; not the rarely-used escape hatch the first draft assumed. The scope of that pass is now the substance of Q5.</div>
+
+      <h3>Q2 — Canon vs Track</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30).</strong>
+        <ul>
+          <li><strong>Every canon belongs to exactly one track.</strong> A role belongs to one track and is exclusively a member of that one &mdash; canons never span tracks.</li>
+          <li><strong>Career gets canons in v1 too</strong>, not side-only. Both tracks ship together.</li>
+          <li><strong>Canon never replaces track; they coexist.</strong> Canon is a strict <em>subset</em> of track (track &supe; canon &supe; job) &mdash; a finer partition <em>within</em> a track, not a competing axis.</li>
+        </ul>
+      </div>
+      <div class="callout warn"><strong>Consequence (this drives Q3 + Q4).</strong> Because career is in v1, the &ldquo;watchlist ≈ canon&rdquo; shortcut no longer covers everything. It holds for <strong>side</strong> (linkedin/indeed watchlists are role-shaped) but <strong>not career</strong> (Greenhouse/Lever/Workday watchlists are company-shaped &mdash; one employer, many roles). So Q3 (keyword source) and Q4 (job&rarr;canon assignment) now <strong>split by track</strong>: the side mechanism and the career mechanism are genuinely different, and each needs its own answer.</div>
+
+      <h3>Q3 — Where the canon's keywords come from</h3>
+      <p>The pipeline needs a keyword profile (with per-keyword importance &mdash; see Q6) to stand in for &ldquo;a posting.&rdquo; Per Q2 this <strong>splits by track</strong>, because the two track types carry different watchlist shapes.</p>
+
+      <h4>Side canons</h4>
+      <div class="callout tip"><strong>&check; Your call (6.3.d):</strong> a side canon's keywords = its feeding watchlist's keywords. A linkedin/indeed watchlist already <em>is</em> a role-type and its <code>keywords</code> field is the role query.</div>
+      <div class="callout"><strong>Caveat (the actual decision lives in Q6).</strong> That field is a single free-text OR-string (e.g. <code>"math tutor OR SAT prep OR test prep"</code>, max 200 chars), <em>not</em> a weighted <code>{keyword, importance}[]</code> list &mdash; so &ldquo;same as the watchlist&rdquo; still needs a small transform to feed the pipeline. Whether that's a plain split (flat weights) or a one-time <code>posting-parse</code> pass (real weights) is the importance question &mdash; <strong>answer it in Q6.</strong></div>
+
+      <h4>Career canons</h4>
+      <div class="callout tip"><strong>&check; Your call (6.3 career): (a) manual.</strong> You type the canon's keywords yourself, mirroring the side track (where the keywords are the watchlist string you typed). A career watchlist is a company board with no role keywords to copy, so you curate them directly on the canon &mdash; &ldquo;I'll just add some myself.&rdquo;</div>
+      <div class="callout"><strong>This unifies the keyword source.</strong> Both tracks now boil down to <em>user-provided keyword text</em> &mdash; side reads it off the feeding watchlist's <code>keywords</code> string, career takes it straight from you. So there's <strong>one</strong> mechanism to build, not two, and the aggregation / LLM-synthesis options drop out of v1 (a self-maintaining &ldquo;aggregate from this canon's tracked postings&rdquo; mode stays on the table as a later enhancement). The only keyword question left is how that text becomes <em>weighted</em> &mdash; Q6.</div>
+
+      <h3>Q4 — How a job gets assigned to a canon</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30): (c) manual tag.</strong> You assign the canon yourself &mdash; no auto-derivation in v1. You'll create role-based watchlists by hand (not just company boards), and a job gets its canon from a manual tag. Consistent with the rest of your choices (manual keywords, etc.): keep v1 deterministic and user-driven, skip the inference.</div>
+      <div class="callout"><strong>What &ldquo;manual tag&rdquo; means in the UI (Q10).</strong> Two manual touch-points, both one-click:
+        <ul>
+          <li><strong>Per-job</strong> &mdash; pick the canon when you track a posting / from the kanban card (sets <code>Application.canonId</code>).</li>
+          <li><strong>Per-watchlist (optional convenience)</strong> &mdash; tag a role-shaped watchlist to a canon once (<code>Watchlist.canonId</code>); jobs it spawns inherit that canon. Still &ldquo;manual&rdquo; &mdash; you set the link one time &mdash; but it spares you per-job tagging for role-watchlists.</li>
+        </ul>
+      </div>
+      <div class="callout"><strong>Deferred automation.</strong> The auto-assign options from the first draft &mdash; watchlist-derived at <code>trackAsApplication</code>, <code>normalizeRoleName</code> matching, LLM-classify &mdash; are <strong>not</strong> in v1. They stay on the table as later conveniences if hand-tagging gets tedious.</div>
+
+      <h3>Q5 — Reuse fidelity: verbatim default + an opt-in specialization pass</h3>
+      <p>Per Q1 there are two modes, not one.</p>
+
+      <h4>Default — verbatim (decided)</h4>
+      <div class="callout tip"><strong>&check; Default reuse is verbatim</strong> &mdash; serve the canon's stored artifact, 0 LLM per job. It's lossless: the rendered resume contains <strong>nothing per-company</strong> &mdash; the H1 is <code>profile.headline</code> (your name), the subtitle is the canon's <code>tagline</code>, and <code>posting.company</code> only ever reaches the download filename / <code>X-Resume-Company</code> header / stored row, never the document body. The one per-job artifact is the filename, which the reuse path can stamp for free.</div>
+
+      <h4>Opt-in — specialization pass (the open scope)</h4>
+      <div class="callout warn"><strong>What you asked for (6.1.a):</strong> an explicit, per-job action that re-tailors the canon resume's <em>language</em> to a specific posting's keywords &mdash; starting from the canon's already-made <strong>selection</strong> (which bullets/entities) rather than re-deriving it. Only wording changes; the curated bullet-set + ordering stay put. Sub-decisions (all resolved by the tentative below, 6.5):
+        <ul>
+          <li><strong>Which calls?</strong> Tagline-only (cheapest), or tagline + a FLASH <code>rewriteBullets</code> over the canon's bullets against this posting's keywords (the real &ldquo;language match&rdquo;)?</li>
+          <li><strong>Posting keywords source:</strong> a <code>posting-parse</code> of the actual job page (one call) &mdash; that's the &ldquo;application-page keywords&rdquo; you want to match.</li>
+          <li><strong>Persistence:</strong> a specialized run saves a <em>new per-job</em> <code>GeneratedResume</code> linked to that Application, leaving the canon resume untouched. (Decided: yes &mdash; canon stays the reusable base; specializations are per-job children.)</li>
+          <li><strong>Phasing:</strong> ship verbatim reuse first; specialization is a fast follow that reuses the existing rewrite/tagline machinery on a pre-built selection.</li>
+        </ul>
+      </div>
+      <div class="callout tip"><strong>&check; Decided (6.5 &mdash; go with the tentative):</strong> default verbatim; specialization = <code>posting-parse</code> + FLASH <code>rewriteBullets</code> + <code>resume-tagline</code> over the canon's <em>fixed</em> selection, saved as a per-job <code>GeneratedResume</code> (canon resume untouched). Cost ≈ a normal per-job gen <em>minus</em> the select/synth stages &mdash; and it only fires when you ask, so the fleet-level win holds.</div>
+
+      <h3>Q6 — Do the keywords need importance weights?</h3>
+      <div class="callout warn"><strong>Re-examined (2026-05-30): not necessary for v1.</strong> <code>keywordWeights</code> is <em>optional</em> in <code>scoreBullet</code> (<code>lib/resumes/select.ts</code>) &mdash; when it's absent, every keyword scores at importance 1 and the pipeline runs fine: it still picks matching bullets, drops off-topic entities, and renders. Importance only changes <em>tie-breaking</em> &mdash; which bullets win when an entity has more matches than its slots (4 per work role) and a few marginal keep/drop calls. On a small profile with a hand-picked keyword list, that difference is minor. (Earlier this question called weights &ldquo;mandatory&rdquo; &mdash; that was wrong; they're a quality nicety.)</div>
+      <div class="callout tip"><strong>Recommendation: flat for v1.</strong> Split the canon's keyword text into a term array and pass it with <em>no</em> weights (zero LLM). If selection quality ever disappoints, add weighting later &mdash; either one <code>posting-parse</code> pass per canon, or let the canon editor accept an importance per keyword, or aggregate weights from the canon's tracked postings. All three stay on the table as future upgrades; none is needed to ship.</div>
+
+      <h3>Q7 — Regeneration &amp; staleness</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30).</strong>
+        <ul>
+          <li><strong>Entity-scoped staleness.</strong> A canon goes stale only when an experience <em>in that canon's resume</em> changes &mdash; its bullets, its tags/keywords (<code>pinKeywords</code>), or the experience is deleted &mdash; or when the canon's own keyword text / framing changes.</li>
+          <li><strong>Unrelated edits don't touch it.</strong> Editing a profile experience that <em>isn't</em> in this canon's resume (or one that's only in a different canon) leaves this canon fresh. No blanket &ldquo;profile changed &rarr; everything stale.&rdquo;</li>
+          <li><strong>Lazy + manual.</strong> Just tag it stale and show a badge; never auto-regenerate, never on a schedule. It rebuilds only when you click regenerate (or download a stale canon).</li>
+        </ul>
+      </div>
+      <div class="callout"><strong>Mechanism.</strong> &ldquo;Experiences in the canon&rdquo; = the distinct entity ids in the canon resume's stored <code>selections</code> (each row carries <code>sourceId</code>). Record that set at gen time (a <code>canon.resumeEntityIds</code> JSON snapshot, or a small <code>CanonEntity</code> join for an indexed lookup). The staleness hook sits on the profile-entity mutations &mdash; <code>app/api/profile/{work-roles,projects,education}</code> PATCH/DELETE + bullet/tag edits &mdash; each flips <code>resumeStale=true</code> on <em>only</em> the canons whose dependency set contains the touched entity.</div>
+      <div class="callout warn"><strong>Wrinkles to accept/decide.</strong>
+        <ul>
+          <li><strong>Newly-relevant entities won't trigger it.</strong> If you beef up an experience that <em>wasn't</em> selected last time, the canon won't auto-mark stale (it's not in the dependency set) even though a regen might now include it. That's the intended tradeoff of the narrow rule &mdash; a manual regen always picks it up.</li>
+          <li><strong>Gen-time auto-tag.</strong> Resume gen runs <code>bullet-tags-from-posting</code>, which writes tags onto the profile. The just-generated canon must clear <code>resumeStale</code> <em>after</em> that (so it doesn't self-stale); open: does tagging a shared entity mark <em>sibling</em> canons stale?</li>
+          <li><strong>Extras (skills / languages / interests).</strong> You enumerated experiences (bullets/keywords/deletion). These also render on the resume but aren't entity-IDed in <code>selections</code> &mdash; do edits to them mark a canon stale, or stay out of the dependency model? (Default: out, to honor the narrow rule.)</li>
+        </ul>
+      </div>
+
+      <h3>Q8 — Per-canon framing overrides</h3>
+      <div class="callout warn"><strong>Re-examined (2026-05-30): not necessary for v1.</strong> The existing pipeline already orders the resume with <em>zero</em> per-canon fields &mdash; <code>selectBullets</code> picks a work-role spine + sorts by date, and the <code>resume-tagline</code> LLM call returns <code>sectionOrder</code> + <code>entityOrder</code> exactly as it does for every per-job resume today. A canon resume gets a perfectly good, stable layout from that path. (Earlier this question pitched stored framing as a way to skip the tagline call &mdash; but skipping it also means losing the role-relevant tagline, so v1 just keeps the call.)</div>
+      <div class="callout tip"><strong>Recommendation: defer.</strong> Don't add <code>pinnedEntityIds</code> / <code>sectionOrder</code> in v1. They're a later refinement worth it only if you want to <em>lock</em> a fixed layout (so regens never reorder) or hand-write a per-canon tagline. The one framing decision that <em>is</em> settled stays: one-page default = on (Q9). Entity <code>pinKeywords</code> already exist if you ever want a specific experience to always lead.</div>
+
+      <h3>Q9 — Storage, formats, versioning</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30).</strong>
+        <ul>
+          <li><strong>One canonical resume per canon</strong> (the current version) &mdash; one stored <em>selection</em>, not one artifact per combo.</li>
+          <li><strong>Default render = PDF + one-page.</strong> A new canon ships with pdf + one-page as its default; the full-length variant and other formats (docx) are available on demand, rendered from the same stored selection.</li>
+          <li><strong>Auto-versioning, no diff.</strong> Each regen makes a new version; prior versions are retained + downloadable, but there's no diff/rollback UI &mdash; just keep the versions. <code>Canon.currentResumeId</code> points at the active one.</li>
+          <li><strong>§4 model confirmed</strong> (<code>Canon</code> + nullable <code>canonId</code> on Application/Watchlist/GeneratedResume + <code>isCanonical</code>), plus <code>GeneratedResume.canonVersion</code> + <code>Canon.currentResumeId</code> for the version chain.</li>
+        </ul>
+      </div>
+      <div class="callout"><strong>From the code &mdash; on-demand re-render is free of LLM.</strong> <code>GeneratedResume</code> already persists <code>profileSnapshot</code> (frozen profile JSON) + <code>selections</code> (the chosen, rewritten bullets) + <code>artifactPath</code>. So pdf&harr;docx and full&harr;one-page variants re-run only <code>composeResumeProps</code> + the renderer &mdash; <strong>zero Gemini</strong> &mdash; off the stored selection. So each version persists one selection; the default (pdf, one-page) artifact is materialized up front and the rest render on click.</div>
+
+      <h3>Q10 — UI / surface</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30): go with the tentative.</strong>
+        <ul>
+          <li><strong>A &ldquo;Canons&rdquo; manager in the Profile view</strong> (next to Generate Resume) &mdash; create/edit a canon (name, track, keyword text), regenerate, view/download the current resume + its prior versions (Q9).</li>
+          <li><strong>The <code>GenerateResumeCard</code> Pipeline picker gains a canon shortcut</strong> &mdash; &ldquo;use this canon's resume&rdquo; for a tracked job.</li>
+          <li><strong>Manual canon tagging (Q4) on the kanban card</strong> (per-job <code>Application.canonId</code>) + the optional per-watchlist canon link.</li>
+          <li><strong>Seeding:</strong> one-time, idempotent auto-create of side canons from existing side watchlists; career canons you add by hand (Q3).</li>
+        </ul>
+      </div>
+
+      <h3>Q11 — Cover letters &amp; per-company personalization</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30): out of scope.</strong> Cover letters are <strong>not</strong> part of this feature. Kept as a noted follow-up (&ldquo;per-job cover letter from the canon + the specific posting&rdquo;) &mdash; the home for true per-company personalization, distinct from the Q5 specialization pass (which tailors the <em>resume's</em> wording, not a letter). It stays in the P5 stretch row, tracked but not built here.</div>
+
+      <h3>Q12 — Naming</h3>
+      <div class="callout tip"><strong>&check; Decided (2026-05-30): keep &ldquo;Canon.&rdquo;</strong> It's the user-facing label, not just a codename &mdash; distinctive and yours. No plainer-label swap.</div>
+    </div>
+  </details>
+
+  <!-- ───────────────────────── 7. PHASING ───────────────────────── -->
+  <details class="section">
+    <summary><h2 id="phasing">Possible phasing</h2></summary>
+    <div class="section-body">
+      <h3>Build order (decisions locked, 2026-05-30)</h3>
+      <details class="task" open>
+        <summary><input type="checkbox"><span class="task-id">P1</span><span class="task-title">Canon model + seeding (both tracks)</span></summary>
+        <div class="task-body"><p><code>Canon</code> model (incl. <code>canonVersion</code>-bearing resumes + <code>currentResumeId</code>) + nullable <code>canonId</code> FKs on Application/Watchlist/GeneratedResume (migration, both DBs), Zod + repository + CRUD route, and a one-time idempotent seeder that creates one <strong>side</strong> canon per existing side watchlist (keywords copied from the watchlist string, per Q3). <strong>Career</strong> canons can't be watchlist-seeded (company-shaped boards) &mdash; seed them manually per Q3. No UI yet.</p></div>
+      </details>
+      <details class="task">
+        <summary><input type="checkbox"><span class="task-id">P2</span><span class="task-title">Canon-driven generation</span></summary>
+        <div class="task-body"><p><code>{ canonId }</code> input branch in <code>POST /api/resumes</code>: synthetic <code>ParsedPosting</code> from the canon's keyword text (weighted via one <code>posting-parse</code> pass per Q6, or flat), per-canon framing overrides, persist as <code>isCanonical</code>.</p></div>
+      </details>
+      <details class="task">
+        <summary><input type="checkbox"><span class="task-id">P3</span><span class="task-title">Assignment + verbatim reuse</span></summary>
+        <div class="task-body"><p>Manual <code>canonId</code> tagging (Q4) &mdash; per-job from the kanban / track action, plus an optional per-watchlist <code>canonId</code> link whose jobs inherit; a &ldquo;download canon resume&rdquo; path that serves the artifact with 0 LLM; staleness flagging (Q7). <strong>Opt-in specialization pass (Q5)</strong> lands here or as an immediate follow-on &mdash; reuses <code>rewriteBullets</code> + <code>resume-tagline</code> on the canon's fixed selection, saved as a per-job <code>GeneratedResume</code>.</p></div>
+      </details>
+      <details class="task">
+        <summary><input type="checkbox"><span class="task-id">P4</span><span class="task-title">UI &mdash; Canons manager + picker shortcut</span></summary>
+        <div class="task-body"><p>Profile-view Canons manager + the <code>GenerateResumeCard</code> shortcut (Q10).</p></div>
+      </details>
+      <details class="task">
+        <summary><input type="checkbox"><span class="task-id">P5</span><span class="task-title">(stretch) cover letters</span></summary>
+        <div class="task-body"><p>Per-job cover-letter generation from the canon + the specific posting (Q11) &mdash; the natural home for the per-company personalization the verbatim resume deliberately omits. (Career canons are now v1, folded into P1&ndash;P3, not here.)</p></div>
+      </details>
+    </div>
+  </details>
+
+  <!-- ───────────────────────── 8. NON-GOALS ───────────────────────── -->
+  <details class="section">
+    <summary><h2 id="non-goals">Non-goals</h2></summary>
+    <div class="section-body">
+      <h3>Explicitly out of scope (for v1)</h3>
+      <ul>
+        <li><strong>Automatic per-job LLM tailoring</strong> &mdash; the default path does <em>zero</em> per-job LLM (verbatim reuse). An <strong>explicit, opt-in specialization pass</strong> (Q5) is in scope as a wanted capability, but it never fires unless you ask for it; the existing per-job URL/Paste flow also stays as a manual escape hatch.</li>
+        <li><strong>Replacing the relevance pipeline</strong> &mdash; select/rewrite/prune/skills-gap are reused as-is; canons only change the <em>input</em> (keywords) and add <em>reuse</em>.</li>
+        <li><strong>Cover letters</strong> (Q11) &mdash; noted as the natural home for per-company personalization, but a separate feature.</li>
+        <li><strong>Auto-regeneration on every profile edit</strong> &mdash; deliberately demand-driven to protect the cost win (§5).</li>
+      </ul>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
