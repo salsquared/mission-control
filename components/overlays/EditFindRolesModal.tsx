@@ -217,7 +217,7 @@ export const EditFindRolesModal: React.FC<EditFindRolesModalProps> = ({ open, gr
                     </button>
                 </div>
 
-                <div className="flex-1 min-h-0 overflow-y-auto p-4 flex flex-col gap-3">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-4 flex flex-col gap-3">
                     <p className="text-[11px] text-white/50">
                         Update the role, location, sources, or cadence for this search. Adding a source creates a new watchlist; removing one deletes it (with its postings).
                     </p>

@@ -151,7 +151,7 @@ export const SpaceView: React.FC = () => {
             colSpan: 2,
             rowSpan: 2,
             content: (
-                <div className="flex flex-col overflow-y-auto pr-1">
+                <div className="flex flex-col overflow-y-auto custom-scrollbar pr-1">
                     <div className="flex items-center justify-between mb-2 text-blue-400">
                         <div className="flex items-center gap-2">
                             <Calendar className="w-5 h-5 shrink-0" />
@@ -167,7 +167,7 @@ export const SpaceView: React.FC = () => {
             id: "space-2",
             hFit: true,
             content: (
-                <div className="flex flex-col overflow-y-auto pr-1">
+                <div className="flex flex-col overflow-y-auto custom-scrollbar pr-1">
                     <div className="flex items-center justify-between mb-2 text-purple-400">
                         <div className="flex items-center gap-2">
                             <Satellite className="w-5 h-5 shrink-0" />

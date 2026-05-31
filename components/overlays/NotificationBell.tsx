@@ -183,7 +183,7 @@ export const NotificationBell: React.FC = () => {
                                 </div>
                             </div>
 
-                            <div className="flex-1 overflow-y-auto">
+                            <div className="flex-1 overflow-y-auto custom-scrollbar">
                                 {isLoading ? (
                                     <div className="flex items-center justify-center py-10 text-white/40">
                                         <Loader2 className="w-4 h-4 animate-spin" />

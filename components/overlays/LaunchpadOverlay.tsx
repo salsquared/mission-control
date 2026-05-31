@@ -304,7 +304,7 @@ export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({
                         <div className="w-10 h-1.5 rounded-full bg-white/20" />
                     </div>
 
-                    <div className="flex-1 overflow-y-auto px-4 pb-6 pt-2 space-y-4">
+                    <div className="flex-1 overflow-y-auto custom-scrollbar px-4 pb-6 pt-2 space-y-4">
                         {headerRow}
                         {dashGrid}
                         {moreRows}
@@ -322,7 +322,7 @@ export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -20 }}
-            className="relative z-10 w-full h-full px-20 pt-12 pb-20 overflow-y-auto flex flex-col"
+            className="relative z-10 w-full h-full px-20 pt-12 pb-20 overflow-y-auto custom-scrollbar flex flex-col"
         >
             <div className="flex justify-end mb-8 w-full shrink-0 z-20">
                 <button

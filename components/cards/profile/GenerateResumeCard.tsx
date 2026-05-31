@@ -341,7 +341,7 @@ export function GenerateResumeCard() {
                             Why these bullets?
                         </button>
                         {showTrace && (
-                            <div className="mt-2 rounded-lg bg-black/30 border border-white/10 px-3 py-2 max-h-[24rem] overflow-y-auto">
+                            <div className="mt-2 rounded-lg bg-black/30 border border-white/10 px-3 py-2 max-h-[24rem] overflow-y-auto custom-scrollbar">
                                 {traceQuery.isLoading ? (
                                     <div className="flex items-center gap-2 text-[11px] text-white/40">
                                         <Loader2 className="w-3 h-3 animate-spin" /> Loading…
@@ -519,7 +519,7 @@ const InterestedAppPicker: React.FC<{
                     </span>
                 </div>
             ) : (
-                <div className="max-h-[14rem] overflow-y-auto rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
+                <div className="max-h-[14rem] overflow-y-auto custom-scrollbar rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
                     {items.map(it => {
                         const active = selectedApplicationId === it.id;
                         let host = "";
@@ -663,7 +663,7 @@ const PreviousResumesDropdown: React.FC<{
                     className="fixed z-50 w-[26rem] max-w-[90vw] rounded-lg bg-slate-900/95 backdrop-blur border border-white/10 shadow-xl"
                     style={{ top: pos.top, right: pos.right }}
                 >
-                    <div className="max-h-[20rem] overflow-y-auto divide-y divide-white/5">
+                    <div className="max-h-[20rem] overflow-y-auto custom-scrollbar divide-y divide-white/5">
                         {visible.map(r => (
                             <button
                                 key={r.id}

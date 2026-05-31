@@ -523,7 +523,7 @@ const CanonVersionsDropdown: React.FC<{
                     ) : versions.length === 0 ? (
                         <div className="px-3 py-3 text-[11px] text-white/40">No versions yet.</div>
                     ) : (
-                        <div className="max-h-[20rem] overflow-y-auto divide-y divide-white/5">
+                        <div className="max-h-[20rem] overflow-y-auto custom-scrollbar divide-y divide-white/5">
                             {versions.map((v) => (
                                 <button
                                     key={v.id}
@@ -603,7 +603,7 @@ const SpecializeJobPicker: React.FC<{
                     </span>
                 </div>
             ) : (
-                <div className="max-h-[12rem] overflow-y-auto rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
+                <div className="max-h-[12rem] overflow-y-auto custom-scrollbar rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
                     {items.map((it) => {
                         let host = "";
                         try {

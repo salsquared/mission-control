@@ -842,7 +842,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                 </div>
 
                 {/* Mode bodies — scrollable so tall forms (esp. Advanced) don't push action buttons offscreen */}
-                <div className="flex-1 min-h-0 overflow-y-auto">
+                <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
                 {mode === "find" && (
                     <form onSubmit={submitFind} className="p-4 flex flex-col gap-3">
                         <p className="text-[11px] text-white/50">

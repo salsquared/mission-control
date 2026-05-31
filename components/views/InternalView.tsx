@@ -258,7 +258,7 @@ export const InternalView: React.FC = () => {
                                 <p className="text-muted-foreground text-sm font-medium">Event logging currently offline or no logs yet</p>
                             </div>
                         ) : (
-                            <div className="flex flex-col-reverse overflow-y-auto gap-1.5 font-mono text-xs w-full h-full pr-2 select-text cursor-text">
+                            <div className="flex flex-col-reverse overflow-y-auto custom-scrollbar gap-1.5 font-mono text-xs w-full h-full pr-2 select-text cursor-text">
                                 {sysLogs.slice(-LOG_DISPLAY_CAP).reverse().map((log) => (
                                     <div key={log.id} className="flex gap-3 w-full border-b border-white/5 pb-1.5 first:border-0 first:pb-0">
                                         <div className="flex gap-2 shrink-0">
@@ -320,7 +320,7 @@ export const InternalView: React.FC = () => {
                         </div>
                         <div className="flex-1 flex flex-col p-4 border border-dashed border-white/10 rounded-xl bg-black/40 overflow-hidden relative">
                             {sysMetrics?.cache?.activeEntries && sysMetrics.cache.activeEntries.length > 0 ? (
-                                <div className="flex flex-col overflow-y-auto gap-2 font-mono text-xs w-full h-full pr-2">
+                                <div className="flex flex-col overflow-y-auto custom-scrollbar gap-2 font-mono text-xs w-full h-full pr-2">
                                     {[...sysMetrics.cache.activeEntries].sort((a, b) => a.remainingTtl - b.remainingTtl).map((entry, idx) => (
                                         <div key={idx} className="flex justify-between items-center w-full border-b border-white/5 pb-1.5 last:border-0 last:pb-0 shrink-0 group">
                                             <span className="text-cyan-400 truncate flex-1 pr-4" title={entry.key}>{entry.key}</span>

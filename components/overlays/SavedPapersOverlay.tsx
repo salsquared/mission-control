@@ -173,7 +173,7 @@ export const SavedPapersOverlay: React.FC<SavedPapersOverlayProps> = ({ topic, o
                     </button>
                 </div>
 
-                <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                <div className="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
                     {activeTab === 'IMPORT' ? (
                         <div className="flex flex-col gap-6">
                             <form onSubmit={handleSearch} className="flex flex-col gap-2">

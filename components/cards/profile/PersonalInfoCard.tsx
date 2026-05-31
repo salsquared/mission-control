@@ -251,7 +251,7 @@ const LanguageDraft: React.FC<{
                     className="w-full bg-black/40 border border-white/10 rounded px-2 py-1.5 text-sm text-white/90 focus:outline-none focus:border-amber-500/50 placeholder:text-white/30"
                 />
                 {open && filtered.length > 0 && (
-                    <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900 border border-white/10 rounded shadow-xl z-10 max-h-48 overflow-y-auto">
+                    <div className="absolute top-full left-0 right-0 mt-1 bg-zinc-900 border border-white/10 rounded shadow-xl z-10 max-h-48 overflow-y-auto custom-scrollbar">
                         {filtered.map((l) => (
                             <button
                                 key={l}

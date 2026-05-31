@@ -186,7 +186,7 @@ export const LaunchCalendarWidget: React.FC<LaunchCalendarWidgetProps> = ({ laun
     }, [allLaunches, viewDate]);
 
     return (
-        <div className="flex flex-col h-full overflow-y-auto pr-1">
+        <div className="flex flex-col h-full overflow-y-auto custom-scrollbar pr-1">
             <div className="flex flex-col gap-3 mb-4">
                 <div className="flex justify-between items-center">
                     <h3 className="text-lg font-bold text-white relative flex items-center gap-2">

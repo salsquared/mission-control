@@ -175,7 +175,7 @@ export const ResearchPaperCard: React.FC<ResearchPaperCardProps> = ({ subject, p
                 </div>
             </div>
 
-            <div className="flex-1 relative mb-4 min-h-0 overflow-y-auto">
+            <div className="flex-1 relative mb-4 min-h-0 overflow-y-auto custom-scrollbar">
                 <div className="text-sm text-white/80 leading-relaxed whitespace-pre-line md:columns-2 md:gap-8 text-justify">
                     {currentPaper.summary}
                 </div>

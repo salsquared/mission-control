@@ -146,7 +146,7 @@ const ResumeGroup: React.FC<{
                     {emptyHint}
                 </div>
             ) : (
-                <div className="max-h-[16rem] overflow-y-auto rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
+                <div className="max-h-[16rem] overflow-y-auto custom-scrollbar rounded-lg bg-black/40 border border-white/10 divide-y divide-white/5">
                     {rows.map((r) => (
                         <button
                             key={r.id}

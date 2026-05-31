@@ -148,7 +148,7 @@ export const FetcherHealthCard: React.FC = () => {
                     </div>
                 </div>
             </div>
-            <div className="flex-1 overflow-y-auto pr-2">
+            <div className="flex-1 overflow-y-auto custom-scrollbar pr-2">
                 {Object.keys(data?.health ?? {}).length === 0 ? (
                     <div className="flex items-center justify-center h-full">
                         <p className="text-muted-foreground text-sm">

@@ -80,7 +80,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
             action={onRefresh ? <ReloadButton onReload={onRefresh} /> : undefined}
         >
             {categories && categories.length > 0 && onCategoryChange && (
-                <div className="flex items-center gap-2 mb-4 overflow-x-auto pb-1 pb-scroll shrink-0 touch-pan-x">
+                <div className="flex items-center gap-2 mb-4 overflow-x-auto custom-scrollbar pb-1 pb-scroll shrink-0 touch-pan-x">
                     {categories.map((cat) => (
                         <button
                             key={cat.id}
@@ -120,7 +120,7 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                 </div>
             </div>
 
-            <div className="flex-1 min-h-0 overflow-y-auto pr-2 -mr-2 space-y-2">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar pr-2 -mr-2 space-y-2">
                 {sortedModels.map((model, idx) => (
                     <div key={`${model.rank}-${model.id}-${idx}`} className="group flex items-center justify-between gap-4 bg-white/5 hover:bg-white/10 py-1.5 px-3 rounded-lg transition-colors border border-white/5">
                         <div className="flex items-center gap-3 min-w-0 flex-1">
