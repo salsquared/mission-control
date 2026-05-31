@@ -22,7 +22,7 @@ export const Section: React.FC<SectionProps> = ({ title, description, children, 
     // gutter. It sits INSIDE each view's scroll container, so the scrollbar
     // stays flush to the frame's right edge while content is inset.
     return (
-        <div className="mb-8 last:mb-0 px-6">
+        <div className="last:mb-0 px-8">
             <div className="mb-4">
                 <h2 className="text-2xl font-bold text-white tracking-tight">{title}</h2>
                 {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}

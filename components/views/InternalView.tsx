@@ -168,24 +168,24 @@ export const InternalView: React.FC = () => {
                         <Cpu className="w-5 h-5" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">System Telemetry</h3>
                     </div>
-                    <div className="flex flex-wrap md:flex-nowrap justify-between gap-4 md:gap-6 flex-1 w-full">
-                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                    <div className="flex justify-between gap-0 md:gap-8 flex-1 w-full overflow-x-auto custom-scrollbar">
+                        <div className="flex flex-col items-center text-center bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">CPU Load</span>
                             <span className="text-2xl font-mono text-white">{sysMetrics ? `${sysMetrics.cpuUsagePercent}%` : '--'}</span>
                         </div>
-                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col items-center text-center bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Memory Usage</span>
                             <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.memoryUsageFormatted.split(' / ')[0] : '--'}</span>
                         </div>
-                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col items-center text-center bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Allocated RAM</span>
                             <span className="text-2xl font-mono text-white">{sysMetrics?.maxAllocatedRamGB ? `${sysMetrics.maxAllocatedRamGB} GB` : '--'}</span>
                         </div>
-                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col items-center text-center bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Server Uptime</span>
                             <span className="text-2xl font-mono text-white">{sysMetrics ? sysMetrics.uptimeFormatted : '--'}</span>
                         </div>
-                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col items-center text-center bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Database Status</span>
                             <div className="flex items-center gap-2 mt-1">
                                 {sysMetrics ? (
@@ -200,7 +200,7 @@ export const InternalView: React.FC = () => {
                                 )}
                             </div>
                         </div>
-                        <div className="flex flex-col bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
+                        <div className="flex flex-col items-center text-center bg-black/20 py-4 px-8 rounded-xl border border-white/5 w-fit shrink-0 whitespace-nowrap">
                             <span className="text-xs text-muted-foreground mb-1">Pulsar Status</span>
                             <div className="flex items-center gap-2 mt-1">
                                 {sysMetrics ? (
