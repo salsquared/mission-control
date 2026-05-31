@@ -136,6 +136,11 @@ SUITES=(
     "scripts/tests/hermetic/profile-extras-filter-smoke.ts"
     # API reference stays in sync with route code (2026-05-28)
     "scripts/tests/hermetic/api-docs-smoke.ts"
+    # Canonical resumes ("Canons") — keyword split, repo CRUD, entity-scoped
+    # staleness (2026-05-30, docs/canonical-resumes.html §7)
+    "scripts/tests/hermetic/canon-keyword-split-smoke.ts"
+    "scripts/tests/hermetic/canon-crud-smoke.ts"
+    "scripts/tests/hermetic/canon-staleness-smoke.ts"
 )
 
 for suite in "${SUITES[@]}"; do

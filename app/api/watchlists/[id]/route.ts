@@ -71,6 +71,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
+    // §6 Q4 — verify a non-null canon link belongs to this user.
+    if (parsed.data.canonId) {
+        const ownCanon = await prisma.canon.findFirst({ where: { id: parsed.data.canonId, userId }, select: { id: true } });
+        if (!ownCanon) {
+            return NextResponse.json({ error: "Canon not found" }, { status: 400 });
+        }
+    }
 
     try {
         const data: Record<string, unknown> = {};
@@ -88,6 +95,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         if (parsed.data.active !== undefined) data.active = parsed.data.active;
         if (parsed.data.notificationMode !== undefined) data.notificationMode = parsed.data.notificationMode;
         if (parsed.data.track !== undefined) data.track = parsed.data.track;
+        if (parsed.data.canonId !== undefined) data.canonId = parsed.data.canonId;
         if (parsed.data.negativeFilters !== undefined) {
             // Empty array → NULL so the column reads as "no filtering" rather than "[]".
             data.negativeFilters = parsed.data.negativeFilters.length > 0

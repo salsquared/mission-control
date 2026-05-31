@@ -47,6 +47,7 @@ export interface ApplicationUpdate {
     lastUpdateAt?: Date;
     senderDomain?: string | null;
     sourceJobId?: string | null;
+    canonId?: string | null;
 }
 
 /**

@@ -18,8 +18,8 @@ model SavedPaper {
   url         String
   authors     String
   publishedAt DateTime
-  topic       String   // e.g. "AI", "Space"
-  status      String   // e.g. "READ", "READ_LATER", "FAVORITE"
+  topic       String // e.g. "AI", "Space"
+  status      String // e.g. "READ", "READ_LATER", "FAVORITE"
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -50,7 +50,7 @@ model GlobalSetting {
   id                    String   @id @default("global")
   isDarkMode            Boolean  @default(true)
   viewHuesEnabled       Boolean  @default(true)
-  viewHues              String   @default("{}")  // JSON: Record<string, number>
+  viewHues              String   @default("{}") // JSON: Record<string, number>
   dashOrder             String   @default("[]") // JSON: string[]
   dashTitles            String   @default("{}") // JSON: Record<string, string>
   globalNegativeFilters String   @default("[]") // JSON: string[] — regex patterns merged into every watchlist's filter on read
@@ -63,24 +63,24 @@ model GlobalSetting {
   quietHoursStart       String?
   quietHoursEnd         String?
   quietHoursTimezone    String?
-  version               Int      @default(0)   // bumped on every write; client sends as If-Match
+  version               Int      @default(0) // bumped on every write; client sends as If-Match
   updatedAt             DateTime @updatedAt
 }
 
 // --- NextAuth Models --- //
 model Account {
-  id                 String  @id @default(cuid())
-  userId             String
-  type               String
-  provider           String
-  providerAccountId  String
-  refresh_token      String?
-  access_token       String?
-  expires_at         Int?
-  token_type         String?
-  scope              String?
-  id_token           String?
-  session_state      String?
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -96,27 +96,28 @@ model Session {
 }
 
 model User {
-  id               String            @id @default(cuid())
-  name             String?
-  email            String?           @unique
-  emailVerified    DateTime?
-  image            String?
+  id                  String               @id @default(cuid())
+  name                String?
+  email               String?              @unique
+  emailVerified       DateTime?
+  image               String?
   // PB-5 audit finding: persist the Gmail history.list watermark per user so
   // we can recover from a multi-day scheduler / webhook outage without losing
   // events. Gmail rejects `history.list?startHistoryId` older than ~7 days
   // with 404. The webhook updates this on each successful batch.
   lastSyncedHistoryId String?
-  accounts         Account[]
-  sessions         Session[]
-  applications     Application[]
-  gcalSyncState    GcalSyncState?
-  profile          Profile?
-  watchlists       Watchlist[]
-  notifications    Notification[]
-  generatedResumes GeneratedResume[]
-  blacklist        BlacklistedCompany[]
-  profileSnapshots ProfileSnapshot[]
-  resumeUploads    ResumeUpload[]
+  accounts            Account[]
+  sessions            Session[]
+  applications        Application[]
+  gcalSyncState       GcalSyncState?
+  profile             Profile?
+  watchlists          Watchlist[]
+  notifications       Notification[]
+  generatedResumes    GeneratedResume[]
+  blacklist           BlacklistedCompany[]
+  profileSnapshots    ProfileSnapshot[]
+  resumeUploads       ResumeUpload[]
+  canons              Canon[]
 }
 
 model VerificationToken {
@@ -128,9 +129,9 @@ model VerificationToken {
 }
 
 model Application {
-  id              String    @id @default(cuid())
-  userId          String
-  company         String
+  id                String    @id @default(cuid())
+  userId            String
+  company           String
   // PA-3 (PB-1/7 audit follow-up): the canonical key for dedup. Written by
   // ingest.ts via normalizeCompanyName(company) — same function used to look
   // up existing rows. Unique per-user via @@unique below so concurrent
@@ -144,14 +145,14 @@ model Application {
   // at the same employer on the same kanban don't collide, while two emails
   // about the SAME role at the same employer still merge into one row. Null
   // for legacy rows until backfilled by scripts/backfill-normalized-role.ts.
-  normalizedRole  String?
+  normalizedRole    String?
   // ATS-stable job identifier captured at track-as-application time from
   // posting.externalId (LinkedIn job ID, Greenhouse req ID, etc.). High-
   // precision dedup signal for "same job tracked via two ingress paths" —
   // checked AHEAD of company+role match in track-as-application's chain.
   // Null for Gmail-ingested rows (no posting linkage); future enhancement
   // could LLM-extract req IDs from email bodies.
-  sourceJobId     String?
+  sourceJobId       String?
   // Layered-dedup fallback (CSULB drift, 2026-05-20). Registrable root of
   // the most recent sender's email domain (e.g. "csulb.edu"). NULL when
   // the sender was on a multi-tenant ATS / admissions platform (Greenhouse,
@@ -159,26 +160,27 @@ model Application {
   // Written by ingest.ts via extractSenderDomain(fromHeader). Used as a
   // secondary lookup when normalizedCompany doesn't match (LLM drift across
   // emails from the same school/employer).
-  senderDomain    String?
-  role            String?
-  status          String
-  kind            String?   // "job" | "internship" | "college" | "other" — null on legacy rows
-  nextSteps       String?
-  dateApplied     DateTime?
-  lastEmailMsgId  String?   // Gmail message id of the last ingested email; used to dedupe re-runs
-  postingId       String?   @unique // links back to the JobPosting this app was tracked from, if any
+  senderDomain      String?
+  role              String?
+  status            String
+  kind              String? // "job" | "internship" | "college" | "other" — null on legacy rows
+  nextSteps         String?
+  dateApplied       DateTime?
+  lastEmailMsgId    String? // Gmail message id of the last ingested email; used to dedupe re-runs
+  postingId         String?   @unique // links back to the JobPosting this app was tracked from, if any
   // Story S6.3 — "decision deadline approaching" nudges. NULL means unknown /
   // no deadline; the deadline-nudges scheduler job fires when within 3 days.
-  decisionDeadline DateTime?
-  lastUpdateAt    DateTime  @default(now())
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  decisionDeadline  DateTime?
+  lastUpdateAt      DateTime  @default(now())
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
 
-  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   events           ApplicationEvent[]
-  posting          JobPosting?       @relation(fields: [postingId], references: [id], onDelete: SetNull)
+  posting          JobPosting?        @relation(fields: [postingId], references: [id], onDelete: SetNull)
   generatedResumes GeneratedResume[]
   contacts         Contact[]
+  canon            Canon?             @relation(fields: [canonId], references: [id], onDelete: SetNull)
 
   // MB Phase 4 — "career" | "side". Career is the long-term professional
   // pipeline; side is gig / blue-collar / pay-the-bills work tracked separately
@@ -186,17 +188,10 @@ model Application {
   // create site must pass track explicitly so a silent fallback can never
   // miscategorize a row (the previous @default("career") let ingest write
   // career rows without making the decision visible in code).
-  track           String
+  track   String
+  // §6 Q4 — which Canon this app is manually tagged to (manual tag only, nullable).
+  canonId String?
 
-  @@index([userId, status])
-  @@index([userId, kind])
-  @@index([userId, track])
-  // Fallback dedup lookup (see senderDomain field comment).
-  @@index([userId, senderDomain])
-  // 2026-05-27 multi-role-per-company: high-precision dedup hint when
-  // promoting a posting to an application — looked up before company+role
-  // match in track-as-application.
-  @@index([userId, sourceJobId])
   // 2026-05-27 multi-role-per-company: race-safe dedup now scoped by
   // normalizedRole as well, so two distinct roles at the same employer on
   // the same kanban don't collide. Two emails about the SAME role still
@@ -204,6 +199,16 @@ model Application {
   // compound so legacy rows with normalizedRole=null stay unconstrained
   // until backfilled.
   @@unique([userId, normalizedCompany, normalizedRole, track])
+  @@index([userId, status])
+  @@index([userId, kind])
+  @@index([userId, track])
+  @@index([canonId])
+  // Fallback dedup lookup (see senderDomain field comment).
+  @@index([userId, senderDomain])
+  // 2026-05-27 multi-role-per-company: high-precision dedup hint when
+  // promoting a posting to an application — looked up before company+role
+  // match in track-as-application.
+  @@index([userId, sourceJobId])
 }
 
 // Story S11.2 — per-application recruiter / hiring-manager contacts. Optional
@@ -217,51 +222,51 @@ model Contact {
   applicationId String
   name          String
   email         String?
-  role          String?   // free-form: "Recruiter", "Hiring Manager", "Referrer", …
+  role          String? // free-form: "Recruiter", "Hiring Manager", "Referrer", …
   notes         String?
   lastTouchedAt DateTime?
   position      Int       @default(0)
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  application   Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
 
   @@index([applicationId, position])
 }
 
 model ApplicationEvent {
-  id             String    @id @default(cuid())
-  applicationId  String
+  id            String    @id @default(cuid())
+  applicationId String
   // APPLIED | STATUS_CHANGED | EMAIL_RECEIVED | ASSESSMENT_REQUESTED | INTERVIEW_SCHEDULED | OFFER | REJECTION | NOTE
-  kind           String
-  title          String
-  occurredAt     DateTime  // when it happened in real life
-  scheduledAt    DateTime? // future-dated for INTERVIEW_SCHEDULED / ASSESSMENT_REQUESTED
-  endsAt         DateTime?
-  fromStatus     String?
-  toStatus       String?
-  notes          String?
-  emailMsgId     String?   // gmail msg id this event came from
-  gcalEventId    String?   // populated after MS→Gcal sync
-  gcalUpdatedAt  DateTime? // Gcal `updated` field at last sync; for last-write-wins
-  syncSource     String?   // "ms" | "gcal" — which side originated the last write
+  kind          String
+  title         String
+  occurredAt    DateTime // when it happened in real life
+  scheduledAt   DateTime? // future-dated for INTERVIEW_SCHEDULED / ASSESSMENT_REQUESTED
+  endsAt        DateTime?
+  fromStatus    String?
+  toStatus      String?
+  notes         String?
+  emailMsgId    String? // gmail msg id this event came from
+  gcalEventId   String? // populated after MS→Gcal sync
+  gcalUpdatedAt DateTime? // Gcal `updated` field at last sync; for last-write-wins
+  syncSource    String? // "ms" | "gcal" — which side originated the last write
   // PB-5: per-event side-effect checkpoints. NULL = the side-effect has not
   // completed for this event. Ingest re-fires side-effects on retry only for
   // events whose checkpoint is still null. Decouples the "did we see this
   // message?" gate (Application.lastEmailMsgId) from the "did the side-effects
   // commit?" gate, closing the crash-recovery hole.
-  notifiedAt     DateTime?
-  gcalSyncedAt   DateTime?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  notifiedAt    DateTime?
+  gcalSyncedAt  DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
-  application    Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
 
+  // Dedupe re-ingestion of the same email producing the same kind of event
+  @@unique([applicationId, emailMsgId, kind])
   @@index([applicationId, occurredAt])
   @@index([scheduledAt])
   @@index([gcalEventId])
-  // Dedupe re-ingestion of the same email producing the same kind of event
-  @@unique([applicationId, emailMsgId, kind])
 }
 
 model GcalSyncState {
@@ -293,34 +298,34 @@ model Profile {
   location  String?
   email     String?
   phone     String?
-  links     String?  // JSON: [{label, url}]
-  skills    String?  // JSON: [{category, items: string[]}]
-  hobbies   String?  // JSON: string[]
-  languages String?  // JSON: [{name, proficiency}]
+  links     String? // JSON: [{label, url}]
+  skills    String? // JSON: [{category, items: string[]}]
+  hobbies   String? // JSON: string[]
+  languages String? // JSON: [{name, proficiency}]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   workRoles WorkRole[]
   projects  Project[]
   education Education[]
 }
 
 model WorkRole {
-  id        String    @id @default(cuid())
-  profileId String
-  company   String
-  title     String
-  location  String?
-  startDate DateTime
-  endDate   DateTime?
-  bullets   String    @default("[]")
+  id          String    @id @default(cuid())
+  profileId   String
+  company     String
+  title       String
+  location    String?
+  startDate   DateTime
+  endDate     DateTime?
+  bullets     String    @default("[]")
   // M7.8.1 (story S7.13) — free-form per-entity notes the user writes in
   // their own voice. Voice + experience grounding for the LLM bullet-assist
   // paths (M7.6) and resume-gen synthesis (M8.6). Never rendered verbatim
   // into a resume. Capped at 8 KB at the schema layer (lib/schemas/profile.ts)
   // to bound prompt budgets.
-  scratchpad String?
+  scratchpad  String?
   // Posting-category-conditional pin. JSON array of keyword strings. When a
   // resume is generated against a posting whose extracted keywords contain
   // any of these (case-insensitive whole-word match — same matcher as
@@ -330,33 +335,33 @@ model WorkRole {
   // array (or null) means no conditional pin. Stored as JSON-stringified
   // array, same pattern as `bullets`.
   pinKeywords String?
-  position  Int       @default(0)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  position    Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 
-  profile   Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, position])
 }
 
 model Project {
-  id                 String    @id @default(cuid())
-  profileId          String
-  name               String
-  description        String?
-  repoUrl            String?
-  liveUrl            String?
-  bullets            String    @default("[]")
+  id          String   @id @default(cuid())
+  profileId   String
+  name        String
+  description String?
+  repoUrl     String?
+  liveUrl     String?
+  bullets     String   @default("[]")
   // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-project user-voice
   // notes; consumed by bullet-assist + resume-gen synthesis.
-  scratchpad         String?
+  scratchpad  String?
   // See WorkRole.pinKeywords — same semantic.
-  pinKeywords        String?
-  position           Int       @default(0)
-  createdAt          DateTime  @default(now())
-  updatedAt          DateTime  @updatedAt
+  pinKeywords String?
+  position    Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  profile            Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, position])
 }
@@ -379,7 +384,7 @@ model Education {
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 
-  profile     Profile   @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  profile Profile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, position])
 }
@@ -395,11 +400,11 @@ model ProfileSnapshot {
   id        String   @id @default(cuid())
   userId    String
   takenAt   DateTime @default(now())
-  label     String?  // optional free-form label set by the user at capture time
-  payload   String   // JSON: serialized HydratedProfile
+  label     String? // optional free-form label set by the user at capture time
+  payload   String // JSON: serialized HydratedProfile
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, takenAt])
 }
@@ -428,13 +433,13 @@ model ProfileSnapshot {
 model ResumeUpload {
   id            String   @id @default(cuid())
   userId        String
-  filename      String   // original upload filename, as supplied by the client
-  mimeType      String   // application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/plain, application/json, ...
+  filename      String // original upload filename, as supplied by the client
+  mimeType      String // application/pdf, application/vnd.openxmlformats-officedocument.wordprocessingml.document, text/plain, application/json, ...
   sizeBytes     Int
-  rawText       String   // post-extract plaintext, capped at 200 KB in code
-  parsedJson    String   // JSON: the LLM extraction output that fed the merge
-  artifactPath  String?  // relative path under data/resume-uploads/ (gitignored). Null when the upload was JSON-paste or bytes couldn't be written.
-  importBatchId String?  // groups multi-file uploads from one /api/profile/import call
+  rawText       String // post-extract plaintext, capped at 200 KB in code
+  parsedJson    String // JSON: the LLM extraction output that fed the merge
+  artifactPath  String? // relative path under data/resume-uploads/ (gitignored). Null when the upload was JSON-paste or bytes couldn't be written.
+  importBatchId String? // groups multi-file uploads from one /api/profile/import call
   uploadedAt    DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -442,22 +447,21 @@ model ResumeUpload {
   @@index([userId, uploadedAt])
 }
 
-
 model Task {
-  id          String    @id @default(cuid())
-  text        String
-  status      String    // "TODO", "IN_PROGRESS", "DONE"
-  priority    String?   // "BLOCKER", "HIGH", "MEDIUM", "LOW"
-  project     String?
-  dueDate     DateTime?
-  position    Int       @default(0)
-  notes       String?
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  id        String    @id @default(cuid())
+  text      String
+  status    String // "TODO", "IN_PROGRESS", "DONE"
+  priority  String? // "BLOCKER", "HIGH", "MEDIUM", "LOW"
+  project   String?
+  dueDate   DateTime?
+  position  Int       @default(0)
+  notes     String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
 
-  parentId    String?
-  parent      Task?     @relation("TaskToTask", fields: [parentId], references: [id])
-  children    Task[]    @relation("TaskToTask")
+  parentId String?
+  parent   Task?   @relation("TaskToTask", fields: [parentId], references: [id])
+  children Task[]  @relation("TaskToTask")
 
   @@index([status])
   @@index([position])
@@ -474,7 +478,7 @@ model LifeGoal {
 
 model CacheEntry {
   key       String   @id
-  data      String   // JSON-serialized response body
+  data      String // JSON-serialized response body
   expiry    DateTime
   updatedAt DateTime @updatedAt
 
@@ -483,21 +487,21 @@ model CacheEntry {
 
 // MB Phase 1 — job discovery. See docs/implementation.md §MB.1.
 model Watchlist {
-  id              String    @id @default(cuid())
-  userId          String
-  name            String
-  kind            String    // "careers-page" | "greenhouse" | "lever" | "ashby" | "workday" | "linkedin"
-  config          String    // JSON: per-kind config (see lib/schemas/watchlists.ts discriminated union)
+  id               String    @id @default(cuid())
+  userId           String
+  name             String
+  kind             String // "careers-page" | "greenhouse" | "lever" | "ashby" | "workday" | "linkedin"
+  config           String // JSON: per-kind config (see lib/schemas/watchlists.ts discriminated union)
   // PB-14: when set, the row was created from a COMPANY_DIRECTORY entry whose
   // `name` matches this value. Reads hydrate `config` from the live directory
   // entry at fetch time, so slug corrections to lib/company-directory.ts
   // propagate automatically. NULL = legacy / Advanced-tab row → `config` is
   // the source of truth.
-  directoryKey    String?
+  directoryKey     String?
   // JSON array of regex patterns. Postings whose (title + snippet + location)
   // matches any pattern are hidden from the bell / new-postings feed at GET
   // time. Invalid regexes are silently skipped. NULL = no filtering.
-  negativeFilters String?
+  negativeFilters  String?
   // Story S6.2 — per-watchlist notification preference:
   //   "each"   — fire one bell notification per new posting (current default)
   //   "digest" — suppress per-posting; posting-digest scheduler job rolls them
@@ -505,41 +509,45 @@ model Watchlist {
   //   "silent" — never notify; postings still appear in the discovery feed
   notificationMode String    @default("each")
   lastDigestAt     DateTime?
-  scheduleMinutes Int       @default(30)
-  lastRunAt       DateTime?
-  lastSuccessAt   DateTime?
-  lastError       String?
-  active          Boolean   @default(true)
+  scheduleMinutes  Int       @default(30)
+  lastRunAt        DateTime?
+  lastSuccessAt    DateTime?
+  lastError        String?
+  active           Boolean   @default(true)
   // MB Phase 4 — "career" | "side". Career = long-term professional ATSes
   // (Greenhouse, Lever, Workday, etc.); side = gig / blue-collar keyword
   // watchlists (typically LinkedIn search by job-type keywords). Scheduler
   // crawls both transparently; UI segregates them.
-  track           String    @default("career")
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  track            String    @default("career")
+  // §6 Q4 — optional manual link: a role-watchlist feeds a canon; its jobs inherit.
+  canonId          String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   user     User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   postings JobPosting[]
+  canon    Canon?       @relation(fields: [canonId], references: [id], onDelete: SetNull)
 
   @@index([userId, active])
   @@index([userId, track, active])
+  @@index([canonId])
 }
 
 model JobPosting {
-  id          String    @id @default(cuid())
-  watchlistId String
-  externalId  String    // sha256(company + '|' + title + '|' + sourceUrl)
-  company     String
-  title       String
-  location    String?
-  postedAt    DateTime?
-  snippet     String?
-  sourceUrl   String
+  id                   String    @id @default(cuid())
+  watchlistId          String
+  externalId           String // sha256(company + '|' + title + '|' + sourceUrl)
+  company              String
+  title                String
+  location             String?
+  postedAt             DateTime?
+  snippet              String?
+  sourceUrl            String
   // PB-15: normalized employment type for the new-postings filter UI.
   // One of "full-time" | "part-time" | "internship" | "contract" | "temporary"
   // or NULL when neither the ATS payload nor the title gave a clear signal.
   // Populated by fetchers via lib/fetchers/employment-type.ts.
-  employmentType String?
+  employmentType       String?
   // Story S5.9 — compensation parsed out of postings. Stored as integer
   // minor units (e.g. dollars; not cents — most postings quote whole-dollar
   // ranges) so the UI can sort. NULL when no recognisable range was found.
@@ -549,15 +557,15 @@ model JobPosting {
   // defaults to "USD" — we have no postings outside the US yet; when we do,
   // the parser will infer from the symbol and this column carries the
   // ISO-4217 code.
-  compensationMin       Int?
-  compensationMax       Int?
-  compensationCurrency  String?
-  compensationCadence   String?
-  status      String    // "new" | "tracked" | "hidden" | "closed"
-  firstSeenAt DateTime  @default(now())
-  lastSeenAt  DateTime  @default(now())
-  removedAt   DateTime?
-  raw         String    // JSON of the raw extracted fields, for debugging
+  compensationMin      Int?
+  compensationMax      Int?
+  compensationCurrency String?
+  compensationCadence  String?
+  status               String // "new" | "tracked" | "hidden" | "closed"
+  firstSeenAt          DateTime  @default(now())
+  lastSeenAt           DateTime  @default(now())
+  removedAt            DateTime?
+  raw                  String // JSON of the raw extracted fields, for debugging
 
   watchlist   Watchlist    @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
   application Application? // back-relation; the foreign key lives on Application
@@ -569,13 +577,13 @@ model JobPosting {
 model Notification {
   id          String    @id @default(cuid())
   userId      String
-  kind        String    // "posting" | "application" | "system"
+  kind        String // "posting" | "application" | "system"
   // tier: "critical" | "standard" | "low". Drives default channels and UI
   // prominence. Central dispatcher (lib/notifications/dispatch.ts) sets this.
   tier        String    @default("low")
   title       String
   body        String?
-  payload     String    // JSON: { postingId? / applicationId? / ... }
+  payload     String // JSON: { postingId? / applicationId? / ... }
   channels    String    @default("in_app") // comma-sep: "in_app", "in_app,email", ...
   createdAt   DateTime  @default(now())
   readAt      DateTime?
@@ -606,7 +614,7 @@ model Notification {
 // Sub doesn't reuse messageIds, so anything > 30 days old is safe to drop.
 model WebhookDelivery {
   messageId  String   @id
-  source     String   // "gmail" — leave room for future webhooks
+  source     String // "gmail" — leave room for future webhooks
   receivedAt DateTime @default(now())
 
   @@index([receivedAt])
@@ -618,7 +626,7 @@ model GeneratedResume {
   userId          String
   applicationId   String?
   createdAt       DateTime @default(now())
-  postingInput    String   // JSON: { url?, text?, parsedKeywords[] }
+  postingInput    String // JSON: { url?, text?, parsedKeywords[] }
   // M8.4.1 (story S8.11) — hydrated at gen time from parsedPosting. Drives the
   // global "Previous resumes" dropdown on GenerateResumeCard so users can see
   // company/title at a glance. NULL on legacy rows generated before the columns
@@ -632,23 +640,32 @@ model GeneratedResume {
   // tech-coded. NULL on legacy rows pre-dating this column; the template
   // falls back to profile.tagline in that case.
   tagline         String?
-  profileSnapshot String   // JSON: full hydrated profile at gen-time
-  selections      String   // JSON: [{ kind, sourceId, sourceLabel, bulletId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[], locked }]
+  profileSnapshot String // JSON: full hydrated profile at gen-time
+  selections      String // JSON: [{ kind, sourceId, sourceLabel, bulletId, originalText, rewrittenText, score, matchedTags[], matchedKeywords[], locked }]
   // Story S8.8 — JSON array of posting keywords that have NO coverage in the
   // profile (no bullet tags match, no bullet text contains them as a substring).
   // NULL on legacy rows generated before the column existed.
   skillsGap       String?
   templateKey     String   @default("ats-plain")
-  format          String   // "pdf" | "docx"
-  status          String   // "ready" | "failed"
-  artifactPath    String?  // relative path under data/resumes/ (gitignored)
+  format          String // "pdf" | "docx"
+  status          String // "ready" | "failed"
+  artifactPath    String? // relative path under data/resumes/ (gitignored)
   error           String?
+  // Canon linkage (§6). canonId is set on canon-generated + specialized resumes.
+  // isCanonical=true marks a canon VERSION (canonVersion auto-increments per
+  // canon, newest = current); a specialization pass writes isCanonical=false +
+  // applicationId so it's a per-job child, not a version.
+  canonId         String?
+  isCanonical     Boolean  @default(false)
+  canonVersion    Int?
 
   user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   application Application? @relation(fields: [applicationId], references: [id], onDelete: SetNull)
+  canon       Canon?       @relation(fields: [canonId], references: [id], onDelete: SetNull)
 
   @@index([userId, createdAt])
   @@index([applicationId])
+  @@index([canonId, canonVersion])
 }
 
 // User-curated company blacklist. Names entered here are filtered out of every
@@ -661,8 +678,8 @@ model GeneratedResume {
 model BlacklistedCompany {
   id             String   @id @default(cuid())
   userId         String
-  name           String   // What the user typed — shown back in the editor.
-  normalizedName String   // normalizeCompanyName(name) — comparison key.
+  name           String // What the user typed — shown back in the editor.
+  normalizedName String // normalizeCompanyName(name) — comparison key.
   reason         String?
   createdAt      DateTime @default(now())
 
@@ -670,4 +687,49 @@ model BlacklistedCompany {
 
   @@unique([userId, normalizedName])
   @@index([userId])
+}
+
+// Canonical resumes ("Canons") — docs/canonical-resumes.html. A Canon is a
+// named role-archetype that owns one reusable resume (a curated subset of the
+// master profile). Generation feeds the canon's keyword text to the unchanged
+// resume pipeline; jobs are manually tagged to a canon and reuse its artifact.
+model Canon {
+  id          String  @id @default(cuid())
+  userId      String
+  name        String // user-facing label, e.g. "Security Officer"
+  slug        String // normalizeRoleName(name) — match/dedup key
+  track       String // "career" | "side" — every canon nests under one track
+  description String?
+
+  // Raw user-provided keyword text (NOT JSON). Side = the feeding watchlist's
+  // keyword string; career = typed by the user. Split into a flat term array
+  // at gen time; no weights in v1 (§6 Q3/Q6).
+  keywords String @default("")
+
+  // Render default = PDF + one-page (§6 Q9). pinnedEntityIds/sectionOrder are
+  // DEFERRED (§6 Q8) — left null; the pipeline + resume-tagline order the resume.
+  onePage         Boolean @default(true)
+  pinnedEntityIds String?
+  sectionOrder    String?
+
+  // currentResumeId points at the active (latest) canon GeneratedResume version
+  // (plain id, not a relation, to avoid a second Canon<->GeneratedResume edge).
+  currentResumeId String?
+
+  // Demand-driven, entity-scoped staleness (§6 Q7). resumeStale flips true only
+  // when an entity in resumeEntityIds changes, or the canon's keywords change.
+  resumeStale     Boolean @default(true)
+  resumeEntityIds String? // JSON string[] — the staleness dependency set
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user         User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resumes      GeneratedResume[]
+  applications Application[]
+  watchlists   Watchlist[]
+
+  @@unique([userId, slug])
+  @@index([userId, track, active])
 }

@@ -117,6 +117,8 @@ export const ApplicationPatchSchema = z.object({
     nextSteps: z.string().nullable().optional(),
     dateApplied: z.string().datetime().nullable().optional(),
     decisionDeadline: z.string().datetime().nullable().optional(),
+    // §6 Q4 — manual canon tag (null clears it).
+    canonId: z.string().cuid().nullable().optional(),
 }).refine(
     (d) => d.company !== undefined
         || d.role !== undefined
@@ -125,7 +127,8 @@ export const ApplicationPatchSchema = z.object({
         || d.track !== undefined
         || d.nextSteps !== undefined
         || d.dateApplied !== undefined
-        || d.decisionDeadline !== undefined,
+        || d.decisionDeadline !== undefined
+        || d.canonId !== undefined,
     { message: 'At least one mutable field must be provided' }
 );
 

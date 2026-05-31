@@ -291,6 +291,9 @@ export const WatchlistPatchSchema = z.object({
     scheduleMinutes: z.number().int().positive().optional(),
     active: z.boolean().optional(),
     track: WatchlistTrackSchema.optional(),
+    // §6 Q4 — optional manual canon link (null clears it); jobs this watchlist
+    // spawns inherit the canon at track-as-application time.
+    canonId: z.string().cuid().nullable().optional(),
 }).refine(d =>
     d.name !== undefined ||
     d.config !== undefined ||
@@ -298,7 +301,8 @@ export const WatchlistPatchSchema = z.object({
     d.notificationMode !== undefined ||
     d.scheduleMinutes !== undefined ||
     d.active !== undefined ||
-    d.track !== undefined,
+    d.track !== undefined ||
+    d.canonId !== undefined,
     { message: "At least one mutable field must be provided" },
 );
 

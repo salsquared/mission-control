@@ -4,7 +4,10 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
-import { parsePosting } from "@/lib/resumes/posting";
+import { parsePosting, type ParsedPosting } from "@/lib/resumes/posting";
+import { getCanonRow, nextCanonVersion, finalizeCanonGeneration } from "@/lib/repositories/canons";
+import { splitCanonKeywords } from "@/lib/canons/keywords";
+import type { Canon } from "@prisma/client";
 import { selectBullets, selectProfileExtras, flattenSelections, entityIsPinned, type BulletSelection } from "@/lib/resumes/select";
 import { autoTagBullets } from "@/lib/profile/auto-tag";
 import { synthesizeBulletsForEntities, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
@@ -35,9 +38,12 @@ const PostingInputSchema = z.object({
     url: z.string().url().optional(),
     text: z.string().optional(),
     applicationId: z.string().cuid().optional(),
+    // Canon-driven generation (docs/canonical-resumes.html §7 P2): generate a
+    // canon's reusable resume from its keyword text instead of a single posting.
+    canonId: z.string().cuid().optional(),
 }).refine(
-    p => (p.url && p.url.trim().length > 0) || (p.text && p.text.trim().length > 0) || (p.applicationId && p.applicationId.trim().length > 0),
-    { message: "Provide one of: url, text, or applicationId" },
+    p => (p.url && p.url.trim().length > 0) || (p.text && p.text.trim().length > 0) || (p.applicationId && p.applicationId.trim().length > 0) || (p.canonId && p.canonId.trim().length > 0),
+    { message: "Provide one of: url, text, applicationId, or canonId" },
 );
 
 const ResumePostBodySchema = z.object({
@@ -427,9 +433,21 @@ export async function POST(req: NextRequest) {
         //      might bypass the picker).
         // Resolution sets posting.url to the application's posting sourceUrl;
         // the parse step downstream treats it as a normal URL input.
+        // Canon-driven generation (§7 P2). When posting.canonId is set we load
+        // the (ownership-checked) canon and build a synthetic posting from its
+        // keyword text below — skipping parsePosting entirely.
+        const canonInputId = parsed.data.posting.canonId?.trim();
+        let canonForGen: Canon | null = null;
+        if (canonInputId) {
+            canonForGen = await getCanonRow(userId, canonInputId);
+            if (!canonForGen) {
+                return NextResponse.json({ error: "Canon not found", stage: "input" }, { status: 404 });
+            }
+        }
+
         const pickerApplicationId = parsed.data.posting.applicationId?.trim();
         let autoLinkApplicationId: string | null = null;
-        if (pickerApplicationId) {
+        if (pickerApplicationId && !canonForGen) {
             const application = await prisma.application.findUnique({
                 where: { id: pickerApplicationId },
                 include: { posting: true },
@@ -472,9 +490,33 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // 2. Parse posting
+        // 2. Parse posting — or synthesize one from the canon's keyword text.
         stage = "parse";
-        const posting = await parsePosting(parsed.data.posting);
+        let posting: ParsedPosting;
+        if (canonForGen) {
+            const keywords = splitCanonKeywords(canonForGen.keywords);
+            if (keywords.length === 0) {
+                return NextResponse.json(
+                    { error: "This canon has no keywords yet — add some before generating.", stage: "parse" },
+                    { status: 400 },
+                );
+            }
+            // Complete ParsedPosting (rawText is required by the interface).
+            // Flat keywords, no weights (§6 Q6); company/url null — nothing
+            // per-company belongs on the resume body (§6 Q5).
+            posting = {
+                title: canonForGen.name,
+                company: null,
+                location: null,
+                seniority: null,
+                rawText: canonForGen.keywords,
+                sourceUrl: null,
+                keywords,
+                keywordWeights: {},
+            };
+        } else {
+            posting = await parsePosting(parsed.data.posting);
+        }
 
         // 2.5. Auto-tag pass (M8.5.4 / story S8.9) — best-effort write-through
         // to the profile before selection. The LLM proposes posting-keyword
@@ -616,7 +658,9 @@ export async function POST(req: NextRequest) {
         // 5. Render
         stage = "render";
         const format = parsed.data.options?.format ?? "pdf";
-        const onePage = parsed.data.options?.onePage === true;
+        // Canon default render = PDF + one-page (§6 Q9) unless the client
+        // overrides; otherwise the prior "off unless explicitly true" behavior.
+        const onePage = parsed.data.options?.onePage ?? (canonForGen ? canonForGen.onePage : false);
         let bytes: Buffer;
         if (onePage) {
             // Iterative PDF render + prune loop. Mutates `selection` in place.
@@ -690,12 +734,15 @@ export async function POST(req: NextRequest) {
                 );
             }
         }
+        // Canon generation persists a versioned canonical row (§7 P2.4).
+        const canonVersion = canonForGen ? await nextCanonVersion(canonForGen.id) : null;
         let resumeId = "";
         try {
             const row = await prisma.generatedResume.create({
                 data: {
                     userId,
                     applicationId,
+                    ...(canonForGen ? { canonId: canonForGen.id, isCanonical: true, canonVersion } : {}),
                     // M8.4.2 — persist the parsed title + company alongside the
                     // existing X-Resume-Title / X-Resume-Company response
                     // headers. Drives the previous-resumes dropdown UI (M8.4.6).
@@ -783,6 +830,20 @@ export async function POST(req: NextRequest) {
                 id: resumeId,
                 timestamp: Date.now(),
             });
+        }
+
+        // §7 P2.4 — point the canon at this new version, record its dependency
+        // set (distinct entity sourceIds in the final selection), and clear
+        // stale. Done LAST, after the gen-time auto-tag write, so it can't
+        // self-stale (§6 Q7).
+        if (canonForGen && resumeId) {
+            try {
+                const entityIds = [...new Set(flat.map(s => s.sourceId))];
+                await finalizeCanonGeneration(canonForGen.id, resumeId, entityIds);
+                broadcastEvent({ model: 'Canon', action: 'upsert', id: canonForGen.id, timestamp: Date.now() });
+            } catch (e) {
+                console.warn('[resume POST] canon finalize failed:', e);
+            }
         }
 
         // PB-12 (was RAH-22): HTTP header values must be ASCII (undici's Headers throws on

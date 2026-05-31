@@ -114,12 +114,21 @@ export async function PATCH(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
-    const { id, company, role, status, kind, track, nextSteps, dateApplied, decisionDeadline } = parsed.data;
+    const { id, company, role, status, kind, track, nextSteps, dateApplied, decisionDeadline, canonId } = parsed.data;
 
     try {
         const existing = await findApplicationByIdForUser(id, userId);
         if (!existing) {
             return NextResponse.json({ error: "Application not found" }, { status: 404 });
+        }
+
+        // Canon tag (§6 Q4) — verify a non-null canon belongs to this user
+        // before linking, so a tag can't point at someone else's canon.
+        if (canonId) {
+            const ownCanon = await prisma.canon.findFirst({ where: { id: canonId, userId }, select: { id: true } });
+            if (!ownCanon) {
+                return NextResponse.json({ error: "Canon not found" }, { status: 400 });
+            }
         }
 
         // lastUpdateAt tracks the LAST STATUS CHANGE (not metadata edits like
@@ -137,6 +146,7 @@ export async function PATCH(req: NextRequest) {
         if (nextSteps !== undefined) update.nextSteps = nextSteps;
         if (dateApplied !== undefined) update.dateApplied = dateApplied ? new Date(dateApplied) : null;
         if (decisionDeadline !== undefined) update.decisionDeadline = decisionDeadline ? new Date(decisionDeadline) : null;
+        if (canonId !== undefined) update.canonId = canonId;
 
         const application = await updateApplication(id, update);
 

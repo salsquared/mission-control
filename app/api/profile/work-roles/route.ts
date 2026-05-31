@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
+import { markCanonsStaleForEntity } from "@/lib/repositories/canons";
 import {
     WorkRolePostSchema,
     WorkRolePatchSchema,
@@ -74,6 +75,9 @@ export async function PATCH(req: NextRequest) {
             position: parsed.data.position,
         });
         if (!workRole) return NextResponse.json({ error: "WorkRole not found" }, { status: 404 });
+        // §6 Q7 — entity-scoped canon staleness, in the ROUTE (not the repo) so
+        // gen-time auto-tag writes can't self-stale. Best-effort.
+        await markCanonsStaleForEntity(userId, workRole.id).catch(e => console.warn("[work-roles PATCH] canon stale failed:", e));
         broadcastEvent({ model: 'Profile', action: 'upsert', id: workRole.id, timestamp: Date.now() });
         return NextResponse.json({ workRole }, { status: 200 });
     } catch (e) {
@@ -99,6 +103,7 @@ export async function DELETE(req: NextRequest) {
     try {
         const ok = await deleteWorkRole(userId, parsed.data.id);
         if (!ok) return NextResponse.json({ error: "WorkRole not found" }, { status: 404 });
+        await markCanonsStaleForEntity(userId, parsed.data.id).catch(e => console.warn("[work-roles DELETE] canon stale failed:", e));
         broadcastEvent({ model: 'Profile', action: 'delete', id: parsed.data.id, timestamp: Date.now() });
         return NextResponse.json({ success: true, id: parsed.data.id }, { status: 200 });
     } catch (e) {

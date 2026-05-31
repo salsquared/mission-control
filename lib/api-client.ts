@@ -191,7 +191,38 @@ export const queryKeys = {
     // invalidate the picker, and vice-versa.
     pipelinePicker: ['applications', 'pipeline-picker'] as const,
     blacklist: ['blacklist'] as const,
+    // Canons — keep stable; CanonsCard invalidates by this key on SSE + mutation.
+    canons: (filter?: { track?: string }) =>
+        ['canons', filter ?? {}] as const,
 };
+
+// ─── Canon wire shape ──────────────────────────────────────────────────────
+// Mirrors the CanonWire the /api/canons routes return (canonical-resumes
+// feature). Kept local to the client (not lib/schemas) since the canon CRUD
+// surface is owned by the backend worker; this is the response contract the
+// CanonsCard reads.
+export const CanonWireSchema = z.object({
+    id: z.string(),
+    userId: z.string(),
+    name: z.string(),
+    slug: z.string(),
+    track: z.enum(['career', 'side']),
+    description: z.string().nullable(),
+    keywords: z.string(),
+    onePage: z.boolean(),
+    currentResumeId: z.string().nullable(),
+    resumeStale: z.boolean(),
+    resumeEntityIds: z.array(z.string()),
+    versionCount: z.number(),
+    active: z.boolean(),
+    createdAt: z.string(),
+    updatedAt: z.string(),
+});
+export type CanonWire = z.infer<typeof CanonWireSchema>;
+
+const CanonsListResponseSchema = z.object({ canons: z.array(CanonWireSchema) });
+const CanonMutationResponseSchema = z.object({ canon: CanonWireSchema });
+const CanonDeleteResponseSchema = z.object({ ok: z.literal(true) });
 
 // ─── API surface ───────────────────────────────────────────────────────────
 
@@ -726,6 +757,47 @@ export const api = {
             jsonFetch(
                 `/api/blacklist/${encodeURIComponent(id)}`,
                 z.object({ success: z.literal(true), id: z.string() }),
+                { method: 'DELETE' },
+            ),
+    },
+
+    canons: {
+        // GET /api/canons — one reusable resume per role-archetype. Optional
+        // ?track=career|side filter.
+        list: (filter?: { track?: string }) => {
+            const qs = filter?.track ? `?track=${encodeURIComponent(filter.track)}` : '';
+            return jsonFetch(`/api/canons${qs}`, CanonsListResponseSchema);
+        },
+        // POST /api/canons — 201; 409 if the (slug) collides with an existing
+        // canon. jsonFetch surfaces the 409 body's `error` as the thrown
+        // message so the caller can show "name already used".
+        create: (input: {
+            name: string;
+            track: 'career' | 'side';
+            keywords?: string;
+            description?: string | null;
+            onePage?: boolean;
+        }) => jsonFetch('/api/canons', CanonMutationResponseSchema, jsonBody('POST', input)),
+        // PATCH /api/canons/{id} — editing `keywords` marks the canon stale.
+        update: (
+            id: string,
+            input: {
+                name?: string;
+                keywords?: string;
+                description?: string | null;
+                onePage?: boolean;
+                active?: boolean;
+            },
+        ) =>
+            jsonFetch(
+                `/api/canons/${encodeURIComponent(id)}`,
+                CanonMutationResponseSchema,
+                jsonBody('PATCH', input),
+            ),
+        delete: (id: string) =>
+            jsonFetch(
+                `/api/canons/${encodeURIComponent(id)}`,
+                CanonDeleteResponseSchema,
                 { method: 'DELETE' },
             ),
     },

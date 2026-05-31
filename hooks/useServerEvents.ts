@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 
-export type ServerEventModel = 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick' | 'Cache' | 'Profile' | 'ProfileSnapshot' | 'Watchlist' | 'Posting' | 'Notification' | 'Contact' | 'GeneratedResume';
+export type ServerEventModel = 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick' | 'Cache' | 'Profile' | 'ProfileSnapshot' | 'Watchlist' | 'Posting' | 'Notification' | 'Contact' | 'GeneratedResume' | 'Canon';
 
 // Single shared EventSource per browser tab. Every useServerEvents call adds
 // itself to an in-memory subscriber map and the EventSource is opened on the

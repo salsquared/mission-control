@@ -58,7 +58,7 @@ export async function trackAsApplication(
         // applications; career-track postings stay career.
         select: {
             id: true, company: true, title: true, status: true, sourceUrl: true, externalId: true,
-            watchlist: { select: { track: true } },
+            watchlist: { select: { track: true, canonId: true } },
         },
     });
     if (!posting) return { ok: false, reason: "posting-not-found" };
@@ -144,6 +144,9 @@ export async function trackAsApplication(
                     status: "INTERESTED",
                     kind: "job",
                     track: posting.watchlist.track,
+                    // §6 Q4 — inherit the feeding watchlist's canon tag, if set,
+                    // so jobs from a role-watchlist land on the right canon.
+                    canonId: posting.watchlist.canonId ?? null,
                     postingId: posting.id,
                     // High-precision dedup hint for "same job, different
                     // posting row" — populated from the source ATS's stable

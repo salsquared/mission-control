@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-05-30 · 61/61 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-05-31 · 63/63 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -31,6 +31,7 @@
       <li><a href="#sec-Finance-Dashboard">Finance Dashboard</a></li>
       <li><a href="#sec-Space-Dashboard">Space Dashboard</a></li>
       <li><a href="#sec-Internal-Systems">Internal Systems</a></li>
+      <li><a href="#sec-Canons">Canons</a></li>
     </ol>
   </details>
 
@@ -471,6 +472,18 @@
           "type": "string",
           "format": "date-time",
           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "canonId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "cuid",
+          "pattern": "^[cC][0-9a-z]{6,}$"
         },
         {
           "type": "null"
@@ -1746,6 +1759,18 @@
       "enum": [
         "career",
         "side"
+      ]
+    },
+    "canonId": {
+      "anyOf": [
+        {
+          "type": "string",
+          "format": "cuid",
+          "pattern": "^[cC][0-9a-z]{6,}$"
+        },
+        {
+          "type": "null"
+        }
       ]
     }
   }
@@ -3479,6 +3504,99 @@
   <p class="api-purpose">Reads the on-disk PM2 log file, parses its JSON-lines entries, applies optional time-range and level filters, and returns up to the most recent 1000 matches.</p>
   <p class="api-notes">Reads ~/.pm2/logs/mission-control-out.log (overridable via PM2_LOG_PATH); non-JSON lines are skipped.</p>
   <p class="api-src"><code>app/api/system/logs/historical/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Canons">Canons</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/canons">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/canons</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">List and create Canons (role-archetypes that own one reusable resume).</p>
+  <p class="api-schema-label">GET body — <code>CanonTrackSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "string",
+  "enum": [
+    "career",
+    "side"
+  ]
+}</code></pre>
+  <p class="api-schema-label">POST body — <code>CanonPostSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "track": {
+      "type": "string",
+      "enum": [
+        "career",
+        "side"
+      ]
+    },
+    "keywords": {
+      "default": "",
+      "type": "string",
+      "maxLength": 4000
+    },
+    "description": {
+      "type": "string",
+      "maxLength": 1000
+    },
+    "onePage": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "name",
+    "track"
+  ]
+}</code></pre>
+  <p class="api-src"><code>app/api/canons/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/canons/{id}">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/canons/{id}</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Get, update, or delete a single Canon (a keyword edit marks its resume stale).</p>
+  <p class="api-schema-label">PATCH body — <code>CanonPatchSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "keywords": {
+      "type": "string",
+      "maxLength": 4000
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string",
+          "maxLength": 1000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "onePage": {
+      "type": "boolean"
+    },
+    "active": {
+      "type": "boolean"
+    }
+  }
+}</code></pre>
+  <p class="api-src"><code>app/api/canons/[id]/route.ts</code></p>
 </div>
     </div>
   </details>

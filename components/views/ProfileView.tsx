@@ -10,6 +10,7 @@ import { WorkHistoryCard } from "../cards/profile/WorkHistoryCard";
 import { ProjectsCard } from "../cards/profile/ProjectsCard";
 import { EducationCard } from "../cards/profile/EducationCard";
 import { GenerateResumeCard } from "../cards/profile/GenerateResumeCard";
+import { CanonsCard } from "../cards/profile/CanonsCard";
 import { ImportResumesCard } from "../cards/profile/ImportResumesCard";
 import { SnapshotsCard } from "../cards/profile/SnapshotsCard";
 import { useServerEvents } from "@/hooks/useServerEvents";
@@ -259,6 +260,7 @@ export const ProfileView: React.FC = () => {
     const resumeCards: CardItem[] = [
         { id: "import-resumes", colSpan: 1, hFit: true, content: <ImportResumesCard /> },
         { id: "generate-resume", colSpan: 1, hFit: true, content: <GenerateResumeCard /> },
+        { id: "canons", colSpan: 2, hFit: true, content: <CanonsCard /> },
     ];
 
     const historyCards: CardItem[] = [

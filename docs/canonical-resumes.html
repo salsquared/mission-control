@@ -375,6 +375,7 @@ flowchart LR
     <summary><h2 id="phasing">Implementation plan</h2></summary>
     <div class="section-body">
       <h3>Build order (decisions locked, 2026-05-30)</h3>
+      <div class="callout tip"><strong>&check; P1&ndash;P4 SHIPPED to dev (2026-05-30).</strong> Model + migration (dev.db), CRUD API, canon-driven generation, manual tagging + inherit, entity-scoped staleness, and the Canons UI are live on :4101; hermetic gate 88/88. <strong>Pending:</strong> prod migration + redeploy; P5 specialization pass (deferred opt-in); P6 cover letters (out of scope).</div>
       <p>Each phase is independently shippable. <strong>P1&ndash;P4 is the MVP</strong> (model &rarr; generation &rarr; reuse &rarr; UI); <strong>P5</strong> is the wanted opt-in specialization; <strong>P6</strong> (cover letters) stays deferred. Every code phase ends green on the hermetic gate + <code>tsc</code>; the migration lands on <em>both</em> DBs.</p>
       <details class="task" open>
         <summary><input type="checkbox"><span class="task-id">P1</span><span class="task-title">Foundation — model, migration, CRUD, side seeding</span></summary>
