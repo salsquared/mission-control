@@ -292,7 +292,7 @@ export const InternalView: React.FC = () => {
             id: "cache-analytics",
             colSpan: 3,
             content: (
-                <div className="flex flex-col h-[280px]">
+                <div className="flex flex-col min-h-[280px] max-h-[480px] md:h-[280px] md:max-h-none">
                     <div className="flex items-center gap-2 mb-4 text-emerald-400 shrink-0">
                         <Activity className="w-5 h-5" />
                         <h3 className="font-bold tracking-wider uppercase text-sm">Cache Telemetry</h3>
@@ -318,7 +318,7 @@ export const InternalView: React.FC = () => {
                                 </div>
                             </div>
                         </div>
-                        <div className="flex-1 flex flex-col p-4 border border-dashed border-white/10 rounded-xl bg-black/40 overflow-hidden relative">
+                        <div className="flex-1 flex flex-col p-4 border border-dashed border-white/10 rounded-xl bg-black/40 overflow-hidden relative min-h-[180px] md:min-h-0">
                             {sysMetrics?.cache?.activeEntries && sysMetrics.cache.activeEntries.length > 0 ? (
                                 <div className="flex flex-col overflow-y-auto custom-scrollbar gap-2 font-mono text-xs w-full h-full pr-2">
                                     {[...sysMetrics.cache.activeEntries].sort((a, b) => a.remainingTtl - b.remainingTtl).map((entry, idx) => (
