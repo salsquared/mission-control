@@ -296,7 +296,7 @@ export const InternalView: React.FC = () => {
                                         <div className="flex gap-2 shrink-0">
                                             <span className="text-white/40">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
                                             <span className={`w-[60px] text-center ${log.level === 'error' ? 'text-red-400 font-bold' : log.level === 'warn' ? 'text-amber-400 font-bold' : 'text-cyan-400'}`}>[{log.level.toUpperCase()}]</span>
-                                            <span className={`px-1 rounded text-[10px] ${log.source === 'scheduler' ? 'bg-purple-500/20 text-purple-300' : 'bg-white/5 text-white/30'}`}>{log.source === 'scheduler' ? 'SCHED' : 'WEB'}</span>
+                                            <span className={`px-1 rounded text-[10px] ${log.source === 'scheduler' ? 'bg-purple-500/20 text-purple-300' : 'bg-yellow-500/20 text-yellow-300'}`}>{log.source === 'scheduler' ? 'SCH' : 'WEB'}</span>
                                         </div>
                                         <span className={`break-words whitespace-pre-wrap ${log.level === 'error' ? 'text-red-300' : 'text-white'}`}>{formatLogMessage(log.message)}</span>
                                     </div>
@@ -309,7 +309,7 @@ export const InternalView: React.FC = () => {
                                                 <div className="flex gap-2 shrink-0">
                                                     <span className="text-white/40">[{new Date(log.ts).toLocaleTimeString()}]</span>
                                                     <span className={`w-[60px] text-center ${log.level === 'error' ? 'text-red-400 font-bold' : log.level === 'warn' ? 'text-amber-400 font-bold' : 'text-cyan-400'}`}>[{log.level.toUpperCase()}]</span>
-                                                    <span className={`px-1 rounded text-[10px] ${log.source === 'scheduler' ? 'bg-purple-500/20 text-purple-300' : 'bg-white/5 text-white/30'}`}>{log.source === 'scheduler' ? 'SCHED' : 'WEB'}</span>
+                                                    <span className={`px-1 rounded text-[10px] ${log.source === 'scheduler' ? 'bg-purple-500/20 text-purple-300' : 'bg-yellow-500/20 text-yellow-300'}`}>{log.source === 'scheduler' ? 'SCH' : 'WEB'}</span>
                                                 </div>
                                                 <span className={`break-words whitespace-pre-wrap ${log.level === 'error' ? 'text-red-300' : 'text-white'}`}>{formatLogMessage(log.msg)}</span>
                                             </div>
