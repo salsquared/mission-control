@@ -228,6 +228,7 @@ export const EditFindRolesModal: React.FC<EditFindRolesModalProps> = ({ open, gr
                         value={keywords}
                         onChange={(e) => setKeywords(e.target.value)}
                         disabled={submitting}
+                        placeholder="e.g. software engineer, mechanical engineer, propulsion"
                         autoFocus
                         className="px-3 py-2 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-cyan-400/40"
                     />

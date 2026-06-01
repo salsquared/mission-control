@@ -32,6 +32,7 @@ import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
 import { inferEmploymentTypeFromTitle } from "./employment-type";
 import { loggedFetch, hostOf } from "@/lib/external-fetch";
 import { recordFetchOutcome } from "@/lib/fetcher-health/store";
+import { buildSearchQuery } from "@/lib/watchlists/keyword-query";
 
 type IndeedConfig = z.infer<typeof IndeedConfigSchema>;
 
@@ -103,7 +104,9 @@ export async function fetchIndeed(config: IndeedConfig): Promise<FetcherResult> 
 
         for (let page = 0; page < MAX_PAGES; page++) {
             const params = new URLSearchParams({
-                q: config.keywords,
+                // User stores a plain comma list; expand to Indeed's boolean OR
+                // query (quoted phrases) only here. See keyword-query.ts.
+                q: buildSearchQuery(config.keywords),
                 start: String(page * PAGE_SIZE),
                 sort: "date",
             });

@@ -1516,7 +1516,7 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                                 <label className="text-[11px] uppercase tracking-wide text-white/40">Keywords</label>
                                 <input
                                     type="text"
-                                    placeholder="software engineer"
+                                    placeholder="software engineer, mechanical engineer, propulsion"
                                     value={advKeywords}
                                     onChange={(e) => setAdvKeywords(e.target.value)}
                                     disabled={submitting}

@@ -154,6 +154,9 @@ SUITES=(
     # Canonical resumes ("Canons") — keyword split, repo CRUD, entity-scoped
     # staleness (2026-05-30, docs/canonical-resumes.html §7)
     "scripts/tests/hermetic/canon-keyword-split-smoke.ts"
+    # Watchlist keyword list → LinkedIn/Indeed boolean OR query (comma-list UX,
+    # OR/quotes added only at fetch time — lib/watchlists/keyword-query.ts)
+    "scripts/tests/hermetic/keyword-query-smoke.ts"
     "scripts/tests/hermetic/canon-crud-smoke.ts"
     "scripts/tests/hermetic/canon-staleness-smoke.ts"
     "scripts/tests/hermetic/canon-specialize-smoke.ts"

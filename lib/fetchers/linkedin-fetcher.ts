@@ -32,6 +32,7 @@ import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
 import { inferEmploymentTypeFromTitle } from "./employment-type";
 import { loggedFetch, hostOf } from "@/lib/external-fetch";
 import { recordFetchOutcome } from "@/lib/fetcher-health/store";
+import { buildSearchQuery } from "@/lib/watchlists/keyword-query";
 
 type LinkedinConfig = z.infer<typeof LinkedinConfigSchema>;
 
@@ -61,7 +62,9 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
 
         for (let page = 0; page < MAX_PAGES; page++) {
             const params = new URLSearchParams({
-                keywords: config.keywords,
+                // User stores a plain comma list; expand to LinkedIn's boolean
+                // OR query (quoted phrases) only here. See keyword-query.ts.
+                keywords: buildSearchQuery(config.keywords),
                 start: String(page * PAGE_SIZE),
             });
             if (tpr) params.set("f_TPR", tpr);
