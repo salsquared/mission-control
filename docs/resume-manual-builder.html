@@ -101,9 +101,9 @@ flowchart TB
         <li><code>lib/repositories/canons.ts</code> — parse/serialize the JSON; <code>getCanonSelection</code> / <code>saveCanonSelection</code>.</li>
         <li><strong>NEW</strong> <code>lib/canons/selection.ts</code> — <code>resolveSelection(profile, selection) → ResumeSelection</code> (extends/reuses <code>reconstructSelection</code>; included entities + their chosen bullets, in order, dropping deleted ids).</li>
         <li><strong>NEW</strong> <code>app/api/canons/[id]/selection/route.ts</code> + <code>meta.ts</code> — <code>GET</code> (load) / <code>PUT</code> (save) the manual selection.</li>
-        <li><code>app/api/resumes/route.ts</code> — when generating for a <code>canonId</code> that has a manual <code>selection</code>, branch to the <em>resolve</em> path (skip auto <code>selectBullets</code> + the one-page pruner); gate rewrite + tagline behind the toggles; keep the auto-pipeline as the fallback when no manual selection exists.</li>
-        <li><code>app/api/resumes/specialize/route.ts</code> — already reconstructs + re-words; minimal change (optionally read the Canon's <code>selection</code> definition instead of the last rendered resume's <code>selections</code>).</li>
-        <li><strong>NEW</strong> <code>components/overlays/ResumeBuilderOverlay.tsx</code> — Window-class overlay (per the component hierarchy): profile tree → entity checkboxes → bullet checkboxes, extras pickers, live page-count indicator (OQ9), rewrite/tagline toggles, Save / Generate.</li>
+        <li><code>app/api/resumes/route.ts</code> — when generating for a <code>canonId</code>, branch to the <em>resolve</em> path (skip auto <code>selectBullets</code> + the one-page pruner); gate rewrite + tagline behind two new request toggles <code>options.rewrite</code>/<code>options.tagline</code> (default off — extend the resumes POST Zod schema); return the exact rendered page count as a response header (OQ14). <strong>No auto fallback for canons</strong> (OQ15): a <code>canonId</code> with no <code>selection</code> returns a &ldquo;build one first&rdquo; error — the auto-pipeline survives only for the one-off URL/paste/pipeline generator (OQ12).</li>
+        <li><code>app/api/resumes/specialize/route.ts</code> — read the Canon's authoritative <code>selection</code> definition (not the last rendered resume's <code>selections</code>), else a per-job specialization drifts from the curated set.</li>
+        <li><strong>NEW</strong> <code>components/overlays/ResumeBuilderOverlay.tsx</code> — Window-class overlay (per the component hierarchy): profile tree in profile order, no drag (OQ8) → entity checkboxes → bullet checkboxes, extras pickers, live page-count estimate (OQ9/OQ14), rewrite/tagline toggles, Save / Generate. On Save it computes the <code>excluded</code> snapshot (all profile entities − checked) into the PUT payload (OQ5=B).</li>
         <li><code>components/cards/profile/CanonsCard.tsx</code> — &ldquo;Edit &amp; generate&rdquo; entry that opens the overlay (replaces/augments &ldquo;Regenerate&rdquo;).</li>
         <li><code>lib/api-client.ts</code> + query keys; regenerate <code>docs/apis.html</code> (<code>npm run gen:api-docs</code>).</li>
         <li><strong>NEW</strong> hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code> → append to <code>SUITES</code> in <code>pre-push.sh</code>.</li>
@@ -130,14 +130,14 @@ flowchart TB
           <tr><td>Saved selection references an entity/bullet later deleted from the profile</td><td>med</td><td><code>resolveSelection</code> drops missing ids best-effort (same as <code>reconstructSelection</code>); the builder re-syncs the tree against the live profile on open.</td></tr>
           <tr><td>Migration touches <code>prod.db</code> (mailbox-equivalent, backed up)</td><td>low</td><td>Column is additive + nullable — no data rewrite. Back up first (<code>scripts/backup-db.sh</code>); apply to dev.db + prod.db via <code>prisma migrate deploy</code> with <code>DATABASE_URL</code> pointed at each.</td></tr>
           <tr><td>Empty selection → blank resume</td><td>low</td><td>Generate guards on a non-empty resolved selection and errors (mirrors the <code>specialize</code> &ldquo;selection is empty&rdquo; guard) before rendering.</td></tr>
-          <tr><td>Existing canons have no manual selection yet (back-compat)</td><td>high (every existing canon)</td><td>Manual path is gated on <code>Canon.selection != null</code>; until set, &ldquo;Regenerate&rdquo; keeps the auto-pipeline. On first open the builder <strong>pre-fills</strong> from the current resume's stored <code>selections</code> (P3.3) so the user starts curated, not empty.</td></tr>
-          <tr><td>No one-page guardrail → user ships a 3-page resume unknowingly</td><td>med</td><td>The live page-count indicator (OQ9) makes length visible while editing; Generate can also surface the final page count. By design the user owns length — we inform, not prune.</td></tr>
+          <tr><td>Existing canons have no manual selection yet (back-compat)</td><td>high (every existing canon)</td><td>Canon generation is manual-only (OQ15): an existing canon keeps its last-generated resume until re-curated, and &ldquo;Edit &amp; generate&rdquo; opens the builder <strong>pre-filled</strong> from that resume's stored <code>selections</code> (P3.3) — so the user starts curated, not from scratch, and no un-curated canon silently auto-generates.</td></tr>
+          <tr><td>No one-page guardrail → user ships a 3-page resume unknowingly</td><td>med</td><td>The live page-count estimate (OQ9/OQ14) makes length visible while editing, and Generate returns the exact rendered page count (header) to confirm it. By design the user owns length — we inform, not prune.</td></tr>
           <tr><td>Schema-behind tier (prod.db lagging) emits Prisma <code>P2021</code></td><td>low</td><td>Additive column; apply the migration to both tiers in the same deploy. The manual route 500s cleanly (caught) rather than corrupting state if the column is missing.</td></tr>
         </tbody>
       </table>
 
       <h3>Rollback</h3>
-      <p><code>Canon.selection</code> is nullable and additive, and the manual generate path is <strong>gated on its presence</strong> — so backing out the route branch makes every canon fall through to the existing auto-pipeline (degrades to today's behavior, a no-op). To revert: drop the route branch + overlay, revert + <code>npm run build</code> + <code>pm2 restart mission-control</code>. The column can stay (harmless) or be removed with a down-migration after a <code>prod.db</code> backup. No generated artifacts or existing <code>GeneratedResume</code> rows are mutated by this feature.</p>
+      <p><code>Canon.selection</code> is nullable and additive, and the keyword auto-pipeline code is left intact (still used by the one-off generator — OQ12) — so reverting the canon route branch + overlay restores the old auto &ldquo;Regenerate&rdquo; for canons (degrades to today's behavior). To revert: drop the route branch + overlay, revert + <code>npm run build</code> + <code>pm2 restart mission-control</code>. The column can stay (harmless) or be removed with a down-migration after a <code>prod.db</code> backup. No generated artifacts or existing <code>GeneratedResume</code> rows are mutated by this feature.</p>
     </div>
   </details>
 
@@ -188,6 +188,9 @@ flowchart TB
 
       <div class="callout tip"><strong>OQ14 — Live page-indicator fidelity?</strong><br/>
         <strong>✓ Decided: A</strong> — a fast in-browser HTML/height <em>estimate</em> (updates instantly as boxes toggle; exact count confirmed at Generate). Documented fallback: if the estimate proves not accurate enough in practice, switch to <strong>(B)</strong> a true PDF render-on-edit (exact live, ~seconds per change).</div>
+
+      <div class="callout tip"><strong>OQ15 — What does a canon's Generate do when it has no manual selection?</strong><br/>
+        <strong>✓ Decided: manual-only</strong> (surfaced by the Tasks audit). No auto fallback for canons — a canon with no <code>selection</code> can't silently auto-Regenerate; &ldquo;Edit &amp; generate&rdquo; always routes through the builder (pre-filled from the last resume for existing canons via P3.3; a brand-new canon opens empty). The keyword auto-pipeline survives <em>only</em> in the one-off <code>GenerateResumeCard</code> (OQ12). Honors OQ4's intent — no un-curated canon keeps emitting the bad auto picks.</div>
     </div>
   </details>
 
@@ -231,7 +234,7 @@ flowchart TB
               <p>The API contract + read/write helpers.</p>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title"><code>CanonSelectionSchema</code> in <code>lib/schemas/canons.ts</code></span></summary>
-                <div class="task-body"><p>Binary entity map (<code>kind</code>, <code>bulletIds</code>; entities present ⇒ included), the <code>excluded</code> id-list (OQ5=B), <code>extras</code>, <code>sectionOrder</code>/<code>sectionsOff</code>; thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
+                <div class="task-body"><p>Binary entity map (<code>kind</code>, <code>bulletIds</code>; entities present ⇒ included), the <code>excluded</code> id-list (OQ5=B), <code>extras</code>, and <code>sectionOrder</code>/<code>sectionsOff</code> (<code>sectionOrder</code> is the fixed default in v1 — OQ8 defers user reordering); thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
               </details>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title"><code>getCanonSelection</code> / <code>saveCanonSelection</code> in <code>lib/repositories/canons.ts</code></span></summary>
@@ -271,10 +274,14 @@ flowchart TB
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Branch <code>app/api/resumes/route.ts</code> on a manual selection</span></summary>
-            <div class="task-body"><p>If the <code>canonId</code> has <code>selection != null</code>: <code>resolveSelection</code> instead of auto <code>selectBullets</code> (and skip the one-page pruner); gate rewrite + tagline behind toggles (OQ1/OQ13); else keep the auto-pipeline fallback.</p></div>
+            <div class="task-body"><p>For a <code>canonId</code>: <code>resolveSelection</code> instead of auto <code>selectBullets</code> (and skip the one-page pruner); gate rewrite + tagline behind two new <code>options.rewrite</code>/<code>options.tagline</code> toggles, default off (extend the resumes POST Zod schema — OQ1/OQ13); return the exact rendered page count as a header (OQ14). A <code>canonId</code> with no <code>selection</code> returns a &ldquo;build one first&rdquo; error — <strong>no auto fallback</strong> (OQ15).</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Regenerate <code>docs/apis.html</code></span></summary>
+            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Point <code>app/api/resumes/specialize/route.ts</code> at <code>Canon.selection</code></span></summary>
+            <div class="task-body"><p>Read the canon's authoritative manual selection (not the last rendered resume's <code>selections</code>) so a per-job specialization can't drift from the curated set.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">Regenerate <code>docs/apis.html</code></span></summary>
             <div class="task-body"><p><code>npm run gen:api-docs</code> + commit (pre-push <code>api-docs-smoke</code> gate).</p></div>
           </details>
         </div>
@@ -290,15 +297,15 @@ flowchart TB
           <p>The overlay + the Canon entry point.</p>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">NEW <code>components/overlays/ResumeBuilderOverlay.tsx</code></span></summary>
-            <div class="task-body"><p>Profile tree → entity checkboxes → bullet checkboxes → extras pickers → live page indicator (OQ9; fidelity OQ14) → rewrite/tagline toggles → Save / Generate (OQ10).</p></div>
+            <div class="task-body"><p>Profile tree in profile order, no drag (OQ8) → entity checkboxes → bullet checkboxes → extras pickers → live page estimate (OQ9/OQ14) → rewrite/tagline toggles → Save / Generate (OQ10). On Save, compute the <code>excluded</code> snapshot (all profile entities − checked) into the PUT payload (OQ5=B); on Generate, read the exact page count from the response header.</p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">&ldquo;Edit &amp; generate&rdquo; entry in <code>CanonsCard.tsx</code> + <code>lib/api-client.ts</code></span></summary>
             <div class="task-body"><p>Opens the overlay for the canon; query keys + client methods for GET/PUT selection.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">First-open pre-fill from the current resume's stored <code>selections</code></span></summary>
-            <div class="task-body"><p>Back-compat UX: existing canons open curated (from their last rendered selection), not empty.</p></div>
+            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">First-open initial state (pre-fill existing canons; empty for new)</span></summary>
+            <div class="task-body"><p>Back-compat UX: an existing canon opens pre-filled from its last rendered <code>selections</code> (curated, not blank); a brand-new canon (no prior resume) opens empty — nothing checked — and the user builds it up.</p></div>
           </details>
         </div>
       </details>
@@ -313,7 +320,7 @@ flowchart TB
           <p>Tests, build, deploy.</p>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code></span></summary>
-            <div class="task-body"><p>Asserts: <code>resolveSelection</code> drops a deleted entity/bullet; included entities render in order with only their chosen bullets; an excluded entity never appears; generate-from-manual produces the expected <code>ResumeSelection</code>; empty-selection guard fires. Append to <code>SUITES</code> in <code>pre-push.sh</code>.</p></div>
+            <div class="task-body"><p>Asserts: <code>resolveSelection</code> drops a deleted entity/bullet; included entities render in profile order with only their chosen bullets; an entity absent from <code>entities</code> doesn't render; the <code>excluded</code> id-list round-trips through save/load; the one-page pruner is not applied; a <code>canonId</code> with no selection errors (no auto fallback — OQ15); the empty-selection guard fires. Append to <code>SUITES</code> in <code>pre-push.sh</code>.</p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title"><code>tsc</code> clean → prod build → <code>pm2 restart</code> → deploy notes</span></summary>
