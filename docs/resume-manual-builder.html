@@ -145,7 +145,7 @@ flowchart TB
     <summary><h2 id="open-questions">Open Questions</h2></summary>
     <div class="section-body">
       <h3>Unresolved decisions</h3>
-      <p>Nearly everything is now <strong>decided</strong> (this session's design conversation). Only <strong>one remains genuinely open: OQ14</strong> (live page-indicator fidelity — gates the Phase 3 overlay UI, not Phase 1). The five marked <em>✓ Defaulted</em> were taken to my stated lean to keep momentum — say the word to revisit any. <strong>Phase 1 is unblocked.</strong></p>
+      <p><strong>All forks are now decided</strong> (this session's design conversation) — every OQ below is ✓. The five marked <em>✓ Defaulted</em> were taken to my stated lean to keep momentum; say the word to revisit any. <strong>The design is locked; implementation can start at Phase 1.</strong></p>
 
       <div class="callout tip"><strong>OQ1 — What does the AI still do on the manually-picked bullets?</strong><br/>
         <strong>✓ Decided:</strong> manual selection is the core; <strong>rewrite + tagline are opt-in toggles, default off</strong> → deterministic verbatim render. The selection problem is separate from wording, so wording stays optional polish.</div>
@@ -186,8 +186,8 @@ flowchart TB
       <div class="callout tip"><strong>OQ13 — Rewrite scope when the toggle is on?</strong><br/>
         <strong>✓ Defaulted (to lean):</strong> keep today's behavior — rewrite only posting-matching bullets, pass no-match bullets through verbatim (<code>rewrite.ts</code> pre-filter); avoids cross-domain invention and saves tokens. Tagline still needs a posting/keywords.</div>
 
-      <div class="callout"><strong>OQ14 — Live page-indicator fidelity?</strong><br/>
-        How the OQ9 indicator computes the page count. Options: <strong>(A)</strong> a fast in-browser HTML/height <em>estimate</em> — updates instantly as boxes toggle, exact count confirmed at Generate; <strong>(B)</strong> a true PDF render-on-edit — exact live, but ~seconds per change. <em>Lean:</em> A. <em>Status:</em> open (gates the P3.1 overlay UI, not Phase 1).</div>
+      <div class="callout tip"><strong>OQ14 — Live page-indicator fidelity?</strong><br/>
+        <strong>✓ Decided: A</strong> — a fast in-browser HTML/height <em>estimate</em> (updates instantly as boxes toggle; exact count confirmed at Generate). Documented fallback: if the estimate proves not accurate enough in practice, switch to <strong>(B)</strong> a true PDF render-on-edit (exact live, ~seconds per change).</div>
     </div>
   </details>
 
@@ -195,7 +195,7 @@ flowchart TB
     <summary><h2 id="tasks">Tasks</h2></summary>
     <div class="section-body">
       <h3>Implementation checklist</h3>
-      <p><strong>Phase 1 is unblocked; resolve OQ14 (live-indicator fidelity) before the P3.1 overlay.</strong> Everything else is decided.</p>
+      <p><strong>All OQs resolved — implementation can begin.</strong> Phases ship in order; verify each before the next.</p>
 
       <details class="task" open>
         <summary>
