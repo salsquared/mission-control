@@ -465,9 +465,11 @@ async function testIndeed() {
         else pass("indeed: 2nd posting location extracted");
     }
 
-    // URL contains the search params (sanity: we built the URL correctly)
-    if (lastRequestURL && lastRequestURL.includes("q=software+engineer") && lastRequestURL.includes("fromage=1") && lastRequestURL.includes("sort=date")) {
-        pass("indeed: search URL composed (q=, fromage=, sort=)");
+    // URL contains the search params (sanity: we built the URL correctly).
+    // The multi-word phrase is quoted by buildSearchQuery at fetch time, so
+    // `q` is the URL-encoded `"software engineer"` (%22…%22), not a bare phrase.
+    if (lastRequestURL && lastRequestURL.includes("q=%22software+engineer%22") && lastRequestURL.includes("fromage=1") && lastRequestURL.includes("sort=date")) {
+        pass("indeed: search URL composed (quoted q=, fromage=, sort=)");
     } else {
         fail(`indeed: last URL missing expected params (${lastRequestURL})`);
     }
