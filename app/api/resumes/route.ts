@@ -582,22 +582,38 @@ export async function POST(req: NextRequest) {
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
 
-    // RAH-12: per-userId rate limit BEFORE any Gemini-touching code runs.
-    // Defense-in-depth against an accidental refresh loop or runaway client
-    // burning through the daily generation budget (1 generate = 2-3 Gemini
-    // calls). 5 per 10 minutes is a generous human cap while still bounding
-    // a stuck loop.
-    const rl = checkUserRateLimit("resumes:gen", userId, Date.now(), { max: 5, windowMs: 10 * 60 * 1000 });
-    if (!rl.ok) {
-        return NextResponse.json(
-            { error: `Too many resume generations — try again in ${rl.retryAfterSec}s`, stage: "rate-limit" },
-            { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
-        );
-    }
-
+    // Parse first so the rate-limit decision below can see the input shape
+    // (a zero-cost canon verbatim re-render vs a Gemini-touching generation).
+    // Parsing is pure — no side effects — so running it before the limiter is safe.
     const parsed = ResumePostBodySchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues, stage: "input" }, { status: 400 });
+    }
+
+    // RAH-12: per-userId rate limit BEFORE any heavy work runs. Defense-in-depth
+    // against an accidental refresh loop / runaway client. Two budgets, scoped to
+    // actual cost so a zero-Gemini re-render isn't throttled like a paid generation:
+    //   - Gemini-touching generation — the url/text/application auto-pipeline, OR
+    //     a canon render with rewrite/tagline opted in — burns 2-3 paid Gemini
+    //     calls each. Tight 5/10min cap protects the generation budget.
+    //   - Verbatim canon re-render (canonId set, both AI toggles off) spends ZERO
+    //     Gemini budget; it's a deterministic re-render the user drives by hand in
+    //     the builder. It still does an expensive PDF render, so it keeps a much
+    //     more generous cap that bounds a true runaway loop without blocking
+    //     manual iteration. (The old single 5/10min cap wrongly 429'd this path —
+    //     a "too many generations" error for an operation that spends none.)
+    const genOptions = parsed.data.options ?? {};
+    const isCanonRender = !!parsed.data.posting.canonId?.trim();
+    const touchesGemini = !isCanonRender || genOptions.rewrite === true || genOptions.tagline === true;
+    const rl = touchesGemini
+        ? checkUserRateLimit("resumes:gen", userId, Date.now(), { max: 5, windowMs: 10 * 60 * 1000 })
+        : checkUserRateLimit("resumes:render", userId, Date.now(), { max: 60, windowMs: 10 * 60 * 1000 });
+    if (!rl.ok) {
+        const noun = touchesGemini ? "resume generations" : "resume re-renders";
+        return NextResponse.json(
+            { error: `Too many ${noun} — try again in ${rl.retryAfterSec}s`, stage: "rate-limit" },
+            { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+        );
     }
 
     let stage: "load" | "parse" | "select" | "rewrite" | "render" = "load";
