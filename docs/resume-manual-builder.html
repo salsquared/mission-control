@@ -88,11 +88,11 @@ flowchart TB
     "&lt;workRoleId&gt;": { "kind": "workRole", "bulletIds": ["b1", "b3"] },
     "&lt;projectId&gt;":  { "kind": "project",  "bulletIds": ["b7"] }
   },
-  // (OQ5) optional forward-compat: "excluded": ["&lt;guardRoleId&gt;"]
+  "excluded": ["&lt;guardRoleId&gt;"],   // reviewed-and-left-out entities (OQ5=B forward-compat; inert in v1)
   "extras": { "skillItems": ["PyTorch", "..."], "languages": ["Spanish"], "hobbies": [] }
 }</code></pre>
       <p><strong>Selection is binary</strong> (the consequence of retiring Suggest — OQ4/OQ5). Each entity in <code>entities</code> is <em>included</em>, and its <code>bulletIds</code> are exactly the bullets that render, in that order. An entity not listed is excluded. There's no <code>state</code> / lock field because v1 has <strong>no automated process to gate against</strong> — &ldquo;always-in&rdquo; is just &ldquo;checked&rdquo; and &ldquo;never&rdquo; is just &ldquo;unchecked&rdquo;.</p>
-      <p>The Security-Officer job is simply absent from the ML Canon's <code>entities</code> map — and with no scorer, no spine rule, and no Suggest in the picture, <em>nothing</em> can put it back. That's the structural fix. (OQ5 open: whether to also persist an explicit <code>excluded</code> id-list as forward-compat insurance, so a possible future LLM Suggest wouldn't re-propose deliberate excludes.) Within an included entity, <code>bulletIds</code> is the ordered set of bullets to render (OQ7 — per-bullet granularity).</p>
+      <p>The Security-Officer job is simply absent from the ML Canon's <code>entities</code> map — and with no scorer, no spine rule, and no Suggest in the picture, <em>nothing</em> can put it back. That's the structural fix. Per <strong>OQ5=B</strong>, the unchecked-at-save entities are also snapshotted into the <code>excluded</code> list (inert in v1 — forward-compat for a possible future LLM Suggest). Within an included entity, <code>bulletIds</code> is the ordered set of bullets to render (OQ7 — per-bullet granularity).</p>
 
       <h3>Touch list</h3>
       <ul>
@@ -145,7 +145,7 @@ flowchart TB
     <summary><h2 id="open-questions">Open Questions</h2></summary>
     <div class="section-body">
       <h3>Unresolved decisions</h3>
-      <p>Most forks are now <strong>decided</strong> (this session's design conversation). Only <strong>two remain genuinely open: OQ5</strong> (final nod on pure-binary vs a forward-compat exclude layer — gates the Phase 1 data model) and <strong>the OQ9 sub-point</strong> (live-preview fidelity). The five marked <em>✓ Defaulted</em> were taken to my stated lean to keep momentum — say the word to revisit any. <strong>Resolve OQ5 before writing Phase 1 code.</strong></p>
+      <p>Nearly everything is now <strong>decided</strong> (this session's design conversation). Only <strong>one remains genuinely open: OQ14</strong> (live page-indicator fidelity — gates the Phase 3 overlay UI, not Phase 1). The five marked <em>✓ Defaulted</em> were taken to my stated lean to keep momentum — say the word to revisit any. <strong>Phase 1 is unblocked.</strong></p>
 
       <div class="callout tip"><strong>OQ1 — What does the AI still do on the manually-picked bullets?</strong><br/>
         <strong>✓ Decided:</strong> manual selection is the core; <strong>rewrite + tagline are opt-in toggles, default off</strong> → deterministic verbatim render. The selection problem is separate from wording, so wording stays optional polish.</div>
@@ -159,8 +159,8 @@ flowchart TB
       <div class="callout tip"><strong>OQ4 — What happens to the existing auto-scoring pipeline?</strong><br/>
         <strong>✓ Decided (revised):</strong> <strong>no &ldquo;Suggest&rdquo; button in v1.</strong> The keyword auto-selector (<code>selectBullets</code>) is <em>retired</em> from the selection path — not demoted to a pre-fill. (Expanding OQ11 showed a keyword-overlap Suggest inherits the exact flaw that motivated this redesign.) If a suggestion affordance returns later it'll be an <strong>LLM relevance pass</strong> (semantic, respects deliberate excludes), scored against canon keywords — explicitly deferred.</div>
 
-      <div class="callout"><strong>OQ5 — Pure binary, or binary + a forward-compat exclude layer?</strong><br/>
-        With Suggest removed (OQ4) the original <code>always</code>/<code>auto</code>/<code>never</code> collapses to a plain included/excluded checkbox per entity and per bullet. Options: <strong>(A)</strong> pure binary — an entity is either in <code>entities</code> (with chosen <code>bulletIds</code>) or absent; <strong>(B)</strong> binary + an explicit <code>excluded</code> id-list recording <em>deliberate</em> excludes, as forward-compat insurance so a future LLM Suggest wouldn't re-propose the guard job. <em>Lean:</em> A (truly minimal); B costs one array now to save a future annoyance. <em>Status:</em> <strong>open — needs final nod; gates Phase 1.</strong></div>
+      <div class="callout tip"><strong>OQ5 — Pure binary, or binary + a forward-compat exclude layer?</strong><br/>
+        <strong>✓ Decided: B</strong> — binary selection <em>plus</em> a persisted <code>excluded</code> id-list (a snapshot of the entities present-but-unchecked at save time). The builder UI stays binary checkboxes; the list is <strong>inert in v1</strong> — its only consumer is a possible future LLM Suggest, which would respect it (only ever proposing entities added to the profile <em>after</em> your last save). The precise untouched-vs-excluded semantics is left to whenever that Suggest is built.</div>
 
       <div class="callout tip"><strong>OQ6 — Where is the selection stored?</strong><br/>
         <strong>✓ Defaulted (to lean):</strong> a single nullable JSON column <code>Canon.selection</code> — matches the house JSON-selection pattern, resolved best-effort against the live profile; no join model. (Alternatives: relational table; reuse the deferred <code>pinnedEntityIds</code>/<code>sectionOrder</code> fields.)</div>
@@ -171,8 +171,8 @@ flowchart TB
       <div class="callout tip"><strong>OQ8 — Ordering control in v1?</strong><br/>
         <strong>✓ Defaulted (to lean):</strong> inherit profile <code>position</code> order + a fixed <code>DEFAULT_SECTION_ORDER</code>; defer drag-reorder of sections/entities/bullets to a later phase.</div>
 
-      <div class="callout"><strong>OQ9 — Length / one-page handling?</strong><br/>
-        <strong>✓ Decided:</strong> the manual path <em>drops</em> the one-page auto-pruner (the user owns length), and the builder shows a <strong>live page indicator</strong> as boxes are toggled. <em>Open sub-point:</em> fidelity — a true PDF render-on-edit (exact, ~seconds each) vs a fast in-browser HTML/height <em>estimate</em> that's confirmed-exact at Generate. <em>Lean:</em> fast estimate live + exact count at Generate. <em>Status:</em> sub-point open.</div>
+      <div class="callout tip"><strong>OQ9 — Length / one-page handling?</strong><br/>
+        <strong>✓ Decided:</strong> the manual path <em>drops</em> the one-page auto-pruner (the user owns length), and the builder shows a <strong>live page indicator</strong> as boxes are toggled. (How that indicator computes the count is a separate fork — see <strong>OQ14</strong>.)</div>
 
       <div class="callout tip"><strong>OQ10 — UI surface for the builder?</strong><br/>
         <strong>✓ Decided:</strong> a full-screen <strong>Window-class overlay</strong> launched from the Canon row — the full profile tree is too big for an in-grid card, and an overlay is the established escape-the-grid pattern (like the AI Companion).</div>
@@ -185,6 +185,9 @@ flowchart TB
 
       <div class="callout tip"><strong>OQ13 — Rewrite scope when the toggle is on?</strong><br/>
         <strong>✓ Defaulted (to lean):</strong> keep today's behavior — rewrite only posting-matching bullets, pass no-match bullets through verbatim (<code>rewrite.ts</code> pre-filter); avoids cross-domain invention and saves tokens. Tagline still needs a posting/keywords.</div>
+
+      <div class="callout"><strong>OQ14 — Live page-indicator fidelity?</strong><br/>
+        How the OQ9 indicator computes the page count. Options: <strong>(A)</strong> a fast in-browser HTML/height <em>estimate</em> — updates instantly as boxes toggle, exact count confirmed at Generate; <strong>(B)</strong> a true PDF render-on-edit — exact live, but ~seconds per change. <em>Lean:</em> A. <em>Status:</em> open (gates the P3.1 overlay UI, not Phase 1).</div>
     </div>
   </details>
 
@@ -192,7 +195,7 @@ flowchart TB
     <summary><h2 id="tasks">Tasks</h2></summary>
     <div class="section-body">
       <h3>Implementation checklist</h3>
-      <p><strong>Resolve OQ5 (and the OQ9 sub-point) before Phase 1.</strong> Everything else is decided.</p>
+      <p><strong>Phase 1 is unblocked; resolve OQ14 (live-indicator fidelity) before the P3.1 overlay.</strong> Everything else is decided.</p>
 
       <details class="task" open>
         <summary>
@@ -228,7 +231,7 @@ flowchart TB
               <p>The API contract + read/write helpers.</p>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title"><code>CanonSelectionSchema</code> in <code>lib/schemas/canons.ts</code></span></summary>
-                <div class="task-body"><p>Binary entity map (<code>kind</code>, <code>bulletIds</code>; entities present ⇒ included), <code>extras</code>, <code>sectionOrder</code>/<code>sectionsOff</code> (+ optional <code>excluded</code> per OQ5); thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
+                <div class="task-body"><p>Binary entity map (<code>kind</code>, <code>bulletIds</code>; entities present ⇒ included), the <code>excluded</code> id-list (OQ5=B), <code>extras</code>, <code>sectionOrder</code>/<code>sectionsOff</code>; thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
               </details>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title"><code>getCanonSelection</code> / <code>saveCanonSelection</code> in <code>lib/repositories/canons.ts</code></span></summary>
@@ -287,7 +290,7 @@ flowchart TB
           <p>The overlay + the Canon entry point.</p>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">NEW <code>components/overlays/ResumeBuilderOverlay.tsx</code></span></summary>
-            <div class="task-body"><p>Profile tree → entity checkboxes → bullet checkboxes → extras pickers → live page indicator (OQ9) → rewrite/tagline toggles → Save / Generate (OQ10).</p></div>
+            <div class="task-body"><p>Profile tree → entity checkboxes → bullet checkboxes → extras pickers → live page indicator (OQ9; fidelity OQ14) → rewrite/tagline toggles → Save / Generate (OQ10).</p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">&ldquo;Edit &amp; generate&rdquo; entry in <code>CanonsCard.tsx</code> + <code>lib/api-client.ts</code></span></summary>
