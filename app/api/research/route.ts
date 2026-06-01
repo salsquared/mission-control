@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { withCache } from '../../../lib/cache';
+import { withSharedCache, researchSharedStore } from '@/lib/research/shared-cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
 import { loggedFetch, logExternalCall } from '@/lib/external-fetch';
@@ -219,7 +219,8 @@ async function getHandler(request: Request) {
 
 // Aggregates HF + arXiv + Semantic Scholar; tag with the primary upstream.
 // Cache 12h — "yesterday"/"week" windows change at most daily (Layer 2 / OQ6).
-const cachedGET = withCache(getHandler, { ttlSeconds: 43200, upstreamHost: 'huggingface.co' });
+// Cross-tier shared cache so dev+prod don't each fetch (Layer 1).
+const cachedGET = withSharedCache(getHandler, { ttlSeconds: 43200, store: researchSharedStore, upstreamHost: 'huggingface.co' });
 export const GET = async (req: Request) => {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;

@@ -24,7 +24,26 @@
  * webhook-delivery-prune.ts. Exercised by scripts/tests/hermetic/llm-cache-smoke.ts.
  */
 import { pruneLlmCache, type LlmCachePruneResult } from "@/lib/ai/llm-cache";
+import { researchSharedStore } from "@/lib/research/shared-cache";
+
+// The research cross-tier cache (data/research-cache.db) is a sibling adapter
+// over the same shared-sqlite base (docs/arxiv-rate-limit-fix.html Layer 1), so
+// it's pruned here too rather than wiring a separate scheduler job. Its entries
+// are short-TTL (12h/24h) and the base sweeps expired `done` rows on read; this
+// just bounds disk + GCs crashed-leader `pending` tombstones. Best-effort.
+const RESEARCH_DONE_RETENTION_DAYS = 7;
+const RESEARCH_PENDING_RETENTION_HOURS = 24;
 
 export async function runLlmCachePrune(): Promise<LlmCachePruneResult> {
+    try {
+        const now = Date.now();
+        const r = await researchSharedStore.prune(
+            now - RESEARCH_DONE_RETENTION_DAYS * 24 * 60 * 60 * 1000,
+            now - RESEARCH_PENDING_RETENTION_HOURS * 60 * 60 * 1000,
+        );
+        if (!r.disabled && r.deleted > 0) console.info(`[research-cache] pruned ${r.deleted} rows`);
+    } catch (e) {
+        console.warn(`[research-cache] prune failed:`, e instanceof Error ? e.message : e);
+    }
     return pruneLlmCache();
 }

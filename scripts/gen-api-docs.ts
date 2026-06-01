@@ -151,11 +151,13 @@ function analyzeFile(file: string): RouteInfo {
       if (ts.isIdentifier(d.name) && d.initializer) topConsts.set(d.name.text, d.initializer);
   });
 
-  // Find a withCache(handler, opts) call anywhere and extract its config.
-  // (Cached routes only ever wrap GET.)
+  // Find a withCache(handler, opts) / withSharedCache(handler, opts) call anywhere
+  // and extract its config. Both take the same { ttlSeconds, upstreamHost } shape;
+  // withSharedCache (lib/research/shared-cache.ts) is the cross-tier variant used
+  // by the research routes. (Cached routes only ever wrap GET.)
   let cache: MethodInfo['cache'] = null;
   const visitForCache = (n: ts.Node) => {
-    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === 'withCache') {
+    if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && (n.expression.text === 'withCache' || n.expression.text === 'withSharedCache')) {
       const arg = n.arguments[1];
       const resolver: Resolver = (name) => topConsts.get(name);
       if (arg && (ts.isNumericLiteral(arg) || ts.isIdentifier(arg))) {

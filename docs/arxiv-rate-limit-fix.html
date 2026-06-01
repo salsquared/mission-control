@@ -316,33 +316,33 @@ export function withSharedCache(
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P2</span>
-          <span class="task-title">Layer 1 — shared cross-tier cache (incl. shared base + single-flight)</span>
+          <span class="task-title">Layer 1 — shared cross-tier cache (incl. shared base + single-flight) ✓ DONE 2026-05-31 (dev-verified; not yet prod-rebuilt)</span>
         </summary>
         <div class="task-body">
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">NEW lib/shared-sqlite-cache.ts — fat base (OQ5/OQ7)</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title">openDb() seam — guarded better-sqlite3 import, WAL, busy_timeout, best-effort degrade</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.2</span><span class="task-title">Generic keyed store: get / reserve (INSERT OR IGNORE) / steal / finish / release — row-codec param</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.3</span><span class="task-title">getOrCompute() reserve→lead/compute→finish; follower poll/steal; lease 30s / maxWait 8s / poll 150ms</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.4</span><span class="task-title">prune(doneCutoff, pendingCutoff)</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.1</span><span class="task-title">NEW lib/shared-sqlite-cache.ts — fat base (OQ5/OQ7)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.1.1</span><span class="task-title">openDb() seam — guarded better-sqlite3 import, WAL, busy_timeout, best-effort degrade</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.1.2</span><span class="task-title">Generic keyed store: get / reserve / reclaim-expired / steal / finish / release</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.1.3</span><span class="task-title">getOrCompute() reserve→lead/compute→finish; follower poll/steal; lease 30s / maxWait 8s / poll 150ms; ttlSeconds→expiry (null=llm)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.1.4</span><span class="task-title">prune(doneCutoff, pendingCutoff) + expired-done sweep</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">NEW lib/research/shared-cache.ts adapter + wrapper</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.2.1</span><span class="task-title">researchSharedStore = base store @ data/research-cache.db + JSON codec</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.2.2</span><span class="task-title">withSharedCache() — own L1 + stale-fallback, drives store.getOrCompute (OQ10); lib/cache.ts NOT edited</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.2</span><span class="task-title">NEW lib/research/shared-cache.ts adapter + wrapper</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.2.1</span><span class="task-title">researchSharedStore = base store @ data/research-cache.db + JSON codec</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.2.2</span><span class="task-title">withSharedCache() — own L1 + in-process dedup + stale-fallback + force-on-refresh, drives store.getOrCompute (OQ10); lib/cache.ts NOT edited</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Refactor lib/ai/llm-cache.ts onto the base (OQ8)</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3.1</span><span class="task-title">Re-express llmCached() over base getOrCompute; keep content-hash key</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3.2</span><span class="task-title">Preserve 30s/8s/150ms knobs + errors-never-cached + best-effort degrade</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3.3</span><span class="task-title">Run llm-cache-smoke.ts → green (billing-critical regression net)</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.3</span><span class="task-title">Refactor lib/ai/llm-cache.ts onto the base (OQ8)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.3.1</span><span class="task-title">Re-express llmCached() over base getOrCompute; content-hash key kept verbatim (NUL sep)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.3.2</span><span class="task-title">Preserve 30s/8s/150ms knobs + errors-never-cached + best-effort degrade + public API (cacheKey/llmCached/pruneLlmCache/seams)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.3.3</span><span class="task-title">llm-cache-smoke.ts → 18/18 green (billing-critical regression net)</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">Wire routes + gitignore</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.4.1</span><span class="task-title">Wrap all 4 research routes with withSharedCache(..., { store: researchSharedStore }) — incl. hf (OQ2)</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.4.2</span><span class="task-title">.gitignore: 6 lines — research-cache.db + arxiv-bucket.db (+ -wal/-shm each)</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.4</span><span class="task-title">Wire routes + gitignore</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.4.1</span><span class="task-title">Wrap all 4 research routes with withSharedCache(..., { store: researchSharedStore }) — incl. hf (OQ2); + taught gen-api-docs the withSharedCache name so chips persist</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.4.2</span><span class="task-title">.db files covered by existing *.db gitignore glob (lines 71-74) — no explicit edit needed (avoids concurrent .gitignore conflict)</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.5</span><span class="task-title">Tests + prune</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.5.1</span><span class="task-title">NEW research-shared-cache-smoke.ts (read-across + single-flight + degrade); append to pre-push SUITES</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.5.2</span><span class="task-title">Fold research-cache prune into scheduler/jobs/llm-cache-prune.ts</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.5</span><span class="task-title">Tests + prune</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.5.1</span><span class="task-title">NEW research-shared-cache-smoke.ts → 14/14 (cross-tier read-across + single-flight + expiry + force + degrade); in pre-push SUITES</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P2.5.2</span><span class="task-title">Folded research-cache prune into scheduler/jobs/llm-cache-prune.ts (no scheduler/index.ts change)</span></summary><div class="task-body"></div></details>
           </div></details>
         </div>
       </details>

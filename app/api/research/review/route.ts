@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { withCache } from '../../../../lib/cache';
+import { withSharedCache, researchSharedStore } from '@/lib/research/shared-cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
 import { loggedFetch } from '@/lib/external-fetch';
@@ -243,7 +243,8 @@ async function getHandler(request: Request) {
 
 // Cache responses for 24h (weekly pick; metadata served from DB anyway — Layer 2 / OQ6).
 // Primary upstream is arXiv (Semantic Scholar is secondary enrichment).
-const cachedGET = withCache(getHandler, { ttlSeconds: 86400, upstreamHost: 'export.arxiv.org' });
+// Cross-tier shared cache so dev+prod don't each fetch (Layer 1).
+const cachedGET = withSharedCache(getHandler, { ttlSeconds: 86400, store: researchSharedStore, upstreamHost: 'export.arxiv.org' });
 export const GET = async (req: Request) => {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;

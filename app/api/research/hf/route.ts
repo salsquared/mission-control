@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { withCache } from '../../../../lib/cache';
+import { withSharedCache, researchSharedStore } from '@/lib/research/shared-cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { loggedFetch } from '@/lib/external-fetch';
 
@@ -42,8 +42,8 @@ async function getHandler(request: Request) {
     }
 }
 
-// Cache HF responses for an hour
-const cachedGET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'huggingface.co' });
+// Cache HF responses for an hour; cross-tier shared so dev+prod don't each fetch (Layer 1, OQ2).
+const cachedGET = withSharedCache(getHandler, { ttlSeconds: 3600, store: researchSharedStore, upstreamHost: 'huggingface.co' });
 export const GET = async (req: Request) => {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;
