@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
         //    snapshot, refreshing per-bullet matches against THIS posting so the
         //    rewrite emphasizes the right terms. Selection set/order unchanged.
         const profile = JSON.parse(canonResume.profileSnapshot) as ProfileWire;
-        // P2.3 (docs/resume-manual-builder.html) — prefer the canon's AUTHORITATIVE
+        // P2.3 (docs/archive/resume-manual-builder.html) — prefer the canon's AUTHORITATIVE
         // manual selection so a per-job specialization can't drift from a curated
         // set edited since the last canon generate. Fall back to reconstructing
         // from the last rendered resume for canons predating the manual builder.

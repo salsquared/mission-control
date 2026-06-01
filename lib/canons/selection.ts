@@ -4,7 +4,7 @@ import type { ResumeSelection, BulletSelection, EntitySelection, SelectionKind, 
 import { scoreBullet } from "@/lib/resumes/select";
 
 // Manual builder selection → renderable ResumeSelection
-// (docs/resume-manual-builder.html, P1.3.1).
+// (docs/archive/resume-manual-builder.html, P1.3.1).
 //
 // Turns a saved CanonSelection (binary: entity present in `selection.entities`
 // ⇒ included) plus the live profile into the nested ResumeSelection that the

@@ -7,13 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./assets/style.css">
+<link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
 
   <h4 class="kicker">mission-control</h4>
   <h1>Manual Resume Builder</h1>
   <p class="subtitle">Retire the keyword-scoring auto-selector and replace it with a hand-curated, per-Canon bullet selection — so a Security-Officer job never leaks onto an ML/AI resume, because it's structurally absent from that Canon, not just unlucky in a score.</p>
+
+  <div class="callout tip"><strong>✅ SHIPPED 2026-05-31 — archived.</strong> Built P1&ndash;P4 as specified; live on dev + prod. <strong>Data + API:</strong> nullable <code>Canon.selection</code> JSON column (migration <code>20260601034410_add_canon_selection</code>, applied to dev.db + prod.db); <code>lib/canons/selection.ts</code> (<code>resolveSelection</code> / <code>resolveExtras</code>); <code>getCanonSelection</code> / <code>saveCanonSelection</code> + a <code>hasSelection</code> flag on <code>CanonSchema</code>; <code>GET</code> / <code>PUT /api/canons/[id]/selection</code>. Canon generation is manual-only (OQ15) via a self-contained <code>generateCanonManualResume</code> handler in <code>app/api/resumes/route.ts</code> behind an early return &mdash; the url/text/application auto-pipeline is untouched; <code>specialize</code> reads the authoritative selection. <strong>UI:</strong> <code>components/overlays/ResumeBuilderOverlay.tsx</code> (checkbox tree + section toggles + live page estimate + opt-in rewrite/tagline), opened by an &ldquo;Edit &amp; generate&rdquo; button on each canon row. <strong>Divergences from this spec:</strong> (1) the canon list carries a lightweight <code>hasSelection</code> boolean rather than the full selection (the full selection loads via the dedicated route); (2) P2.2 was built as a separate handler + early return rather than an in-route branch (lower regression risk to the working auto path); (3) one spec-gap caught during build &mdash; <code>rewriteBullets</code>' no-match prefilter would have no-op'd the opt-in rewrite on unscored manual bullets, fixed by threading optional <code>keywords</code> through <code>resolveSelection</code> to populate matches when rewrite is on. <strong>Verified:</strong> <code>tsc</code> clean; hermetic <code>canon-manual-selection-smoke</code> 34/34 (in <code>pre-push.sh</code>, full gate 96 suites green); prod build <code>iZ9Sz83W7Vj1AOXkXS4rM</code> deployed. The task checklist below is fully checked off &mdash; kept as the implementation record.</div>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>

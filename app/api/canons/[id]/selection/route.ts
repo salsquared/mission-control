@@ -6,7 +6,7 @@ import { getCanon, getCanonSelection, saveCanonSelection } from "@/lib/repositor
 
 export const runtime = "nodejs";
 
-// The manual builder's per-Canon selection (docs/resume-manual-builder.html, P2.1).
+// The manual builder's per-Canon selection (docs/archive/resume-manual-builder.html, P2.1).
 // GET loads the saved selection (null when not yet curated — the builder then
 // pre-fills from the last resume / opens empty). PUT replaces it wholesale.
 

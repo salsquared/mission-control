@@ -58,7 +58,7 @@ const ResumePostBodySchema = z.object({
         // removable entities (and then bullets) until the resume fits on one
         // Letter page. See lib/resumes/one-page.ts.
         onePage: z.boolean().optional(),
-        // Manual builder (docs/resume-manual-builder.html, OQ1): opt-in AI polish
+        // Manual builder (docs/archive/resume-manual-builder.html, OQ1): opt-in AI polish
         // on a hand-curated canon selection — default off (verbatim render).
         rewrite: z.boolean().optional(),
         tagline: z.boolean().optional(),
@@ -409,7 +409,7 @@ export async function GET(req: NextRequest) {
     }
 }
 
-// Manual builder canon generation (docs/resume-manual-builder.html, P2.2).
+// Manual builder canon generation (docs/archive/resume-manual-builder.html, P2.2).
 // Canon generation is MANUAL-ONLY (OQ15): resolve the canon's saved selection
 // instead of the retired keyword auto-pipeline, then render it verbatim (AI
 // rewrite/tagline are opt-in — OQ1; the user owns length, no one-page prune —
@@ -674,7 +674,7 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // Canon generation is manual-only (docs/resume-manual-builder.html, OQ15):
+        // Canon generation is manual-only (docs/archive/resume-manual-builder.html, OQ15):
         // resolve the saved selection in a self-contained handler and return.
         // A canon with no selection errors rather than falling back to the
         // retired keyword auto-pipeline; the auto-pipeline below is untouched and
@@ -698,7 +698,7 @@ export async function POST(req: NextRequest) {
         }
 
         // 2. Parse posting. (Canon generation returned above via the manual-only
-        //    handler — docs/resume-manual-builder.html OQ15 — so this path is the
+        //    handler — docs/archive/resume-manual-builder.html OQ15 — so this path is the
         //    url / text / application auto-pipeline only.)
         stage = "parse";
         const posting: ParsedPosting = await parsePosting(parsed.data.posting);

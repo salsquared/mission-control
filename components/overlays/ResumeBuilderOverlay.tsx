@@ -19,7 +19,7 @@ import type { ProfileWire } from "@/lib/schemas/profile";
 import type { CanonSelection } from "@/lib/schemas/canons";
 import { SELECTION_SECTION_KEYS, type SelectionSectionKey } from "@/lib/schemas/canons";
 
-// ─── Manual Resume Builder overlay (docs/resume-manual-builder.html, P3.1) ──
+// ─── Manual Resume Builder overlay (docs/archive/resume-manual-builder.html, P3.1) ──
 // A Window-class floating overlay (portal to <body>) that lets the user
 // hand-pick which profile entities + bullets + extras land on a single Canon's
 // reusable resume, then Save the selection and/or Generate a PDF/DOCX. Binary

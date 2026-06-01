@@ -1,6 +1,6 @@
 /**
  * Hermetic smoke for the manual resume-builder's data layer
- * (docs/resume-manual-builder.html, task P4.1):
+ * (docs/archive/resume-manual-builder.html, task P4.1):
  *
  *   - lib/canons/selection.ts:resolveSelection / resolveExtras (pure functions)
  *   - lib/repositories/canons.ts:getCanonSelection / saveCanonSelection +

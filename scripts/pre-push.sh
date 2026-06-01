@@ -158,7 +158,7 @@ SUITES=(
     "scripts/tests/hermetic/canon-staleness-smoke.ts"
     "scripts/tests/hermetic/canon-specialize-smoke.ts"
     # Manual resume-builder data layer — resolveSelection/resolveExtras +
-    # getCanonSelection/saveCanonSelection round-trip (docs/resume-manual-builder.html P4.1)
+    # getCanonSelection/saveCanonSelection round-trip (docs/archive/resume-manual-builder.html P4.1)
     "scripts/tests/hermetic/canon-manual-selection-smoke.ts"
 )
 

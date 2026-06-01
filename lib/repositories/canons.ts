@@ -128,7 +128,7 @@ export async function deleteCanon(userId: string, id: string): Promise<boolean> 
     return true;
 }
 
-// ─── Manual builder selection (docs/resume-manual-builder.html) ──────────────
+// ─── Manual builder selection (docs/archive/resume-manual-builder.html) ──────────────
 // The per-Canon hand-curated selection lives in Canon.selection (JSON). Parsed
 // leniently — corrupt/legacy JSON degrades to null (treated as "not curated").
 

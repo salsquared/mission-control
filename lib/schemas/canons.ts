@@ -35,7 +35,7 @@ export const CanonSchema = z.object({
     // The staleness dependency set — profile entity ids in the current resume's
     // selection. Parsed from the stored JSON by the repository.
     resumeEntityIds: z.array(z.string()),
-    // Whether a manual builder selection exists (docs/resume-manual-builder.html);
+    // Whether a manual builder selection exists (docs/archive/resume-manual-builder.html);
     // derived from Canon.selection != null. The full selection loads via
     // GET /api/canons/[id]/selection — kept off the list payload to stay light.
     hasSelection: z.boolean(),
@@ -48,7 +48,7 @@ export const CanonSchema = z.object({
 
 export type CanonWire = z.infer<typeof CanonSchema>;
 
-// ─── Manual builder selection (docs/resume-manual-builder.html) ──────────────
+// ─── Manual builder selection (docs/archive/resume-manual-builder.html) ──────────────
 // The hand-curated, per-Canon resume selection persisted on Canon.selection
 // (JSON). Replaces the keyword auto-selector for canon generation (OQ4/OQ15).
 
