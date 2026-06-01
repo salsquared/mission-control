@@ -6,7 +6,7 @@
 //   - cross-user ids in the input list silently drop (ownership scope)
 //   - rows already on the target track are no-ops (don't count toward `updated`)
 //   - same-employer-both-tracks conflict surfaces in `conflicts` (no partial move)
-//   - rows with null normalizedCompany don't conflict against each other
+//   - rows with an incomplete dedup key (null normalizedRole) don't conflict
 //
 // The repository helper runs inside a Prisma $transaction; this smoke exercises
 // the public surface that POST /api/applications/bulk-track wraps.
@@ -101,22 +101,24 @@ async function main() {
         const careerAfter = await prisma.application.findUnique({ where: { id: career.id }, select: { track: true } });
         record('conflict: original row untouched', careerAfter?.track === 'career');
 
-        // ─── 5. Null normalizedCompany rows don't false-conflict ──────────
-        // Two rows in different tracks both with null normalizedCompany.
-        // SQLite allows multiple NULLs in the compound unique, so this should
-        // pass without conflict.
+        // ─── 5. Incomplete-key rows (null normalizedRole) don't false-conflict ─
+        // normalizedCompany is NOT NULL since 2026-06-01, but normalizedRole is
+        // still nullable (roleless ingest rows). bulkMoveApplicationsTrack skips
+        // any row missing EITHER key component from its conflict check, so two
+        // same-company rows in different tracks that both lack a role key must
+        // move without a false conflict (NULL is distinct in the compound unique).
         const nullA = await prisma.application.create({
-            data: { userId, company: `${tag}-NullA`, normalizedCompany: null, role: 'r', status: 'APPLIED', lastUpdateAt: new Date(), track: 'career' },
+            data: { userId, company: `${tag}-NullKey`, normalizedCompany: `${tag}-NullKey`, normalizedRole: null, role: 'r', status: 'APPLIED', lastUpdateAt: new Date(), track: 'career' },
             select: { id: true },
         });
         const nullB = await prisma.application.create({
-            data: { userId, company: `${tag}-NullB`, normalizedCompany: null, role: 'r', status: 'APPLIED', lastUpdateAt: new Date(), track: 'side' },
+            data: { userId, company: `${tag}-NullKey`, normalizedCompany: `${tag}-NullKey`, normalizedRole: null, role: 'r', status: 'APPLIED', lastUpdateAt: new Date(), track: 'side' },
             select: { id: true },
         });
         createdIds.push(nullA.id, nullB.id);
         const result5 = await bulkMoveApplicationsTrack(userId, [nullA.id], 'side');
-        record('null normalizedCompany: no false conflict', result5.conflicts.length === 0);
-        record('null normalizedCompany: row moved', result5.updated === 1);
+        record('null normalizedRole: no false conflict', result5.conflicts.length === 0);
+        record('null normalizedRole: row moved', result5.updated === 1);
 
         // ─── 6. Mixed batch (some moveable, some already-target) ──────────
         // After moving everything to side above, a-b-c are on side. Mix one

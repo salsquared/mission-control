@@ -156,9 +156,19 @@ model Application {
   // ingest.ts via normalizeCompanyName(company) — same function used to look
   // up existing rows. Unique per-user via @@unique below so concurrent
   // webhook + manual "Scan inbox" can't both create duplicate rows for the
-  // same employer (P2002 → caller falls through to update). Nullable for
-  // legacy rows; backfilled by scripts/tests/backfill-app-normalized-company.ts.
-  normalizedCompany String?
+  // same employer (P2002 → caller falls through to update).
+  //
+  // NOT NULL since 2026-06-01 (migration require_application_normalized_company).
+  // company is itself NOT NULL and normalizeCompanyName only returns "" for
+  // empty input (which can't happen — every write path guards a non-empty
+  // company), so a NULL here only ever meant "a create path bypassed the
+  // normalize step" — exactly the track-as-application leak that silently
+  // spawned duplicate Rocket Lab cards (the LOWER(company) key never matched
+  // the indexed lookup). Making it NOT NULL turns that silent dedup-defeating
+  // state into a loud insert failure at the offending call site instead of a
+  // duplicate discovered weeks later. Every create goes through
+  // createApplication (auto-derives) or sets it inline (track-as-application).
+  normalizedCompany String
   // 2026-05-27 multi-role-per-company: distinguishes two applications at the
   // same company by role. Written via normalizeRoleName(role) at every create
   // call site. Folded into the unique key (see @@unique below) so two roles

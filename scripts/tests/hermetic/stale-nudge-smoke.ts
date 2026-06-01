@@ -33,7 +33,7 @@ async function main() {
         // 1. Stale + non-terminal → SHOULD nudge
         const stale = await prisma.application.create({
             data: {
-                userId: user.id, company: "Stale Co", role: "Engineer",
+                userId: user.id, company: "Stale Co", normalizedCompany: "Stale Co", role: "Engineer",
                 status: "APPLIED", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(20), // > 14 day threshold
             },
@@ -43,7 +43,7 @@ async function main() {
         // 2. Stale + REJECTED → should NOT nudge (terminal)
         const rejected = await prisma.application.create({
             data: {
-                userId: user.id, company: "Rejected Co", role: "Engineer",
+                userId: user.id, company: "Rejected Co", normalizedCompany: "Rejected Co", role: "Engineer",
                 status: "REJECTED", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(30),
             },
@@ -53,7 +53,7 @@ async function main() {
         // 3. Stale + OFFER → should NOT nudge (terminal)
         const offered = await prisma.application.create({
             data: {
-                userId: user.id, company: "Offer Co", role: "Engineer",
+                userId: user.id, company: "Offer Co", normalizedCompany: "Offer Co", role: "Engineer",
                 status: "OFFER", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(30),
             },
@@ -63,7 +63,7 @@ async function main() {
         // 4. Recent + non-terminal → should NOT nudge (not stale)
         const recent = await prisma.application.create({
             data: {
-                userId: user.id, company: "Recent Co", role: "Engineer",
+                userId: user.id, company: "Recent Co", normalizedCompany: "Recent Co", role: "Engineer",
                 status: "INTERVIEW", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(3),
             },
@@ -73,7 +73,7 @@ async function main() {
         // 5. Stale + already-nudged-recently → should NOT nudge (cooldown)
         const cooledDown = await prisma.application.create({
             data: {
-                userId: user.id, company: "Cooled Co", role: "Engineer",
+                userId: user.id, company: "Cooled Co", normalizedCompany: "Cooled Co", role: "Engineer",
                 status: "APPLIED", kind: "job", track: "career",
                 lastUpdateAt: daysAgo(20),
             },

@@ -54,7 +54,7 @@ async function main() {
         const mk = async (label: string, deadline: Date | null, status: string) => {
             const a = await prisma.application.create({
                 data: {
-                    userId, company: `Co-${label}`, role: "Engineer",
+                    userId, company: `Co-${label}`, normalizedCompany: `Co-${label}`, role: "Engineer",
                     status, kind: "job", track: "career",
                     decisionDeadline: deadline,
                 },

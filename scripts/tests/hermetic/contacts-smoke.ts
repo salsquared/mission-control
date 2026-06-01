@@ -36,6 +36,7 @@ async function main() {
             data: {
                 userId: user.id,
                 company: `Contacts Smoke Co ${Date.now()}`,
+                normalizedCompany: `contacts-smoke-${Date.now()}`,
                 role: 'Smoke Engineer',
                 status: 'APPLIED',
                 lastUpdateAt: new Date(),
@@ -128,6 +129,7 @@ async function main() {
             data: {
                 userId: user.id,
                 company: `Empty Smoke Co ${Date.now()}`,
+                normalizedCompany: `empty-smoke-${Date.now()}`,
                 role: 'Smoke',
                 status: 'APPLIED',
                 lastUpdateAt: new Date(),

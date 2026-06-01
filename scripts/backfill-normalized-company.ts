@@ -25,15 +25,17 @@ import { prisma } from "@/lib/prisma";
 import { normalizeCompanyName } from "@/lib/applications/normalize-company";
 
 async function main() {
-    const candidates = await prisma.application.findMany({
-        where: {
-            OR: [
-                { normalizedCompany: null },
-                { normalizedCompany: "" },
-            ],
-        },
-        select: { id: true, userId: true, company: true, track: true },
-    });
+    // normalizedCompany is NOT NULL as of 2026-06-01, but this backfill is the
+    // PRE-migration prereq: it may run against a DB whose column is still
+    // nullable while the generated client (this checkout's schema) types the
+    // field as required. A typed findMany can no longer express
+    // `normalizedCompany: null`, so select candidates with raw SQL — it works
+    // on both the legacy nullable shape and the migrated one (returning nothing
+    // once the column is NOT NULL and fully populated).
+    const candidates = await prisma.$queryRaw<
+        { id: string; userId: string; company: string; track: string }[]
+    >`SELECT "id", "userId", "company", "track" FROM "Application"
+      WHERE "normalizedCompany" IS NULL OR "normalizedCompany" = ''`;
 
     console.log(`Found ${candidates.length} rows with null/empty normalizedCompany.`);
 

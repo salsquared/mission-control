@@ -80,6 +80,8 @@ SUITES=(
     "scripts/tests/hermetic/notification-negative-filter-smoke.ts"
     "scripts/tests/hermetic/deadline-nudge-smoke.ts"
     "scripts/tests/hermetic/find-app-by-company-smoke.ts"
+    "scripts/tests/hermetic/find-app-by-company-role-stale-key-smoke.ts"
+    "scripts/tests/hermetic/normalized-company-not-null-smoke.ts"
     "scripts/tests/hermetic/company-directory-smoke.ts"
     "scripts/tests/hermetic/watchlist-hydrate-smoke.ts"
     "scripts/tests/hermetic/employment-type-smoke.ts"

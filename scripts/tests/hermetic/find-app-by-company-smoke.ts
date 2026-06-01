@@ -11,6 +11,13 @@
  *   - "AI" does NOT match "Sail-AI" (the exact bug the patch closes)
  *   - cross-user isolation preserved
  *
+ * Each fixture row carries an unmatchable sentinel normalizedCompany. The
+ * indexed lookup in findApplicationByCompany keys on normalizeCompanyName(),
+ * which never produces this sentinel, so every assertion below is forced
+ * through the LOWER(company) raw fallback — which is exactly the code path
+ * this smoke exists to cover. (Before Fix B's NOT NULL these rows used a NULL
+ * normalizedCompany; the sentinel is the post-NOT-NULL equivalent.)
+ *
  * No HTTP / no session.
  */
 import { PrismaClient } from "@prisma/client";
@@ -35,16 +42,16 @@ async function main() {
         await prisma.user.create({ data: { id: otherUserId, email: `find-app-smoke-other-${tag}@example.invalid` } });
 
         const acme = await prisma.application.create({
-            data: { userId, company: "Acme", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
+            data: { userId, company: "Acme", normalizedCompany: "zzz-stale-unmatched-key", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         const acmeCorp = await prisma.application.create({
-            data: { userId, company: "Acme Corp", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
+            data: { userId, company: "Acme Corp", normalizedCompany: "zzz-stale-unmatched-key", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         const sailAI = await prisma.application.create({
-            data: { userId, company: "Sail-AI", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
+            data: { userId, company: "Sail-AI", normalizedCompany: "zzz-stale-unmatched-key", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         const otherUserAcme = await prisma.application.create({
-            data: { userId: otherUserId, company: "Acme", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
+            data: { userId: otherUserId, company: "Acme", normalizedCompany: "zzz-stale-unmatched-key", role: "Engineer", status: "APPLIED", kind: "job", track: "career" },
         });
         appIds.push(acme.id, acmeCorp.id, sailAI.id, otherUserAcme.id);
 

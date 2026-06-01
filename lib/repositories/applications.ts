@@ -209,12 +209,17 @@ export function updateApplication(id: string, data: ApplicationUpdate): Promise<
  * cross-track dedup so a manually-created side-track row gets found and
  * updated instead of duplicated on career).
  *
- * Falls back to LOWER(company) LIKE-style match only when normalizedRole
- * yields no result — that path is intentionally not present here because
- * the previous PB-7 legacy LOWER() fallback covered NULL-normalizedCompany
- * rows and we want the new role key to be strict: a NULL normalizedRole
- * means "this row hasn't been backfilled yet" — let it fall through to
- * the senderDomain fallback rather than guess.
+ * Two-stage (2026-06-01): the indexed normalized-key match first, then a
+ * LOWER(company) + strict-normalizedRole fallback. The fallback exists
+ * because the COMPANY half of the indexed key can go stale (legacy rows with
+ * NULL/empty normalizedCompany; a future normalizeCompanyName rule change)
+ * while the row is still the same employer + same role — without it, ingest
+ * spawns a duplicate kanban card (the Rocket Lab "Software Intern" repro,
+ * 2026-06-01). The ROLE half stays strict on the normalized key so two
+ * genuinely-different roles at one employer remain distinct rows, and a
+ * NULL normalizedRole ("not backfilled" / roleless email) deliberately does
+ * NOT match here — it falls through to the company-only + senderDomain
+ * fallbacks in ingest.ts rather than guess.
  */
 export async function findApplicationByCompanyAndRole(
     userId: string,
@@ -225,12 +230,49 @@ export async function findApplicationByCompanyAndRole(
     const companyKey = normalizeCompanyName(company);
     const roleKey = normalizeRoleName(role);
     if (!companyKey || !roleKey) return null;
-    return prisma.application.findFirst({
+    // Primary: indexed exact match on the normalized keys.
+    const indexed = await prisma.application.findFirst({
         where: track
             ? { userId, normalizedCompany: companyKey, normalizedRole: roleKey, track }
             : { userId, normalizedCompany: companyKey, normalizedRole: roleKey },
         orderBy: { lastUpdateAt: "desc" },
     });
+    if (indexed) return indexed;
+
+    // Fallback (2026-06-01): match the COMPANY on LOWER(company) instead of the
+    // stored normalizedCompany key, while keeping the ROLE strict on the
+    // normalized key. This closes a silent-duplicate hole: a row whose
+    // normalizedCompany is stale, empty, or NULL (e.g. a legacy track-as-
+    // application row created before the inline-normalize fix, or any future
+    // normalizeCompanyName rule change) is invisible to the indexed lookup
+    // above even though it's the SAME employer + SAME role. Without this,
+    // Gmail ingest spawns a second kanban card for an application the user
+    // already has. The role key stays strict so two genuinely-different roles
+    // at one employer remain distinct rows (multi-role-per-company), and a
+    // roleless row (normalizedRole NULL) won't match here — it's handled by
+    // the company-only roleless branch in ingest.ts. Mirrors the LOWER(company)
+    // safety net findApplicationByCompany already carries. Prisma's
+    // mode:"insensitive" is Postgres/Mongo-only, so use $queryRaw with LOWER()
+    // for SQLite.
+    const rows = track
+        ? await prisma.$queryRaw<Application[]>`
+            SELECT * FROM "Application"
+            WHERE "userId" = ${userId}
+              AND LOWER("company") = LOWER(${company})
+              AND "normalizedRole" = ${roleKey}
+              AND "track" = ${track}
+            ORDER BY "lastUpdateAt" DESC
+            LIMIT 1
+        `
+        : await prisma.$queryRaw<Application[]>`
+            SELECT * FROM "Application"
+            WHERE "userId" = ${userId}
+              AND LOWER("company") = LOWER(${company})
+              AND "normalizedRole" = ${roleKey}
+            ORDER BY "lastUpdateAt" DESC
+            LIMIT 1
+        `;
+    return rows[0] ?? null;
 }
 
 /**
