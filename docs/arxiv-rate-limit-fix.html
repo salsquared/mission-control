@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>arXiv Rate-Limit — Permanent Fix</h1>
-  <p class="subtitle">Design + implementation plan. arXiv 429s recur because dev and prod run on one box, share one IP, and <strong>never share research-fetch state</strong> — so every paper is fetched twice and the two token buckets burst-collide. This plan removes all three load multipliers. Status: <strong>PLAN ONLY — not yet built</strong> (2026-05-31). <strong>All OQ1–OQ10 resolved 2026-05-31</strong> — design fully pinned; cleared to build. (OQ10: a dedicated <code>withSharedCache()</code> wrapper; the generic <code>withCache</code> is left untouched.)</p>
+  <p class="subtitle">Design + implementation plan. arXiv 429s recur because dev and prod run on one box, share one IP, and <strong>never share research-fetch state</strong> — so every paper is fetched twice and the two token buckets burst-collide. This plan removes all three load multipliers. Status: <strong>✅ SHIPPED 2026-05-31 — all 3 layers live on dev + prod (P1–P4 done; cross-tier dedup verified in prod); not pushed to origin</strong>. <strong>All OQ1–OQ10 resolved 2026-05-31</strong> — design fully pinned; cleared to build. (OQ10: a dedicated <code>withSharedCache()</code> wrapper; the generic <code>withCache</code> is left untouched.)</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -380,9 +380,9 @@ export function withSharedCache(
             <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.1.1</span><span class="task-title">CLAUDE.md: new "Shared cross-tier SQLite cache base + arXiv rate bucket" subsection + updated the existing "Cross-tier call dedup" para (llm-cache on the base, OQ8)</span></summary><div class="task-body"></div></details>
             <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.1.2</span><span class="task-title">Forward note in docs/archive/cross-tier-llm-dedup.html SHIPPED banner</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Ops — prod ship HELD pending user OK</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.2.1</span><span class="task-title">prod.db already migrated (P1). Remaining: pm2 restart … --update-env (picks up ARXIV_RATE_PER_MIN=14)</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2.2</span><span class="task-title">PROD SHIP: npm run build + pm2 restart mission-control mission-control-scheduler-prod — HELD: a rebuild ships ALL committed main work incl. other jobs' "PROD DEPLOY HELD" UI changes. Needs a coordinated-deploy decision. (Build NOT run yet — building alone overwrites .next under the running prod server; build+restart must be atomic. tsc clean is the pre-flight.) Then verify cross-tier dedup live.</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.2</span><span class="task-title">Ops — PROD SHIPPED + VERIFIED 2026-05-31 (user OK'd the coordinated deploy)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.2.1</span><span class="task-title">prod.db migrated (P1); prod restarted --update-env picks up ARXIV_RATE_PER_MIN=14</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.2.2</span><span class="task-title">npm run build (BUILD_ID heSdS3U_fSGfMHs28HDQG) + pm2 restart mission-control + both schedulers --update-env. Coordinated deploy (also shipped concurrent jobs' held UI work). VERIFIED: prod read dev's shared research-cache row (same physics pick, 0 arXiv call) — cross-tier dedup live in prod. All 4 procs online, prod 200.</span></summary><div class="task-body"></div></details>
           </div></details>
         </div>
       </details>
