@@ -22,6 +22,24 @@ import { runClassifyPendingEmploymentTypes } from './jobs/classify-pending-emplo
 import { runGmailWatchRenew } from './jobs/gmail-watch-renew';
 import { runLlmCachePrune } from './jobs/llm-cache-prune';
 import { runFetcherHealthPrune } from './jobs/fetcher-health-prune';
+import { runLogsPrune } from './jobs/logs-prune';
+import { initLogger, subscribeToLogs } from '@/lib/logger';
+import { recordLogLine } from '@/lib/logs-store';
+
+// Give the scheduler the same structured logger the web runtime gets from
+// instrumentation.ts: JSON {ts,level,msg,source,tier} stdout lines + the ring
+// buffer / listener fan-out that lib/logs-store.ts drains into data/logs.db for
+// the in-app viewer. ONLY the logger patch — NOT the rest of register(), which
+// is web-only (Lunary, the Pulsar WS relay, shutdown drains). Called before any
+// console.* below so every scheduler line is structured + source-tagged.
+// See docs/scheduler-structured-logs.html.
+initLogger();
+
+// Scheduler-only sink (OQ8): drain every structured log line into the shared
+// per-tier data/logs.db so the web tier's in-app viewer can tail + show them.
+// The web process never writes here — it only reads. Best-effort: a store-init
+// failure degrades to a silent no-op. See lib/logs-store.ts.
+subscribeToLogs(recordLogLine);
 
 interface IntervalJob {
     name: string;
@@ -148,6 +166,20 @@ const JOBS: IntervalJob[] = [
             const r = await runFetcherHealthPrune();
             if (r.deleted > 0) {
                 console.info(`[fetcher-health-prune] deleted ${r.deleted} rows (older than ${r.cutoff.toISOString()})`);
+            }
+        },
+    },
+    {
+        name: 'logs-prune',
+        // Daily — bound the scheduler-log bridge store (data/logs.db) to 48h.
+        // The in-app viewer only queries ~24h, so this is pure housekeeping; no
+        // roll-up needed (the routes read raw rows). No-op when the store failed
+        // to init on this tier (best-effort). See docs/scheduler-structured-logs.html.
+        intervalMs: 24 * 60 * 60 * 1000,
+        run: async () => {
+            const r = await runLogsPrune();
+            if (r.deleted > 0) {
+                console.info(`[logs-prune] deleted ${r.deleted} rows (older than ${r.cutoff.toISOString()})`);
             }
         },
     },

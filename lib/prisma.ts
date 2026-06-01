@@ -22,8 +22,16 @@ basePrisma.$executeRawUnsafe('PRAGMA synchronous = NORMAL').catch(() => {});
 // dozens of queries per page load that pegs the dev process. Production
 // keeps logging on (the in-app log viewer is the canonical observability
 // surface per CLAUDE.md); set DEBUG_PRISMA=1 in dev when you need it back.
+//
+// Also muted in BOTH scheduler tiers (MC_SCHEDULER_TIER set) regardless of
+// NODE_ENV: the prod scheduler runs NODE_ENV=production, so without this it
+// would JSON-emit a [DATABASE] line per query into data/logs.db + the in-app
+// viewer — thousands per sweep, drowning the scheduler's job summaries. The
+// crawl signal lives in [EXTERNAL API] lines + the FetcherHealthCard instead.
+// See docs/scheduler-structured-logs.html (OQ7).
 const LOG_PRISMA_QUERIES =
-    process.env.NODE_ENV === 'production' || process.env.DEBUG_PRISMA === '1';
+    (process.env.NODE_ENV === 'production' && !process.env.MC_SCHEDULER_TIER)
+    || process.env.DEBUG_PRISMA === '1';
 
 export const prisma = basePrisma.$extends({
     query: {

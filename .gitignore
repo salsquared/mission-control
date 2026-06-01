@@ -106,6 +106,14 @@ public/swe-worker-*.js
 /data/fetcher-health.db-wal
 /data/fetcher-health.db-shm
 
+# Scheduler structured-log bridge (lib/logs-store.ts) + WAL/shm sidecars. The
+# scheduler-only sink that carries its logs to the web tier's in-app viewer
+# (48h retention), not state. Also matched by the global *.db globs above;
+# listed explicitly for clarity. See docs/scheduler-structured-logs.html.
+/data/logs.db
+/data/logs.db-wal
+/data/logs.db-shm
+
 # Promptfoo eval output — JSON results + per-run dirs from `npm run test:prompts`.
 # LOP-9. The fixtures themselves (eval/fixtures/, eval/suites/) ARE checked in;
 # results are not.

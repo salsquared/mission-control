@@ -99,6 +99,7 @@ SUITES=(
     "scripts/tests/hermetic/gemini-rate-limit-smoke.ts"
     "scripts/tests/hermetic/llm-cache-smoke.ts"
     "scripts/tests/hermetic/fetcher-health-store-smoke.ts"
+    "scripts/tests/hermetic/logs-store-smoke.ts"
     "scripts/tests/hermetic/cache-smoke.ts"
     "scripts/tests/hermetic/classify-employment-type-smoke.ts"
     "scripts/tests/hermetic/classify-pending-sweep-smoke.ts"

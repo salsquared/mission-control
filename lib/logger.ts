@@ -1,9 +1,32 @@
+export type LogSource = 'web' | 'scheduler';
+export type LogTier = 'dev' | 'prod';
+
 export type LogEntry = {
     id: string;
     timestamp: string;
     level: 'info' | 'warn' | 'error' | 'debug';
     message: string;
+    source: LogSource;
+    tier: LogTier;
 };
+
+// Process identity, derived once at module load. The scheduler processes set
+// MC_SCHEDULER_TIER (=dev|prod, ecosystem.config.cjs); its presence is what
+// distinguishes a scheduler process from a web process. Web picks its tier from
+// NODE_ENV. Stamped on every LogEntry + JSON line so the in-app viewer can
+// filter All / Web / Scheduler WITHOUT parsing message text — most scheduler
+// lines carry no [SCHEDULER:tier] prefix (only ~6 top-level ones do). Mirrors
+// currentTier()/currentSource() in lib/fetcher-health/store.ts, kept inline so
+// this module stays dependency-light (it loads at instrumentation time).
+// See docs/scheduler-structured-logs.html.
+const SCHED_TIER = process.env.MC_SCHEDULER_TIER;
+export const LOG_SOURCE: LogSource = SCHED_TIER ? 'scheduler' : 'web';
+export const LOG_TIER: LogTier =
+    SCHED_TIER === 'dev' || SCHED_TIER === 'prod'
+        ? SCHED_TIER
+        : process.env.NODE_ENV === 'production'
+          ? 'prod'
+          : 'dev';
 
 // In-memory ring buffer for newly-connecting SSE clients (recent burst window only).
 // Historical logs are read from the PM2 log file via /api/system/logs/historical.
@@ -71,7 +94,9 @@ export function initLogger() {
             id: Math.random().toString(36).substring(2, 11),
             timestamp: new Date().toISOString(),
             level,
-            message
+            message,
+            source: LOG_SOURCE,
+            tier: LOG_TIER
         };
 
         globalForLogs.__SYSTEM_LOGS.push(newLog);
@@ -80,7 +105,7 @@ export function initLogger() {
         }
 
         // Emit structured JSON-line for PM2 log capture (bypass the patched write).
-        rawStdout(JSON.stringify({ ts: newLog.timestamp, level, msg: message }) + '\n');
+        rawStdout(JSON.stringify({ ts: newLog.timestamp, level, msg: message, source: LOG_SOURCE, tier: LOG_TIER }) + '\n');
 
         globalForLogs.__LOG_LISTENERS.forEach(listener => listener(newLog));
     };
@@ -123,7 +148,9 @@ export function initLogger() {
             id: Math.random().toString(36).substring(2, 11),
             timestamp: new Date().toISOString(),
             level,
-            message
+            message,
+            source: LOG_SOURCE,
+            tier: LOG_TIER
         };
 
         globalForLogs.__SYSTEM_LOGS.push(newLog);

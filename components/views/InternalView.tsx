@@ -51,9 +51,13 @@ export const InternalView: React.FC = () => {
         queryFn: () => api.system.get(),
         refetchInterval: 5000,
     });
-    const [sysLogs, setSysLogs] = useState<{ id: string; timestamp: string; level: string; message: string; }[]>([]);
-    const [historicalLogs, setHistoricalLogs] = useState<{ ts: string; level: string; msg: string }[]>([]);
+    const [sysLogs, setSysLogs] = useState<{ id: string; timestamp: string; level: string; message: string; source?: string; tier?: string; }[]>([]);
+    const [historicalLogs, setHistoricalLogs] = useState<{ ts: string; level: string; msg: string; source?: string; tier?: string }[]>([]);
     const [loadingOlder, setLoadingOlder] = useState(false);
+    // Log-viewer source filter (All / Web / Scheduler). Scheduler rows arrive
+    // source-tagged via data/logs.db; web rows are tagged 'web' (older rows that
+    // predate the field default to 'web'). See docs/scheduler-structured-logs.html.
+    const [logSourceFilter, setLogSourceFilter] = useState<'all' | 'web' | 'scheduler'>('all');
 
     const loadOlderLogs = useCallback(async () => {
         setLoadingOlder(true);
@@ -68,6 +72,13 @@ export const InternalView: React.FC = () => {
             setLoadingOlder(false);
         }
     }, []);
+
+    const matchLogSource = useCallback(
+        (src?: string) => logSourceFilter === 'all' || (src ?? 'web') === logSourceFilter,
+        [logSourceFilter],
+    );
+    const visibleSysLogs = useMemo(() => sysLogs.filter(l => matchLogSource(l.source)), [sysLogs, matchLogSource]);
+    const visibleHistoricalLogs = useMemo(() => historicalLogs.filter(l => matchLogSource(l.source)), [historicalLogs, matchLogSource]);
 
     useEffect(() => {
         let es: EventSource | null = null;
@@ -244,38 +255,61 @@ export const InternalView: React.FC = () => {
                             <Server className="w-5 h-5" />
                             <h3 className="font-bold tracking-wider uppercase text-sm">Background Event Log</h3>
                         </div>
-                        <button
-                            onClick={loadOlderLogs}
-                            disabled={loadingOlder}
-                            className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 border border-white/10 rounded-lg disabled:opacity-50 transition-colors"
-                        >
-                            {loadingOlder ? 'Loading…' : 'Load older'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-1">
+                                {(['all', 'web', 'scheduler'] as const).map((opt) => (
+                                    <button
+                                        key={opt}
+                                        onClick={() => setLogSourceFilter(opt)}
+                                        className={`text-[10px] uppercase tracking-wider px-2 py-1 rounded-lg border transition-colors ${
+                                            logSourceFilter === opt
+                                                ? 'border-cyan-500/40 text-cyan-300 bg-cyan-500/10'
+                                                : 'border-white/10 text-slate-400 hover:text-slate-200'
+                                        }`}
+                                    >
+                                        {opt}
+                                    </button>
+                                ))}
+                            </div>
+                            <button
+                                onClick={loadOlderLogs}
+                                disabled={loadingOlder}
+                                className="text-xs text-slate-400 hover:text-slate-200 px-2 py-1 border border-white/10 rounded-lg disabled:opacity-50 transition-colors"
+                            >
+                                {loadingOlder ? 'Loading…' : 'Load older'}
+                            </button>
+                        </div>
                     </div>
                     <div className="flex-1 flex flex-col p-4 border border-dashed border-white/10 rounded-xl bg-black/40 overflow-hidden relative">
-                        {sysLogs.length === 0 && historicalLogs.length === 0 ? (
+                        {visibleSysLogs.length === 0 && visibleHistoricalLogs.length === 0 ? (
                             <div className="flex-1 flex items-center justify-center">
-                                <p className="text-muted-foreground text-sm font-medium">Event logging currently offline or no logs yet</p>
+                                <p className="text-muted-foreground text-sm font-medium">
+                                    {logSourceFilter === 'all'
+                                        ? 'Event logging currently offline or no logs yet'
+                                        : `No ${logSourceFilter} logs yet`}
+                                </p>
                             </div>
                         ) : (
                             <div className="flex flex-col-reverse overflow-y-auto custom-scrollbar gap-1.5 font-mono text-xs w-full h-full pr-2 select-text cursor-text">
-                                {sysLogs.slice(-LOG_DISPLAY_CAP).reverse().map((log) => (
+                                {visibleSysLogs.slice(-LOG_DISPLAY_CAP).reverse().map((log) => (
                                     <div key={log.id} className="flex gap-3 w-full border-b border-white/5 pb-1.5 first:border-0 first:pb-0">
                                         <div className="flex gap-2 shrink-0">
                                             <span className="text-white/40">[{new Date(log.timestamp).toLocaleTimeString()}]</span>
                                             <span className={`w-[60px] text-center ${log.level === 'error' ? 'text-red-400 font-bold' : log.level === 'warn' ? 'text-amber-400 font-bold' : 'text-cyan-400'}`}>[{log.level.toUpperCase()}]</span>
+                                            <span className={`px-1 rounded text-[10px] ${log.source === 'scheduler' ? 'bg-purple-500/20 text-purple-300' : 'bg-white/5 text-white/30'}`}>{log.source === 'scheduler' ? 'SCHED' : 'WEB'}</span>
                                         </div>
                                         <span className={`break-words whitespace-pre-wrap ${log.level === 'error' ? 'text-red-300' : 'text-white'}`}>{formatLogMessage(log.message)}</span>
                                     </div>
                                 ))}
-                                {historicalLogs.length > 0 && (
+                                {visibleHistoricalLogs.length > 0 && (
                                     <>
                                         <div className="text-center text-xs text-white/20 py-1 border-b border-white/5">— older logs —</div>
-                                        {[...historicalLogs].reverse().map((log, i) => (
+                                        {[...visibleHistoricalLogs].reverse().map((log, i) => (
                                             <div key={`h-${i}`} className="flex gap-3 w-full border-b border-white/5 pb-1.5 opacity-60">
                                                 <div className="flex gap-2 shrink-0">
                                                     <span className="text-white/40">[{new Date(log.ts).toLocaleTimeString()}]</span>
                                                     <span className={`w-[60px] text-center ${log.level === 'error' ? 'text-red-400 font-bold' : log.level === 'warn' ? 'text-amber-400 font-bold' : 'text-cyan-400'}`}>[{log.level.toUpperCase()}]</span>
+                                                    <span className={`px-1 rounded text-[10px] ${log.source === 'scheduler' ? 'bg-purple-500/20 text-purple-300' : 'bg-white/5 text-white/30'}`}>{log.source === 'scheduler' ? 'SCHED' : 'WEB'}</span>
                                                 </div>
                                                 <span className={`break-words whitespace-pre-wrap ${log.level === 'error' ? 'text-red-300' : 'text-white'}`}>{formatLogMessage(log.msg)}</span>
                                             </div>
@@ -496,7 +530,7 @@ export const InternalView: React.FC = () => {
             ),
         },
     ], [
-        sysMetrics, sysLogs, historicalLogs, loadingOlder,
+        sysMetrics, visibleSysLogs, visibleHistoricalLogs, logSourceFilter, loadingOlder,
         session, isDarkMode, viewHues, views, autoResearch, aiCompanionEnabled,
         loadOlderLogs, setViewHue, toggleTheme, setAutoResearch, setAiCompanionEnabled,
     ]);

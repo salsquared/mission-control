@@ -36,8 +36,13 @@ const useSQLite = () => process.env.CACHE_BACKEND === 'sqlite';
 // Prod keeps these on because the in-app log viewer is the canonical
 // observability surface (CLAUDE.md). DEBUG_VERBOSE_LOG=1 re-enables them
 // in dev for active debugging of cache behavior.
+//
+// Also muted in BOTH scheduler tiers (MC_SCHEDULER_TIER set) regardless of
+// NODE_ENV — same rationale as the [DATABASE] gate in lib/prisma.ts: keep the
+// scheduler's in-app log stream signal-dense. See docs/scheduler-structured-logs.html (OQ7).
 const LOG_VERBOSE =
-    process.env.NODE_ENV === 'production' || process.env.DEBUG_VERBOSE_LOG === '1';
+    (process.env.NODE_ENV === 'production' && !process.env.MC_SCHEDULER_TIER)
+    || process.env.DEBUG_VERBOSE_LOG === '1';
 
 // Sweep expired L1 entries every 5 min. Without this, expired-but-not-
 // revisited keys stay in the map indefinitely, each holding its full
