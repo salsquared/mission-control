@@ -35,6 +35,10 @@ export const CanonSchema = z.object({
     // The staleness dependency set — profile entity ids in the current resume's
     // selection. Parsed from the stored JSON by the repository.
     resumeEntityIds: z.array(z.string()),
+    // Whether a manual builder selection exists (docs/resume-manual-builder.html);
+    // derived from Canon.selection != null. The full selection loads via
+    // GET /api/canons/[id]/selection — kept off the list payload to stay light.
+    hasSelection: z.boolean(),
     // How many canonical versions exist (derived; convenience for the UI).
     versionCount: z.number().int().nonnegative(),
     active: z.boolean(),
@@ -43,6 +47,55 @@ export const CanonSchema = z.object({
 });
 
 export type CanonWire = z.infer<typeof CanonSchema>;
+
+// ─── Manual builder selection (docs/resume-manual-builder.html) ──────────────
+// The hand-curated, per-Canon resume selection persisted on Canon.selection
+// (JSON). Replaces the keyword auto-selector for canon generation (OQ4/OQ15).
+
+export const SELECTION_SECTION_KEYS = [
+    "experience",
+    "projects",
+    "education",
+    "skills",
+    "languages",
+    "interests",
+] as const;
+export const SelectionSectionKeySchema = z.enum(SELECTION_SECTION_KEYS);
+export type SelectionSectionKey = z.infer<typeof SelectionSectionKeySchema>;
+
+export const SELECTION_ENTITY_KINDS = ["workRole", "project", "education"] as const;
+export const SelectionEntityKindSchema = z.enum(SELECTION_ENTITY_KINDS);
+
+// One included entity: which kind + the bullet ids that render. Bullet order is
+// the profile's order in v1 (OQ8); bulletIds is a membership set here.
+export const CanonSelectionEntrySchema = z.object({
+    kind: SelectionEntityKindSchema,
+    bulletIds: z.array(z.string()).default([]),
+});
+
+export const CanonSelectionExtrasSchema = z.object({
+    skillItems: z.array(z.string()).default([]),
+    languages: z.array(z.string()).default([]),
+    hobbies: z.array(z.string()).default([]),
+});
+
+// The full manual selection (Canon.selection JSON; also the PUT request body).
+// Binary: an entity present in `entities` is included, one absent is not.
+// `excluded` records deliberate excludes (OQ5=B) — inert in v1, forward-compat.
+export const CanonSelectionSchema = z.object({
+    version: z.number().int().min(1).default(1),
+    sectionOrder: z.array(SelectionSectionKeySchema).default([...SELECTION_SECTION_KEYS]),
+    sectionsOff: z.array(SelectionSectionKeySchema).default([]),
+    entities: z.record(z.string(), CanonSelectionEntrySchema).default({}),
+    excluded: z.array(z.string()).default([]),
+    extras: CanonSelectionExtrasSchema.default({ skillItems: [], languages: [], hobbies: [] }),
+});
+export type CanonSelection = z.infer<typeof CanonSelectionSchema>;
+export type CanonSelectionEntry = z.infer<typeof CanonSelectionEntrySchema>;
+
+// PUT /api/canons/[id]/selection request body — the full selection.
+export const CanonSelectionPutSchema = CanonSelectionSchema;
+export type CanonSelectionPutInput = z.infer<typeof CanonSelectionPutSchema>;
 
 // ─── Requests ──────────────────────────────────────────────────────────────
 

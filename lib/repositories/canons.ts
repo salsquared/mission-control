@@ -2,7 +2,8 @@ import { Prisma } from "@prisma/client";
 import type { Canon } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { normalizeRoleName } from "@/lib/applications/normalize-role";
-import type { CanonWire, CanonPostInput, CanonPatchInput } from "@/lib/schemas/canons";
+import type { CanonWire, CanonPostInput, CanonPatchInput, CanonSelection } from "@/lib/schemas/canons";
+import { CanonSelectionSchema } from "@/lib/schemas/canons";
 
 // Tolerant JSON-array parse for resumeEntityIds (mirrors settings.ts helpers).
 function parseStringArray(json: string | null): string[] {
@@ -28,6 +29,7 @@ export function serializeCanon(row: Canon, versionCount = 0): CanonWire {
         currentResumeId: row.currentResumeId,
         resumeStale: row.resumeStale,
         resumeEntityIds: parseStringArray(row.resumeEntityIds),
+        hasSelection: row.selection != null,
         versionCount,
         active: row.active,
         createdAt: row.createdAt.toISOString(),
@@ -123,6 +125,31 @@ export async function deleteCanon(userId: string, id: string): Promise<boolean> 
     const existing = await prisma.canon.findFirst({ where: { id, userId }, select: { id: true } });
     if (!existing) return false;
     await prisma.canon.delete({ where: { id } });
+    return true;
+}
+
+// ─── Manual builder selection (docs/resume-manual-builder.html) ──────────────
+// The per-Canon hand-curated selection lives in Canon.selection (JSON). Parsed
+// leniently — corrupt/legacy JSON degrades to null (treated as "not curated").
+
+export async function getCanonSelection(userId: string, id: string): Promise<CanonSelection | null> {
+    const row = await prisma.canon.findFirst({ where: { id, userId }, select: { selection: true } });
+    if (!row || row.selection == null) return null;
+    try {
+        return CanonSelectionSchema.parse(JSON.parse(row.selection));
+    } catch {
+        return null; // best-effort — corrupt JSON is treated as no selection
+    }
+}
+
+export async function saveCanonSelection(
+    userId: string,
+    id: string,
+    selection: CanonSelection,
+): Promise<boolean> {
+    const existing = await prisma.canon.findFirst({ where: { id, userId }, select: { id: true } });
+    if (!existing) return false;
+    await prisma.canon.update({ where: { id }, data: { selection: JSON.stringify(selection) } });
     return true;
 }
 

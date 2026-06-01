@@ -202,7 +202,7 @@ flowchart TB
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P1</span>
           <span class="task-title">Phase 1 — Selection data model + resolve core</span>
         </summary>
@@ -211,14 +211,14 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.1</span>
               <span class="task-title">Schema + migration</span>
             </summary>
             <div class="task-body">
               <p>Add the storage column on the Canon.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.1.1</span><span class="task-title">Add <code>Canon.selection String?</code> to <code>prisma/schema.prisma</code></span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.1.1</span><span class="task-title">Add <code>Canon.selection String?</code> to <code>prisma/schema.prisma</code></span></summary>
                 <div class="task-body"><p>Nullable JSON; back up first, then <code>prisma migrate deploy</code> against <code>dev.db</code> and <code>prod.db</code>.</p></div>
               </details>
             </div>
@@ -226,18 +226,18 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.2</span>
               <span class="task-title">Zod schema + repository</span>
             </summary>
             <div class="task-body">
               <p>The API contract + read/write helpers.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title"><code>CanonSelectionSchema</code> in <code>lib/schemas/canons.ts</code></span></summary>
-                <div class="task-body"><p>Binary entity map (<code>kind</code>, <code>bulletIds</code>; entities present ⇒ included), the <code>excluded</code> id-list (OQ5=B), <code>extras</code>, and <code>sectionOrder</code>/<code>sectionsOff</code> (<code>sectionOrder</code> is the fixed default in v1 — OQ8 defers user reordering); thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
+                <summary><input type="checkbox" checked><span class="task-id">P1.2.1</span><span class="task-title"><code>CanonSelectionSchema</code> in <code>lib/schemas/canons.ts</code></span></summary>
+                <div class="task-body"><p>Binary entity map (<code>kind</code>, <code>bulletIds</code>; entities present ⇒ included), the <code>excluded</code> id-list (OQ5=B), <code>extras</code>, and <code>sectionOrder</code>/<code>sectionsOff</code> (<code>sectionOrder</code> is the fixed default in v1 — OQ8 defers user reordering). <code>CanonSchema</code> gets a lightweight <code>hasSelection</code> flag (the full selection loads via the route, not the list payload); plus a <code>CanonSelectionPutSchema</code>.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title"><code>getCanonSelection</code> / <code>saveCanonSelection</code> in <code>lib/repositories/canons.ts</code></span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.2.2</span><span class="task-title"><code>getCanonSelection</code> / <code>saveCanonSelection</code> in <code>lib/repositories/canons.ts</code></span></summary>
                 <div class="task-body"><p>Parse/serialize the JSON column (mirrors the existing <code>resumeEntityIds</code> parse).</p></div>
               </details>
             </div>
@@ -245,14 +245,14 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.3</span>
               <span class="task-title">Selection resolution library</span>
             </summary>
             <div class="task-body">
               <p>NEW <code>lib/canons/selection.ts</code>.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.3.1</span><span class="task-title"><code>resolveSelection(profile, selection) → ResumeSelection</code></span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.3.1</span><span class="task-title"><code>resolveSelection(profile, selection) → ResumeSelection</code></span></summary>
                 <div class="task-body"><p>Build the nested selection from the saved definition + live profile: included entities in order, each with its chosen bullets, dropping deleted entities/bullets (extend/reuse <code>reconstructSelection</code>).</p></div>
               </details>
             </div>

@@ -741,6 +741,12 @@ model Canon {
   resumeStale     Boolean @default(true)
   resumeEntityIds String? // JSON string[] — the staleness dependency set
 
+  // Manual builder selection (docs/resume-manual-builder.html). JSON shape:
+  // { version, sectionOrder, sectionsOff[], entities:{<id>:{kind,bulletIds[]}}, excluded[], extras }.
+  // When set, POST /api/resumes resolves THIS instead of running the auto-pipeline
+  // (manual-only canon generation — OQ15). Null = not yet curated.
+  selection String?
+
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
