@@ -15,6 +15,8 @@ import { z } from "zod";
 import type { WorkdayConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
 import { inferEmploymentTypeFromTitle } from "./employment-type";
+import { loggedFetch, hostOf } from "@/lib/external-fetch";
+import { recordFetchOutcome } from "@/lib/fetcher-health/store";
 
 type WorkdayConfig = z.infer<typeof WorkdayConfigSchema>;
 
@@ -83,7 +85,9 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
             // Per-page timeout — a single signal across the whole loop would
             // fire after the first ~10s regardless of which iteration we're on,
             // which limits us to 1-2 pages on a slow connection.
-            const res = await fetch(endpoint, {
+            // record: false — defer to the parse-aware outcome below so one
+            // page POST = one health row (200-with-bad-shape is `broken`).
+            const res = await loggedFetch(endpoint, {
                 method: "POST",
                 headers: {
                     "User-Agent": USER_AGENT,
@@ -97,8 +101,9 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
                     searchText: "",
                 }),
                 signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-            });
+            }, { record: false });
             if (!res.ok) {
+                recordFetchOutcome(hostOf(endpoint), "error");
                 // Got some pages, stop early instead of failing — but flag the
                 // result `partial` so job-watcher's close-detection skips this
                 // run. Without this flag, Boeing (1462 active) / Blue Origin
@@ -110,8 +115,10 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
             const json = await res.json();
             const parsed = WorkdayResponseSchema.safeParse(json);
             if (!parsed.success) {
+                recordFetchOutcome(hostOf(endpoint), "broken");
                 return { ok: false, error: `Unexpected Workday envelope shape: ${parsed.error.issues.slice(0, 2).map(i => i.message).join("; ")}` };
             }
+            recordFetchOutcome(hostOf(endpoint), "ok");
             for (const raw of parsed.data.jobPostings) {
                 const job = WorkdayJobSchema.safeParse(raw);
                 if (!job.success) {
@@ -144,6 +151,7 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
             if (page === 0 && typeof parsed.data.total === "number" && parsed.data.total > 0 && out.length >= parsed.data.total) break;
         }
     } catch (e) {
+        recordFetchOutcome(hostOf(endpoint), "error");
         const msg = e instanceof Error ? e.message : String(e);
         // If we collected anything before the failure, return what we have —
         // but flag partial so close-detection doesn't mass-close on a flaky

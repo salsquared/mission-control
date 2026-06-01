@@ -12,6 +12,8 @@ import type { CareersPageConfigSchema } from "@/lib/schemas/watchlists";
 import { z } from "zod";
 import { assertExternalHttpUrl, assertSafeResponseUrl, UnsafeURLError } from "@/lib/security/url-guard";
 import { inferEmploymentTypeFromTitle } from "./employment-type";
+import { loggedFetch, hostOf } from "@/lib/external-fetch";
+import { recordFetchOutcome } from "@/lib/fetcher-health/store";
 
 type CareersPageConfig = z.infer<typeof CareersPageConfigSchema>;
 
@@ -76,7 +78,8 @@ export async function fetchCareersPage(config: CareersPageConfig): Promise<Fetch
 
     let html: string;
     try {
-        const res = await fetch(config.rootUrl, {
+        // record: false — own the outcome so one fetch = one health row.
+        const res = await loggedFetch(config.rootUrl, {
             headers: {
                 "User-Agent": USER_AGENT,
                 "Accept": "text/html,application/xhtml+xml",
@@ -84,21 +87,26 @@ export async function fetchCareersPage(config: CareersPageConfig): Promise<Fetch
             },
             redirect: "follow",
             signal: controller.signal,
-        });
+        }, { record: false });
         clearTimeout(timeoutId);
         if (!res.ok) {
+            recordFetchOutcome(hostOf(config.rootUrl), "error");
             return { ok: false, error: `HTTP ${res.status} ${res.statusText} from ${config.rootUrl}` };
         }
         // If redirects landed on an internal target, refuse.
         try {
             assertSafeResponseUrl(res);
         } catch (e) {
-            if (e instanceof UnsafeURLError) return { ok: false, error: e.message };
+            if (e instanceof UnsafeURLError) {
+                recordFetchOutcome(hostOf(config.rootUrl), "error");
+                return { ok: false, error: e.message };
+            }
             throw e;
         }
         html = await res.text();
     } catch (e) {
         clearTimeout(timeoutId);
+        recordFetchOutcome(hostOf(config.rootUrl), "error");
         const msg = e instanceof Error ? e.message : String(e);
         return { ok: false, error: `Fetch failed: ${msg}` };
     }
@@ -141,5 +149,9 @@ export async function fetchCareersPage(config: CareersPageConfig): Promise<Fetch
         });
     });
 
+    // Reached + parsed the page (200, safe target). An empty result is
+    // legitimate here (regex simply matched nothing), so this is `ok`, never
+    // `broken` — unlike the ATS APIs we don't have a "this shape is wrong" signal.
+    recordFetchOutcome(hostOf(config.rootUrl), "ok");
     return { ok: true, postings: out };
 }

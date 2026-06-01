@@ -15,6 +15,8 @@ import type { z } from "zod";
 import type { PersonioConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
 import { pickEmploymentType } from "./employment-type";
+import { loggedFetch, hostOf } from "@/lib/external-fetch";
+import { recordFetchOutcome } from "@/lib/fetcher-health/store";
 
 type PersonioConfig = z.infer<typeof PersonioConfigSchema>;
 
@@ -41,25 +43,30 @@ export async function fetchPersonio(config: PersonioConfig): Promise<FetcherResu
 
     let xml: string;
     try {
-        const res = await fetch(url, {
+        // record: false — defer to the parse-aware outcome below so one fetch =
+        // one health row (a 200 with an unexpected shape is `broken`, not `ok`).
+        const res = await loggedFetch(url, {
             headers: {
                 "User-Agent": "mission-control-watcher/1.0 (+https://mc.local; personal job-search agent)",
                 "Accept": "application/xml, text/xml",
             },
             signal: controller.signal,
             redirect: "manual",
-        });
+        }, { record: false });
         clearTimeout(timeoutId);
         // Personio redirects unknown slugs to personio.com — treat as not-found.
         if (res.status >= 300 && res.status < 400) {
+            recordFetchOutcome(hostOf(url), "error");
             return { ok: false, error: `Unknown Personio slug (HTTP ${res.status} redirect from ${url})` };
         }
         if (!res.ok) {
+            recordFetchOutcome(hostOf(url), "error");
             return { ok: false, error: `HTTP ${res.status} ${res.statusText} from ${url}` };
         }
         xml = await res.text();
     } catch (e) {
         clearTimeout(timeoutId);
+        recordFetchOutcome(hostOf(url), "error");
         const msg = e instanceof Error ? e.message : String(e);
         return { ok: false, error: `Fetch failed: ${msg}` };
     }
@@ -68,14 +75,18 @@ export async function fetchPersonio(config: PersonioConfig): Promise<FetcherResu
     try {
         $ = cheerio.load(xml, { xml: true });
     } catch (e) {
+        recordFetchOutcome(hostOf(url), "broken");
         const msg = e instanceof Error ? e.message : String(e);
         return { ok: false, error: `XML parse failed: ${msg}` };
     }
 
     // Sanity-check the root.
     if ($("workzag-jobs").length === 0) {
+        recordFetchOutcome(hostOf(url), "broken");
         return { ok: false, error: "Unexpected Personio response shape: missing <workzag-jobs> root" };
     }
+
+    recordFetchOutcome(hostOf(url), "ok");
 
     const postings: RawPosting[] = [];
     $("workzag-jobs > position").slice(0, MAX_POSITIONS).each((_, el) => {

@@ -30,6 +30,8 @@ import { z } from "zod";
 import type { LinkedinConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
 import { inferEmploymentTypeFromTitle } from "./employment-type";
+import { loggedFetch, hostOf } from "@/lib/external-fetch";
+import { recordFetchOutcome } from "@/lib/fetcher-health/store";
 
 type LinkedinConfig = z.infer<typeof LinkedinConfigSchema>;
 
@@ -68,15 +70,17 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
 
             let res: Response;
             try {
-                res = await fetch(url, {
+                // record: false — own the per-page outcome below.
+                res = await loggedFetch(url, {
                     headers: {
                         "User-Agent": USER_AGENT,
                         "Accept": "text/html,application/xhtml+xml",
                         "Accept-Language": "en-US,en;q=0.9",
                     },
                     signal: controller.signal,
-                });
+                }, { record: false });
             } catch (e) {
+                recordFetchOutcome(hostOf(url), "error");
                 // Pagination failed mid-crawl. Keep the postings we already
                 // have from earlier pages but mark the result partial so
                 // close-detection doesn't mass-close postings we never got
@@ -86,13 +90,16 @@ export async function fetchLinkedin(config: LinkedinConfig): Promise<FetcherResu
             }
 
             if (res.status === 429) {
+                recordFetchOutcome(hostOf(url), "error");
                 return { ok: false, error: "LinkedIn rate-limited (HTTP 429). Slow the cadence." };
             }
             if (!res.ok) {
+                recordFetchOutcome(hostOf(url), "error");
                 if (page > 0) { partial = true; break; }
                 return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
             }
 
+            recordFetchOutcome(hostOf(url), "ok");
             const html = await res.text();
             // Empty body = no more pages. LinkedIn returns 200 with whitespace
             // when start > total.

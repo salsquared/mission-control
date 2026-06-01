@@ -30,6 +30,8 @@ import { z } from "zod";
 import type { IndeedConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
 import { inferEmploymentTypeFromTitle } from "./employment-type";
+import { loggedFetch, hostOf } from "@/lib/external-fetch";
+import { recordFetchOutcome } from "@/lib/fetcher-health/store";
 
 type IndeedConfig = z.infer<typeof IndeedConfigSchema>;
 
@@ -111,30 +113,38 @@ export async function fetchIndeed(config: IndeedConfig): Promise<FetcherResult> 
 
             let res: Response;
             try {
-                res = await fetch(url, {
+                // record: false — own the per-page outcome below.
+                res = await loggedFetch(url, {
                     headers: BROWSER_HEADERS,
                     signal: controller.signal,
-                });
+                }, { record: false });
             } catch (e) {
+                recordFetchOutcome(hostOf(url), "error");
                 if (page > 0) { partial = true; break; }
                 return { ok: false, error: `Fetch failed: ${e instanceof Error ? e.message : String(e)}` };
             }
 
             if (res.status === 429) {
+                recordFetchOutcome(hostOf(url), "error");
                 return { ok: false, error: "Indeed rate-limited (HTTP 429). Slow the cadence." };
             }
             if (res.status === 403) {
+                recordFetchOutcome(hostOf(url), "error");
                 return { ok: false, error: "Indeed blocked the request (HTTP 403) — likely Cloudflare bot challenge. Slow the cadence." };
             }
             if (!res.ok) {
+                recordFetchOutcome(hostOf(url), "error");
                 if (page > 0) { partial = true; break; }
                 return { ok: false, error: `HTTP ${res.status} ${res.statusText}` };
             }
 
             const html = await res.text();
             if (looksLikeCloudflareChallenge(html)) {
+                // 200 but a bot wall, not job cards — a usable-content break.
+                recordFetchOutcome(hostOf(url), "broken");
                 return { ok: false, error: "Indeed served a Cloudflare challenge instead of search results. Slow the cadence." };
             }
+            recordFetchOutcome(hostOf(url), "ok");
             if (html.trim().length < 200) break;
 
             const $ = cheerio.load(html);

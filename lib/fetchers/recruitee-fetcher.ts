@@ -10,6 +10,8 @@ import { z } from "zod";
 import type { RecruiteeConfigSchema } from "@/lib/schemas/watchlists";
 import type { RawPosting, FetcherResult } from "./careers-page-fetcher";
 import { pickEmploymentType } from "./employment-type";
+import { loggedFetch, hostOf } from "@/lib/external-fetch";
+import { recordFetchOutcome } from "@/lib/fetcher-health/store";
 
 type RecruiteeConfig = z.infer<typeof RecruiteeConfigSchema>;
 
@@ -55,28 +57,35 @@ export async function fetchRecruitee(config: RecruiteeConfig): Promise<FetcherRe
 
     let json: unknown;
     try {
-        const res = await fetch(url, {
+        // record: false — defer to the parse-aware outcome below so one fetch =
+        // one health row (a 200 with an unexpected shape is `broken`, not `ok`).
+        const res = await loggedFetch(url, {
             headers: {
                 "User-Agent": "mission-control-watcher/1.0 (+https://mc.local; personal job-search agent)",
                 "Accept": "application/json",
             },
             signal: controller.signal,
-        });
+        }, { record: false });
         clearTimeout(timeoutId);
         if (!res.ok) {
+            recordFetchOutcome(hostOf(url), "error");
             return { ok: false, error: `HTTP ${res.status} ${res.statusText} from ${url}` };
         }
         json = await res.json();
     } catch (e) {
         clearTimeout(timeoutId);
+        recordFetchOutcome(hostOf(url), "error");
         const msg = e instanceof Error ? e.message : String(e);
         return { ok: false, error: `Fetch failed: ${msg}` };
     }
 
     const parsed = RecruiteeResponseSchema.safeParse(json);
     if (!parsed.success) {
+        recordFetchOutcome(hostOf(url), "broken");
         return { ok: false, error: `Unexpected Recruitee response shape: ${parsed.error.issues.slice(0, 2).map(i => i.message).join("; ")}` };
     }
+
+    recordFetchOutcome(hostOf(url), "ok");
 
     const postings: RawPosting[] = parsed.data.offers
         .filter(o => o.title && (o.careers_url || o.slug))
