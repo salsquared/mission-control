@@ -8,6 +8,7 @@ import {
     TaskPatchSchema,
     TaskPostSchema,
 } from './schemas/tasks';
+import { CanonSelectionSchema, type CanonSelection } from './schemas/canons';
 import {
     GoalsListResponseSchema,
     GoalMutationResponseSchema,
@@ -198,6 +199,8 @@ export const queryKeys = {
     // Per-canon retained resume versions — drives the version-history dropdown
     // on each canon row. Invalidated alongside `canons` after a regenerate.
     canonVersions: (canonId: string) => ['canon-versions', canonId] as const,
+    // Per-canon manual builder selection — loaded when the builder overlay opens.
+    canonSelection: (canonId: string) => ['canons', canonId, 'selection'] as const,
 };
 
 // ─── Canon wire shape ──────────────────────────────────────────────────────
@@ -819,6 +822,20 @@ export const api = {
                 `/api/canons/${encodeURIComponent(id)}`,
                 CanonDeleteResponseSchema,
                 { method: 'DELETE' },
+            ),
+        // GET /api/canons/{id}/selection — the hand-curated manual resume
+        // selection (null until the builder first saves one).
+        getSelection: (id: string) =>
+            jsonFetch(
+                `/api/canons/${encodeURIComponent(id)}/selection`,
+                z.object({ selection: CanonSelectionSchema.nullable() }),
+            ),
+        // PUT /api/canons/{id}/selection — replace the manual selection wholesale.
+        saveSelection: (id: string, selection: CanonSelection) =>
+            jsonFetch(
+                `/api/canons/${encodeURIComponent(id)}/selection`,
+                z.object({ ok: z.boolean() }),
+                jsonBody('PUT', selection),
             ),
     },
 

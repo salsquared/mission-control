@@ -16,12 +16,14 @@ import {
     Search,
     History,
     ChevronDown,
+    SlidersHorizontal,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys, type CanonWire } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { Card } from "../../ui/Card";
+import { ResumeBuilderOverlay } from "@/components/overlays/ResumeBuilderOverlay";
 
 // Relative-time helper — mirrors GenerateResumeCard's formatRelative so the
 // version-history dropdown reads timestamps the same way the resume archive does.
@@ -78,6 +80,8 @@ export function CanonsCard() {
     // Which canon row is currently mid-specialize (single-flight, like regenId).
     const [specializeId, setSpecializeId] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
+    // Which canon's manual resume builder overlay is open (P3.2).
+    const [builderCanon, setBuilderCanon] = useState<CanonWire | null>(null);
 
     async function handleRegenerate(canon: CanonWire) {
         if (regenId) return;
@@ -229,6 +233,7 @@ export function CanonsCard() {
                                         onDownload={() => handleDownload(canon)}
                                         onSpecialize={(applicationId) => handleSpecialize(canon, applicationId)}
                                         onDelete={() => handleDelete(canon)}
+                                        onEdit={() => setBuilderCanon(canon)}
                                         onSaved={invalidate}
                                     />
                                 ))}
@@ -255,6 +260,17 @@ export function CanonsCard() {
                     </button>
                 )}
             </div>
+
+            {builderCanon && (
+                <ResumeBuilderOverlay
+                    canon={{
+                        id: builderCanon.id,
+                        name: builderCanon.name,
+                        currentResumeId: builderCanon.currentResumeId,
+                    }}
+                    onClose={() => setBuilderCanon(null)}
+                />
+            )}
         </Card>
     );
 }
@@ -271,6 +287,7 @@ const CanonRow: React.FC<{
     onDownload: () => void;
     onSpecialize: (applicationId: string) => void;
     onDelete: () => void;
+    onEdit: () => void;
     onSaved: () => void;
 }> = ({
     canon,
@@ -282,6 +299,7 @@ const CanonRow: React.FC<{
     onDownload,
     onSpecialize,
     onDelete,
+    onEdit,
     onSaved,
 }) => {
     const [editing, setEditing] = useState(false);
@@ -349,16 +367,26 @@ const CanonRow: React.FC<{
                     <div className="flex items-center gap-1.5 flex-wrap justify-end">
                         <button
                             type="button"
+                            onClick={onEdit}
+                            title="Open the builder — hand-pick what goes on this canon's resume, then generate"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 text-[11px] font-semibold text-purple-100 transition-colors"
+                        >
+                            <SlidersHorizontal className="w-3 h-3" />
+                            Edit &amp; generate
+                        </button>
+                        <button
+                            type="button"
                             onClick={onRegenerate}
                             disabled={anyRegenerating}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-400/30 text-[11px] font-semibold text-purple-100 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                            title="Re-render the saved selection (verbatim, no AI) — curate it first via Edit & generate"
+                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
                             {regenerating ? (
                                 <Loader2 className="w-3 h-3 animate-spin" />
                             ) : (
                                 <RefreshCw className="w-3 h-3" />
                             )}
-                            {regenerating ? "Generating…" : "Regenerate"}
+                            {regenerating ? "Generating…" : "Re-render"}
                         </button>
                         <button
                             type="button"

@@ -289,22 +289,22 @@ flowchart TB
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P3</span>
           <span class="task-title">Phase 3 — Builder UI</span>
         </summary>
         <div class="task-body">
           <p>The overlay + the Canon entry point.</p>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">NEW <code>components/overlays/ResumeBuilderOverlay.tsx</code></span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.1</span><span class="task-title">NEW <code>components/overlays/ResumeBuilderOverlay.tsx</code></span></summary>
             <div class="task-body"><p>Profile tree in profile order, no drag (OQ8) → entity checkboxes → bullet checkboxes → extras pickers → live page estimate (OQ9/OQ14) → rewrite/tagline toggles → Save / Generate (OQ10). On Save, compute the <code>excluded</code> snapshot (all profile entities − checked) into the PUT payload (OQ5=B); on Generate, read the exact page count from the response header.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">&ldquo;Edit &amp; generate&rdquo; entry in <code>CanonsCard.tsx</code> + <code>lib/api-client.ts</code></span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.2</span><span class="task-title">&ldquo;Edit &amp; generate&rdquo; entry in <code>CanonsCard.tsx</code> + <code>lib/api-client.ts</code></span></summary>
             <div class="task-body"><p>Opens the overlay for the canon; query keys + client methods for GET/PUT selection.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">First-open initial state (pre-fill existing canons; empty for new)</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.3</span><span class="task-title">First-open initial state (pre-fill existing canons; empty for new)</span></summary>
             <div class="task-body"><p>Back-compat UX: an existing canon opens pre-filled from its last rendered <code>selections</code> (curated, not blank); a brand-new canon (no prior resume) opens empty — nothing checked — and the user builds it up.</p></div>
           </details>
         </div>
@@ -319,7 +319,7 @@ flowchart TB
         <div class="task-body">
           <p>Tests, build, deploy.</p>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code></span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P4.1</span><span class="task-title">Hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code></span></summary>
             <div class="task-body"><p>Asserts: <code>resolveSelection</code> drops a deleted entity/bullet; included entities render in profile order with only their chosen bullets; an entity absent from <code>entities</code> doesn't render; the <code>excluded</code> id-list round-trips through save/load; the one-page pruner is not applied; a <code>canonId</code> with no selection errors (no auto fallback — OQ15); the empty-selection guard fires. Append to <code>SUITES</code> in <code>pre-push.sh</code>.</p></div>
           </details>
           <details class="task">
