@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Manual Resume Builder</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Manual Resume Builder</h1>
+  <p class="subtitle">Replace the keyword-scoring auto-selector with a hand-curated, per-Canon bullet selection — so a Security-Officer job never leaks onto an ML/AI resume, because it's structurally absent from that Canon, not just unlucky in a score.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#context">Context &amp; problem</a></li>
+      <li><a href="#design">Design</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="context">Context &amp; problem</h2></summary>
+    <div class="section-body">
+
+      <h3>Problem</h3>
+      <p>The resume generator picks which bullets go on a tailored resume by <strong>counting posting-keyword overlap</strong>. <code>lib/resumes/select.ts:scoreBullet</code> awards <code>TAG_WEIGHT = 2</code> per matched tag and <code>SUBSTRING_WEIGHT = 1</code> per keyword found in the bullet text; the entity's aggregate score is the sum over its bullets. This has a fundamental ceiling: <em>keyword overlap cannot distinguish domain-relevant experience from domain-irrelevant experience.</em></p>
+      <p>Concretely, an ML/AI Engineering posting is dense with soft words — <em>communication, collaboration, data, reporting, scheduling, problem-solving</em>. A Security-Officer bullet like &ldquo;Coordinated radio communication and filed daily incident reports&rdquo; matches several of them, scores nonzero, and is kept. Two more rules push irrelevant experience onto the page regardless of relevance:</p>
+      <ul>
+        <li><strong>The work-role &ldquo;spine&rdquo; is always kept</strong> (<code>pickWorkRoleSpineIndex</code> + <code>dropZeroScoreEntities</code> in <code>select.ts</code>) so the Experience section is never empty — which force-includes the most-recent job even at zero score.</li>
+        <li><strong>All Education is always kept</strong> regardless of score.</li>
+      </ul>
+      <p>The net effect is the user's actual complaint: <strong>security-guard experience appears on an ML/AI Engineering resume.</strong> The pipeline is elaborate — auto-tag → score → LLM section/entity ordering (<code>resume-tagline</code> callsite) → Flash bullet rewrite → two-phase one-page pruner (<code>lib/resumes/one-page.ts</code>) — yet it is wrong at the one thing that defines a good resume: <em>relevance of what's included</em>. No prompt-tuning fixes a keyword-matching ceiling. Relevance is a human judgement, and the user wants to make it.</p>
+      <p>Good news on blast radius: <strong>only the selection layer is broken.</strong> The renderer consumes a tidy document shape (<code>ResumeProps</code> in <code>lib/resumes/templates/ats-plain.tsx</code>: <code>{ profile, tagline, sections{workRoles,projects,education}, extras{skills,languages,hobbies}, sectionOrder }</code>) and turns it into PDF/DOCX. The fixed-selection plumbing already exists for Canons — <code>lib/canons/specialize.ts:reconstructSelection</code> rebuilds a nested <code>ResumeSelection</code> from a flat stored selection + a frozen profile snapshot, dropping entities that no longer exist. We swap the <em>brain</em> (how the selection is decided) and reuse the <em>body</em> (resolve → optional rewrite/tagline → compose → render → persist).</p>
+
+      <h3>Goals &amp; non-goals</h3>
+      <ul>
+        <li><strong>Goal:</strong> a manual builder that shows the user's <em>entire</em> profile (work roles, projects, education, and skills/languages/interests) and lets them hand-pick what goes on a resume.</li>
+        <li><strong>Goal:</strong> the selection is <strong>saved per-Canon</strong> and re-renderable — &ldquo;ML Engineer&rdquo; and &ldquo;Security Officer&rdquo; are separate curated selections.</li>
+        <li><strong>Goal:</strong> a <strong>per-entity lock state</strong> (always-in / out) so relevance is a property you set, not something the algorithm re-decides each run.</li>
+        <li><strong>Goal:</strong> AI rewrite + tagline survive as <strong>opt-in toggles</strong> (default off → verbatim render); the old scoring pipeline survives as a <strong>&ldquo;Suggest from posting&rdquo;</strong> pre-fill button.</li>
+        <li><strong>Goal:</strong> reuse the existing render / <code>specialize</code> / persistence / staleness / versioning machinery unchanged.</li>
+        <li><strong>Non-goal:</strong> drag-to-reorder of sections/entities/bullets — deferred (OQ8); v1 inherits profile order.</li>
+        <li><strong>Non-goal:</strong> a live in-builder page-count preview — deferred (OQ9); v1 reports page count after render.</li>
+        <li><strong>Non-goal:</strong> deprecating or removing the one-off URL/paste generator (<code>GenerateResumeCard</code>) — deferred (OQ12).</li>
+        <li><strong>Non-goal:</strong> cover letters, multi-template, per-company personalization — out of scope.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="design">Design</h2></summary>
+    <div class="section-body">
+      <h3>Approach</h3>
+      <p>Extend the <strong>Canon</strong>. Today a Canon owns one reusable resume whose fixed bullet set lives <em>implicitly</em> inside the latest <code>GeneratedResume.selections</code> (a flat JSON array), produced by the auto-pipeline at &ldquo;Regenerate&rdquo; time. We make that selection a <strong>first-class, user-editable definition on the Canon</strong> — a new <code>Canon.selection</code> JSON field (OQ6) — and replace &ldquo;Regenerate&rdquo;'s auto-pipeline with a manual editor. Generate then becomes the <code>specialize</code> flow almost verbatim: <em>resolve the saved selection against the live profile → (optionally) rewrite + tagline → compose → render → persist</em>.</p>
+
+      <pre class="mermaid">
+flowchart TB
+  card["Canon row<br/>(CanonsCard)"] -->|"Edit &amp; generate"| overlay["Resume Builder overlay<br/>(Window-class)"]
+  profile[("Profile<br/>roles · projects · education · extras")] --> overlay
+  saved[("Canon.selection<br/>saved JSON")] --> overlay
+  overlay -->|"Suggest from posting"| suggest["selectBullets<br/>pre-fills 'auto' entities"]
+  suggest --> overlay
+  overlay -->|"Save"| put["PUT /api/canons/:id/selection"]
+  put --> saved
+  overlay -->|"Generate"| gen["POST /api/resumes<br/>(canonId)"]
+  gen --> resolve["resolveSelection<br/>selection + profile to ResumeSelection"]
+  resolve -->|"rewrite/tagline toggle ON"| ai["rewriteBullets + tailorTagline"]
+  resolve -->|"toggle OFF"| compose["composeResumeProps"]
+  ai --> compose
+  compose --> render["render PDF / DOCX"]
+  render --> persist[("GeneratedResume<br/>+ Canon.currentResumeId")]
+      </pre>
+
+      <h3>Data model</h3>
+      <p>The <code>Canon.selection</code> JSON (parsed by the repository, like <code>resumeEntityIds</code> already is). Resolved <strong>best-effort against the live profile at render</strong> — a referenced entity or bullet that's since been deleted is silently dropped, exactly as <code>reconstructSelection</code> does today.</p>
+      <pre><code class="language-json">{
+  "version": 1,
+  "sectionOrder": ["experience", "projects", "education", "skills", "languages", "interests"],
+  "sectionsOff": ["interests"],          // section types the user toggled entirely off
+  "entities": {
+    "&lt;workRoleId&gt;": { "kind": "workRole", "state": "always", "bulletIds": ["b1", "b3"] },
+    "&lt;projectId&gt;":  { "kind": "project",  "state": "auto",   "bulletIds": ["b7"] },
+    "&lt;guardRoleId&gt;": { "kind": "workRole", "state": "never",  "bulletIds": [] }
+  },
+  "extras": { "skillItems": ["PyTorch", "..."], "languages": ["Spanish"], "hobbies": [] }
+}</code></pre>
+      <p><strong>Per-entity state (OQ5)</strong> is the crux of the fix — three values:</p>
+      <ul>
+        <li><strong><code>always</code></strong> (🔒) — always rendered; &ldquo;Suggest from posting&rdquo; cannot remove it.</li>
+        <li><strong><code>auto</code></strong> (default) — eligible; &ldquo;Suggest from posting&rdquo; may toggle it in/out based on score.</li>
+        <li><strong><code>never</code></strong> (🚫) — never rendered; &ldquo;Suggest&rdquo; <em>must respect this</em> and never re-add it.</li>
+      </ul>
+      <p>The Security-Officer job set to <code>never</code> on the ML Canon is the structural fix: no re-score, no spine rule, no &ldquo;Suggest&rdquo; pass can put it back. Within an included entity, <code>bulletIds</code> is the ordered set of bullets to render (OQ7 — per-bullet granularity).</p>
+
+      <h3>Touch list</h3>
+      <ul>
+        <li><code>prisma/schema.prisma</code> — add <code>Canon.selection String?</code> (nullable JSON); migration applied to <strong>both</strong> <code>dev.db</code> + <code>prod.db</code> (additive, no data risk).</li>
+        <li><code>lib/schemas/canons.ts</code> — a <code>CanonSelectionSchema</code> sub-shape; thread it onto <code>CanonSchema</code> (parsed) and a new <code>CanonSelectionPutSchema</code> request shape.</li>
+        <li><code>lib/repositories/canons.ts</code> — parse/serialize the JSON; <code>getCanonSelection</code> / <code>saveCanonSelection</code>.</li>
+        <li><strong>NEW</strong> <code>lib/canons/selection.ts</code> — <code>resolveSelection(profile, selection) → ResumeSelection</code> (extends/reuses <code>reconstructSelection</code>) and <code>suggestPrefill(profile, keywords, prev) → selection</code> (runs <code>selectBullets</code>, honoring <code>always</code>/<code>never</code>).</li>
+        <li><strong>NEW</strong> <code>app/api/canons/[id]/selection/route.ts</code> + <code>meta.ts</code> — <code>GET</code> (load) / <code>PUT</code> (save) the manual selection.</li>
+        <li><code>app/api/resumes/route.ts</code> — when generating for a <code>canonId</code> that has a manual <code>selection</code>, branch to the <em>resolve</em> path (skip auto <code>selectBullets</code>); gate rewrite + tagline behind the toggles; keep the auto-pipeline as the fallback when no manual selection exists.</li>
+        <li><code>app/api/resumes/specialize/route.ts</code> — already reconstructs + re-words; minimal change (optionally read the Canon's <code>selection</code> definition instead of the last rendered resume's <code>selections</code>).</li>
+        <li><strong>NEW</strong> <code>components/overlays/ResumeBuilderOverlay.tsx</code> — Window-class overlay (per the component hierarchy): profile tree → entities (lock toggle) → bullets (checkboxes), extras pickers, &ldquo;Suggest from posting&rdquo;, rewrite/tagline toggles, Generate.</li>
+        <li><code>components/cards/profile/CanonsCard.tsx</code> — &ldquo;Edit &amp; generate&rdquo; entry that opens the overlay (replaces/augments &ldquo;Regenerate&rdquo;).</li>
+        <li><code>lib/api-client.ts</code> + query keys; regenerate <code>docs/apis.html</code> (<code>npm run gen:api-docs</code>).</li>
+        <li><strong>NEW</strong> hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code> → append to <code>SUITES</code> in <code>pre-push.sh</code>.</li>
+      </ul>
+
+      <h3>Alternatives considered</h3>
+      <ul>
+        <li><strong>Per-bullet global <code>locked</code>/<code>excluded</code> flags (already exist).</strong> Rejected: those are <em>global</em> — they affect every resume. The whole point is &ldquo;include this job on my Security resume but never on my ML one,&rdquo; which is inherently per-Canon. Manual selection lives at the Canon, not the bullet.</li>
+        <li><strong>Relational <code>CanonSelectionEntry</code> table.</strong> Rejected for v1: the stored selection is already JSON (<code>GeneratedResume.selections</code>), the resolve-against-live-profile pattern already exists, and a JSON column matches the house pattern with no join model to maintain. Revisit only if we need to query selections across canons.</li>
+        <li><strong>Keep the auto-pipeline and bolt on a manual exclude list.</strong> Rejected: doesn't deliver the &ldquo;show everything, pick what you want&rdquo; UX the user asked for, and leaves the spine/soft-keyword leaks intact for everything not explicitly excluded.</li>
+        <li><strong>Drag-reorder + live page preview in v1.</strong> Deferred (OQ8/OQ9): real work, not load-bearing for the relevance fix. v1 inherits profile order and reports page count after render.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+      <h3>Risks &amp; mitigations</h3>
+      <table>
+        <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td>Saved selection references an entity/bullet later deleted from the profile</td><td>med</td><td><code>resolveSelection</code> drops missing ids best-effort (same as <code>reconstructSelection</code>); the builder re-syncs the tree against the live profile on open.</td></tr>
+          <tr><td>Migration touches <code>prod.db</code> (mailbox-equivalent, backed up)</td><td>low</td><td>Column is additive + nullable — no data rewrite. Back up first (<code>scripts/backup-db.sh</code>); apply to dev.db + prod.db via <code>prisma migrate deploy</code> with <code>DATABASE_URL</code> pointed at each.</td></tr>
+          <tr><td>Empty selection → blank resume</td><td>low</td><td>Generate guards on a non-empty resolved selection and errors (mirrors the <code>specialize</code> &ldquo;selection is empty&rdquo; guard) before rendering.</td></tr>
+          <tr><td>Existing canons have no manual selection yet (back-compat)</td><td>high (every existing canon)</td><td>Manual path is gated on <code>Canon.selection != null</code>; until set, &ldquo;Regenerate&rdquo; keeps the auto-pipeline. On first open the builder <strong>pre-fills</strong> from the current resume's stored <code>selections</code> (P3.3) so the user starts curated, not empty.</td></tr>
+          <tr><td>Schema-behind tier (prod.db lagging) emits Prisma <code>P2021</code></td><td>low</td><td>Additive column; apply the migration to both tiers in the same deploy. The manual route 500s cleanly (caught) rather than corrupting state if the column is missing.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Rollback</h3>
+      <p><code>Canon.selection</code> is nullable and additive, and the manual generate path is <strong>gated on its presence</strong> — so backing out the route branch makes every canon fall through to the existing auto-pipeline (degrades to today's behavior, a no-op). To revert: drop the route branch + overlay, revert + <code>npm run build</code> + <code>pm2 restart mission-control</code>. The column can stay (harmless) or be removed with a down-migration after a <code>prod.db</code> backup. No generated artifacts or existing <code>GeneratedResume</code> rows are mutated by this feature.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <h3>Unresolved decisions</h3>
+      <p>The four forks below the line are <strong>decided</strong> (this session's design conversation). OQ5–OQ13 are open; each carries a <em>Lean</em>. <strong>Resolve all open OQs with the user before writing implementation code.</strong> OQ5/OQ6/OQ7 define the data model and gate Phase 1, so settle those first.</p>
+
+      <div class="callout tip"><strong>OQ1 — What does the AI still do on the manually-picked bullets?</strong><br/>
+        <strong>✓ Decided:</strong> manual selection is the core; <strong>rewrite + tagline are opt-in toggles, default off</strong> → deterministic verbatim render. The selection problem is separate from wording, so wording stays optional polish.</div>
+
+      <div class="callout tip"><strong>OQ2 — What does &ldquo;locked aka always there&rdquo; mean?</strong><br/>
+        <strong>✓ Decided:</strong> lock is <strong>per-entity</strong> (🔒 ML Engineer always, Security Guard never), <em>not</em> per-section-type. Relevance is a state you set on an entity.</div>
+
+      <div class="callout tip"><strong>OQ3 — Is a manual selection saved and reusable?</strong><br/>
+        <strong>✓ Decided:</strong> saved <strong>per-Canon</strong>, re-renderable. Canons already model the user's job-search lanes; &ldquo;ML resume vs security resume&rdquo; lives there.</div>
+
+      <div class="callout tip"><strong>OQ4 — What happens to the existing auto-scoring pipeline?</strong><br/>
+        <strong>✓ Decided:</strong> it survives as an optional <strong>&ldquo;Suggest from posting&rdquo;</strong> pre-fill button — a starting guess the user edits, not the decider.</div>
+
+      <div class="callout"><strong>OQ5 — Entity state cardinality: three states or two?</strong><br/>
+        Options: <strong>(A)</strong> three — <code>always</code> / <code>auto</code> / <code>never</code>; or <strong>(B)</strong> two — <code>in</code> / <code>out</code>, where &ldquo;Suggest&rdquo; may re-propose any out entity. <em>Lean:</em> A. The third state (<code>never</code>) is what stops &ldquo;Suggest from posting&rdquo; from re-adding the Security-Officer job every run; with B the user re-excludes it forever. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ6 — Where is the selection stored?</strong><br/>
+        Options: <strong>(A)</strong> a single nullable JSON column <code>Canon.selection</code>; <strong>(B)</strong> a relational <code>CanonSelectionEntry</code> table; <strong>(C)</strong> reuse the existing deferred <code>Canon.pinnedEntityIds</code>/<code>sectionOrder</code> fields. <em>Lean:</em> A — matches the house JSON-selection pattern, resolved best-effort against the live profile; no join model. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ7 — Bullet granularity in v1: per-bullet, or entity-level only?</strong><br/>
+        Options: <strong>(A)</strong> per-bullet checkboxes within an included entity; <strong>(B)</strong> include an entity ⇒ all its bullets render. <em>Lean:</em> A — picking which bullets show is core to a good resume and cheap given the data is already there. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ8 — Ordering control in v1?</strong><br/>
+        Options: <strong>(A)</strong> inherit profile <code>position</code> order + a fixed <code>DEFAULT_SECTION_ORDER</code>; <strong>(B)</strong> drag-reorder sections/entities/bullets. <em>Lean:</em> A for v1, defer B. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ9 — Length / one-page handling?</strong><br/>
+        Options: <strong>(A)</strong> drop the auto one-page pruner in manual mode (the user owns length) and report page count after render; <strong>(B)</strong> keep the auto-pruner; <strong>(C)</strong> live in-builder page preview. <em>Lean:</em> A — auto-pruning contradicts &ldquo;manual&rdquo; (it would silently drop the user's picks). Defer C. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ10 — UI surface for the builder?</strong><br/>
+        Options: <strong>(A)</strong> a full-screen Window-class overlay launched from the Canon row; <strong>(B)</strong> a new dash/view; <strong>(C)</strong> inline expansion inside <code>CanonsCard</code>. <em>Lean:</em> A — the full profile tree is too big for a card; an overlay is the established escape-the-grid pattern. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ11 — &ldquo;Suggest from posting&rdquo; input?</strong><br/>
+        Options: <strong>(A)</strong> the Canon's own <code>keywords</code>; <strong>(B)</strong> a pasted/linked specific posting; <strong>(C)</strong> both. <em>Lean:</em> C — default to canon keywords, allow pasting a specific posting to bias the suggestion. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ12 — Fate of the one-off generator (<code>GenerateResumeCard</code> URL/paste/pipeline)?</strong><br/>
+        Options: <strong>(A)</strong> keep it as the quick non-canon throwaway path; <strong>(B)</strong> fold it into the builder; <strong>(C)</strong> deprecate it. <em>Lean:</em> A for now — the canon builder is the curated path; revisit once the builder lands. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ13 — Rewrite scope when the toggle is on?</strong><br/>
+        Options: <strong>(A)</strong> keep today's behavior — rewrite only posting-matching bullets, pass no-match bullets through verbatim (<code>rewrite.ts</code> pre-filter); <strong>(B)</strong> rewrite every included bullet. <em>Lean:</em> A — avoids cross-domain invention and saves tokens; tagline still needs a posting/keywords. <em>Status:</em> open.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+      <h3>Implementation checklist</h3>
+      <p><strong>No code until OQ5–OQ13 are resolved.</strong> Phase 1 is blocked on OQ5/OQ6/OQ7 (the data model).</p>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Selection data model + resolve/suggest core</span>
+        </summary>
+        <div class="task-body">
+          <p>The substrate: persist a per-Canon selection and turn it into a renderable <code>ResumeSelection</code>. Ship + verify before any UI.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.1</span>
+              <span class="task-title">Schema + migration</span>
+            </summary>
+            <div class="task-body">
+              <p>Add the storage column on the Canon.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.1</span><span class="task-title">Add <code>Canon.selection String?</code> to <code>prisma/schema.prisma</code></span></summary>
+                <div class="task-body"><p>Nullable JSON; back up first, then <code>prisma migrate deploy</code> against <code>dev.db</code> and <code>prod.db</code>.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.2</span>
+              <span class="task-title">Zod schema + repository</span>
+            </summary>
+            <div class="task-body">
+              <p>The API contract + read/write helpers.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title"><code>CanonSelectionSchema</code> in <code>lib/schemas/canons.ts</code></span></summary>
+                <div class="task-body"><p>Entity map (<code>kind</code>, <code>state</code> always/auto/never, <code>bulletIds</code>), extras, <code>sectionOrder</code>/<code>sectionsOff</code>; thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title"><code>getCanonSelection</code> / <code>saveCanonSelection</code> in <code>lib/repositories/canons.ts</code></span></summary>
+                <div class="task-body"><p>Parse/serialize the JSON column (mirrors the existing <code>resumeEntityIds</code> parse).</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.3</span>
+              <span class="task-title">Selection resolution + suggestion library</span>
+            </summary>
+            <div class="task-body">
+              <p>NEW <code>lib/canons/selection.ts</code>.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.1</span><span class="task-title"><code>resolveSelection(profile, selection) → ResumeSelection</code></span></summary>
+                <div class="task-body"><p>Build the nested selection from the saved definition + live profile, dropping deleted entities/bullets (extend/reuse <code>reconstructSelection</code>).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.2</span><span class="task-title"><code>suggestPrefill(profile, keywords, prev) → selection</code></span></summary>
+                <div class="task-body"><p>Run <code>selectBullets</code> for a pre-fill; flip only <code>auto</code> entities, never touch <code>always</code>/<code>never</code> (OQ5).</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — API surface</span>
+        </summary>
+        <div class="task-body">
+          <p>Expose load/save + branch the generator.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">NEW <code>app/api/canons/[id]/selection/route.ts</code> (GET/PUT) + <code>meta.ts</code></span></summary>
+            <div class="task-body"><p>Session-guarded, ownership-scoped; PUT validates with <code>CanonSelectionPutSchema</code>.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Branch <code>app/api/resumes/route.ts</code> on a manual selection</span></summary>
+            <div class="task-body"><p>If the <code>canonId</code> has <code>selection != null</code>: <code>resolveSelection</code> instead of auto <code>selectBullets</code>; gate rewrite + tagline behind toggles (OQ1/OQ13); else keep the auto-pipeline fallback.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Regenerate <code>docs/apis.html</code></span></summary>
+            <div class="task-body"><p><code>npm run gen:api-docs</code> + commit (pre-push <code>api-docs-smoke</code> gate).</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Builder UI</span>
+        </summary>
+        <div class="task-body">
+          <p>The overlay + the Canon entry point.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">NEW <code>components/overlays/ResumeBuilderOverlay.tsx</code></span></summary>
+            <div class="task-body"><p>Profile tree → entity lock toggles → bullet checkboxes → extras pickers → &ldquo;Suggest from posting&rdquo; → rewrite/tagline toggles → Save / Generate (OQ10).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">&ldquo;Edit &amp; generate&rdquo; entry in <code>CanonsCard.tsx</code> + <code>lib/api-client.ts</code></span></summary>
+            <div class="task-body"><p>Opens the overlay for the canon; query keys + client methods for GET/PUT selection.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">First-open pre-fill from the current resume's stored <code>selections</code></span></summary>
+            <div class="task-body"><p>Back-compat UX: existing canons open curated (from their last rendered selection), not empty.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P4</span>
+          <span class="task-title">Phase 4 — Verify + ship</span>
+        </summary>
+        <div class="task-body">
+          <p>Tests, build, deploy.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code></span></summary>
+            <div class="task-body"><p>Asserts: resolve drops a deleted entity; <code>suggestPrefill</code> respects <code>always</code>/<code>never</code>; generate-from-manual produces the expected <code>ResumeSelection</code>; empty-selection guard fires. Append to <code>SUITES</code> in <code>pre-push.sh</code>.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title"><code>tsc</code> clean → prod build → <code>pm2 restart</code> → deploy notes</span></summary>
+            <div class="task-body"><p>Update <code>docs/next_steps.md</code>; note the dev.db + prod.db migration in the same coordinated deploy.</p></div>
+          </details>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
