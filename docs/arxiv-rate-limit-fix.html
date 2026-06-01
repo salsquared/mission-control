@@ -349,22 +349,22 @@ export function withSharedCache(
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P3</span>
-          <span class="task-title">Layer 3 — shared rate bucket (committed, OQ4)</span>
+          <span class="task-title">Layer 3 — shared rate bucket (OQ4) ✓ DONE 2026-05-31 (dev-verified, live 14/min shared)</span>
         </summary>
         <div class="task-body">
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">Shared-file token bucket (lib/arxiv/rate-limit.ts)</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1.1</span><span class="task-title">arxiv_bucket table via base openDb() seam (OQ9); data/arxiv-bucket.db</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1.2</span><span class="task-title">acquireArxivSlot(): BEGIN IMMEDIATE → refill/consume or reserve next slot → COMMIT → sleep(waitMs)</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1.3</span><span class="task-title">per-process globalThis fallback on store failure</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.1</span><span class="task-title">Shared-file token bucket (lib/arxiv/rate-limit.ts)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.1.1</span><span class="task-title">arxiv_bucket single-row table via base openDb() seam (OQ9); data/arxiv-bucket.db</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.1.2</span><span class="task-title">consume = BEGIN IMMEDIATE refill→consume-or-reserve-future-slot → COMMIT; acquireArxivSlot sleeps waitMs</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.1.3</span><span class="task-title">per-process globalThis fallback at HALF rate on store failure (2-tier sum ≈ ceiling)</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">Env semantics flip</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.2.1</span><span class="task-title">ARXIV_RATE_PER_MIN → 14 (shared) in both .env.development + .env.production</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.2.2</span><span class="task-title">Rewrite the per-process→shared comment in both files (easy to get backwards)</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.2</span><span class="task-title">Env semantics flip</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.2.1</span><span class="task-title">ARXIV_RATE_PER_MIN 7→14 (shared) in both .env.development + .env.production (+ code default 14)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.2.2</span><span class="task-title">Rewrote the per-process→shared comment in both files (flagged the meaning change)</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">Test</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.3.1</span><span class="task-title">NEW arxiv-shared-bucket-smoke.ts: atomic consume paces to rate; fallback on bad path; append to SUITES</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.3</span><span class="task-title">Test</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P3.3.1</span><span class="task-title">NEW arxiv-shared-bucket-smoke.ts → 6/6 (one shared paced line across 2 tiers + refill + fallback); in pre-push SUITES</span></summary><div class="task-body"></div></details>
           </div></details>
         </div>
       </details>
