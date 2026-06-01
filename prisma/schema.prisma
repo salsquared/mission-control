@@ -371,6 +371,12 @@ model Project {
   description String?
   repoUrl     String?
   liveUrl     String?
+  // Nullable (mirrors Education, not WorkRole's required startDate) so the
+  // additive migration over existing date-less project rows needs no backfill.
+  // Render rule (lib/resumes/templates/ats-plain.tsx): startDate present +
+  // endDate null ⇒ "<start> – Present"; startDate null ⇒ no date emitted.
+  startDate   DateTime?
+  endDate     DateTime?
   bullets     String   @default("[]")
   // M7.8.1 (story S7.13) — see WorkRole.scratchpad. Per-project user-voice
   // notes; consumed by bullet-assist + resume-gen synthesis.

@@ -128,6 +128,12 @@ export const ProjectSchema = z.object({
     description: z.string().nullable(),
     repoUrl: z.string().nullable(),
     liveUrl: z.string().nullable(),
+    // .nullable().optional() (not Education's required-present .nullable()):
+    // dates were added to Project after the fact, so — same rationale as
+    // `scratchpad` above — pre-migration snapshots and existing fixtures that
+    // predate the column validate without spelling out a null.
+    startDate: z.string().datetime().nullable().optional(),
+    endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletSchema),
     scratchpad: z.string().nullable().optional(),
     pinKeywords: PinKeywordsSchema,
@@ -242,6 +248,8 @@ export const ProjectPostSchema = z.object({
     description: z.string().nullable().optional(),
     repoUrl: z.string().nullable().optional(),
     liveUrl: z.string().nullable().optional(),
+    startDate: z.string().datetime().nullable().optional(),
+    endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     pinKeywords: PinKeywordsSchema,
@@ -254,6 +262,8 @@ export const ProjectPatchSchema = z.object({
     description: z.string().nullable().optional(),
     repoUrl: z.string().nullable().optional(),
     liveUrl: z.string().nullable().optional(),
+    startDate: z.string().datetime().nullable().optional(),
+    endDate: z.string().datetime().nullable().optional(),
     bullets: z.array(BulletWriteSchema).optional(),
     scratchpad: z.string().max(SCRATCHPAD_MAX_BYTES).nullable().optional(),
     pinKeywords: PinKeywordsSchema,

@@ -301,6 +301,8 @@ export interface ProjectCreateInput {
     description?: string | null;
     repoUrl?: string | null;
     liveUrl?: string | null;
+    startDate?: Date | null;
+    endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
     pinKeywords?: string[] | null;
@@ -318,6 +320,8 @@ export async function createProject(userId: string, input: ProjectCreateInput): 
             description: input.description ?? null,
             repoUrl: input.repoUrl ?? null,
             liveUrl: input.liveUrl ?? null,
+            startDate: input.startDate ?? null,
+            endDate: input.endDate ?? null,
             bullets: serializeBullets(bullets),
             scratchpad: input.scratchpad ?? null,
             pinKeywords: serializePinKeywords(input.pinKeywords),
@@ -332,6 +336,8 @@ export interface ProjectUpdateInput {
     description?: string | null;
     repoUrl?: string | null;
     liveUrl?: string | null;
+    startDate?: Date | null;
+    endDate?: Date | null;
     bullets?: Array<Partial<Bullet> & { text: string }>;
     scratchpad?: string | null;
     pinKeywords?: string[] | null;
@@ -349,6 +355,8 @@ export async function updateProject(userId: string, id: string, input: ProjectUp
     if (input.description !== undefined) payload.description = input.description;
     if (input.repoUrl !== undefined) payload.repoUrl = input.repoUrl;
     if (input.liveUrl !== undefined) payload.liveUrl = input.liveUrl;
+    if (input.startDate !== undefined) payload.startDate = input.startDate;
+    if (input.endDate !== undefined) payload.endDate = input.endDate;
     if (input.position !== undefined) payload.position = input.position;
     if (input.bullets !== undefined) payload.bullets = serializeBullets(input.bullets.map(normalizeBullet));
     if (input.scratchpad !== undefined) payload.scratchpad = input.scratchpad;

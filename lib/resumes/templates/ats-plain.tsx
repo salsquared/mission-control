@@ -276,11 +276,19 @@ function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeP
                                                 { label: "Repo", url: entity.repoUrl },
                                                 { label: "Website", url: entity.liveUrl },
                                             ].filter((l): l is { label: string; url: string } => !!l.url && isValidUrl(l.url));
+                                            // Date + links share the right column on one line:
+                                            // "<start> – <end|Present> · Repo · Website". The
+                                            // date renders only when a startDate exists — legacy
+                                            // date-less projects emit just the links, exactly as
+                                            // before (no "? – Present" placeholder).
+                                            const dateText = entity.startDate
+                                                ? fmtDateRange(entity.startDate, entity.endDate ?? null)
+                                                : null;
                                             return (
                                             <div key={entity.id} className="entity">
                                                 <div className="entity-line">
                                                     <span className="title">{entity.name}</span>
-                                                    {projectLinks.length > 0 ? (
+                                                    {(dateText || projectLinks.length > 0) ? (
                                                         // A <div> (not <span>) so html-to-docx
                                                         // renders the nested <a> hyperlinks —
                                                         // it doesn't descend into <span> for
@@ -291,9 +299,10 @@ function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeP
                                                         // a new tab instead of replacing the
                                                         // resume the user is viewing.
                                                         <div className="right">
+                                                            {dateText ? <span>{dateText}</span> : null}
                                                             {projectLinks.map((l, i) => (
                                                                 <React.Fragment key={l.label}>
-                                                                    {i > 0 ? "  ·  " : null}
+                                                                    {(dateText || i > 0) ? "  ·  " : null}
                                                                     <a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a>
                                                                 </React.Fragment>
                                                             ))}

@@ -8,6 +8,13 @@ import { api } from "@/lib/api-client";
 import type { Bullet } from "@/lib/profile/types";
 import type { ProjectWire } from "@/lib/schemas/profile";
 
+// Mirrors EducationRow: <input type="date"> wants YYYY-MM-DD; the API stores
+// full ISO. Anchor at UTC midnight so the displayed day doesn't drift by TZ.
+const dateToInput = (iso: string | Date | null | undefined): string =>
+    iso ? new Date(iso).toISOString().slice(0, 10) : "";
+const inputToIso = (yyyymmdd: string | null): string | null =>
+    yyyymmdd ? new Date(yyyymmdd + 'T00:00:00Z').toISOString() : null;
+
 interface ProjectRowProps {
     project: ProjectWire;
     onUpdate: (patch: Partial<{
@@ -15,6 +22,8 @@ interface ProjectRowProps {
         description: string | null;
         repoUrl: string | null;
         liveUrl: string | null;
+        startDate: string | null;
+        endDate: string | null;
         bullets: Bullet[];
         scratchpad: string | null;
     }>) => void;
@@ -138,6 +147,31 @@ export const ProjectRow: React.FC<ProjectRowProps> = ({
                         onSave={(v) => onUpdate({ liveUrl: v })}
                         placeholder="Project Site (optional)"
                         readClassName="text-sm text-white/70 truncate"
+                    />
+                </div>
+            </div>
+
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
+                <div>
+                    <span className="text-[10px] uppercase tracking-wider text-white/30">Start</span>
+                    <EditableField
+                        value={dateToInput(project.startDate)}
+                        onSave={(v) => onUpdate({ startDate: inputToIso(v) })}
+                        placeholder="YYYY-MM-DD"
+                        type="date"
+                        readClassName="text-sm text-white/70"
+                        allowEmpty
+                    />
+                </div>
+                <div>
+                    <span className="text-[10px] uppercase tracking-wider text-white/30">End</span>
+                    <EditableField
+                        value={dateToInput(project.endDate)}
+                        onSave={(v) => onUpdate({ endDate: inputToIso(v) })}
+                        placeholder="Present"
+                        type="date"
+                        readClassName="text-sm text-white/70"
+                        allowEmpty
                     />
                 </div>
             </div>
