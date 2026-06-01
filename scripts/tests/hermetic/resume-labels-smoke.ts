@@ -137,6 +137,50 @@ function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, de
     else pass("sanitize: strips leading + trailing dot runs");
 }
 
+// ─── HTTP-header safety (Content-Disposition is a ByteString) ─────────────────
+// Regression: a canon/posting name with an em dash (U+2014) — e.g. "security
+// officer — Downey, CA" — used to flow into `Content-Disposition: filename="…"`
+// and throw "Cannot convert argument to a ByteString" (codepoint > 255),
+// failing the whole resume render. Typographic punctuation must fold to ASCII
+// and any remaining > 255 codepoint must drop.
+{
+    const emDash = sanitizeFilenameSegment("security officer — Downey, CA");
+    if (emDash !== "security officer - Downey, CA") fail("sanitize: em dash not folded to hyphen", emDash);
+    else pass("sanitize: em dash folds to '-'");
+}
+{
+    // Latin-1 accents (codepoint <= 255) are valid in a ByteString — keep them.
+    const accented = sanitizeFilenameSegment("Señor Café");
+    if (accented !== "Señor Café") fail("sanitize: dropped a valid Latin-1 accent", accented);
+    else pass("sanitize: preserves Latin-1 accents (<= 255)");
+}
+{
+    // The load-bearing assertion: every sanitized segment is header-safe, and a
+    // full filename round-trips through Headers.set without throwing.
+    const nasty = ["プロジェクト — Lead “Staff”", "Résumé – Café…", "emoji 🚀 role"];
+    let leaked = false;
+    for (const s of nasty) {
+        for (const ch of sanitizeFilenameSegment(s)) {
+            if (ch.codePointAt(0)! > 255) { leaked = true; break; }
+        }
+    }
+    if (leaked) fail("sanitize: leaked a codepoint > 255 (would break Content-Disposition)");
+    else pass("sanitize: no codepoint > 255 survives");
+
+    const filename = buildResumeDownloadFilename({
+        userDisplayName: "Salvador Salcedo",
+        postingTitle: "security officer — Downey, CA",
+        postingCompany: null,
+        format: "pdf",
+    });
+    try {
+        new Headers().set("Content-Disposition", `attachment; filename="${filename}"`);
+        pass("filename: Content-Disposition round-trips without a ByteString throw");
+    } catch (e) {
+        fail("filename: Content-Disposition threw on a real canon name", (e as Error).message);
+    }
+}
+
 console.log(`\n${passes}/${passes + fails} steps passed`);
 if (fails > 0) process.exit(1);
 console.log("All checks passed.");

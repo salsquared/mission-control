@@ -24,8 +24,20 @@ export interface ResumeLabelParts {
 // are fine on modern macOS/Linux/Windows.
 //   Disallowed:  \ / : * ? " < > |  + control chars  + leading/trailing dots
 // Also collapses runs of whitespace to a single space and trims.
+//
+// The result also has to be safe in an HTTP `Content-Disposition` filename,
+// which is a ByteString — any codepoint > 255 (em/en dashes, smart quotes,
+// emoji, CJK) throws "Cannot convert argument to a ByteString". A canon or
+// scraped posting title routinely contains an em dash (e.g. "security officer
+// — Downey, CA"), so we fold the common typographic punctuation to ASCII and
+// drop anything still > 255 (keeping Latin-1 accents like "José" intact).
 export function sanitizeFilenameSegment(s: string): string {
     return s
+        .replace(/[‐-―−]/g, "-")       // dashes / minus -> hyphen
+        .replace(/[‘’‚‛]/g, "'")  // single curly quotes -> '
+        .replace(/[“”„‟]/g, "'")  // double curly quotes -> '
+        .replace(/…/g, "...")                    // ellipsis -> ...
+        .replace(/[^\x00-\xff]/g, "")                 // drop remaining codepoints > 255
         // eslint-disable-next-line no-control-regex
         .replace(/[\\/:*?"<>|\x00-\x1f]+/g, "")
         .replace(/\s+/g, " ")
