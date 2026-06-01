@@ -400,8 +400,11 @@ export function ResumeBuilderOverlay(props: ResumeBuilderOverlayProps): React.JS
                 // viewer ignores target=_blank on PDF link annotations. The PDF
                 // artifact is persisted and downloadable from the Generated
                 // Resumes list; the selection was just saved above, so the
-                // preview matches what was generated.
-                window.open(`/api/canons/${canon.id}/preview`, "_blank");
+                // preview matches what was generated. Pass the exact page count
+                // from the PDF render (X-Resume-Pages) so the preview shows an
+                // authoritative page-fit banner, not the line-count estimate.
+                const previewUrl = `/api/canons/${canon.id}/preview${Number.isFinite(pages) ? `?pages=${pages}` : ""}`;
+                window.open(previewUrl, "_blank");
             } else {
                 const objectUrl = URL.createObjectURL(blob);
                 const a = document.createElement("a");

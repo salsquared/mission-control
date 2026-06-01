@@ -4,7 +4,7 @@ import { getCanon, getCanonSelection } from "@/lib/repositories/canons";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { resolveSelection, resolveExtras } from "@/lib/canons/selection";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
-import { renderResumeHTML } from "@/lib/resumes/render-html";
+import { renderResumeHTML, decorateResumePreview } from "@/lib/resumes/render-html";
 import type { SectionKey } from "@/lib/resumes/tagline-tailor";
 import type { ProfileWire } from "@/lib/schemas/profile";
 
@@ -23,7 +23,7 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
     return user?.id && user.id.length > 0 ? user.id : null;
 }
 
-export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
     const guard = await requireSession();
     if ("error" in guard) return guard.error;
     const userId = userIdFromGuard(guard);
@@ -52,7 +52,14 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         const sectionOrder = selection.sectionOrder.filter((s) => !off.has(s)) as SectionKey[];
         const extras = resolveExtras(profile, selection);
         const props = composeResumeProps(profile, resolved, [], profile.tagline ?? null, extras, sectionOrder);
-        const html = await renderResumeHTML(props);
+        // `?pages=N` is the exact count from the just-rendered PDF (the caller
+        // reads it off the X-Resume-Pages response header). It drives the
+        // authoritative page-fit banner — far more reliable than the builder's
+        // line-count estimate. Absent (preview opened outside the generate
+        // flow) → neutral banner, no page claim.
+        const pagesParam = req.nextUrl.searchParams.get("pages");
+        const pageCount = pagesParam && /^\d+$/.test(pagesParam) ? parseInt(pagesParam, 10) : null;
+        const html = decorateResumePreview(await renderResumeHTML(props), pageCount);
 
         return new NextResponse(html, {
             status: 200,

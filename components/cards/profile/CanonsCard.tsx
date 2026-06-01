@@ -107,9 +107,15 @@ export function CanonsCard() {
                 }
                 throw new Error(detail || `HTTP ${res.status}`);
             }
-            const blob = await res.blob();
-            const objectUrl = URL.createObjectURL(blob);
-            window.open(objectUrl, "_blank");
+            // Re-render persists a fresh PDF version (downloadable via the
+            // Download button / version dropdown); for VIEWING, open the HTML
+            // preview — links open in their own tab and never close the resume
+            // (Chrome's PDF viewer can't do that) — with the exact page count
+            // so it shows an authoritative page-fit banner.
+            const pagesHeader = res.headers.get("X-Resume-Pages");
+            const pages = pagesHeader ? parseInt(pagesHeader, 10) : NaN;
+            const previewUrl = `/api/canons/${canon.id}/preview${Number.isFinite(pages) ? `?pages=${pages}` : ""}`;
+            window.open(previewUrl, "_blank");
             // Clear the stale badge + pick up the new version count, and refresh
             // this canon's version-history dropdown so the new version shows.
             invalidate();
@@ -377,8 +383,12 @@ const CanonRow: React.FC<{
                         <button
                             type="button"
                             onClick={onRegenerate}
-                            disabled={anyRegenerating}
-                            title="Re-render the saved selection (verbatim, no AI) — curate it first via Edit & generate"
+                            disabled={anyRegenerating || !canon.hasSelection}
+                            title={
+                                canon.hasSelection
+                                    ? "Re-render the saved selection (verbatim, no AI) and open the HTML preview"
+                                    : "No saved selection yet — use Edit & generate to curate this canon's resume first"
+                            }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
                             {regenerating ? (

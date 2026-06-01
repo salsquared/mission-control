@@ -218,6 +218,11 @@ export const CanonWireSchema = z.object({
     keywords: z.string(),
     onePage: z.boolean(),
     currentResumeId: z.string().nullable(),
+    // Whether the canon has a saved manual selection (gates the card's
+    // Re-render button — verbatim re-render needs a selection to replay).
+    // `.catch(false)` so a stale/legacy payload missing the field degrades to
+    // "disabled" rather than throwing.
+    hasSelection: z.boolean().catch(false),
     resumeStale: z.boolean(),
     resumeEntityIds: z.array(z.string()),
     versionCount: z.number(),
