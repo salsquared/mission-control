@@ -75,57 +75,21 @@ export function CanonsCard() {
     // Live-refresh on canon mutations from any tab / the scheduler.
     useServerEvents("Canon", invalidate);
 
-    // Which canon row is currently mid-regenerate (so we only spin that one).
-    const [regenId, setRegenId] = useState<string | null>(null);
-    // Which canon row is currently mid-specialize (single-flight, like regenId).
+    // Which canon row is currently mid-specialize (single-flight).
     const [specializeId, setSpecializeId] = useState<string | null>(null);
     const [showCreate, setShowCreate] = useState(false);
     // Which canon's manual resume builder overlay is open (P3.2).
     const [builderCanon, setBuilderCanon] = useState<CanonWire | null>(null);
 
-    async function handleRegenerate(canon: CanonWire) {
-        if (regenId) return;
-        setRegenId(canon.id);
-        try {
-            const res = await fetch("/api/resumes", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    posting: { canonId: canon.id },
-                    options: { format: "pdf", onePage: canon.onePage },
-                }),
-            });
-            if (!res.ok) {
-                let detail = "";
-                try {
-                    const j = await res.json();
-                    detail = j.error
-                        ? (typeof j.error === "string" ? j.error : JSON.stringify(j.error))
-                        : "";
-                } catch {
-                    /* non-JSON body */
-                }
-                throw new Error(detail || `HTTP ${res.status}`);
-            }
-            // Re-render persists a fresh PDF version (downloadable via the
-            // Download button / version dropdown); for VIEWING, open the HTML
-            // preview — links open in their own tab and never close the resume
-            // (Chrome's PDF viewer can't do that) — with the exact page count
-            // so it shows an authoritative page-fit banner.
-            const pagesHeader = res.headers.get("X-Resume-Pages");
-            const pages = pagesHeader ? parseInt(pagesHeader, 10) : NaN;
-            const previewUrl = `/api/canons/${canon.id}/preview${Number.isFinite(pages) ? `?pages=${pages}` : ""}`;
-            window.open(previewUrl, "_blank");
-            // Clear the stale badge + pick up the new version count, and refresh
-            // this canon's version-history dropdown so the new version shows.
-            invalidate();
-            queryClient.invalidateQueries({ queryKey: queryKeys.canonVersions(canon.id) });
-            toastStore.push({ message: `“${canon.name}” resume regenerated`, type: "info" });
-        } catch (e) {
-            toastStore.push({ message: `Regenerate failed: ${errMessage(e)}`, type: "error" });
-        } finally {
-            setRegenId(null);
-        }
+    // "Re-render" opens the HTML preview of the canon's saved selection in a new
+    // tab — links open in their own tab and never close the resume (Chrome's
+    // PDF viewer can't do that), and the preview computes its own page-fit
+    // banner. It deliberately does NOT generate a new resume version: versions
+    // come only from the Generate buttons (the builder overlay + the one-off
+    // GenerateResumeCard). So this is a pure GET — no POST, no persistence.
+    function handleRegenerate(canon: CanonWire) {
+        if (!canon.hasSelection) return;
+        window.open(`/api/canons/${canon.id}/preview`, "_blank");
     }
 
     function handleDownload(canon: CanonWire) {
@@ -231,8 +195,6 @@ export function CanonsCard() {
                                     <CanonRow
                                         key={canon.id}
                                         canon={canon}
-                                        regenerating={regenId === canon.id}
-                                        anyRegenerating={regenId !== null}
                                         specializing={specializeId === canon.id}
                                         anySpecializing={specializeId !== null}
                                         onRegenerate={() => handleRegenerate(canon)}
@@ -285,8 +247,6 @@ export function CanonsCard() {
 
 const CanonRow: React.FC<{
     canon: CanonWire;
-    regenerating: boolean;
-    anyRegenerating: boolean;
     specializing: boolean;
     anySpecializing: boolean;
     onRegenerate: () => void;
@@ -297,8 +257,6 @@ const CanonRow: React.FC<{
     onSaved: () => void;
 }> = ({
     canon,
-    regenerating,
-    anyRegenerating,
     specializing,
     anySpecializing,
     onRegenerate,
@@ -383,20 +341,16 @@ const CanonRow: React.FC<{
                         <button
                             type="button"
                             onClick={onRegenerate}
-                            disabled={anyRegenerating || !canon.hasSelection}
+                            disabled={!canon.hasSelection}
                             title={
                                 canon.hasSelection
-                                    ? "Re-render the saved selection (verbatim, no AI) and open the HTML preview"
+                                    ? "Open the HTML preview of the saved selection (verbatim, no AI) — does NOT create a new version"
                                     : "No saved selection yet — use Edit & generate to curate this canon's resume first"
                             }
                             className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border border-white/10 text-[11px] text-white/60 hover:text-white/90 hover:bg-white/[0.04] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                         >
-                            {regenerating ? (
-                                <Loader2 className="w-3 h-3 animate-spin" />
-                            ) : (
-                                <RefreshCw className="w-3 h-3" />
-                            )}
-                            {regenerating ? "Generating…" : "Re-render"}
+                            <RefreshCw className="w-3 h-3" />
+                            Re-render
                         </button>
                         <button
                             type="button"
@@ -729,7 +683,7 @@ const EditCanonForm: React.FC<{
                 onChange={(e) => setKeywords(e.target.value)}
                 disabled={busy}
                 rows={2}
-                placeholder="security officer OR mall patrol OR access control"
+                placeholder="security officer, mall patrol, access control"
                 className="w-full px-3 py-1.5 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40 resize-y"
             />
             <div className="flex items-center gap-1.5 mt-2">
@@ -844,7 +798,7 @@ const CreateCanonForm: React.FC<{
                 onChange={(e) => setKeywords(e.target.value)}
                 disabled={busy}
                 rows={2}
-                placeholder="security officer OR mall patrol OR access control"
+                placeholder="security officer, mall patrol, access control"
                 className="w-full px-3 py-1.5 rounded-lg bg-black/40 border border-white/10 text-sm text-white placeholder-white/30 focus:outline-none focus:border-purple-400/40 resize-y"
             />
             <div className="flex items-center gap-1.5 mt-2">

@@ -5,18 +5,24 @@ import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { resolveSelection, resolveExtras } from "@/lib/canons/selection";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
 import { renderResumeHTML, decorateResumePreview } from "@/lib/resumes/render-html";
+import { renderResumePDF } from "@/lib/resumes/render-pdf";
+import { countPdfPages } from "@/lib/resumes/one-page";
 import type { SectionKey } from "@/lib/resumes/tagline-tailor";
 import type { ProfileWire } from "@/lib/schemas/profile";
 
 export const runtime = "nodejs";
 
 // On-screen HTML preview of a Canon's manual resume selection
-// (docs/archive/resume-manual-builder.html). The builder opens this in a new
-// tab after Generate so links ("Repo" / "Website" / contact) open in their own
-// tab — the PDF render can't do that (Chrome's PDF viewer ignores
-// target=_blank). Rendered VERBATIM (no AI rewrite/tagline) to stay instant +
+// (docs/archive/resume-manual-builder.html). Opened in a new tab by the
+// builder's Generate AND the card's Re-render, so links ("Repo" / "Website" /
+// contact) open in their own tab — the PDF render can't do that (Chrome's PDF
+// viewer ignores target=_blank). Rendered VERBATIM (no AI rewrite/tagline) to
 // match the builder's default; the persisted PDF/DOCX artifact is the
-// authoritative output.
+// authoritative output. This is a read-only GET — it NEVER persists a resume
+// version (Re-render must not count as a generation; only the Generate buttons
+// create versions). It shows a page-fit banner from the exact PDF page count,
+// taken from `?pages=` when the caller already has it (Generate) or rendered
+// here on demand when not (Re-render).
 
 function userIdFromGuard(guard: { session: { user?: unknown } }): string | null {
     const user = guard.session.user as { id?: string } | undefined;
@@ -52,13 +58,25 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         const sectionOrder = selection.sectionOrder.filter((s) => !off.has(s)) as SectionKey[];
         const extras = resolveExtras(profile, selection);
         const props = composeResumeProps(profile, resolved, [], profile.tagline ?? null, extras, sectionOrder);
-        // `?pages=N` is the exact count from the just-rendered PDF (the caller
-        // reads it off the X-Resume-Pages response header). It drives the
-        // authoritative page-fit banner — far more reliable than the builder's
-        // line-count estimate. Absent (preview opened outside the generate
-        // flow) → neutral banner, no page claim.
+
+        // Page-fit banner count. `?pages=N` is the exact count the caller already
+        // has from a just-rendered PDF (the builder's Generate reads it off the
+        // X-Resume-Pages header) — use it and skip a redundant render. Absent
+        // (the card's Re-render opens the preview directly, with NO generation
+        // so it never creates a version) → render the PDF here just to count
+        // pages. Best-effort: a render failure leaves the banner neutral rather
+        // than breaking the preview. NOTHING here persists — this is a pure GET.
         const pagesParam = req.nextUrl.searchParams.get("pages");
-        const pageCount = pagesParam && /^\d+$/.test(pagesParam) ? parseInt(pagesParam, 10) : null;
+        let pageCount: number | null = null;
+        if (pagesParam && /^\d+$/.test(pagesParam)) {
+            pageCount = parseInt(pagesParam, 10);
+        } else {
+            try {
+                pageCount = await countPdfPages(await renderResumePDF(props));
+            } catch (e) {
+                console.warn(`[canons/${id}/preview] page-count render failed:`, e);
+            }
+        }
         const html = decorateResumePreview(await renderResumeHTML(props), pageCount);
 
         return new NextResponse(html, {
