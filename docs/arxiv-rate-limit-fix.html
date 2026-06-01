@@ -369,20 +369,20 @@ export function withSharedCache(
         </div>
       </details>
 
-      <details class="task">
+      <details class="task" open>
         <summary>
           <input type="checkbox">
           <span class="task-id">P4</span>
-          <span class="task-title">Docs + ops</span>
+          <span class="task-title">Docs + ops — P4.1 DONE; P4.2 prod ship HELD (bundles concurrent jobs' held UI work — coordinated-deploy decision)</span>
         </summary>
         <div class="task-body">
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Docs</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.1.1</span><span class="task-title">CLAUDE.md: new subsections (research cache + arXiv bucket) + update existing "Cross-tier call dedup" para (OQ8)</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.1.2</span><span class="task-title">Forward note in docs/archive/cross-tier-llm-dedup.html</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.1</span><span class="task-title">Docs ✓ DONE 2026-05-31</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.1.1</span><span class="task-title">CLAUDE.md: new "Shared cross-tier SQLite cache base + arXiv rate bucket" subsection + updated the existing "Cross-tier call dedup" para (llm-cache on the base, OQ8)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.1.2</span><span class="task-title">Forward note in docs/archive/cross-tier-llm-dedup.html SHIPPED banner</span></summary><div class="task-body"></div></details>
           </div></details>
-          <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Ops</span></summary><div class="task-body">
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2.1</span><span class="task-title">Migrate prod.db (migrate deploy) + pm2 restart … --update-env (all 4 procs)</span></summary><div class="task-body"></div></details>
-            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2.2</span><span class="task-title">next_steps.md update; verify dedup on both tiers (Internal Systems Fetcher Health)</span></summary><div class="task-body"></div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Ops — prod ship HELD pending user OK</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P4.2.1</span><span class="task-title">prod.db already migrated (P1). Remaining: pm2 restart … --update-env (picks up ARXIV_RATE_PER_MIN=14)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2.2</span><span class="task-title">PROD SHIP: npm run build + pm2 restart mission-control mission-control-scheduler-prod — HELD: a rebuild ships ALL committed main work incl. other jobs' "PROD DEPLOY HELD" UI changes. Needs a coordinated-deploy decision. (Build NOT run yet — building alone overwrites .next under the running prod server; build+restart must be atomic. tsc clean is the pre-flight.) Then verify cross-tier dedup live.</span></summary><div class="task-body"></div></details>
           </div></details>
         </div>
       </details>
