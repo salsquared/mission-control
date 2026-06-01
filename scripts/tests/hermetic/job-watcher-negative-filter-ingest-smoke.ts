@@ -18,7 +18,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { AddressInfo } from "net";
 import { PrismaClient } from "@prisma/client";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 // Test-only: allow fetching the in-process fixture at 127.0.0.1. The SSRF guard
 // in lib/security/url-guard.ts rejects private IPs otherwise. Must be set
@@ -72,11 +72,16 @@ async function main() {
     const fixture = new FixtureServer();
     await fixture.start();
 
-    const user = await prisma.user.findFirst();
-    if (!user) {
-        console.error("No user in dev.db — log in first.");
-        process.exit(1);
-    }
+    // Synthetic throwaway user — never attach test data (or a stray per-posting
+    // notification) to the REAL dev.db user. Earlier this used
+    // prisma.user.findFirst() and left the survivor's notification uncleaned, so
+    // every push dripped a "NegFilter-Ingest-Co — Operations Coordinator" row
+    // into the real notification feed. Cleaned up in `finally` below.
+    const tag = randomBytes(4).toString("hex");
+    const userId = `negfilt-ingest-smoke-user-${tag}`;
+    await prisma.user.create({
+        data: { id: userId, email: `negfilt-ingest-smoke-${tag}@example.invalid` },
+    });
 
     // Snapshot + override the global filter to a known value (block "Senior").
     const origGlobalRow = await prisma.globalSetting.findUnique({
@@ -103,11 +108,14 @@ async function main() {
         // stale candidates (no probe).
         const wl = await prisma.watchlist.create({
             data: {
-                userId: user.id,
+                userId,
                 name: "NegFilter-Ingest-WL",
                 kind: "careers-page",
                 config: wlConfig,
                 scheduleMinutes: 60,
+                // This smoke asserts the ingest DROP, not notification dispatch —
+                // silence it so the surviving posting never fires a notification.
+                notificationMode: "silent",
                 lastSuccessAt: new Date(Date.now() - 60 * 60 * 1000),
             },
         });
@@ -156,6 +164,10 @@ async function main() {
             await prisma.jobPosting.deleteMany({ where: { watchlistId: wId } }).catch(() => undefined);
             await prisma.watchlist.delete({ where: { id: wId } }).catch(() => undefined);
         }
+        // Belt-and-suspenders: even with notificationMode="silent" + a synthetic
+        // user, drop anything this run dispatched and the throwaway user itself.
+        await prisma.notification.deleteMany({ where: { userId } }).catch(() => undefined);
+        await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
         await fixture.stop();
         await prisma.$disconnect();
         console.log(`\n${passes}/${passes + fails} steps passed`);
