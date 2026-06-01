@@ -312,7 +312,7 @@ flowchart TB
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P4</span>
           <span class="task-title">Phase 4 — Verify + ship</span>
         </summary>
@@ -323,7 +323,7 @@ flowchart TB
             <div class="task-body"><p>Asserts: <code>resolveSelection</code> drops a deleted entity/bullet; included entities render in profile order with only their chosen bullets; an entity absent from <code>entities</code> doesn't render; the <code>excluded</code> id-list round-trips through save/load; the one-page pruner is not applied; a <code>canonId</code> with no selection errors (no auto fallback — OQ15); the empty-selection guard fires. Append to <code>SUITES</code> in <code>pre-push.sh</code>.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title"><code>tsc</code> clean → prod build → <code>pm2 restart</code> → deploy notes</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P4.2</span><span class="task-title"><code>tsc</code> clean → prod build → <code>pm2 restart</code> → deploy notes</span></summary>
             <div class="task-body"><p>Update <code>docs/next_steps.md</code>; note the dev.db + prod.db migration in the same coordinated deploy.</p></div>
           </details>
         </div>
