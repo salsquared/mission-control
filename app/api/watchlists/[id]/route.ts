@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { WatchlistPatchSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
+import { deleteOrphanedSideCanon } from "@/lib/watchlists/cascade-canon";
 
 export const runtime = "nodejs";
 
@@ -124,13 +125,26 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
 
     const { id } = await params;
-    if (!await ownedWatchlist(userId, id)) {
+    const existing = await ownedWatchlist(userId, id);
+    if (!existing) {
         return NextResponse.json({ error: "Watchlist not found" }, { status: 404 });
     }
 
     try {
         await prisma.watchlist.delete({ where: { id } });
         broadcastEvent({ model: 'Watchlist', action: 'delete', id, timestamp: Date.now() });
+        // "Last-one-out" cleanup: retire the linked SIDE canon once no watchlist
+        // still feeds it. Generated resumes + applications survive (the FK is
+        // onDelete: SetNull) — they stay in the Generated Resumes card. This is
+        // best-effort: never fail the watchlist delete on canon-cleanup trouble.
+        try {
+            const deletedCanonId = await deleteOrphanedSideCanon(userId, existing.canonId);
+            if (deletedCanonId) {
+                broadcastEvent({ model: 'Canon', action: 'delete', id: deletedCanonId, timestamp: Date.now() });
+            }
+        } catch (e) {
+            console.warn(`[watchlists/${id} DELETE] canon cascade failed:`, e instanceof Error ? e.message : e);
+        }
         return NextResponse.json({ success: true, id }, { status: 200 });
     } catch (e) {
         console.error(`[watchlists/${id} DELETE] error:`, e);
