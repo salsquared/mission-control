@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>Manual Resume Builder</h1>
-  <p class="subtitle">Replace the keyword-scoring auto-selector with a hand-curated, per-Canon bullet selection — so a Security-Officer job never leaks onto an ML/AI resume, because it's structurally absent from that Canon, not just unlucky in a score.</p>
+  <p class="subtitle">Retire the keyword-scoring auto-selector and replace it with a hand-curated, per-Canon bullet selection — so a Security-Officer job never leaks onto an ML/AI resume, because it's structurally absent from that Canon, not just unlucky in a score.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -42,13 +42,14 @@
 
       <h3>Goals &amp; non-goals</h3>
       <ul>
-        <li><strong>Goal:</strong> a manual builder that shows the user's <em>entire</em> profile (work roles, projects, education, and skills/languages/interests) and lets them hand-pick what goes on a resume.</li>
+        <li><strong>Goal:</strong> a manual builder that shows the user's <em>entire</em> profile (work roles, projects, education, and skills/languages/interests) and lets them hand-pick what goes on a resume — per-entity <em>and</em> per-bullet.</li>
         <li><strong>Goal:</strong> the selection is <strong>saved per-Canon</strong> and re-renderable — &ldquo;ML Engineer&rdquo; and &ldquo;Security Officer&rdquo; are separate curated selections.</li>
-        <li><strong>Goal:</strong> a <strong>per-entity lock state</strong> (always-in / out) so relevance is a property you set, not something the algorithm re-decides each run.</li>
-        <li><strong>Goal:</strong> AI rewrite + tagline survive as <strong>opt-in toggles</strong> (default off → verbatim render); the old scoring pipeline survives as a <strong>&ldquo;Suggest from posting&rdquo;</strong> pre-fill button.</li>
+        <li><strong>Goal:</strong> <strong>no automated selection at all</strong> — the keyword scorer is retired from the selection path (OQ4). What's on the resume is exactly what the user checked; nothing is auto-decided, scored, or force-kept.</li>
+        <li><strong>Goal:</strong> AI rewrite + tagline survive as <strong>opt-in toggles</strong> (default off → verbatim render).</li>
+        <li><strong>Goal:</strong> a <strong>live page-count indicator</strong> in the builder (OQ9) so the user owns length deliberately.</li>
         <li><strong>Goal:</strong> reuse the existing render / <code>specialize</code> / persistence / staleness / versioning machinery unchanged.</li>
+        <li><strong>Non-goal:</strong> any &ldquo;Suggest&rdquo; / auto-prefill in v1 — deferred (OQ4); if it returns it'll be an LLM <em>relevance</em> pass, not the keyword scorer.</li>
         <li><strong>Non-goal:</strong> drag-to-reorder of sections/entities/bullets — deferred (OQ8); v1 inherits profile order.</li>
-        <li><strong>Non-goal:</strong> a live in-builder page-count preview — deferred (OQ9); v1 reports page count after render.</li>
         <li><strong>Non-goal:</strong> deprecating or removing the one-off URL/paste generator (<code>GenerateResumeCard</code>) — deferred (OQ12).</li>
         <li><strong>Non-goal:</strong> cover letters, multi-template, per-company personalization — out of scope.</li>
       </ul>
@@ -59,15 +60,13 @@
     <summary><h2 id="design">Design</h2></summary>
     <div class="section-body">
       <h3>Approach</h3>
-      <p>Extend the <strong>Canon</strong>. Today a Canon owns one reusable resume whose fixed bullet set lives <em>implicitly</em> inside the latest <code>GeneratedResume.selections</code> (a flat JSON array), produced by the auto-pipeline at &ldquo;Regenerate&rdquo; time. We make that selection a <strong>first-class, user-editable definition on the Canon</strong> — a new <code>Canon.selection</code> JSON field (OQ6) — and replace &ldquo;Regenerate&rdquo;'s auto-pipeline with a manual editor. Generate then becomes the <code>specialize</code> flow almost verbatim: <em>resolve the saved selection against the live profile → (optionally) rewrite + tagline → compose → render → persist</em>.</p>
+      <p>Extend the <strong>Canon</strong>. Today a Canon owns one reusable resume whose fixed bullet set lives <em>implicitly</em> inside the latest <code>GeneratedResume.selections</code> (a flat JSON array), produced by the auto-pipeline at &ldquo;Regenerate&rdquo; time. We make that selection a <strong>first-class, user-editable definition on the Canon</strong> — a new <code>Canon.selection</code> JSON field (OQ6) — and replace &ldquo;Regenerate&rdquo;'s auto-pipeline with a manual editor. Generate then becomes the <code>specialize</code> flow almost verbatim: <em>resolve the saved selection against the live profile → (optionally) rewrite + tagline → compose → render → persist</em>. The manual path <strong>never calls <code>selectBullets</code></strong>, so the spine rule, the all-education-kept rule, and the one-page pruner simply don't run — the resume is exactly the checked set.</p>
 
       <pre class="mermaid">
 flowchart TB
   card["Canon row<br/>(CanonsCard)"] -->|"Edit &amp; generate"| overlay["Resume Builder overlay<br/>(Window-class)"]
   profile[("Profile<br/>roles · projects · education · extras")] --> overlay
   saved[("Canon.selection<br/>saved JSON")] --> overlay
-  overlay -->|"Suggest from posting"| suggest["selectBullets<br/>pre-fills 'auto' entities"]
-  suggest --> overlay
   overlay -->|"Save"| put["PUT /api/canons/:id/selection"]
   put --> saved
   overlay -->|"Generate"| gen["POST /api/resumes<br/>(canonId)"]
@@ -84,32 +83,27 @@ flowchart TB
       <pre><code class="language-json">{
   "version": 1,
   "sectionOrder": ["experience", "projects", "education", "skills", "languages", "interests"],
-  "sectionsOff": ["interests"],          // section types the user toggled entirely off
+  "sectionsOff": ["interests"],          // section types toggled entirely off
   "entities": {
-    "&lt;workRoleId&gt;": { "kind": "workRole", "state": "always", "bulletIds": ["b1", "b3"] },
-    "&lt;projectId&gt;":  { "kind": "project",  "state": "auto",   "bulletIds": ["b7"] },
-    "&lt;guardRoleId&gt;": { "kind": "workRole", "state": "never",  "bulletIds": [] }
+    "&lt;workRoleId&gt;": { "kind": "workRole", "bulletIds": ["b1", "b3"] },
+    "&lt;projectId&gt;":  { "kind": "project",  "bulletIds": ["b7"] }
   },
+  // (OQ5) optional forward-compat: "excluded": ["&lt;guardRoleId&gt;"]
   "extras": { "skillItems": ["PyTorch", "..."], "languages": ["Spanish"], "hobbies": [] }
 }</code></pre>
-      <p><strong>Per-entity state (OQ5)</strong> is the crux of the fix — three values:</p>
-      <ul>
-        <li><strong><code>always</code></strong> (🔒) — always rendered; &ldquo;Suggest from posting&rdquo; cannot remove it.</li>
-        <li><strong><code>auto</code></strong> (default) — eligible; &ldquo;Suggest from posting&rdquo; may toggle it in/out based on score.</li>
-        <li><strong><code>never</code></strong> (🚫) — never rendered; &ldquo;Suggest&rdquo; <em>must respect this</em> and never re-add it.</li>
-      </ul>
-      <p>The Security-Officer job set to <code>never</code> on the ML Canon is the structural fix: no re-score, no spine rule, no &ldquo;Suggest&rdquo; pass can put it back. Within an included entity, <code>bulletIds</code> is the ordered set of bullets to render (OQ7 — per-bullet granularity).</p>
+      <p><strong>Selection is binary</strong> (the consequence of retiring Suggest — OQ4/OQ5). Each entity in <code>entities</code> is <em>included</em>, and its <code>bulletIds</code> are exactly the bullets that render, in that order. An entity not listed is excluded. There's no <code>state</code> / lock field because v1 has <strong>no automated process to gate against</strong> — &ldquo;always-in&rdquo; is just &ldquo;checked&rdquo; and &ldquo;never&rdquo; is just &ldquo;unchecked&rdquo;.</p>
+      <p>The Security-Officer job is simply absent from the ML Canon's <code>entities</code> map — and with no scorer, no spine rule, and no Suggest in the picture, <em>nothing</em> can put it back. That's the structural fix. (OQ5 open: whether to also persist an explicit <code>excluded</code> id-list as forward-compat insurance, so a possible future LLM Suggest wouldn't re-propose deliberate excludes.) Within an included entity, <code>bulletIds</code> is the ordered set of bullets to render (OQ7 — per-bullet granularity).</p>
 
       <h3>Touch list</h3>
       <ul>
         <li><code>prisma/schema.prisma</code> — add <code>Canon.selection String?</code> (nullable JSON); migration applied to <strong>both</strong> <code>dev.db</code> + <code>prod.db</code> (additive, no data risk).</li>
         <li><code>lib/schemas/canons.ts</code> — a <code>CanonSelectionSchema</code> sub-shape; thread it onto <code>CanonSchema</code> (parsed) and a new <code>CanonSelectionPutSchema</code> request shape.</li>
         <li><code>lib/repositories/canons.ts</code> — parse/serialize the JSON; <code>getCanonSelection</code> / <code>saveCanonSelection</code>.</li>
-        <li><strong>NEW</strong> <code>lib/canons/selection.ts</code> — <code>resolveSelection(profile, selection) → ResumeSelection</code> (extends/reuses <code>reconstructSelection</code>) and <code>suggestPrefill(profile, keywords, prev) → selection</code> (runs <code>selectBullets</code>, honoring <code>always</code>/<code>never</code>).</li>
+        <li><strong>NEW</strong> <code>lib/canons/selection.ts</code> — <code>resolveSelection(profile, selection) → ResumeSelection</code> (extends/reuses <code>reconstructSelection</code>; included entities + their chosen bullets, in order, dropping deleted ids).</li>
         <li><strong>NEW</strong> <code>app/api/canons/[id]/selection/route.ts</code> + <code>meta.ts</code> — <code>GET</code> (load) / <code>PUT</code> (save) the manual selection.</li>
-        <li><code>app/api/resumes/route.ts</code> — when generating for a <code>canonId</code> that has a manual <code>selection</code>, branch to the <em>resolve</em> path (skip auto <code>selectBullets</code>); gate rewrite + tagline behind the toggles; keep the auto-pipeline as the fallback when no manual selection exists.</li>
+        <li><code>app/api/resumes/route.ts</code> — when generating for a <code>canonId</code> that has a manual <code>selection</code>, branch to the <em>resolve</em> path (skip auto <code>selectBullets</code> + the one-page pruner); gate rewrite + tagline behind the toggles; keep the auto-pipeline as the fallback when no manual selection exists.</li>
         <li><code>app/api/resumes/specialize/route.ts</code> — already reconstructs + re-words; minimal change (optionally read the Canon's <code>selection</code> definition instead of the last rendered resume's <code>selections</code>).</li>
-        <li><strong>NEW</strong> <code>components/overlays/ResumeBuilderOverlay.tsx</code> — Window-class overlay (per the component hierarchy): profile tree → entities (lock toggle) → bullets (checkboxes), extras pickers, &ldquo;Suggest from posting&rdquo;, rewrite/tagline toggles, Generate.</li>
+        <li><strong>NEW</strong> <code>components/overlays/ResumeBuilderOverlay.tsx</code> — Window-class overlay (per the component hierarchy): profile tree → entity checkboxes → bullet checkboxes, extras pickers, live page-count indicator (OQ9), rewrite/tagline toggles, Save / Generate.</li>
         <li><code>components/cards/profile/CanonsCard.tsx</code> — &ldquo;Edit &amp; generate&rdquo; entry that opens the overlay (replaces/augments &ldquo;Regenerate&rdquo;).</li>
         <li><code>lib/api-client.ts</code> + query keys; regenerate <code>docs/apis.html</code> (<code>npm run gen:api-docs</code>).</li>
         <li><strong>NEW</strong> hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code> → append to <code>SUITES</code> in <code>pre-push.sh</code>.</li>
@@ -117,10 +111,11 @@ flowchart TB
 
       <h3>Alternatives considered</h3>
       <ul>
+        <li><strong>Keep the keyword scorer as a &ldquo;Suggest from posting&rdquo; pre-fill.</strong> Rejected (OQ4): it's the exact mechanism being replaced — keyword overlap is why the guard bullet matched in the first place. A pre-fill built on it inherits the flaw. If a suggestion affordance is ever wanted, it should be a semantic LLM relevance pass, not the scorer.</li>
+        <li><strong>Three-state entity model (always / auto / never).</strong> Rejected (OQ5): those states only earned their keep when a Suggest pass needed fencing. With no automated mutation, they collapse to a plain checkbox; carrying them would be dead complexity.</li>
         <li><strong>Per-bullet global <code>locked</code>/<code>excluded</code> flags (already exist).</strong> Rejected: those are <em>global</em> — they affect every resume. The whole point is &ldquo;include this job on my Security resume but never on my ML one,&rdquo; which is inherently per-Canon. Manual selection lives at the Canon, not the bullet.</li>
         <li><strong>Relational <code>CanonSelectionEntry</code> table.</strong> Rejected for v1: the stored selection is already JSON (<code>GeneratedResume.selections</code>), the resolve-against-live-profile pattern already exists, and a JSON column matches the house pattern with no join model to maintain. Revisit only if we need to query selections across canons.</li>
-        <li><strong>Keep the auto-pipeline and bolt on a manual exclude list.</strong> Rejected: doesn't deliver the &ldquo;show everything, pick what you want&rdquo; UX the user asked for, and leaves the spine/soft-keyword leaks intact for everything not explicitly excluded.</li>
-        <li><strong>Drag-reorder + live page preview in v1.</strong> Deferred (OQ8/OQ9): real work, not load-bearing for the relevance fix. v1 inherits profile order and reports page count after render.</li>
+        <li><strong>Drag-reorder in v1.</strong> Deferred (OQ8): real work, not load-bearing for the relevance fix. v1 inherits profile order.</li>
       </ul>
     </div>
   </details>
@@ -136,6 +131,7 @@ flowchart TB
           <tr><td>Migration touches <code>prod.db</code> (mailbox-equivalent, backed up)</td><td>low</td><td>Column is additive + nullable — no data rewrite. Back up first (<code>scripts/backup-db.sh</code>); apply to dev.db + prod.db via <code>prisma migrate deploy</code> with <code>DATABASE_URL</code> pointed at each.</td></tr>
           <tr><td>Empty selection → blank resume</td><td>low</td><td>Generate guards on a non-empty resolved selection and errors (mirrors the <code>specialize</code> &ldquo;selection is empty&rdquo; guard) before rendering.</td></tr>
           <tr><td>Existing canons have no manual selection yet (back-compat)</td><td>high (every existing canon)</td><td>Manual path is gated on <code>Canon.selection != null</code>; until set, &ldquo;Regenerate&rdquo; keeps the auto-pipeline. On first open the builder <strong>pre-fills</strong> from the current resume's stored <code>selections</code> (P3.3) so the user starts curated, not empty.</td></tr>
+          <tr><td>No one-page guardrail → user ships a 3-page resume unknowingly</td><td>med</td><td>The live page-count indicator (OQ9) makes length visible while editing; Generate can also surface the final page count. By design the user owns length — we inform, not prune.</td></tr>
           <tr><td>Schema-behind tier (prod.db lagging) emits Prisma <code>P2021</code></td><td>low</td><td>Additive column; apply the migration to both tiers in the same deploy. The manual route 500s cleanly (caught) rather than corrupting state if the column is missing.</td></tr>
         </tbody>
       </table>
@@ -149,46 +145,46 @@ flowchart TB
     <summary><h2 id="open-questions">Open Questions</h2></summary>
     <div class="section-body">
       <h3>Unresolved decisions</h3>
-      <p>The four forks below the line are <strong>decided</strong> (this session's design conversation). OQ5–OQ13 are open; each carries a <em>Lean</em>. <strong>Resolve all open OQs with the user before writing implementation code.</strong> OQ5/OQ6/OQ7 define the data model and gate Phase 1, so settle those first.</p>
+      <p>Most forks are now <strong>decided</strong> (this session's design conversation). Only <strong>two remain genuinely open: OQ5</strong> (final nod on pure-binary vs a forward-compat exclude layer — gates the Phase 1 data model) and <strong>the OQ9 sub-point</strong> (live-preview fidelity). The five marked <em>✓ Defaulted</em> were taken to my stated lean to keep momentum — say the word to revisit any. <strong>Resolve OQ5 before writing Phase 1 code.</strong></p>
 
       <div class="callout tip"><strong>OQ1 — What does the AI still do on the manually-picked bullets?</strong><br/>
         <strong>✓ Decided:</strong> manual selection is the core; <strong>rewrite + tagline are opt-in toggles, default off</strong> → deterministic verbatim render. The selection problem is separate from wording, so wording stays optional polish.</div>
 
       <div class="callout tip"><strong>OQ2 — What does &ldquo;locked aka always there&rdquo; mean?</strong><br/>
-        <strong>✓ Decided:</strong> lock is <strong>per-entity</strong> (🔒 ML Engineer always, Security Guard never), <em>not</em> per-section-type. Relevance is a state you set on an entity.</div>
+        <strong>✓ Decided (revised):</strong> lock is <strong>per-entity</strong>, not per-section-type. <em>But</em> once Suggest was dropped (OQ4) there's no automated process to lock against, so &ldquo;lock&rdquo; collapses to a plain include/exclude checkbox. The per-entity (and per-bullet) granularity stands; the separate &ldquo;lock&rdquo; affordance does not.</div>
 
       <div class="callout tip"><strong>OQ3 — Is a manual selection saved and reusable?</strong><br/>
         <strong>✓ Decided:</strong> saved <strong>per-Canon</strong>, re-renderable. Canons already model the user's job-search lanes; &ldquo;ML resume vs security resume&rdquo; lives there.</div>
 
       <div class="callout tip"><strong>OQ4 — What happens to the existing auto-scoring pipeline?</strong><br/>
-        <strong>✓ Decided:</strong> it survives as an optional <strong>&ldquo;Suggest from posting&rdquo;</strong> pre-fill button — a starting guess the user edits, not the decider.</div>
+        <strong>✓ Decided (revised):</strong> <strong>no &ldquo;Suggest&rdquo; button in v1.</strong> The keyword auto-selector (<code>selectBullets</code>) is <em>retired</em> from the selection path — not demoted to a pre-fill. (Expanding OQ11 showed a keyword-overlap Suggest inherits the exact flaw that motivated this redesign.) If a suggestion affordance returns later it'll be an <strong>LLM relevance pass</strong> (semantic, respects deliberate excludes), scored against canon keywords — explicitly deferred.</div>
 
-      <div class="callout"><strong>OQ5 — Entity state cardinality: three states or two?</strong><br/>
-        Options: <strong>(A)</strong> three — <code>always</code> / <code>auto</code> / <code>never</code>; or <strong>(B)</strong> two — <code>in</code> / <code>out</code>, where &ldquo;Suggest&rdquo; may re-propose any out entity. <em>Lean:</em> A. The third state (<code>never</code>) is what stops &ldquo;Suggest from posting&rdquo; from re-adding the Security-Officer job every run; with B the user re-excludes it forever. <em>Status:</em> open.</div>
+      <div class="callout"><strong>OQ5 — Pure binary, or binary + a forward-compat exclude layer?</strong><br/>
+        With Suggest removed (OQ4) the original <code>always</code>/<code>auto</code>/<code>never</code> collapses to a plain included/excluded checkbox per entity and per bullet. Options: <strong>(A)</strong> pure binary — an entity is either in <code>entities</code> (with chosen <code>bulletIds</code>) or absent; <strong>(B)</strong> binary + an explicit <code>excluded</code> id-list recording <em>deliberate</em> excludes, as forward-compat insurance so a future LLM Suggest wouldn't re-propose the guard job. <em>Lean:</em> A (truly minimal); B costs one array now to save a future annoyance. <em>Status:</em> <strong>open — needs final nod; gates Phase 1.</strong></div>
 
-      <div class="callout"><strong>OQ6 — Where is the selection stored?</strong><br/>
-        Options: <strong>(A)</strong> a single nullable JSON column <code>Canon.selection</code>; <strong>(B)</strong> a relational <code>CanonSelectionEntry</code> table; <strong>(C)</strong> reuse the existing deferred <code>Canon.pinnedEntityIds</code>/<code>sectionOrder</code> fields. <em>Lean:</em> A — matches the house JSON-selection pattern, resolved best-effort against the live profile; no join model. <em>Status:</em> open.</div>
+      <div class="callout tip"><strong>OQ6 — Where is the selection stored?</strong><br/>
+        <strong>✓ Defaulted (to lean):</strong> a single nullable JSON column <code>Canon.selection</code> — matches the house JSON-selection pattern, resolved best-effort against the live profile; no join model. (Alternatives: relational table; reuse the deferred <code>pinnedEntityIds</code>/<code>sectionOrder</code> fields.)</div>
 
-      <div class="callout"><strong>OQ7 — Bullet granularity in v1: per-bullet, or entity-level only?</strong><br/>
-        Options: <strong>(A)</strong> per-bullet checkboxes within an included entity; <strong>(B)</strong> include an entity ⇒ all its bullets render. <em>Lean:</em> A — picking which bullets show is core to a good resume and cheap given the data is already there. <em>Status:</em> open.</div>
+      <div class="callout tip"><strong>OQ7 — Bullet granularity in v1?</strong><br/>
+        <strong>✓ Decided:</strong> per-bullet checkboxes within an included entity (the user's &ldquo;select the ones I want&rdquo;). Picking which bullets show is core to a good resume and cheap given the data is already there.</div>
 
-      <div class="callout"><strong>OQ8 — Ordering control in v1?</strong><br/>
-        Options: <strong>(A)</strong> inherit profile <code>position</code> order + a fixed <code>DEFAULT_SECTION_ORDER</code>; <strong>(B)</strong> drag-reorder sections/entities/bullets. <em>Lean:</em> A for v1, defer B. <em>Status:</em> open.</div>
+      <div class="callout tip"><strong>OQ8 — Ordering control in v1?</strong><br/>
+        <strong>✓ Defaulted (to lean):</strong> inherit profile <code>position</code> order + a fixed <code>DEFAULT_SECTION_ORDER</code>; defer drag-reorder of sections/entities/bullets to a later phase.</div>
 
       <div class="callout"><strong>OQ9 — Length / one-page handling?</strong><br/>
-        Options: <strong>(A)</strong> drop the auto one-page pruner in manual mode (the user owns length) and report page count after render; <strong>(B)</strong> keep the auto-pruner; <strong>(C)</strong> live in-builder page preview. <em>Lean:</em> A — auto-pruning contradicts &ldquo;manual&rdquo; (it would silently drop the user's picks). Defer C. <em>Status:</em> open.</div>
+        <strong>✓ Decided:</strong> the manual path <em>drops</em> the one-page auto-pruner (the user owns length), and the builder shows a <strong>live page indicator</strong> as boxes are toggled. <em>Open sub-point:</em> fidelity — a true PDF render-on-edit (exact, ~seconds each) vs a fast in-browser HTML/height <em>estimate</em> that's confirmed-exact at Generate. <em>Lean:</em> fast estimate live + exact count at Generate. <em>Status:</em> sub-point open.</div>
 
-      <div class="callout"><strong>OQ10 — UI surface for the builder?</strong><br/>
-        Options: <strong>(A)</strong> a full-screen Window-class overlay launched from the Canon row; <strong>(B)</strong> a new dash/view; <strong>(C)</strong> inline expansion inside <code>CanonsCard</code>. <em>Lean:</em> A — the full profile tree is too big for a card; an overlay is the established escape-the-grid pattern. <em>Status:</em> open.</div>
+      <div class="callout tip"><strong>OQ10 — UI surface for the builder?</strong><br/>
+        <strong>✓ Decided:</strong> a full-screen <strong>Window-class overlay</strong> launched from the Canon row — the full profile tree is too big for an in-grid card, and an overlay is the established escape-the-grid pattern (like the AI Companion).</div>
 
-      <div class="callout"><strong>OQ11 — &ldquo;Suggest from posting&rdquo; input?</strong><br/>
-        Options: <strong>(A)</strong> the Canon's own <code>keywords</code>; <strong>(B)</strong> a pasted/linked specific posting; <strong>(C)</strong> both. <em>Lean:</em> C — default to canon keywords, allow pasting a specific posting to bias the suggestion. <em>Status:</em> open.</div>
+      <div class="callout tip"><strong>OQ11 — &ldquo;Suggest from posting&rdquo; input?</strong><br/>
+        <strong>✓ Resolved — moot.</strong> No Suggest in v1 (OQ4), so there's no input to choose. If an LLM relevance Suggest is built later, the input is canon keywords by default with an optional pasted posting to refine.</div>
 
-      <div class="callout"><strong>OQ12 — Fate of the one-off generator (<code>GenerateResumeCard</code> URL/paste/pipeline)?</strong><br/>
-        Options: <strong>(A)</strong> keep it as the quick non-canon throwaway path; <strong>(B)</strong> fold it into the builder; <strong>(C)</strong> deprecate it. <em>Lean:</em> A for now — the canon builder is the curated path; revisit once the builder lands. <em>Status:</em> open.</div>
+      <div class="callout tip"><strong>OQ12 — Fate of the one-off generator (<code>GenerateResumeCard</code>)?</strong><br/>
+        <strong>✓ Defaulted (to lean):</strong> keep it as the quick non-canon throwaway path for now; the canon builder is the curated path. Revisit once the builder lands.</div>
 
-      <div class="callout"><strong>OQ13 — Rewrite scope when the toggle is on?</strong><br/>
-        Options: <strong>(A)</strong> keep today's behavior — rewrite only posting-matching bullets, pass no-match bullets through verbatim (<code>rewrite.ts</code> pre-filter); <strong>(B)</strong> rewrite every included bullet. <em>Lean:</em> A — avoids cross-domain invention and saves tokens; tagline still needs a posting/keywords. <em>Status:</em> open.</div>
+      <div class="callout tip"><strong>OQ13 — Rewrite scope when the toggle is on?</strong><br/>
+        <strong>✓ Defaulted (to lean):</strong> keep today's behavior — rewrite only posting-matching bullets, pass no-match bullets through verbatim (<code>rewrite.ts</code> pre-filter); avoids cross-domain invention and saves tokens. Tagline still needs a posting/keywords.</div>
     </div>
   </details>
 
@@ -196,13 +192,13 @@ flowchart TB
     <summary><h2 id="tasks">Tasks</h2></summary>
     <div class="section-body">
       <h3>Implementation checklist</h3>
-      <p><strong>No code until OQ5–OQ13 are resolved.</strong> Phase 1 is blocked on OQ5/OQ6/OQ7 (the data model).</p>
+      <p><strong>Resolve OQ5 (and the OQ9 sub-point) before Phase 1.</strong> Everything else is decided.</p>
 
       <details class="task" open>
         <summary>
           <input type="checkbox">
           <span class="task-id">P1</span>
-          <span class="task-title">Phase 1 — Selection data model + resolve/suggest core</span>
+          <span class="task-title">Phase 1 — Selection data model + resolve core</span>
         </summary>
         <div class="task-body">
           <p>The substrate: persist a per-Canon selection and turn it into a renderable <code>ResumeSelection</code>. Ship + verify before any UI.</p>
@@ -232,7 +228,7 @@ flowchart TB
               <p>The API contract + read/write helpers.</p>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title"><code>CanonSelectionSchema</code> in <code>lib/schemas/canons.ts</code></span></summary>
-                <div class="task-body"><p>Entity map (<code>kind</code>, <code>state</code> always/auto/never, <code>bulletIds</code>), extras, <code>sectionOrder</code>/<code>sectionsOff</code>; thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
+                <div class="task-body"><p>Binary entity map (<code>kind</code>, <code>bulletIds</code>; entities present ⇒ included), <code>extras</code>, <code>sectionOrder</code>/<code>sectionsOff</code> (+ optional <code>excluded</code> per OQ5); thread onto <code>CanonSchema</code> + a <code>CanonSelectionPutSchema</code>.</p></div>
               </details>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title"><code>getCanonSelection</code> / <code>saveCanonSelection</code> in <code>lib/repositories/canons.ts</code></span></summary>
@@ -245,17 +241,13 @@ flowchart TB
             <summary>
               <input type="checkbox">
               <span class="task-id">P1.3</span>
-              <span class="task-title">Selection resolution + suggestion library</span>
+              <span class="task-title">Selection resolution library</span>
             </summary>
             <div class="task-body">
               <p>NEW <code>lib/canons/selection.ts</code>.</p>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P1.3.1</span><span class="task-title"><code>resolveSelection(profile, selection) → ResumeSelection</code></span></summary>
-                <div class="task-body"><p>Build the nested selection from the saved definition + live profile, dropping deleted entities/bullets (extend/reuse <code>reconstructSelection</code>).</p></div>
-              </details>
-              <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.3.2</span><span class="task-title"><code>suggestPrefill(profile, keywords, prev) → selection</code></span></summary>
-                <div class="task-body"><p>Run <code>selectBullets</code> for a pre-fill; flip only <code>auto</code> entities, never touch <code>always</code>/<code>never</code> (OQ5).</p></div>
+                <div class="task-body"><p>Build the nested selection from the saved definition + live profile: included entities in order, each with its chosen bullets, dropping deleted entities/bullets (extend/reuse <code>reconstructSelection</code>).</p></div>
               </details>
             </div>
           </details>
@@ -276,7 +268,7 @@ flowchart TB
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Branch <code>app/api/resumes/route.ts</code> on a manual selection</span></summary>
-            <div class="task-body"><p>If the <code>canonId</code> has <code>selection != null</code>: <code>resolveSelection</code> instead of auto <code>selectBullets</code>; gate rewrite + tagline behind toggles (OQ1/OQ13); else keep the auto-pipeline fallback.</p></div>
+            <div class="task-body"><p>If the <code>canonId</code> has <code>selection != null</code>: <code>resolveSelection</code> instead of auto <code>selectBullets</code> (and skip the one-page pruner); gate rewrite + tagline behind toggles (OQ1/OQ13); else keep the auto-pipeline fallback.</p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Regenerate <code>docs/apis.html</code></span></summary>
@@ -295,7 +287,7 @@ flowchart TB
           <p>The overlay + the Canon entry point.</p>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">NEW <code>components/overlays/ResumeBuilderOverlay.tsx</code></span></summary>
-            <div class="task-body"><p>Profile tree → entity lock toggles → bullet checkboxes → extras pickers → &ldquo;Suggest from posting&rdquo; → rewrite/tagline toggles → Save / Generate (OQ10).</p></div>
+            <div class="task-body"><p>Profile tree → entity checkboxes → bullet checkboxes → extras pickers → live page indicator (OQ9) → rewrite/tagline toggles → Save / Generate (OQ10).</p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">&ldquo;Edit &amp; generate&rdquo; entry in <code>CanonsCard.tsx</code> + <code>lib/api-client.ts</code></span></summary>
@@ -318,7 +310,7 @@ flowchart TB
           <p>Tests, build, deploy.</p>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Hermetic smoke <code>scripts/tests/hermetic/canon-manual-selection-smoke.ts</code></span></summary>
-            <div class="task-body"><p>Asserts: resolve drops a deleted entity; <code>suggestPrefill</code> respects <code>always</code>/<code>never</code>; generate-from-manual produces the expected <code>ResumeSelection</code>; empty-selection guard fires. Append to <code>SUITES</code> in <code>pre-push.sh</code>.</p></div>
+            <div class="task-body"><p>Asserts: <code>resolveSelection</code> drops a deleted entity/bullet; included entities render in order with only their chosen bullets; an excluded entity never appears; generate-from-manual produces the expected <code>ResumeSelection</code>; empty-selection guard fires. Append to <code>SUITES</code> in <code>pre-push.sh</code>.</p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title"><code>tsc</code> clean → prod build → <code>pm2 restart</code> → deploy notes</span></summary>
