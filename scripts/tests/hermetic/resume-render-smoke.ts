@@ -78,7 +78,7 @@ const profile: ProfileWire = {
             name: "mission-control",
             description: "Personal job-search dashboard built in Next.js.",
             repoUrl: "https://github.com/salsquared/mission-control",
-            liveUrl: null,
+            liveUrl: "https://mission-control.salsquared.xyz",
             bullets: [
                 mkBullet("b5", "Designed a dash carousel architecture in Next.js + Zustand", ["nextjs", "zustand"]),
             ],

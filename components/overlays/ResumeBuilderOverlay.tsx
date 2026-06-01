@@ -394,10 +394,16 @@ export function ResumeBuilderOverlay(props: ResumeBuilderOverlayProps): React.JS
                 const m = cd.match(/filename="([^"]+)"/);
                 return m?.[1] ?? `resume.${responseFormat}`;
             })();
-            const objectUrl = URL.createObjectURL(blob);
             if (responseFormat === "pdf") {
-                window.open(objectUrl, "_blank");
+                // Open an HTML preview (links open in their own tab and never
+                // close the resume) instead of the raw PDF blob — Chrome's PDF
+                // viewer ignores target=_blank on PDF link annotations. The PDF
+                // artifact is persisted and downloadable from the Generated
+                // Resumes list; the selection was just saved above, so the
+                // preview matches what was generated.
+                window.open(`/api/canons/${canon.id}/preview`, "_blank");
             } else {
+                const objectUrl = URL.createObjectURL(blob);
                 const a = document.createElement("a");
                 a.href = objectUrl;
                 a.download = filename;

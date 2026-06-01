@@ -109,6 +109,7 @@ body {
 }
 .entity-line .title { font-weight: 700; }
 .entity-line .right { color: #444; font-size: 9.5pt; white-space: nowrap; }
+.entity-line .right a { color: #1b56b8; text-decoration: none; }
 .entity-sub { color: #444; font-size: 9.5pt; font-style: italic; }
 ul.bullets { margin: 2px 0 0 0.22in; padding: 0; }
 ul.bullets li { margin-bottom: 1px; }
@@ -204,7 +205,7 @@ function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeP
                             {links.map((l, i) => (
                                 <React.Fragment key={l.url}>
                                     {i > 0 ? "  ·  " : null}
-                                    <a href={l.url}>{l.label}</a>
+                                    <a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a>
                                 </React.Fragment>
                             ))}
                         </div>
@@ -262,11 +263,42 @@ function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeP
                                 return sections.projects.length === 0 ? null : (
                                     <section key="projects" className="section">
                                         <h2>Projects</h2>
-                                        {sections.projects.map(({ entity, bullets }) => (
+                                        {sections.projects.map(({ entity, bullets }) => {
+                                            // Render project links as compact named
+                                            // anchors ("Repo" / "Website") rather than
+                                            // the raw URL — the same treatment the
+                                            // header contact links get. `repoUrl` →
+                                            // Repo, `liveUrl` → Website (the project's
+                                            // own page/demo, previously not rendered at
+                                            // all). Filtered through isValidUrl so legacy
+                                            // corrupt entries don't emit broken links.
+                                            const projectLinks = [
+                                                { label: "Repo", url: entity.repoUrl },
+                                                { label: "Website", url: entity.liveUrl },
+                                            ].filter((l): l is { label: string; url: string } => !!l.url && isValidUrl(l.url));
+                                            return (
                                             <div key={entity.id} className="entity">
                                                 <div className="entity-line">
                                                     <span className="title">{entity.name}</span>
-                                                    {entity.repoUrl ? <span className="right"><a href={entity.repoUrl}>{entity.repoUrl}</a></span> : null}
+                                                    {projectLinks.length > 0 ? (
+                                                        // A <div> (not <span>) so html-to-docx
+                                                        // renders the nested <a> hyperlinks —
+                                                        // it doesn't descend into <span> for
+                                                        // links (the DOCX path would otherwise
+                                                        // drop them silently). As a flex item
+                                                        // it still right-aligns like the date.
+                                                        // target=_blank so clicking a link opens
+                                                        // a new tab instead of replacing the
+                                                        // resume the user is viewing.
+                                                        <div className="right">
+                                                            {projectLinks.map((l, i) => (
+                                                                <React.Fragment key={l.label}>
+                                                                    {i > 0 ? "  ·  " : null}
+                                                                    <a href={l.url} target="_blank" rel="noopener noreferrer">{l.label}</a>
+                                                                </React.Fragment>
+                                                            ))}
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                                 {entity.description ? <div className="entity-sub">{entity.description}</div> : null}
                                                 {bullets.length > 0 && (
@@ -275,7 +307,8 @@ function ResumeDoc({ profile, tagline, sections, extras, sectionOrder }: ResumeP
                                                     </ul>
                                                 )}
                                             </div>
-                                        ))}
+                                            );
+                                        })}
                                     </section>
                                 );
                             case "education":
