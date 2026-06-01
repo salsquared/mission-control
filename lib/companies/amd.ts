@@ -5,5 +5,5 @@ export default rssAdapter({
     name: 'AMD',
     view: 'ai',
     category: 'Fabless',
-    rssUrl: 'https://ir.amd.com/rss/PressRelease',
+    rssUrl: 'https://ir.amd.com/news-events/press-releases/rss',
 });
