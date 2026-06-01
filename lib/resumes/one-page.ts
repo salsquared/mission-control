@@ -205,7 +205,7 @@ export function pruneOneStep(
     return null;
 }
 
-async function countPdfPages(bytes: Buffer): Promise<number> {
+export async function countPdfPages(bytes: Buffer): Promise<number> {
     const { PDFParse } = await import("pdf-parse");
     const parser = new PDFParse({ data: new Uint8Array(bytes) });
     try {

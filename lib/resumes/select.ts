@@ -128,7 +128,7 @@ export function entityIsPinned(
 // Missing keys default to 1 (preserves legacy behavior for callers that
 // don't supply weights). Importance is sourced from `posting-parse`'s
 // per-keyword importance field; see `lib/resumes/posting.ts`.
-function scoreBullet(
+export function scoreBullet(
     text: string,
     tags: string[],
     keywords: string[],

@@ -5,14 +5,15 @@ import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting, type ParsedPosting } from "@/lib/resumes/posting";
-import { getCanonRow, nextCanonVersion, finalizeCanonGeneration } from "@/lib/repositories/canons";
+import { getCanonRow, getCanonSelection, nextCanonVersion, finalizeCanonGeneration } from "@/lib/repositories/canons";
 import { splitCanonKeywords } from "@/lib/canons/keywords";
+import { resolveSelection, resolveExtras } from "@/lib/canons/selection";
 import type { Canon } from "@prisma/client";
 import { selectBullets, selectProfileExtras, flattenSelections, entityIsPinned, mostRecentEducationId, type BulletSelection } from "@/lib/resumes/select";
 import { autoTagBullets } from "@/lib/profile/auto-tag";
 import { synthesizeBulletsForEntities, type ScratchpadSynthEntityKind } from "@/lib/profile/scratchpad-synth";
 import { broadcastEvent } from "@/lib/events";
-import { rewriteBullets } from "@/lib/resumes/rewrite";
+import { rewriteBullets, type RewrittenBullet } from "@/lib/resumes/rewrite";
 import { tailorResumeTagline, DEFAULT_SECTION_ORDER, type SectionKey } from "@/lib/resumes/tagline-tailor";
 import { computeSkillsGap } from "@/lib/resumes/skills-gap";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
@@ -20,9 +21,10 @@ import { renderResumePDF } from "@/lib/resumes/render-pdf";
 import { renderResumeDOCX } from "@/lib/resumes/render-docx";
 import { writeResumeArtifact, deleteResumeArtifact } from "@/lib/resumes/storage";
 import { buildResumeDownloadFilename } from "@/lib/resumes/labels";
-import { renderResumePDFOnePage, getUnremovableEntityIds } from "@/lib/resumes/one-page";
+import { renderResumePDFOnePage, getUnremovableEntityIds, countPdfPages } from "@/lib/resumes/one-page";
 import { AIError } from "@/lib/ai/gemini";
 import type { ProfileWire } from "@/lib/schemas/profile";
+import type { CanonSelection } from "@/lib/schemas/canons";
 
 export const runtime = "nodejs";
 // PDF render is far heavier than the typical 10s API timeout.
@@ -56,6 +58,10 @@ const ResumePostBodySchema = z.object({
         // removable entities (and then bullets) until the resume fits on one
         // Letter page. See lib/resumes/one-page.ts.
         onePage: z.boolean().optional(),
+        // Manual builder (docs/resume-manual-builder.html, OQ1): opt-in AI polish
+        // on a hand-curated canon selection — default off (verbatim render).
+        rewrite: z.boolean().optional(),
+        tagline: z.boolean().optional(),
     }).optional(),
 });
 
@@ -403,6 +409,173 @@ export async function GET(req: NextRequest) {
     }
 }
 
+// Manual builder canon generation (docs/resume-manual-builder.html, P2.2).
+// Canon generation is MANUAL-ONLY (OQ15): resolve the canon's saved selection
+// instead of the retired keyword auto-pipeline, then render it verbatim (AI
+// rewrite/tagline are opt-in — OQ1; the user owns length, no one-page prune —
+// OQ9). Self-contained so the auto-pipeline serving the url/text/application
+// paths (OQ12) stays untouched. Mirrors the canonical persist + finalize the
+// main POST path uses.
+async function generateCanonManualResume(args: {
+    userId: string;
+    canon: Canon;
+    selection: CanonSelection;
+    profile: ProfileWire;
+    options: { format?: "pdf" | "docx"; template?: "ats-plain"; rewrite?: boolean; tagline?: boolean };
+    applicationId: string | null;
+}): Promise<NextResponse> {
+    const { userId, canon, selection: manualSelection, profile, options } = args;
+    const wantRewrite = options.rewrite === true;
+    const wantTagline = options.tagline === true;
+    const format = options.format ?? "pdf";
+
+    let stage: "select" | "rewrite" | "render" = "select";
+    try {
+        // Synthetic posting from the canon's keyword text drives the opt-in
+        // rewrite/tagline + the (informational) skills gap. With both toggles
+        // off, empty keywords are fine — nothing consumes them.
+        const keywords = splitCanonKeywords(canon.keywords);
+        if (keywords.length === 0 && (wantRewrite || wantTagline)) {
+            return NextResponse.json(
+                { error: "This canon has no keywords yet — add some before enabling AI rewrite/tagline.", stage: "select" },
+                { status: 400 },
+            );
+        }
+        const posting: ParsedPosting = {
+            title: canon.name, company: null, location: null, seniority: null,
+            rawText: canon.keywords, sourceUrl: null, keywords, keywordWeights: {},
+        };
+
+        // 1. Resolve the curated selection against the live profile. Pass the
+        //    canon keywords only when the rewrite is on, so the bullets carry the
+        //    matches rewriteBullets needs (else its no-match prefilter no-ops).
+        const selection = resolveSelection(profile, manualSelection, wantRewrite ? keywords : undefined);
+        const flat = flattenSelections(selection);
+        if (flat.length === 0) {
+            return NextResponse.json(
+                { error: "Your selection is empty — pick at least one bullet in the builder.", stage: "select" },
+                { status: 400 },
+            );
+        }
+
+        // 2. AI is opt-in (OQ1). Default off → verbatim bullets + profile tagline.
+        stage = "rewrite";
+        const rewrites: RewrittenBullet[] = wantRewrite ? await rewriteBullets(flat, posting) : [];
+        let tailoredTagline: string | null = profile.tagline ?? null;
+        if (wantTagline) {
+            const tr = await tailorResumeTagline({ profile, posting, selection }).catch((e) => {
+                console.warn(`[resume-tagline] skipped: ${e instanceof Error ? e.message : e}`);
+                return null;
+            });
+            if (tr) tailoredTagline = tr.tagline;
+        }
+
+        // 3. Section order = curated order minus toggled-off sections (OQ8/OQ9);
+        //    extras = the user's picks intersected with the live profile.
+        const off = new Set(manualSelection.sectionsOff);
+        const sectionOrder = manualSelection.sectionOrder.filter((s) => !off.has(s)) as SectionKey[];
+        const extras = resolveExtras(profile, manualSelection);
+        const skillsGap = computeSkillsGap(profile, posting.keywords);
+
+        // 4. Render — NO one-page pruning (the user owns length — OQ9).
+        stage = "render";
+        const props = composeResumeProps(profile, selection, rewrites, tailoredTagline, extras, sectionOrder);
+        const bytes = format === "docx" ? await renderResumeDOCX(props) : await renderResumePDF(props);
+        // Exact page count for the builder's live estimate to reconcile against
+        // (OQ14) — meaningful only for the PDF render.
+        const pageCount = format === "pdf" ? await countPdfPages(bytes).catch(() => 0) : 0;
+
+        const dateSlug = new Date().toISOString().slice(0, 10);
+        const filename = buildResumeDownloadFilename({
+            userDisplayName: profile.headline?.trim() || null,
+            postingTitle: posting.title?.trim() || null,
+            postingCompany: posting.company?.trim() || null,
+            format,
+        }, dateSlug);
+
+        // 5. Persist a canonical version (isCanonical=true) + finalize the canon.
+        //    Best-effort, mirroring the main POST path's artifact-rollback semantics.
+        const canonVersion = await nextCanonVersion(canon.id);
+        let resumeId = "";
+        try {
+            const row = await prisma.generatedResume.create({
+                data: {
+                    userId,
+                    applicationId: args.applicationId,
+                    canonId: canon.id, isCanonical: true, canonVersion,
+                    postingTitle: posting.title, postingCompany: posting.company,
+                    tagline: tailoredTagline,
+                    postingInput: JSON.stringify({
+                        canonId: canon.id, sourceUrl: null,
+                        title: posting.title, company: posting.company, parsedKeywords: posting.keywords,
+                    }),
+                    profileSnapshot: JSON.stringify(profile),
+                    selections: JSON.stringify(flat.map((s) => ({
+                        kind: s.kind, sourceId: s.sourceId, sourceLabel: s.sourceLabel,
+                        bulletId: s.bulletId, originalText: s.originalText,
+                        rewrittenText: rewrites.find((r) => r.id === s.bulletId)?.rewrittenText ?? s.originalText,
+                        score: Number.isFinite(s.score) ? s.score : -1,
+                        matchedTags: s.matchedTags, matchedKeywords: s.matchedKeywords, locked: s.locked,
+                    }))),
+                    skillsGap: JSON.stringify(skillsGap.missing),
+                    templateKey: options.template ?? "ats-plain",
+                    format, status: "ready",
+                },
+                select: { id: true },
+            });
+            resumeId = row.id;
+            let artifactPath: string | null = null;
+            try {
+                artifactPath = await writeResumeArtifact(resumeId, format, bytes);
+                await prisma.generatedResume.update({ where: { id: resumeId }, data: { artifactPath } });
+            } catch (innerErr) {
+                if (artifactPath) await deleteResumeArtifact(artifactPath).catch(() => {});
+                await prisma.generatedResume.update({
+                    where: { id: resumeId },
+                    data: { status: "errored", error: innerErr instanceof Error ? innerErr.message : String(innerErr) },
+                }).catch(() => {});
+                throw innerErr;
+            }
+        } catch (e) {
+            console.warn(`[resume canon-manual] persistence failed (id=${resumeId || "<none>"}):`, e);
+        }
+
+        if (resumeId) {
+            broadcastEvent({ model: "GeneratedResume", action: "upsert", id: resumeId, timestamp: Date.now() });
+            try {
+                const entityIds = [...new Set(flat.map((s) => s.sourceId))];
+                await finalizeCanonGeneration(canon.id, resumeId, entityIds);
+                broadcastEvent({ model: "Canon", action: "upsert", id: canon.id, timestamp: Date.now() });
+            } catch (e) {
+                console.warn("[resume canon-manual] canon finalize failed:", e);
+            }
+        }
+
+        const asciiHeader = (s: string | null | undefined) => (s ?? "").replace(/[^\x20-\x7e]/g, "");
+        return new NextResponse(new Uint8Array(bytes), {
+            status: 200,
+            headers: {
+                "Content-Type": FORMAT_CONTENT_TYPES[format],
+                "Content-Length": String(bytes.length),
+                "Content-Disposition": `attachment; filename="${filename}"`,
+                "Cache-Control": "no-store",
+                "X-Resume-Title": asciiHeader(posting.title),
+                "X-Resume-Company": asciiHeader(posting.company),
+                "X-Resume-Format": format,
+                ...(pageCount > 0 ? { "X-Resume-Pages": String(pageCount) } : {}),
+                ...(resumeId ? { "X-Resume-Id": resumeId } : {}),
+            },
+        });
+    } catch (e) {
+        console.error(`[resume canon-manual] stage=${stage} error:`, e);
+        if (e instanceof AIError) {
+            return NextResponse.json({ error: e.message, stage, aiStage: e.stage }, { status: 502 });
+        }
+        const msg = e instanceof Error ? e.message : "Internal Server Error";
+        return NextResponse.json({ error: msg, stage }, { status: 500 });
+    }
+}
+
 export async function POST(req: NextRequest) {
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
@@ -501,33 +674,34 @@ export async function POST(req: NextRequest) {
             );
         }
 
-        // 2. Parse posting — or synthesize one from the canon's keyword text.
-        stage = "parse";
-        let posting: ParsedPosting;
+        // Canon generation is manual-only (docs/resume-manual-builder.html, OQ15):
+        // resolve the saved selection in a self-contained handler and return.
+        // A canon with no selection errors rather than falling back to the
+        // retired keyword auto-pipeline; the auto-pipeline below is untouched and
+        // serves only the url / text / application paths (OQ12).
         if (canonForGen) {
-            const keywords = splitCanonKeywords(canonForGen.keywords);
-            if (keywords.length === 0) {
+            const manualSelection = await getCanonSelection(userId, canonForGen.id);
+            if (!manualSelection) {
                 return NextResponse.json(
-                    { error: "This canon has no keywords yet — add some before generating.", stage: "parse" },
+                    { error: "This canon has no saved selection yet — open the builder and curate it first.", stage: "select" },
                     { status: 400 },
                 );
             }
-            // Complete ParsedPosting (rawText is required by the interface).
-            // Flat keywords, no weights (§6 Q6); company/url null — nothing
-            // per-company belongs on the resume body (§6 Q5).
-            posting = {
-                title: canonForGen.name,
-                company: null,
-                location: null,
-                seniority: null,
-                rawText: canonForGen.keywords,
-                sourceUrl: null,
-                keywords,
-                keywordWeights: {},
-            };
-        } else {
-            posting = await parsePosting(parsed.data.posting);
+            return await generateCanonManualResume({
+                userId,
+                canon: canonForGen,
+                selection: manualSelection,
+                profile,
+                options: parsed.data.options ?? {},
+                applicationId: parsed.data.applicationId?.trim() || null,
+            });
         }
+
+        // 2. Parse posting. (Canon generation returned above via the manual-only
+        //    handler — docs/resume-manual-builder.html OQ15 — so this path is the
+        //    url / text / application auto-pipeline only.)
+        stage = "parse";
+        const posting: ParsedPosting = await parsePosting(parsed.data.posting);
 
         // 2.5. Auto-tag pass (M8.5.4 / story S8.9) — best-effort write-through
         // to the profile before selection. The LLM proposes posting-keyword
@@ -683,9 +857,8 @@ export async function POST(req: NextRequest) {
         // 5. Render
         stage = "render";
         const format = parsed.data.options?.format ?? "pdf";
-        // Canon default render = PDF + one-page (§6 Q9) unless the client
-        // overrides; otherwise the prior "off unless explicitly true" behavior.
-        const onePage = parsed.data.options?.onePage ?? (canonForGen ? canonForGen.onePage : false);
+        // One-page pruning is off unless the client explicitly asks for it.
+        const onePage = parsed.data.options?.onePage ?? false;
         let bytes: Buffer;
         if (onePage) {
             // Iterative PDF render + prune loop. Mutates `selection` in place.
@@ -759,15 +932,13 @@ export async function POST(req: NextRequest) {
                 );
             }
         }
-        // Canon generation persists a versioned canonical row (§7 P2.4).
-        const canonVersion = canonForGen ? await nextCanonVersion(canonForGen.id) : null;
+        // (Canon-versioned rows are persisted by the manual-only handler above.)
         let resumeId = "";
         try {
             const row = await prisma.generatedResume.create({
                 data: {
                     userId,
                     applicationId,
-                    ...(canonForGen ? { canonId: canonForGen.id, isCanonical: true, canonVersion } : {}),
                     // M8.4.2 — persist the parsed title + company alongside the
                     // existing X-Resume-Title / X-Resume-Company response
                     // headers. Drives the previous-resumes dropdown UI (M8.4.6).
@@ -857,19 +1028,9 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        // §7 P2.4 — point the canon at this new version, record its dependency
-        // set (distinct entity sourceIds in the final selection), and clear
-        // stale. Done LAST, after the gen-time auto-tag write, so it can't
-        // self-stale (§6 Q7).
-        if (canonForGen && resumeId) {
-            try {
-                const entityIds = [...new Set(flat.map(s => s.sourceId))];
-                await finalizeCanonGeneration(canonForGen.id, resumeId, entityIds);
-                broadcastEvent({ model: 'Canon', action: 'upsert', id: canonForGen.id, timestamp: Date.now() });
-            } catch (e) {
-                console.warn('[resume POST] canon finalize failed:', e);
-            }
-        }
+        // (Canon finalize — currentResumeId / dependency set / clear-stale — is
+        // handled by the manual-only canon handler above; this auto path serves
+        // only url / text / application generation.)
 
         // PB-12 (was RAH-22): HTTP header values must be ASCII (undici's Headers throws on
         // non-Latin1 chars). LLM-extracted strings often carry em-dashes,

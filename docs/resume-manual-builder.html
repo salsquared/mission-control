@@ -262,26 +262,26 @@ flowchart TB
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P2</span>
           <span class="task-title">Phase 2 — API surface</span>
         </summary>
         <div class="task-body">
           <p>Expose load/save + branch the generator.</p>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">NEW <code>app/api/canons/[id]/selection/route.ts</code> (GET/PUT) + <code>meta.ts</code></span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.1</span><span class="task-title">NEW <code>app/api/canons/[id]/selection/route.ts</code> (GET/PUT) + <code>meta.ts</code></span></summary>
             <div class="task-body"><p>Session-guarded, ownership-scoped; PUT validates with <code>CanonSelectionPutSchema</code>.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Branch <code>app/api/resumes/route.ts</code> on a manual selection</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.2</span><span class="task-title">Branch <code>app/api/resumes/route.ts</code> on a manual selection</span></summary>
             <div class="task-body"><p>For a <code>canonId</code>: <code>resolveSelection</code> instead of auto <code>selectBullets</code> (and skip the one-page pruner); gate rewrite + tagline behind two new <code>options.rewrite</code>/<code>options.tagline</code> toggles, default off (extend the resumes POST Zod schema — OQ1/OQ13); return the exact rendered page count as a header (OQ14). A <code>canonId</code> with no <code>selection</code> returns a &ldquo;build one first&rdquo; error — <strong>no auto fallback</strong> (OQ15).</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Point <code>app/api/resumes/specialize/route.ts</code> at <code>Canon.selection</code></span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.3</span><span class="task-title">Point <code>app/api/resumes/specialize/route.ts</code> at <code>Canon.selection</code></span></summary>
             <div class="task-body"><p>Read the canon's authoritative manual selection (not the last rendered resume's <code>selections</code>) so a per-job specialization can't drift from the curated set.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">Regenerate <code>docs/apis.html</code></span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.4</span><span class="task-title">Regenerate <code>docs/apis.html</code></span></summary>
             <div class="task-body"><p><code>npm run gen:api-docs</code> + commit (pre-push <code>api-docs-smoke</code> gate).</p></div>
           </details>
         </div>

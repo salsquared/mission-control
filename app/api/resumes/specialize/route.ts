@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { parsePosting } from "@/lib/resumes/posting";
-import { selectBullets, selectProfileExtras, flattenSelections } from "@/lib/resumes/select";
+import { selectBullets, selectProfileExtras, flattenSelections, type ResumeSelection } from "@/lib/resumes/select";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
 import { tailorResumeTagline, DEFAULT_SECTION_ORDER } from "@/lib/resumes/tagline-tailor";
 import { composeResumeProps } from "@/lib/resumes/templates/ats-plain";
@@ -12,8 +12,9 @@ import { renderResumePDF } from "@/lib/resumes/render-pdf";
 import { writeResumeArtifact, deleteResumeArtifact } from "@/lib/resumes/storage";
 import { buildResumeDownloadFilename } from "@/lib/resumes/labels";
 import { broadcastEvent } from "@/lib/events";
-import { getCanonRow } from "@/lib/repositories/canons";
+import { getCanonRow, getCanonSelection } from "@/lib/repositories/canons";
 import { reconstructSelection, type StoredSelectionRow } from "@/lib/canons/specialize";
+import { resolveSelection } from "@/lib/canons/selection";
 import { AIError } from "@/lib/ai/gemini";
 import type { ProfileWire } from "@/lib/schemas/profile";
 
@@ -97,12 +98,22 @@ export async function POST(req: NextRequest) {
         //    snapshot, refreshing per-bullet matches against THIS posting so the
         //    rewrite emphasizes the right terms. Selection set/order unchanged.
         const profile = JSON.parse(canonResume.profileSnapshot) as ProfileWire;
-        const stored = JSON.parse(canonResume.selections) as StoredSelectionRow[];
-        const fresh = selectBullets(profile, posting.keywords, {}, posting.keywordWeights);
-        const matchMap = new Map(
-            flattenSelections(fresh).map((s) => [s.bulletId, { matchedTags: s.matchedTags, matchedKeywords: s.matchedKeywords }]),
-        );
-        const selection = reconstructSelection(stored, profile, matchMap);
+        // P2.3 (docs/resume-manual-builder.html) — prefer the canon's AUTHORITATIVE
+        // manual selection so a per-job specialization can't drift from a curated
+        // set edited since the last canon generate. Fall back to reconstructing
+        // from the last rendered resume for canons predating the manual builder.
+        const manualSelection = await getCanonSelection(userId, canon.id);
+        let selection: ResumeSelection;
+        if (manualSelection) {
+            selection = resolveSelection(profile, manualSelection, posting.keywords);
+        } else {
+            const stored = JSON.parse(canonResume.selections) as StoredSelectionRow[];
+            const fresh = selectBullets(profile, posting.keywords, {}, posting.keywordWeights);
+            const matchMap = new Map(
+                flattenSelections(fresh).map((s) => [s.bulletId, { matchedTags: s.matchedTags, matchedKeywords: s.matchedKeywords }]),
+            );
+            selection = reconstructSelection(stored, profile, matchMap);
+        }
         const flat = flattenSelections(selection);
         if (flat.length === 0) {
             return NextResponse.json(
