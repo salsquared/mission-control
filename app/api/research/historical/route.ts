@@ -7,6 +7,7 @@ import {
     findCurrentHistoricalPick,
     listPickedHistoricalIds,
     recordHistoricalPick,
+    backfillHistoricalPick,
 } from '@/lib/repositories/selected-papers';
 
 function getStartOfWeek(date: Date) {
@@ -31,6 +32,26 @@ async function getHandler(request: Request) {
         const existingSelection = await findCurrentHistoricalPick(topic.toLowerCase(), weekStart);
 
         if (existingSelection) {
+            // Fast path (Layer 2): metadata cached at pick time → 0 arXiv/SS calls.
+            if (existingSelection.title) {
+                const mappedPaper = {
+                    id: `http://arxiv.org/abs/${existingSelection.paperId}`,
+                    title: existingSelection.title,
+                    summary: existingSelection.summary ?? '',
+                    url: existingSelection.url ?? `https://arxiv.org/abs/${existingSelection.paperId}`,
+                    author: existingSelection.author ?? 'Unknown',
+                    published_at: existingSelection.publishedAt
+                        ? existingSelection.publishedAt.toISOString()
+                        : new Date().toISOString(),
+                    source: 'ArXiv Historical Selection',
+                    paperId: existingSelection.paperId,
+                    citationCount: existingSelection.citationCount ?? 0,
+                };
+                return NextResponse.json([mappedPaper]);
+            }
+
+            // Legacy row (pre-backfill, NULL metadata): one id_list fetch, then
+            // backfill so the next render is free.
             await acquireArxivSlot();
             const res = await loggedFetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
 
@@ -46,8 +67,6 @@ async function getHandler(request: Request) {
                 if (!xml.trimStart().startsWith('<')) {
                     throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
                 }
-                // Simple parsing or just use the local route structure to make it easier, but we need details
-                // For simplicity, let's query the main route with a special query or just parse the XML directly here?
                 // Extract proper entry to avoid matching feed title
                 const entries = xml.split('<entry>');
                 if (entries.length > 1) {
@@ -58,13 +77,18 @@ async function getHandler(request: Request) {
                     const publishedMatch = entry.match(/<published>([\s\S]*?)<\/published>/);
 
                     if (titleMatch && summaryMatch) {
-                        const mappedPaper = {
+                        const title = titleMatch[1].trim().replace(/\n/g, ' ');
+                        const summary = summaryMatch[1].trim();
+                        const url = `https://arxiv.org/abs/${existingSelection.paperId}`;
+                        const author = authorMatch ? authorMatch[1].trim() : 'Unknown';
+                        const publishedIso = publishedMatch ? publishedMatch[1].trim() : new Date().toISOString();
+                        const mappedPaper: any = {
                             id: `http://arxiv.org/abs/${existingSelection.paperId}`,
-                            title: titleMatch[1].trim().replace(/\n/g, ' '),
-                            summary: summaryMatch[1].trim(),
-                            url: `https://arxiv.org/abs/${existingSelection.paperId}`,
-                            author: authorMatch ? authorMatch[1].trim() : 'Unknown',
-                            published_at: publishedMatch ? publishedMatch[1].trim() : new Date().toISOString(),
+                            title,
+                            summary,
+                            url,
+                            author,
+                            published_at: publishedIso,
                             source: 'ArXiv Historical Selection',
                             paperId: existingSelection.paperId
                         };
@@ -76,12 +100,22 @@ async function getHandler(request: Request) {
                             body: JSON.stringify({ ids: [`ArXiv:${existingSelection.paperId}`] })
                         });
 
+                        let citationCount: number | null = null;
                         if (ssRes.ok) {
                             const ssData = await ssRes.json();
                             if (ssData[0]) {
-                                (mappedPaper as any).citationCount = ssData[0].citationCount || 0;
+                                citationCount = ssData[0].citationCount || 0;
+                                mappedPaper.citationCount = citationCount;
                             }
                         }
+
+                        // Backfill so the next render skips arXiv + SS entirely.
+                        await backfillHistoricalPick(existingSelection.paperId, topic.toLowerCase(), {
+                            title, summary, url, author,
+                            publishedAt: new Date(publishedIso),
+                            citationCount,
+                        });
+
                         return NextResponse.json([mappedPaper]);
                     }
                 }
@@ -164,22 +198,32 @@ async function getHandler(request: Request) {
                 const selectedEntry = topRecord.entry;
                 const selectedId = topRecord.id;
 
-                // Save it to DB
-                await recordHistoricalPick(selectedId, topic.toLowerCase(), weekStart);
-
                 // Parse it
                 const titleMatch = selectedEntry.match(/<title>([\s\S]*?)<\/title>/);
                 const summaryMatch = selectedEntry.match(/<summary>([\s\S]*?)<\/summary>/);
                 const authorMatch = selectedEntry.match(/<author>\s*<name>([\s\S]*?)<\/name>/);
                 const publishedMatch = selectedEntry.match(/<published>([\s\S]*?)<\/published>/);
 
+                const title = titleMatch ? titleMatch[1].trim().replace(/\n/g, ' ') : 'Unknown Title';
+                const summary = summaryMatch ? summaryMatch[1].trim() : 'No summary';
+                const url = `https://arxiv.org/abs/${selectedId}`;
+                const author = authorMatch ? authorMatch[1].trim() : 'Unknown';
+                const publishedIso = publishedMatch ? publishedMatch[1].trim() : new Date().toISOString();
+
+                // Save it to DB WITH cached metadata so re-renders skip arXiv + SS (Layer 2).
+                await recordHistoricalPick(selectedId, topic.toLowerCase(), weekStart, {
+                    title, summary, url, author,
+                    publishedAt: new Date(publishedIso),
+                    citationCount: topRecord.citations,
+                });
+
                 const mappedPaper = {
                     id: `http://arxiv.org/abs/${selectedId}`,
-                    title: titleMatch ? titleMatch[1].trim().replace(/\n/g, ' ') : 'Unknown Title',
-                    summary: summaryMatch ? summaryMatch[1].trim() : 'No summary',
-                    url: `https://arxiv.org/abs/${selectedId}`,
-                    author: authorMatch ? authorMatch[1].trim() : 'Unknown',
-                    published_at: publishedMatch ? publishedMatch[1].trim() : new Date().toISOString(),
+                    title,
+                    summary,
+                    url,
+                    author,
+                    published_at: publishedIso,
                     source: 'ArXiv Historical Selection',
                     paperId: selectedId,
                     upvotes: 0,
@@ -197,8 +241,9 @@ async function getHandler(request: Request) {
     }
 }
 
-// Cache historical responses for an hour. Primary upstream is arXiv (Semantic Scholar enrichment is secondary).
-const cachedGET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'export.arxiv.org' });
+// Cache historical responses for 24h (weekly pick; metadata served from DB anyway — Layer 2 / OQ6).
+// Primary upstream is arXiv (Semantic Scholar enrichment is secondary).
+const cachedGET = withCache(getHandler, { ttlSeconds: 86400, upstreamHost: 'export.arxiv.org' });
 export const GET = async (req: Request) => {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;

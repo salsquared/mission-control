@@ -218,7 +218,8 @@ async function getHandler(request: Request) {
 }
 
 // Aggregates HF + arXiv + Semantic Scholar; tag with the primary upstream.
-const cachedGET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: 'huggingface.co' });
+// Cache 12h — "yesterday"/"week" windows change at most daily (Layer 2 / OQ6).
+const cachedGET = withCache(getHandler, { ttlSeconds: 43200, upstreamHost: 'huggingface.co' });
 export const GET = async (req: Request) => {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;

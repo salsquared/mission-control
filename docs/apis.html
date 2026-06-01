@@ -3244,7 +3244,7 @@
 
 <div class="api-route" id="/api/research">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 43200s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
   <p class="api-purpose">Fetches recent research papers for a topic (ai, crypto, space), using Hugging Face Daily Papers for the AI topic and arXiv otherwise, enriched with citation counts.</p>
   <p class="api-src"><code>app/api/research/route.ts</code></p>
 </div>
@@ -3258,7 +3258,7 @@
 
 <div class="api-route" id="/api/research/historical">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/historical</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 86400s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
   <p class="api-purpose">Selects and fetches one historical research paper (3–30 years old) per topic per week, avoiding duplicates and enriching with citation counts.</p>
   <p class="api-notes">The weekly pick is locked in the SelectedHistoricalPaper table for persistence across requests.</p>
   <p class="api-src"><code>app/api/research/historical/route.ts</code></p>
@@ -3287,7 +3287,7 @@
 
 <div class="api-route" id="/api/research/review">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/review</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 86400s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
   <p class="api-purpose">Picks and features one review or survey paper from the last 365 days per topic per week, enriching with citation counts.</p>
   <p class="api-notes">The weekly pick is locked in the SelectedReviewPaper table for persistence across requests.</p>
   <p class="api-src"><code>app/api/research/review/route.ts</code></p>

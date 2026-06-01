@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>arXiv Rate-Limit — Permanent Fix Plan</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>arXiv Rate-Limit — Permanent Fix</h1>
+  <p class="subtitle">Design + implementation plan. arXiv 429s recur because dev and prod run on one box, share one IP, and <strong>never share research-fetch state</strong> — so every paper is fetched twice and the two token buckets burst-collide. This plan removes all three load multipliers. Status: <strong>PLAN ONLY — not yet built</strong> (2026-05-31). <strong>All OQ1–OQ10 resolved 2026-05-31</strong> — design fully pinned; cleared to build. (OQ10: a dedicated <code>withSharedCache()</code> wrapper; the generic <code>withCache</code> is left untouched.)</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#state">Current state &amp; refresh rates</a></li>
+      <li><a href="#rootcause">Root cause — three multipliers</a></li>
+      <li><a href="#solution">The permanent solution</a></li>
+      <li><a href="#layer2">Layer 2 — persist picks + raise TTLs</a></li>
+      <li><a href="#layer1">Layer 1 — shared cross-tier cache</a></li>
+      <li><a href="#layer3">Layer 3 — shared cross-tier rate bucket</a></li>
+      <li><a href="#touch">Touch list, tests &amp; ops</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open questions</a></li>
+      <li><a href="#tasks">Implementation checklist</a></li>
+    </ol>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="state">Current state &amp; refresh rates</h2></summary>
+    <div class="section-body">
+      <h3>Every arXiv-touching route caches for one hour</h3>
+      <p>All research routes wrap their handler in <code>withCache(..., { ttlSeconds: 3600 })</code> — no per-route variation. On top of the TTL, a per-process token bucket (<code>lib/arxiv/rate-limit.ts</code>) paces every arXiv fetch at <code>ARXIV_RATE_PER_MIN=7</code> (one request per ~8.6s, no burst, queue cap 20). The <code>7</code> is already half the <code>15</code> default — a prior band-aid acknowledging the shared-IP problem in the <code>.env.*</code> comments.</p>
+      <table>
+        <thead>
+          <tr><th>Route</th><th>TTL</th><th>Hits arXiv?</th><th>arXiv calls / miss</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>/api/research</code> (yesterday + week listings)</td><td>3600s</td><td>physics/crypto/space → yes; <strong>ai → HuggingFace</strong></td><td>1</td></tr>
+          <tr><td><code>/api/research/review</code> (weekly pick)</td><td>3600s</td><td>yes — all topics</td><td>1</td></tr>
+          <tr><td><code>/api/research/historical</code> (weekly pick)</td><td>3600s</td><td>yes — all topics</td><td>1</td></tr>
+          <tr><td><code>/api/research/hf</code></td><td>3600s</td><td>no (HuggingFace)</td><td>0</td></tr>
+          <tr><td><code>/api/research/import</code></td><td><strong>no cache</strong></td><td>only as fallback</td><td>0–1, user-initiated</td></tr>
+        </tbody>
+      </table>
+      <h3>Live fan-out is AI + Physics only</h3>
+      <p>Only <code>AIView</code> and <code>PhysicsView</code> call these routes. <code>SpaceView</code> doesn't touch arXiv; <code>crypto</code>/<code>space</code> topics in the pick routes are dead paths. So the live arXiv key set is <strong>6 keys</strong>:</p>
+      <ul>
+        <li>Physics → <code>yesterday</code>, <code>week</code>, <code>review</code>, <code>historical</code> (4 keys — this is the "physics has at most 4 calls" the user noted)</li>
+        <li>AI → <code>review</code>, <code>historical</code> (2 keys; its listings go to HuggingFace, not arXiv)</li>
+      </ul>
+      <p>react-query window-focus refetches are absorbed by the server cache (they hit <code>withCache</code>, not arXiv), so they are <em>not</em> a contributor.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="rootcause">Root cause — three multipliers</h2></summary>
+    <div class="section-body">
+      <h3>Why the 7/min throttle doesn't save us</h3>
+      <p>The throttle paces requests but never reduces <em>how many distinct fetches happen</em>. Three independent multipliers stack on top of the 6 keys:</p>
+      <ol>
+        <li><strong>No cross-tier dedup — the ×2.</strong> <code>CACHE_BACKEND=sqlite</code> is on, but <code>lib/repositories/cache-entries.ts</code> writes L2 through <code>prisma.cacheEntry</code>, which is the <em>per-tier</em> DB (<code>dev.db</code> vs <code>prod.db</code>). Dev and prod keep separate caches and each fetches every key independently. Every arXiv key is pulled twice.</li>
+        <li><strong>Uncoordinated buckets — burst collisions.</strong> The token bucket lives on <code>globalThis</code> per process (<code>lib/arxiv/rate-limit.ts:33</code>). Dev's and prod's buckets are phase-independent, so two requests can hit the shared IP &lt;3s apart even though the <em>average</em> (14/min combined) is under arXiv's limit. arXiv 429s on the instantaneous spacing, not the average.</li>
+        <li><strong>Re-fetching immutable picks + a 1h TTL on weekly data.</strong> <code>review</code>/<code>historical</code> persist <strong>only <code>paperId</code></strong> (see <code>recordReviewPick</code>: <code>data: { paperId, topic, weekStart }</code>). So even when the week's pick is already chosen, the route re-hits arXiv via <code>id_list=</code> <em>and</em> Semantic Scholar every cache-miss just to re-render metadata that never changes — hourly, per tier. A 1h TTL on data that turns over daily (listings) or weekly (picks) means ~24 refetches/day for data that changes once.</li>
+      </ol>
+      <div class="callout"><strong>The exact same problem was already solved for Gemini.</strong> <code>lib/ai/llm-cache.ts</code> (design: <code>docs/archive/cross-tier-llm-dedup.html</code>) exists precisely because "dev and prod run the same code on one box against the same data, so every cacheable step would call Gemini twice." Research never got that treatment. This plan ports the pattern.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="solution">The permanent solution</h2></summary>
+    <div class="section-body">
+      <h3>Three layers, each killing one multiplier</h3>
+      <p>All three are committed (OQ4: build Layer 3 now, not gated on measurement). <strong>Build order</strong> stays <strong>Layer 2 → Layer 1 → Layer 3</strong> — Layer 2 is nearly free and lands the biggest volume cut first — but all three ship in this effort. Layer 1 includes cross-tier single-flight (OQ3) and folds in <code>/api/research/hf</code> (OQ2); Layers 1 + 3 both build on a shared SQLite base (OQ5).</p>
+      <table>
+        <thead><tr><th>Layer</th><th>Kills</th><th>Mechanism</th><th>New infra</th></tr></thead>
+        <tbody>
+          <tr><td><strong>2 — persist picks + raise TTLs</strong></td><td>Multiplier 3 (immutable refetch, short TTL)</td><td>Store pick metadata in the DB; serve picks with 0 arXiv calls; bump TTLs to 12h/24h</td><td>none (schema columns only)</td></tr>
+          <tr><td><strong>1 — shared cross-tier cache</strong></td><td>Multiplier 1 (the ×2)</td><td>One shared SQLite file both tiers read/write for research L2; prod's fetch serves dev and vice-versa</td><td><code>data/research-cache.db</code></td></tr>
+          <tr><td><strong>3 — shared rate bucket</strong></td><td>Multiplier 2 (burst collisions)</td><td>File-locked token bucket = one paced ~14/min line shared by both processes</td><td><code>data/arxiv-bucket.db</code></td></tr>
+        </tbody>
+      </table>
+      <h3>Combined data flow after the fix</h3>
+      <pre class="mermaid">
+flowchart TB
+  subgraph proc["dev :4101 / prod :3101 (same box, same IP)"]
+    route["research route handler"]
+    l1["withCache L1<br/>(per-process map)"]
+    pick["SelectedReviewPaper /<br/>SelectedHistoricalPaper<br/>(+ metadata cols — Layer 2)"]
+  end
+  shared["data/research-cache.db<br/>shared L2 — Layer 1"]
+  bucket["data/arxiv-bucket.db<br/>shared token bucket — Layer 3"]
+  arxiv["export.arxiv.org"]
+
+  route --> l1
+  l1 -->|"miss"| shared
+  shared -->|"miss (leader only)"| acquire["acquireArxivSlot()"]
+  acquire --> bucket
+  bucket -->|"paced ~14/min,<br/>both tiers"| arxiv
+  route -->|"pick exists +<br/>metadata present"| pick
+  pick -->|"serve, 0 arXiv calls"| route
+      </pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="layer2">Layer 2 — persist picks + raise TTLs</h2></summary>
+    <div class="section-body">
+      <h3>Persist pick metadata so picks never re-hit arXiv</h3>
+      <p>Add nullable metadata columns to both pick models. Nullable so existing rows migrate cleanly — a NULL triggers the legacy <code>id_list</code> fetch <em>once</em>, which then backfills the row.</p>
+      <pre><code class="language-typescript">// prisma/schema.prisma — both SelectedReviewPaper and SelectedHistoricalPaper
+model SelectedReviewPaper {
+  id            String    @id @default(cuid())
+  paperId       String
+  topic         String
+  weekStart     DateTime
+  // NEW — persisted at pick time so the weekly pick renders with zero arXiv/SS calls
+  title         String?
+  summary       String?
+  url           String?
+  author        String?
+  publishedAt   DateTime?
+  citationCount Int?
+  @@unique([paperId, topic])
+  @@index([topic, weekStart])
+}</code></pre>
+      <ul>
+        <li><strong><code>lib/repositories/selected-papers.ts</code></strong> — extend <code>recordReviewPick</code> / <code>recordHistoricalPick</code> to accept + store the metadata; add a <code>backfill*Pick</code> updater for legacy NULL rows.</li>
+        <li><strong><code>app/api/research/review/route.ts</code> + <code>historical/route.ts</code></strong> — when <code>existingSelection</code> exists <em>and</em> has metadata, return it directly and <strong>skip both the arXiv <code>id_list</code> fetch and the Semantic Scholar enrichment</strong>. Only when metadata is NULL (pre-migration row) do the one-time <code>id_list</code> fetch, then backfill. On a fresh search-and-pick, persist the metadata in the same <code>recordPick</code> call.</li>
+      </ul>
+      <h3>Raise the TTLs to match how often the data actually changes</h3>
+      <table>
+        <thead><tr><th>Route</th><th>Current</th><th>New</th><th>Rationale</th></tr></thead>
+        <tbody>
+          <tr><td><code>/api/research</code> (listings)</td><td>3600s (1h)</td><td><strong>43200s (12h)</strong></td><td>"yesterday"/"week" windows change at most daily</td></tr>
+          <tr><td><code>/api/research/review</code></td><td>3600s (1h)</td><td><strong>86400s (24h)</strong></td><td>weekly pick; metadata now served from DB anyway</td></tr>
+          <tr><td><code>/api/research/historical</code></td><td>3600s (1h)</td><td><strong>86400s (24h)</strong></td><td>weekly pick; metadata now served from DB anyway</td></tr>
+        </tbody>
+      </table>
+      <div class="callout tip"><strong>Why this is first.</strong> No new infrastructure, no native deps, no cross-process protocol — just schema columns + a conditional + three numbers. It alone removes the 4 pick-route arXiv calls from steady state and cuts listing refetches 12×. Likely solves the 429s outright — but Layers 1 and 3 still ship (OQ4): they remove the dev+prod root cause structurally, not just the symptom.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="layer1">Layer 1 — shared cross-tier cache</h2></summary>
+    <div class="section-body">
+      <h3>A dedicated withSharedCache() wrapper, withCache left untouched</h3>
+      <p>The only reason dev and prod don't already share L2 is that <code>cache-entries.ts</code> points at the per-tier Prisma DB. Fix: a best-effort store on a <strong>third</strong> SQLite file (neither tier's DB), as a thin adapter over the <em>fat</em> shared base (OQ5/OQ7 — a generic keyed store with the reservation protocol; see §7). The 4 research routes reach it through a <strong>dedicated <code>withSharedCache()</code> wrapper (OQ10)</strong> — a sibling of <code>withCache</code>; the generic wrapper every other cached route uses is <em>not</em> edited. Per OQ2 this covers <code>/api/research/hf</code> too, and per OQ3 it carries the full cross-tier single-flight protocol from day one. <code>lib/ai/llm-cache.ts</code> refactors onto the same base this effort (OQ8).</p>
+      <div class="callout warn"><strong>Why a wrapper and not <code>{ read, write }</code>.</strong> Cross-tier single-flight (OQ3) requires the cache to wrap the <em>arXiv fetch itself</em> (reserve → lead/compute → finish), so two tiers can't both call arXiv on a simultaneous miss. A read/write store can't express that — the handler would run on both tiers before either writes. So the store is <strong>compute-mediating</strong> (<code>getOrCompute</code>), which is exactly the fat base's reserve/lead/follow (OQ7), and the wrapper drives it.</div>
+      <pre><code class="language-typescript">// NEW lib/research/shared-cache.ts — thin getOrCompute() adapter over the fat base
+//   - data/research-cache.db, WAL, busy_timeout, guarded dynamic import of better-sqlite3
+//   - reserve/lead/follow single-flight (OQ3) so simultaneous dev+prod misses fetch ONCE
+//   - BEST-EFFORT: any init/IO failure degrades to a direct compute() (uncached)
+//   - schema: research_cache(key, data, expiry, status, reserved_at, done_at)
+export interface SharedStore {
+  // fresh hit → cached value; miss → run `compute` under cross-tier single-flight, store, return.
+  getOrCompute(key: string, ttlSeconds: number, compute: () =&gt; Promise&lt;any&gt;): Promise&lt;any&gt;;
+}
+export const researchSharedStore: SharedStore = /* adapter over lib/shared-sqlite-cache.ts */;</code></pre>
+      <pre><code class="language-typescript">// NEW withSharedCache() — sibling of withCache, used ONLY by the 4 research routes.
+// Owns its own in-process L1 + stale-fallback (~30 lines mirrored from withCache,
+// OQ10) and drives the compute-mediating store. lib/cache.ts is NOT touched.
+export function withSharedCache(
+  handler: (req: Request) =&gt; Promise&lt;NextResponse&gt;,
+  opts: { ttlSeconds: number; store: SharedStore; upstreamHost?: string },
+) { /* L1 check → store.getOrCompute(key, ttl, () =&gt; jsonOf(handler(req))) → L1 set + shape */ }
+
+// route: export const GET = withSharedCache(getHandler, { ttlSeconds, store: researchSharedStore });</code></pre>
+      <ul>
+        <li>All 4 research routes wrap with <code>withSharedCache(..., { store: researchSharedStore })</code> — the 3 arXiv routes <strong>plus <code>/api/research/hf</code></strong> (OQ2: dedup HF across tiers too).</li>
+        <li><strong>Single-flight (OQ3 — included now):</strong> the wrapper's per-process L1 dedups within a tier; the base's reserve/lead/follow (pending/done rows + lease/steal) guarantees simultaneous cross-tier misses fetch arXiv <strong>exactly once</strong>. Lives in the shared base (OQ5/OQ7), so research-cache and llm-cache share one tested implementation.</li>
+        <li><strong><code>withCache</code> is untouched (OQ10), so <code>cache-smoke.ts</code> is unaffected.</strong> The new wrapper gets its own coverage in <code>research-shared-cache-smoke.ts</code> (store single-flight) — a focused wrapper smoke is optional.</li>
+        <li><strong>gitignore (per-file, not blanket):</strong> <code>/data/</code> isn't ignored wholesale — each DB is listed individually. Add <strong>6 lines</strong>: <code>data/research-cache.db</code> + <code>-wal</code> + <code>-shm</code>, and <code>data/arxiv-bucket.db</code> + <code>-wal</code> + <code>-shm</code>.</li>
+        <li><strong>Prune:</strong> fold an <code>expiry &lt; now</code> sweep into <code>scheduler/jobs/llm-cache-prune.ts</code> (the better-sqlite3 prune — <em>not</em> <code>cache-prune.ts</code>, which prunes the prisma <code>CacheEntry</code> L2). Content/key is path+query, expiry-bounded — eviction is pure housekeeping.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="layer3">Layer 3 — shared cross-tier rate bucket</h2></summary>
+    <div class="section-body">
+      <h3>One paced line for both processes, file-locked</h3>
+      <p>Replace the <code>globalThis</code> per-process bucket with a single-row SQLite bucket both processes draw from atomically — so the two tiers can't burst-collide on the IP.</p>
+      <pre><code class="language-typescript">// EDIT lib/arxiv/rate-limit.ts (or NEW lib/arxiv/shared-bucket.ts wired in)
+//   table: arxiv_bucket(id INTEGER PRIMARY KEY CHECK(id=1), tokens REAL, last_refill INTEGER)
+//   acquireArxivSlot():
+//     BEGIN IMMEDIATE              -- cross-process write lock (busy_timeout handles contention)
+//       refill tokens by elapsed * rate, cap at 1 (strict pacing, no burst)
+//       if tokens >= 1: tokens -= 1; waitMs = 0
+//       else:           reserve next slot, advance last_refill, compute waitMs
+//     COMMIT
+//     await sleep(waitMs)          -- pacing happens in-process, lock released first
+//   BEST-EFFORT: file/native failure → fall back to the current globalThis bucket.</code></pre>
+      <div class="callout warn"><strong>Env semantics change.</strong> <code>ARXIV_RATE_PER_MIN</code> currently means <em>per-process</em> (7 each → ~14 combined). With a shared bucket it becomes the <em>single shared</em> rate — set it to ~<strong>14</strong> (still under arXiv's ~20/min = 1-per-3s) and update the explanatory comments in both <code>.env.development</code> and <code>.env.production</code>. Getting this wrong (leaving 7 as "shared") needlessly halves throughput; leaving 14 as "per-process" re-creates the collision. Call it out in the commit.</div>
+      <p>Committed for this effort (OQ4: build now, not gated on measurement). The bucket calls the base's low-level <code>openDb()</code> seam (open / WAL / degrade) and keeps its own single-row <code>BEGIN IMMEDIATE</code> refill logic (OQ9) — no duplicated open/degrade code. Keep the per-process <code>globalThis</code> bucket as the best-effort fallback so a shared-file failure can never block arXiv calls.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="touch">Touch list, tests &amp; ops</h2></summary>
+    <div class="section-body">
+      <h3>Files to touch</h3>
+      <table>
+        <thead><tr><th>Layer</th><th>File</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td>2</td><td><code>prisma/schema.prisma</code></td><td>add 6 nullable metadata cols to both pick models</td></tr>
+          <tr><td>2</td><td><code>prisma/migrations/*</code></td><td>new migration (run on <strong>both</strong> dev.db + prod.db)</td></tr>
+          <tr><td>2</td><td><code>lib/repositories/selected-papers.ts</code></td><td>record + return metadata; add backfill updater</td></tr>
+          <tr><td>2</td><td><code>app/api/research/review/route.ts</code></td><td>serve from stored metadata; skip arXiv+SS; backfill legacy; TTL 86400</td></tr>
+          <tr><td>2</td><td><code>app/api/research/historical/route.ts</code></td><td>same as review</td></tr>
+          <tr><td>2</td><td><code>app/api/research/route.ts</code></td><td>TTL 43200</td></tr>
+          <tr><td>1</td><td><code>lib/shared-sqlite-cache.ts</code></td><td><strong>NEW</strong> (OQ5/OQ7) — <em>fat</em> base: generic keyed store w/ reserve/lead/follow (row-codec param) <strong>+ exported <code>openDb()</code> seam</strong> (guarded open / WAL / busy_timeout / best-effort degrade / prune)</td></tr>
+          <tr><td>1</td><td><code>lib/research/shared-cache.ts</code></td><td><strong>NEW</strong> — thin adapter over the base; <code>data/research-cache.db</code>; exports <code>researchSharedStore</code> + <code>withSharedCache()</code> (OQ3/OQ10)</td></tr>
+          <tr><td>1</td><td><code>lib/ai/llm-cache.ts</code></td><td>refactor onto the base <strong>this effort</strong> (OQ8); <code>llm-cache-smoke.ts</code> must stay green (protocol semantics preserved exactly)</td></tr>
+          <tr><td>1</td><td><code>lib/research/shared-cache.ts</code> (cont.)</td><td>also export <strong><code>withSharedCache()</code></strong> (OQ10) — sibling of <code>withCache</code> w/ own L1 + stale-fallback; <code>lib/cache.ts</code> is <strong>NOT</strong> edited</td></tr>
+          <tr><td>1</td><td><strong>4</strong> research routes</td><td>wrap with <code>withSharedCache(..., { store: researchSharedStore })</code> — incl. <code>/api/research/hf</code> (OQ2)</td></tr>
+          <tr><td>1</td><td><code>scheduler/jobs/llm-cache-prune.ts</code></td><td>also prune <code>research-cache.db</code> (or sibling job)</td></tr>
+          <tr><td>3</td><td><code>lib/arxiv/rate-limit.ts</code></td><td>shared-file bucket via the base's <code>openDb()</code> seam (OQ9) + per-process fallback</td></tr>
+          <tr><td>3</td><td><code>.env.development</code> / <code>.env.production</code></td><td><code>ARXIV_RATE_PER_MIN</code> → 14 (shared) + comment rewrite</td></tr>
+          <tr><td>1/3</td><td><code>.gitignore</code></td><td>add 6 lines — <code>data/research-cache.db</code> + <code>-wal</code>/<code>-shm</code>, <code>data/arxiv-bucket.db</code> + <code>-wal</code>/<code>-shm</code> (dir is not blanket-ignored)</td></tr>
+        </tbody>
+      </table>
+      <h3>Tests &amp; docs</h3>
+      <ul>
+        <li><strong>NEW</strong> <code>scripts/tests/hermetic/research-shared-cache-smoke.ts</code> — two store handles on a temp file, assert a write by one is read by the other; assert single-flight (simultaneous miss → one fetch); assert best-effort degrade on a bad path. Append to the <code>SUITES</code> array in <code>scripts/pre-push.sh</code>.</li>
+        <li><strong>GUARD</strong> the existing <code>scripts/tests/hermetic/llm-cache-smoke.ts</code> must stay green across the <code>llm-cache.ts</code> refactor onto the shared base (OQ8) — it's the regression net for billing-critical dedup. If a shared base is extracted, consider a <code>shared-sqlite-cache-smoke.ts</code> for the base itself.</li>
+        <li><strong>NEW</strong> <code>scripts/tests/hermetic/arxiv-shared-bucket-smoke.ts</code> — assert atomic token consume across two handles paces to the configured rate; assert fallback when the file can't open.</li>
+        <li><code>docs/apis.html</code> — the generator AST-parses <code>withCache</code> TTLs, so changing them makes it stale. Run <code>npm run gen:api-docs</code> + commit (the <code>api-docs-smoke</code> hermetic test fails the push otherwise).</li>
+        <li><code>CLAUDE.md</code> — add a short subsection under "API routes + caching" (cross-tier research cache) and "Gemini rate limiting" neighbor (shared arXiv bucket); <strong>and update the existing "Cross-tier call dedup" paragraph</strong> since <code>llm-cache.ts</code> now sits on the shared base (OQ8). Consider a forward note in <code>docs/archive/cross-tier-llm-dedup.html</code>.</li>
+        <li><code>docs/next_steps.md</code> — paired update per session protocol.</li>
+      </ul>
+      <h3>Ops sequence (per the PM2 convention)</h3>
+      <ul>
+        <li>Migrate dev: <code>DATABASE_URL="file:./dev.db" npx prisma migrate dev</code> (note the <code>./dev.db</code> not <code>./prisma/dev.db</code> gotcha).</li>
+        <li>Migrate prod: point <code>DATABASE_URL</code> at <code>prod.db</code>, <code>npx prisma migrate deploy</code>.</li>
+        <li>Restart with env refresh: <code>pm2 restart mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod --update-env</code>.</li>
+        <li>Verify: hit a pick route twice on each tier, confirm only the first miss logs an arXiv call (<code>logExternalCall</code> / Internal Systems Fetcher Health card), and that the second tier reads the shared-cache entry.</li>
+      </ul>
+      <div class="callout tip"><strong>Pre-implementation recheck (2026-05-31).</strong> Code claims verified against the tree: <code>better-sqlite3@12.10.0</code> is a dep + in <code>serverExternalPackages</code>; <code>loggedFetch</code> + <code>logExternalCall</code> exist in <code>lib/external-fetch.ts</code>; <code>llm-cache-prune.ts</code>, <code>cache-smoke.ts</code>, <code>llm-cache-smoke.ts</code>, <code>api-docs-smoke.ts</code> all present; <code>gen-api-docs.ts</code> AST-reads <code>withCache</code> <code>ttlSeconds</code> (so TTL bumps require <code>gen:api-docs</code>); pick models persist only <code>{ paperId, topic, weekStart }</code>; both pick routes share the id_list-refetch pattern. Two corrections folded in above: the L2 backend is compute-mediating (not read/write), and <code>.gitignore</code> needs explicit per-file lines.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+      <h3>Known risks</h3>
+      <ul>
+        <li><strong>better-sqlite3 ABI mismatch</strong> (after an nvm Node switch) — both new stores use the same guarded dynamic-import + best-effort degrade as <code>llm-cache.ts</code>, so a load failure runs uncached / per-process, never crashes. This is a hard requirement, not a nicety: <strong>correctness must never depend on either shared file being up.</strong></li>
+        <li><strong>Two-DB migration drift</strong> — the new columns must land on <code>prod.db</code> too, or the scheduler/prod route throws Prisma <code>P2021</code>/unknown-column. Run <code>migrate deploy</code> on prod in the same step.</li>
+        <li><strong>Env-semantics flip (Layer 3)</strong> — see the warning in §6; the shared-vs-per-process meaning of <code>ARXIV_RATE_PER_MIN</code> changes. Easy to get backwards.</li>
+        <li><strong>Stale pick metadata</strong> — once persisted, a pick's title/summary never refresh. That's correct (arXiv abstracts are immutable), but if a pick row is ever wrong, clearing the row re-triggers a fresh fetch.</li>
+      </ul>
+      <h3>Rollback</h3>
+      <p>Each layer is independent and reversible. Layer 2: revert TTLs + route conditional (columns can stay, harmless when unread). Layer 1: revert the 4 routes from <code>withSharedCache</code> back to <code>withCache</code> — they fall back to per-tier prisma L2 (generic wrapper was never touched). Layer 3: drop the shared-bucket call — <code>acquireArxivSlot</code> uses the <code>globalThis</code> bucket. No layer is load-bearing for correctness; all three are pure optimizations over a working baseline.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open questions</h2></summary>
+    <div class="section-body">
+      <p>Each is tagged <code>OQ&lt;n&gt;</code> so it's referenceable in review threads and commits. <strong>All OQ1–OQ10 resolved 2026-05-31</strong> — design fully pinned; cleared to build. This section is second-to-last by convention; the execution checklist (§10) is the final section.</p>
+
+      <h3>Resolved (2026-05-31)</h3>
+      <ul>
+        <li><strong>OQ1 ✓ — Persisted <code>citationCount</code>:</strong> <strong>accept stale.</strong> Persist it at pick time alongside title/summary; never refresh. Soft sort signal, not load-bearing.</li>
+        <li><strong>OQ2 ✓ — <code>/api/research/hf</code> in the shared cache:</strong> <strong>yes, fold it in.</strong> Dedups HuggingFace across tiers too; all 4 research routes wrap with <code>withSharedCache</code> / <code>researchSharedStore</code>.</li>
+        <li><strong>OQ3 ✓ — Single-flight:</strong> <strong>include it now.</strong> Port reserve/lead/follow (pending/done rows + lease/steal) so simultaneous cross-tier misses fetch arXiv exactly once — no "accept a rare duplicate" interim.</li>
+        <li><strong>OQ4 ✓ — Layer 3 timing:</strong> <strong>build now, unconditionally.</strong> Not gated on post-Layer-1+2 measurement; ships in this effort with the per-process fallback.</li>
+        <li><strong>OQ5 ✓ — Abstraction:</strong> <strong>extract a shared base</strong> (<code>lib/shared-sqlite-cache.ts</code>); <code>llm-cache.ts</code> and <code>research-cache.ts</code> both build on it instead of duplicating the store boilerplate.</li>
+        <li><strong>OQ6 ✓ — TTLs:</strong> <strong>12h listings / 24h picks</strong> (43200s / 86400s).</li>
+        <li><strong>OQ7 ✓ — Shared base scope:</strong> <strong>fat base.</strong> <code>lib/shared-sqlite-cache.ts</code> is a generic keyed store including the reserve/lead/follow protocol (parameterized by a row codec); <code>llm-cache</code>/<code>research-cache</code> become thin (path + value (de)serialize). <strong>It also exports a low-level <code>openDb()</code> seam</strong> (guarded open / WAL / degrade) for non-keyed callers — required by OQ9.</li>
+        <li><strong>OQ8 ✓ — <code>llm-cache.ts</code> refactor timing:</strong> <strong>same effort.</strong> Port it onto the base as part of this work (no interim duplication); guarded by the existing <code>llm-cache-smoke.ts</code> so the generic protocol must preserve current semantics exactly (30s lease, 8s max-wait, 150ms poll, content-hash keys, errors never cached, release-on-error).</li>
+        <li><strong>OQ9 ✓ — Rate bucket vs. base:</strong> <strong>reuse the low-level primitive.</strong> The Layer 3 bucket calls the base's <code>openDb()</code> seam (open/WAL/degrade) and keeps its own single-row <code>BEGIN IMMEDIATE</code> refill logic — no duplicated open/degrade code, no forced fit into the keyed-store shape.</li>
+        <li><strong>OQ10 ✓ — Single-flight placement:</strong> <strong>dedicated <code>withSharedCache()</code> wrapper.</strong> The generic <code>withCache</code> is left <em>untouched</em> (zero blast radius on the wrapper every cached route shares); a sibling wrapper used only by the 4 research routes owns the compute-mediating cross-tier <code>getOrCompute</code> + its own L1 + stale-fallback (~30 lines duplicated from <code>withCache</code>, accepted). Routes stay one-liners. <em>(Opened by the pre-implementation review, which surfaced that the "compute-mediating, not read/write" finding concealed a real placement fork.)</em></li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Implementation checklist</h2></summary>
+    <div class="section-body">
+      <h3>Phased</h3>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P1</span>
+          <span class="task-title">Layer 2 — persist picks + raise TTLs (build first; biggest cut) ✓ DONE 2026-05-31 (dev + prod)</span>
+        </summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.1</span><span class="task-title">Schema + migration (both pick models)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.1.1</span><span class="task-title">Add 6 nullable cols (title, summary, url, author, publishedAt, citationCount) to SelectedReviewPaper + SelectedHistoricalPaper</span></summary><div class="task-body"><p>Nullable so legacy rows migrate clean.</p></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.1.2</span><span class="task-title">migrate dev + prisma generate; confirm client types — migration 20260531235412_add_pick_metadata applied to BOTH dev.db + prod.db</span></summary><div class="task-body"><p>Brief tier pause to clear the SQLite write lock. Prod migrated to defuse the shared-client landmine.</p></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.2</span><span class="task-title">Repository (lib/repositories/selected-papers.ts)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.2.1</span><span class="task-title">record{Review,Historical}Pick accept + store the metadata</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.2.2</span><span class="task-title">Add backfill{Review,Historical}Pick updaters for legacy NULL rows</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.3</span><span class="task-title">Routes (review + historical, same shape)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.3.1</span><span class="task-title">Metadata present → serve from DB, skip arXiv id_list + Semantic Scholar</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.3.2</span><span class="task-title">Legacy NULL → one id_list fetch, then backfill the row</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.3.3</span><span class="task-title">Fresh search-and-pick → pass parsed metadata into record*Pick</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.4</span><span class="task-title">TTLs + verify</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.4.1</span><span class="task-title">TTL 3600→43200 (listings), 3600→86400 (picks)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.4.2</span><span class="task-title">npm run gen:api-docs + commit apis.html (64 routes, chips now 43200/86400)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox" checked><span class="task-id">P1.4.3</span><span class="task-title">Verify: 2nd hit on each pick route serves from DB, no arXiv call logged — confirmed (review 50ms, historical 20ms, 0 new arXiv calls)</span></summary><div class="task-body"></div></details>
+          </div></details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Layer 1 — shared cross-tier cache (incl. shared base + single-flight)</span>
+        </summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">NEW lib/shared-sqlite-cache.ts — fat base (OQ5/OQ7)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title">openDb() seam — guarded better-sqlite3 import, WAL, busy_timeout, best-effort degrade</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.2</span><span class="task-title">Generic keyed store: get / reserve (INSERT OR IGNORE) / steal / finish / release — row-codec param</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.3</span><span class="task-title">getOrCompute() reserve→lead/compute→finish; follower poll/steal; lease 30s / maxWait 8s / poll 150ms</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.1.4</span><span class="task-title">prune(doneCutoff, pendingCutoff)</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">NEW lib/research/shared-cache.ts adapter + wrapper</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.2.1</span><span class="task-title">researchSharedStore = base store @ data/research-cache.db + JSON codec</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.2.2</span><span class="task-title">withSharedCache() — own L1 + stale-fallback, drives store.getOrCompute (OQ10); lib/cache.ts NOT edited</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">Refactor lib/ai/llm-cache.ts onto the base (OQ8)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3.1</span><span class="task-title">Re-express llmCached() over base getOrCompute; keep content-hash key</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3.2</span><span class="task-title">Preserve 30s/8s/150ms knobs + errors-never-cached + best-effort degrade</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.3.3</span><span class="task-title">Run llm-cache-smoke.ts → green (billing-critical regression net)</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">Wire routes + gitignore</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.4.1</span><span class="task-title">Wrap all 4 research routes with withSharedCache(..., { store: researchSharedStore }) — incl. hf (OQ2)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.4.2</span><span class="task-title">.gitignore: 6 lines — research-cache.db + arxiv-bucket.db (+ -wal/-shm each)</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P2.5</span><span class="task-title">Tests + prune</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.5.1</span><span class="task-title">NEW research-shared-cache-smoke.ts (read-across + single-flight + degrade); append to pre-push SUITES</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P2.5.2</span><span class="task-title">Fold research-cache prune into scheduler/jobs/llm-cache-prune.ts</span></summary><div class="task-body"></div></details>
+          </div></details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Layer 3 — shared rate bucket (committed, OQ4)</span>
+        </summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">Shared-file token bucket (lib/arxiv/rate-limit.ts)</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1.1</span><span class="task-title">arxiv_bucket table via base openDb() seam (OQ9); data/arxiv-bucket.db</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1.2</span><span class="task-title">acquireArxivSlot(): BEGIN IMMEDIATE → refill/consume or reserve next slot → COMMIT → sleep(waitMs)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.1.3</span><span class="task-title">per-process globalThis fallback on store failure</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">Env semantics flip</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.2.1</span><span class="task-title">ARXIV_RATE_PER_MIN → 14 (shared) in both .env.development + .env.production</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.2.2</span><span class="task-title">Rewrite the per-process→shared comment in both files (easy to get backwards)</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">Test</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P3.3.1</span><span class="task-title">NEW arxiv-shared-bucket-smoke.ts: atomic consume paces to rate; fallback on bad path; append to SUITES</span></summary><div class="task-body"></div></details>
+          </div></details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P4</span>
+          <span class="task-title">Docs + ops</span>
+        </summary>
+        <div class="task-body">
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Docs</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.1.1</span><span class="task-title">CLAUDE.md: new subsections (research cache + arXiv bucket) + update existing "Cross-tier call dedup" para (OQ8)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.1.2</span><span class="task-title">Forward note in docs/archive/cross-tier-llm-dedup.html</span></summary><div class="task-body"></div></details>
+          </div></details>
+          <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Ops</span></summary><div class="task-body">
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2.1</span><span class="task-title">Migrate prod.db (migrate deploy) + pm2 restart … --update-env (all 4 procs)</span></summary><div class="task-body"></div></details>
+            <details class="task"><summary><input type="checkbox"><span class="task-id">P4.2.2</span><span class="task-title">next_steps.md update; verify dedup on both tiers (Internal Systems Fetcher Health)</span></summary><div class="task-body"></div></details>
+          </div></details>
+        </div>
+      </details>
+
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
