@@ -1,0 +1,264 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Design Doc Template</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <!--
+    DESIGN-DOC STARTER. Copy this file to docs/<feature>.html, rename, and fill
+    each section. This is the *archetype* template — it embodies the fixed
+    design-doc rules (section order, OQ-numbering, nested Tasks). For a non-design
+    doc (reference, runbook, fix writeup) copy the generic _template.html instead;
+    that file is the live markup cheat-sheet (callouts, tables, code, Mermaid).
+    The section ORDER below is the rule — keep it. Delete the placeholder prose,
+    not the structure.
+  -->
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Feature Name</h1>
+  <p class="subtitle">One sentence: what this builds and why it matters now. <em>(Design-doc starter — replace this subtitle, keep the section order. See the convention callout in §1.)</em></p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#context">Context &amp; problem</a></li>
+      <li><a href="#design">Design</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="context">Context &amp; problem</h2></summary>
+    <div class="section-body">
+
+      <div class="callout"><strong>Design-doc convention (delete before publishing).</strong> Sections follow the decision-making flow and the tail order is fixed: <em>context → design → risks &amp; rollback → <strong>Open Questions</strong> (second-to-last) → <strong>Tasks</strong> (last, right before the footer).</em> Open Questions are <code>OQ</code>-numbered (<code>OQ1</code>, <code>OQ2</code>… — never <code>Q</code>) and <strong>must be resolved with the user before any implementation code is written</strong>. The Tasks checklist needs <strong>≥2 nested levels</strong> (phase → task → sub-task, e.g. <code>P1.2.3</code>) — never flat.</div>
+
+      <h3>Problem</h3>
+      <p>What's broken, missing, or painful today — grounded in the current code/state (cite files + line numbers, not vibes). Why is this worth doing now? What's the cost of not doing it?</p>
+
+      <h3>Goals &amp; non-goals</h3>
+      <p>What this doc commits to delivering, and — just as important — what it explicitly does <em>not</em> (deferred to a later phase, or out of scope entirely). Naming non-goals up front keeps the design honest and the Tasks list bounded.</p>
+      <ul>
+        <li><strong>Goal:</strong> &lt;the outcome that defines done&gt;</li>
+        <li><strong>Non-goal:</strong> &lt;the tempting-but-deferred thing&gt; — deferred to &lt;when / why&gt;</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="design">Design</h2></summary>
+    <div class="section-body">
+      <h3>Approach</h3>
+      <p>The chosen design. Start from the existing code's grain — what abstraction/pattern already exists that this extends (e.g. the per-tier SQLite house pattern, the <code>withCache</code> wrapper, the fetcher registry)? Describe data model, API surface, and control flow. Use a diagram for anything with more than ~3 moving parts:</p>
+      <pre class="mermaid">
+flowchart TB
+  trigger["entry point"] -->|"step"| work["does the thing"]
+  work --> store["persists / emits"]
+  store --> done(["done"])
+      </pre>
+      <p>Note the touch list: every file/module this changes (schema, Zod, repository, route, UI, scheduler job, tests, generated docs). The reviewer should be able to predict the diff from this section.</p>
+
+      <h3>Alternatives considered</h3>
+      <p>The other viable designs and why they lost. This is where "minimal v1" lives — for each component, state why it's load-bearing or why the heavier alternative was deferred. A rejected alternative with a clear reason often becomes an Open Question or a non-goal.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+      <h3>Risks &amp; mitigations</h3>
+      <p>What could break — data loss, race conditions, log-viewer spam, prod/dev divergence, schema-behind tiers, external-API bursts. For each, the mitigation already in the design.</p>
+      <table>
+        <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td>&lt;what goes wrong&gt;</td><td>low / med / high</td><td>&lt;how the design prevents or contains it&gt;</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Rollback</h3>
+      <p>How to back this out if it misbehaves in prod — feature flag, revert + rebuild + <code>pm2 restart</code>, migration-down, or "best-effort so it degrades to a no-op." If a migration is involved, note the backup step and that both DBs must be handled.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <h3>Unresolved decisions</h3>
+      <p>Genuine design forks not yet settled — pulled from real conditional choices in the plan (scope cuts, deferred abstractions, "verify load-bearing first" items). Don't pad with fake questions. Each is <code>OQ&lt;n&gt;</code> with a short <em>Lean:</em> giving the current default. <strong>Resolve all OQs with the user before writing implementation code</strong>; once decided, flip the callout to <code>callout tip</code> and prefix the answer with <strong>✓ Decided.</strong></p>
+
+      <div class="callout"><strong>OQ1 — &lt;the first undecided fork&gt;?</strong><br/>
+        Options: &lt;A&gt; vs &lt;B&gt;. <em>Lean:</em> &lt;A&gt;, because &lt;reason&gt;. <em>Status:</em> open.</div>
+
+      <div class="callout"><strong>OQ2 — &lt;the second undecided fork&gt;?</strong><br/>
+        Options: &lt;A&gt; vs &lt;B&gt; vs &lt;C&gt;. <em>Lean:</em> &lt;B&gt;. <em>Status:</em> open.</div>
+
+      <div class="callout tip"><strong>OQ3 — &lt;a fork that's already been settled&gt;?</strong><br/>
+        <strong>✓ Decided:</strong> &lt;the chosen answer&gt; — &lt;one-line rationale from the conversation&gt;. <em>(Example of the decided state.)</em></div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+      <h3>Implementation checklist</h3>
+      <p>The execution plan, and the <strong>last</strong> section of the doc. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;…</code> (one dot per level). Break every phase down to <strong>at least 2 nested levels</strong> — a flat list hides real work. Mark done by adding <code>checked</code> to the <code>&lt;input&gt;</code>.</p>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Foundation</span>
+        </summary>
+        <div class="task-body">
+          <p>The substrate everything else builds on (schema, store module, core helper). Ship + verify this before wiring callers.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.1</span>
+              <span class="task-title">First concrete task</span>
+            </summary>
+            <div class="task-body">
+              <p>What it does and where it lands (file path).</p>
+
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P1.1.1</span>
+                  <span class="task-title">Sub-task — the ≥2nd level the convention requires</span>
+                </summary>
+                <div class="task-body">
+                  <p>The concrete, checkable unit of work.</p>
+                </div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.2</span>
+              <span class="task-title">Second concrete task</span>
+            </summary>
+            <div class="task-body">
+              <p>e.g. wire the Zod schema + repository + route; regenerate <code>apis.html</code> if a route surface changed.</p>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — Wire callers + UI</span>
+        </summary>
+        <div class="task-body">
+          <p>Connect the foundation to the surfaces that use it; add the card/view.</p>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.1</span>
+              <span class="task-title">A task in phase 2</span>
+            </summary>
+            <div class="task-body"><p>…</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Verify + ship</span>
+        </summary>
+        <div class="task-body">
+          <p>Hermetic smoke wired into <code>pre-push.sh</code>, <code>tsc</code> clean, prod build + <code>pm2 restart</code>, deploy notes.</p>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P3.1</span>
+              <span class="task-title">Add hermetic smoke</span>
+            </summary>
+            <div class="task-body"><p>New file under <code>scripts/tests/hermetic/</code>, appended to the <code>SUITES</code> array.</p></div>
+          </details>
+        </div>
+      </details>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  // Syntax-highlight every <pre><code> (auto-detects, or honors a
+  // class="language-xxx" hint). Mermaid blocks are <pre class="mermaid"> with
+  // no inner <code>, so hljs skips them. Highlighting needs no layout, so it's
+  // fine to run on load even for code inside collapsed sections.
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,   // sections start collapsed; render lazily on open (below)
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  // Mermaid can't measure a diagram inside a collapsed (display:none) <details>,
+  // so render each only once its section is visible. mermaid.run() tags nodes
+  // with data-processed, and the :not() guard prevents re-processing.
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');     // bounded viewport (CSS) before measuring
+    svgPanZoom(svg, {
+      controlIcons: true,               // built-in zoom in / out / reset buttons
+      fit: true, center: true,          // show the whole diagram first
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });       // await so the SVG exists before pan/zoom
+    nodes.forEach(attachPanZoom);
+  }
+  // Render any diagrams already visible at load (sections that start open).
+  renderVisibleMermaid(document);
+  // …and render on first expand of each collapsible section.
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  // Keep the copyright year current without editing every doc.
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

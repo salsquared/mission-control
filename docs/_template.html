@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>Doc Template</h1>
-  <p class="subtitle">Copy this file to start a new doc. It renders as the style guide — every component below is live, so this page IS the cheat-sheet. The <code>h4</code> kicker above the title is the project name; the <code>h1</code> is this doc's name. Delete the parts you don't need and replace the rest.</p>
+  <p class="subtitle">Copy this file to start a new doc. It renders as the style guide — every component below is live, so this page IS the cheat-sheet. The <code>h4</code> kicker above the title is the project name; the <code>h1</code> is this doc's name. Delete the parts you don't need and replace the rest. <strong>Starting a feature/design doc?</strong> Copy <code>_template.design-doc.html</code> instead — it pre-stubs the fixed design-doc section order (context → design → risks → Open Questions → Tasks) so the structure is correct before you type.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -144,6 +144,7 @@ flowchart TB
     <h3>Authoring</h3>
     <p>Use <code>&lt;details class="task"&gt;</code> for any to-do list. They're collapsible and carry a checkbox + id. Mark done by adding <code>checked</code> to the <code>&lt;input&gt;</code> — the title strikes through and the id dims. Nest sub-tasks by putting another <code>&lt;details class="task"&gt;</code> inside <code>.task-body</code>; the id + checkbox color shifts per depth (blue → green → teal → sky → lime).</p>
     <p>Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;…</code> — one dot per level, no depth cap: <code>P1</code> → <code>P1.2</code> → <code>P1.2.3</code> → <code>P1.2.3.4.5</code>.</p>
+    <div class="callout"><strong>Feature/design-doc convention.</strong> In a feature or design doc this Tasks section is the <strong>final section</strong>, and <strong>Open Questions</strong> sits immediately before it — the doc follows the natural decision-making flow (context → design → risks → open questions → execution). Break the checklist down to <strong>at least 2 nested levels</strong> of granularity (phase → task → sub-task, e.g. <code>P1.2.3</code>) — never a flat or single-level list. Don't hand-assemble this from scratch: copy <code>_template.design-doc.html</code>, which already lays out these sections in order with the OQ + nested-task stubs in place.</div>
 
   <details class="task" open>
     <summary>
