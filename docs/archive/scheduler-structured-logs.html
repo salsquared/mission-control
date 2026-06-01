@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./assets/style.css">
+<link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
 
@@ -15,7 +15,7 @@
   <h1>Scheduler Logs — Structured Output + In-App Visibility</h1>
   <p class="subtitle">The two scheduler processes (<code>mission-control-scheduler-{dev,prod}</code>) do all the continuous background work — watchlist crawls, classification sweeps, digests, prunes — but their logs are <strong>plain text, untimestamped, and invisible to the in-app log viewer</strong>. The Internal Systems dash shows only the web process's logs, because the logger monkey-patch lives in a Next.js-only startup hook the scheduler never runs, and the log viewer reads a per-process ring buffer + the web PM2 file. This plan gives the scheduler <strong>structured JSON log output</strong> (with a per-line <code>source</code>/<code>tier</code> field), <strong>mutes its per-query verbose noise</strong>, and bridges its logs into the in-app viewer — live (near-real-time) and historical — via a per-tier shared SQLite store, the same cross-process pattern as <code>llm-cache.db</code> / <code>fetcher-health.db</code>.</p>
 
-  <div class="callout tip"><strong>STATUS — DECIDED, ready to implement (2026-05-31).</strong> All open questions resolved with the user this session (see <a href="#decisions">§5</a>). Spun out of the <a href="./fetcher-health-store.html">Fetcher Health store plan</a> (its OQ14): structured scheduler logging is orthogonal to that card but was surfaced by the same root cause. No code written yet; the firmed-up build plan is in <a href="#tasks">§6</a>.</div>
+  <div class="callout tip"><strong>✅ SHIPPED — archived 2026-06-01.</strong> Implemented end-to-end (P1&ndash;P7) 2026-05-31: structured JSON scheduler output carrying <code>source</code>/<code>tier</code>, verbose per-query noise muted in the scheduler, and a per-tier <code>data/logs.db</code> bridge into the in-app viewer (live SSE poll + historical merge). Live code: <code>lib/logs-store.ts</code>, <code>lib/logger.ts</code> (<code>LOG_SOURCE</code>/<code>LOG_TIER</code>), <code>app/api/system/logs/{route,historical/route}.ts</code>, <code>scheduler/jobs/logs-prune.ts</code> (48h), the All·Web·Scheduler filter + SCHED/WEB badges in <code>components/views/InternalView.tsx</code>; hermetic <code>logs-store-smoke</code>. Spun out of the <a href="./fetcher-health-store.html">Fetcher Health store plan</a> (its OQ14). Kept as the design rationale (referenced from those code files + <code>docs/architecture.html</code>).</div>
 
   <div class="callout"><strong>Relationship to the Fetcher Health store + card.</strong> The <a href="./fetcher-health-store.html">Fetcher Health plan</a> makes fetcher <em>health</em> independent of log parsing (it records structured outcomes to <code>data/fetcher-health.db</code> and the <code>FetcherHealthCard</code> aggregates them). This doc is the <em>general</em> fix for scheduler observability — every other <code>[SCHEDULER:*]</code> line, not just fetches. They share a root cause but neither blocks the other. The <strong>view</strong> boundary between them is settled in <a href="#decisions">OQ9</a>: there is no separate “fetcher log” view — fetcher <em>monitoring</em> is the card; raw fetcher <em>log lines</em> live in this general viewer, source-filtered.</div>
 

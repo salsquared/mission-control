@@ -715,7 +715,7 @@ model BlacklistedCompany {
   @@index([userId])
 }
 
-// Canonical resumes ("Canons") — docs/canonical-resumes.html. A Canon is a
+// Canonical resumes ("Canons") — docs/archive/canonical-resumes.html. A Canon is a
 // named role-archetype that owns one reusable resume (a curated subset of the
 // master profile). Generation feeds the canon's keyword text to the unchanged
 // resume pipeline; jobs are manually tagged to a canon and reuse its artifact.

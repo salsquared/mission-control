@@ -101,7 +101,7 @@ public/swe-worker-*.js
 # Fetcher-health telemetry store (lib/fetcher-health/store.ts) + WAL/shm sidecars.
 # Ephemeral per-tier fetch outcomes (48h retention), not state. Also matched by
 # the global *.db globs above; listed explicitly for clarity. See
-# docs/fetcher-health-store.html.
+# docs/archive/fetcher-health-store.html.
 /data/fetcher-health.db
 /data/fetcher-health.db-wal
 /data/fetcher-health.db-shm
@@ -109,7 +109,7 @@ public/swe-worker-*.js
 # Scheduler structured-log bridge (lib/logs-store.ts) + WAL/shm sidecars. The
 # scheduler-only sink that carries its logs to the web tier's in-app viewer
 # (48h retention), not state. Also matched by the global *.db globs above;
-# listed explicitly for clarity. See docs/scheduler-structured-logs.html.
+# listed explicitly for clarity. See docs/archive/scheduler-structured-logs.html.
 /data/logs.db
 /data/logs.db-wal
 /data/logs.db-shm

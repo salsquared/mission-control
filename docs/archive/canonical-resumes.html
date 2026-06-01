@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./assets/style.css">
+<link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
 
@@ -15,7 +15,7 @@
   <h1>Canonical Resumes (&ldquo;Canons&rdquo;)</h1>
   <p class="subtitle">A plan for generating <strong>one resume per role-archetype</strong> instead of one per job &mdash; so near-identical postings (every &ldquo;security officer&rdquo; listing, every &ldquo;math tutor&rdquo; gig) reuse a single LLM-built resume rather than burning 2&ndash;3 Gemini calls each to re-derive the same thing. §1&ndash;§5 frame the idea + design; <strong>§6's decision list is now fully answered (2026-05-30)</strong> &mdash; the locked spec is the Decisions summary up top.</p>
 
-  <div class="callout"><strong>Status: design decided (2026-05-30) &mdash; no code yet.</strong> All 12 open questions in §6 are answered (✓ Decided callouts); the Decisions summary below is the locked spec, and §4's design + §7's phasing are updated to match. Companion refs: <code>docs/resume-pipeline.md</code> (the per-job pipeline this extends), <code>docs/llm-calls.html</code> (the cost model), <code>docs/user-stories.md</code> / <code>docs/implementation.md</code> (where this slots as a milestone).</div>
+  <div class="callout tip"><strong>✅ SHIPPED &mdash; archived 2026-06-01.</strong> The Canon infrastructure (model + migration, CRUD API, canon-driven generation, manual tagging + inherit, entity-scoped staleness, Canons UI) shipped to dev 2026-05-30 (P1&ndash;P4) and to prod with the manual-builder work. <strong>The keyword auto-selection generation this doc's §7 P2 describes was subsequently redesigned</strong> &mdash; replaced by the hand-curated per-Canon selector in <a href="./resume-manual-builder.html">resume-manual-builder.html</a> (also archived). Live code: <code>lib/canons/</code>, <code>app/api/canons/</code>, <code>components/cards/profile/CanonsCard.tsx</code>; <code>model Canon</code> in <code>prisma/schema.prisma</code>; hermetic <code>canon-{crud,staleness,specialize,keyword-split,manual-selection}-smoke</code>. Kept as the original design rationale (referenced from those code files). Companion refs: <code>docs/resume-pipeline.md</code>, <code>docs/llm-calls.html</code>.</div>
 
   <details class="section no-count" open>
     <summary><h2 id="decisions">Decisions (locked — 2026-05-30)</h2></summary>
@@ -71,7 +71,7 @@
         <li>Every <strong>security officer</strong> posting (Allied Universal &mdash; museum rover, mall patrol, studio, &hellip;) &rarr; same security history, same bullets, near-identical output.</li>
         <li>The four no-degree <strong>side</strong> watchlists already <em>are</em> role-types: <em>AI coding evaluator</em>, <em>Math / test-prep tutor</em>, <em>Bilingual CS / interpreter</em>, <em>Junior web dev &amp; QA</em>.</li>
       </ul>
-      <p>Generating a fresh resume for each of, say, five Interested security jobs means <strong>~10&ndash;15 Gemini calls to produce five PDFs that are practically the same document.</strong> The <a href="./archive/cross-tier-llm-dedup.html">cross-tier LLM cache</a> doesn't rescue this: it's content-addressed on the <em>exact</em> rendered prompt, so two <em>similar-but-not-identical</em> postings miss the cache and each pay full price.</p>
+      <p>Generating a fresh resume for each of, say, five Interested security jobs means <strong>~10&ndash;15 Gemini calls to produce five PDFs that are practically the same document.</strong> The <a href="./cross-tier-llm-dedup.html">cross-tier LLM cache</a> doesn't rescue this: it's content-addressed on the <em>exact</em> rendered prompt, so two <em>similar-but-not-identical</em> postings miss the cache and each pay full price.</p>
       <blockquote>Sal's framing: &ldquo;it doesn't make sense to create resumes per job but per canon or type of job &mdash; we really only need one resume for security-type jobs.&rdquo;</blockquote>
     </div>
   </details>

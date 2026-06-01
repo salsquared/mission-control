@@ -1,5 +1,5 @@
 /**
- * Scheduler structured-log bridge (design: docs/scheduler-structured-logs.html).
+ * Scheduler structured-log bridge (design: docs/archive/scheduler-structured-logs.html).
  *
  * The scheduler processes run their own structured logger (scheduler/index.ts
  * calls initLogger()), but their ring buffer is per-process and the web tier's

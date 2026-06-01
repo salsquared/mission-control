@@ -1,5 +1,5 @@
 /**
- * Fetcher health store (design: docs/fetcher-health-store.html).
+ * Fetcher health store (design: docs/archive/fetcher-health-store.html).
  *
  * Replaces the old PM2-log-parsing FetcherHealthCard backend with a dedicated,
  * per-tier, best-effort SQLite store written at the fetch chokepoints

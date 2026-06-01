@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic';
 // fetch chokepoints (loggedFetch / serveStale / ScraperBrokenError), NOT the
 // PM2 log file — the old regex-the-log approach only saw the web process's
 // fetches (never the scheduler's crawls) and was fragile to log-format drift.
-// Full design + rationale: docs/fetcher-health-store.html.
+// Full design + rationale: docs/archive/fetcher-health-store.html.
 
 const VALID_SOURCES = new Set<Source>(['web', 'scheduler']);
 const VALID_WINDOWS = new Set<WindowKey>(['1h', '6h', '1d']);

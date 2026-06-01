@@ -12,7 +12,7 @@ export const dynamic = 'force-dynamic';
 // mission-control-dev-out.log). Pick by the serving process's tier so the dev
 // viewer reads dev (OQ5 — the old hardcode always read the prod web file, so the
 // dev tier's "load older" showed prod). PM2_LOG_PATH overrides for non-PM2 /
-// test setups. See docs/scheduler-structured-logs.html.
+// test setups. See docs/archive/scheduler-structured-logs.html.
 function pm2LogPath(): string {
     const envPath = process.env.PM2_LOG_PATH;
     if (envPath) return envPath;

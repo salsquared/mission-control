@@ -1,5 +1,5 @@
 /**
- * Hermetic smoke for the fetcher-health store (docs/fetcher-health-store.html).
+ * Hermetic smoke for the fetcher-health store (docs/archive/fetcher-health-store.html).
  *
  * Fully hermetic: no PM2, no network (the loggedFetch check stubs global fetch),
  * and it uses its OWN temp FETCHER_HEALTH_PATH — never touches the real

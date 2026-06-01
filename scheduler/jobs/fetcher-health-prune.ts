@@ -1,5 +1,5 @@
 /**
- * Fetcher-health store housekeeping (docs/fetcher-health-store.html §7).
+ * Fetcher-health store housekeeping (docs/archive/fetcher-health-store.html §7).
  *
  * The card only ever queries the last 24h, so `data/fetcher-health.db` self-
  * bounds: this sweep deletes `fetch_event` rows older than the 48h retention

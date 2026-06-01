@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-// Canonical resumes ("Canons") — docs/canonical-resumes.html. A Canon is a
+// Canonical resumes ("Canons") — docs/archive/canonical-resumes.html. A Canon is a
 // user-named role-archetype that owns one reusable resume. This module is the
 // API contract: the repository, the routes, and the Profile-view UI all build
 // against these shapes.

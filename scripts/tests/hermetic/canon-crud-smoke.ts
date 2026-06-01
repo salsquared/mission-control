@@ -1,4 +1,4 @@
-// Hermetic smoke for the Canon repository CRUD (docs/canonical-resumes.html §7
+// Hermetic smoke for the Canon repository CRUD (docs/archive/canonical-resumes.html §7
 // P1.4 / P1.7). Runs against dev.db with the existing user; creates + tears
 // down its own canons.
 //   npx tsx scripts/tests/hermetic/canon-crud-smoke.ts

@@ -38,7 +38,7 @@ export function hostOf(urlStr: string): string {
  * fetch() with a canonical pre-flight log line. Drop-in for `fetch`.
  *
  * Also records the real upstream OUTCOME to the fetcher-health store
- * (docs/fetcher-health-store.html): 2xx/3xx → `ok`, 4xx/5xx → `error`, a thrown
+ * (docs/archive/fetcher-health-store.html): 2xx/3xx → `ok`, 4xx/5xx → `error`, a thrown
  * request → `error`. This is the single source of truth for upstream health —
  * the recording is best-effort and never alters the returned Response or thrown
  * error.

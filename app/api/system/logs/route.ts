@@ -6,7 +6,7 @@ export const dynamic = 'force-dynamic';
 
 // Scheduler log rows live in data/logs.db (the scheduler-only sink). Convert one
 // to the LogEntry shape the in-app viewer renders; the id is namespaced so it
-// never collides with a web ring-buffer id. See docs/scheduler-structured-logs.html.
+// never collides with a web ring-buffer id. See docs/archive/scheduler-structured-logs.html.
 function rowToEntry(r: LogRow): LogEntry {
     return {
         id: `sched-${r.id}`,

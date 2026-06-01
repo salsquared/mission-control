@@ -18,7 +18,7 @@ export type LogEntry = {
 // lines carry no [SCHEDULER:tier] prefix (only ~6 top-level ones do). Mirrors
 // currentTier()/currentSource() in lib/fetcher-health/store.ts, kept inline so
 // this module stays dependency-light (it loads at instrumentation time).
-// See docs/scheduler-structured-logs.html.
+// See docs/archive/scheduler-structured-logs.html.
 const SCHED_TIER = process.env.MC_SCHEDULER_TIER;
 export const LOG_SOURCE: LogSource = SCHED_TIER ? 'scheduler' : 'web';
 export const LOG_TIER: LogTier =

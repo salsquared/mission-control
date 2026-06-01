@@ -1,5 +1,5 @@
 /**
- * One-time idempotent seeder (docs/canonical-resumes.html §7 P1.6).
+ * One-time idempotent seeder (docs/archive/canonical-resumes.html §7 P1.6).
  *
  * Creates one SIDE canon per side keyword watchlist (linkedin/indeed), copying
  * the watchlist's keyword string into the canon's `keywords`, and links the

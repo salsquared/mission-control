@@ -1,4 +1,4 @@
-// Hermetic smoke for entity-scoped canon staleness (docs/canonical-resumes.html
+// Hermetic smoke for entity-scoped canon staleness (docs/archive/canonical-resumes.html
 // §6 Q7 / §7 P3.3 / P3.4). A canon goes stale ONLY when an entity in its
 // current resume's dependency set (resumeEntityIds) changes; unrelated entities
 // and sibling canons are untouched. Runs against dev.db with self-cleanup.

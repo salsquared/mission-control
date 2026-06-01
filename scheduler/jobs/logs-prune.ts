@@ -1,5 +1,5 @@
 /**
- * Scheduler-log store housekeeping (docs/scheduler-structured-logs.html §4).
+ * Scheduler-log store housekeeping (docs/archive/scheduler-structured-logs.html §4).
  *
  * `data/logs.db` carries the scheduler's structured logs to the web tier's
  * in-app viewer. The viewer only ever queries the last ~24h, so this daily

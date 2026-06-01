@@ -32,7 +32,7 @@ import { recordLogLine } from '@/lib/logs-store';
 // the in-app viewer. ONLY the logger patch — NOT the rest of register(), which
 // is web-only (Lunary, the Pulsar WS relay, shutdown drains). Called before any
 // console.* below so every scheduler line is structured + source-tagged.
-// See docs/scheduler-structured-logs.html.
+// See docs/archive/scheduler-structured-logs.html.
 initLogger();
 
 // Scheduler-only sink (OQ8): drain every structured log line into the shared
@@ -160,7 +160,7 @@ const JOBS: IntervalJob[] = [
         // to 48h. The card only queries 24h, so this is pure housekeeping; no
         // roll-up job is needed (the route aggregates raw events on read). No-op
         // when the store failed to init on this tier (best-effort). See
-        // docs/fetcher-health-store.html.
+        // docs/archive/fetcher-health-store.html.
         intervalMs: 24 * 60 * 60 * 1000,
         run: async () => {
             const r = await runFetcherHealthPrune();
@@ -174,7 +174,7 @@ const JOBS: IntervalJob[] = [
         // Daily — bound the scheduler-log bridge store (data/logs.db) to 48h.
         // The in-app viewer only queries ~24h, so this is pure housekeeping; no
         // roll-up needed (the routes read raw rows). No-op when the store failed
-        // to init on this tier (best-effort). See docs/scheduler-structured-logs.html.
+        // to init on this tier (best-effort). See docs/archive/scheduler-structured-logs.html.
         intervalMs: 24 * 60 * 60 * 1000,
         run: async () => {
             const r = await runLogsPrune();

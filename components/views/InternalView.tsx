@@ -56,7 +56,7 @@ export const InternalView: React.FC = () => {
     const [loadingOlder, setLoadingOlder] = useState(false);
     // Log-viewer source filter (All / Web / Scheduler). Scheduler rows arrive
     // source-tagged via data/logs.db; web rows are tagged 'web' (older rows that
-    // predate the field default to 'web'). See docs/scheduler-structured-logs.html.
+    // predate the field default to 'web'). See docs/archive/scheduler-structured-logs.html.
     const [logSourceFilter, setLogSourceFilter] = useState<'all' | 'web' | 'scheduler'>('all');
 
     const loadOlderLogs = useCallback(async () => {

@@ -39,7 +39,7 @@ const useSQLite = () => process.env.CACHE_BACKEND === 'sqlite';
 //
 // Also muted in BOTH scheduler tiers (MC_SCHEDULER_TIER set) regardless of
 // NODE_ENV — same rationale as the [DATABASE] gate in lib/prisma.ts: keep the
-// scheduler's in-app log stream signal-dense. See docs/scheduler-structured-logs.html (OQ7).
+// scheduler's in-app log stream signal-dense. See docs/archive/scheduler-structured-logs.html (OQ7).
 const LOG_VERBOSE =
     (process.env.NODE_ENV === 'production' && !process.env.MC_SCHEDULER_TIER)
     || process.env.DEBUG_VERBOSE_LOG === '1';
@@ -421,7 +421,7 @@ function serveStale(cacheKey: string, entry: L1Entry, retryTtl: number, host: st
     // Record the stale-fallback to the fetcher-health store (best-effort). Only
     // when an upstreamHost is known — a bare cacheKey isn't a host. Cache HITS
     // are intentionally NOT recorded (a hit isn't an upstream touch; cacheStats
-    // owns hit/miss). See docs/fetcher-health-store.html.
+    // owns hit/miss). See docs/archive/fetcher-health-store.html.
     if (host) recordFetchOutcome(host, 'fallback');
     const expiry = Date.now() + retryTtl * 1000;
     globalCache.set(cacheKey, { data: entry.data, expiry });

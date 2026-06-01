@@ -7,7 +7,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="./assets/style.css">
+<link rel="stylesheet" href="../assets/style.css">
 </head>
 <body>
 
@@ -15,7 +15,7 @@
   <h1>Fetcher Health — Dedicated Store</h1>
   <p class="subtitle">The <strong>Fetcher Health</strong> card on the Internal Systems dash is structurally unable to show what it claims to. It derives per-host counts by <strong>regex-parsing one PM2 log file on demand</strong> — the <em>web</em> process's — so it never sees the continuous background crawling (which runs in the <em>scheduler</em> processes), empties its per-host table after an hour of web quiet while the 1-day badge still reads 100%, and has broken repeatedly on log-format drift. This plan replaces the log-parsing with a small <strong>SQLite store every process writes to at the moment of fetch</strong> — reusing the best-effort cross-<em>process</em> pattern already proven by <code>data/llm-cache.db</code> (though, unlike that one, this store is per-<em>tier</em> by data — OQ5). Same plumbing, but a typed table you query instead of unstructured text you regex.</p>
 
-  <div class="callout tip"><strong>STATUS — FULLY SCOPED, ready to implement.</strong> No code written yet. <strong>All 16 open questions decided (2026-05-31) and folded throughout §4–§8 + §10.</strong> Headlines: cache hits don't count as health and there's no 5th bucket (OQ1/OQ3 — the existing <code>cacheStats</code> tracker owns hit/miss); record the real response <em>outcome</em>, a 500 is an <code>error</code>, four buckets <code>ok / error / fallback / broken</code> (OQ2/OQ3); per-tier store (OQ5) with a web/scheduler source filter on the card (OQ4); raw events, 48h retention, direct sync write (OQ7/OQ8/OQ9); hostname grouping (OQ6); near-live TTL + clickable window badges + Error column (OQ10/OQ2); start fresh, fully delete the old log-parsing path (OQ12/OQ13); drop the dead roll-up placeholder (OQ11); just-color, no notifications in v1 (OQ15); card scope confirmed (OQ16). Scheduler structured logging (OQ14) is broken out into <a href="./scheduler-structured-logs.html">its own doc</a>. <strong>Next:</strong> work the §10 checklist.</div>
+  <div class="callout tip"><strong>✅ SHIPPED — archived 2026-06-01.</strong> Implemented 2026-05-31: the on-demand log-parsing path was deleted and replaced by the per-tier SQLite store every process writes to at the moment of fetch. Live code: <code>lib/fetcher-health/store.ts</code> (best-effort <code>data/fetcher-health.db</code>), recorded via <code>loggedFetch</code>/<code>logExternalCall</code> in <code>lib/external-fetch.ts</code> (<code>ok / error / fallback / broken</code>), read + aggregated by <code>app/api/system/fetcher-health/route.ts</code> (window/source filters), pruned at 48h by <code>scheduler/jobs/fetcher-health-prune.ts</code>; hermetic <code>fetcher-health-store-smoke</code>. Scheduler structured logging (OQ14) shipped separately — see <a href="./scheduler-structured-logs.html">scheduler-structured-logs.html</a>. Kept as the design rationale (referenced from those code files + <code>docs/architecture.html</code>).</div>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>

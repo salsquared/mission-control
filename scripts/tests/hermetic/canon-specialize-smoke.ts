@@ -1,5 +1,5 @@
 // Hermetic smoke for the specialization-pass selection reconstruction
-// (docs/canonical-resumes.html §6 Q5 / §7 P5). reconstructSelection rebuilds
+// (docs/archive/canonical-resumes.html §6 Q5 / §7 P5). reconstructSelection rebuilds
 // the nested ResumeSelection from a canon resume's stored FLAT selections +
 // profileSnapshot, preserving the canon's exact bullet set + order (only
 // wording is re-done downstream). Pure — no DB, no LLM.

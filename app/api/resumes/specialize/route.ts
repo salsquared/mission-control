@@ -21,7 +21,7 @@ import type { ProfileWire } from "@/lib/schemas/profile";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-// Opt-in per-job specialization (docs/canonical-resumes.html §6 Q5 / §7 P5).
+// Opt-in per-job specialization (docs/archive/canonical-resumes.html §6 Q5 / §7 P5).
 // Re-words a canon's CURRENT resume for a specific posting WITHOUT re-selecting
 // — the bullet set + layout stay the canon's; only wording + tagline change.
 // Saved as a per-job child (isCanonical=false, applicationId set); the canon's

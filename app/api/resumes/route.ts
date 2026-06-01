@@ -40,7 +40,7 @@ const PostingInputSchema = z.object({
     url: z.string().url().optional(),
     text: z.string().optional(),
     applicationId: z.string().cuid().optional(),
-    // Canon-driven generation (docs/canonical-resumes.html §7 P2): generate a
+    // Canon-driven generation (docs/archive/canonical-resumes.html §7 P2): generate a
     // canon's reusable resume from its keyword text instead of a single posting.
     canonId: z.string().cuid().optional(),
 }).refine(

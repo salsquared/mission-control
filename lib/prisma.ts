@@ -28,7 +28,7 @@ basePrisma.$executeRawUnsafe('PRAGMA synchronous = NORMAL').catch(() => {});
 // would JSON-emit a [DATABASE] line per query into data/logs.db + the in-app
 // viewer — thousands per sweep, drowning the scheduler's job summaries. The
 // crawl signal lives in [EXTERNAL API] lines + the FetcherHealthCard instead.
-// See docs/scheduler-structured-logs.html (OQ7).
+// See docs/archive/scheduler-structured-logs.html (OQ7).
 const LOG_PRISMA_QUERIES =
     (process.env.NODE_ENV === 'production' && !process.env.MC_SCHEDULER_TIER)
     || process.env.DEBUG_PRISMA === '1';

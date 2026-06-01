@@ -1,5 +1,5 @@
 /**
- * Hermetic smoke for the scheduler-log store (docs/scheduler-structured-logs.html).
+ * Hermetic smoke for the scheduler-log store (docs/archive/scheduler-structured-logs.html).
  *
  * Fully hermetic: no PM2, no network. Uses its OWN temp LOGS_DB_PATH — never
  * touches the real data/logs.db. Cleans up after itself.
