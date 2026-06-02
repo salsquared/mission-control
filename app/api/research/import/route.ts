@@ -2,8 +2,8 @@ import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 import { ResearchImportSchema } from '@/lib/schemas/research-import';
 import { requireSession } from '@/lib/auth-guards';
-import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
-import { loggedFetch, logExternalCall } from '@/lib/external-fetch';
+import { fetchArxivXml } from '@/lib/arxiv/fetch';
+import { loggedFetch } from '@/lib/external-fetch';
 
 const parser = new Parser({
     customFields: {
@@ -105,9 +105,9 @@ export async function POST(request: Request) {
         if ((!ssRes.ok || !paperMetadata?.summary || paperMetadata.summary === "No abstract available.") && paperIdFallback) {
             try {
                 const arxivApiUrl = `https://export.arxiv.org/api/query?id_list=${paperIdFallback}`;
-                await acquireArxivSlot();
-                logExternalCall(arxivApiUrl);
-                const feed = await parser.parseURL(arxivApiUrl);
+                // Paced + cooldown-aware; throws ArxivUnavailableError during a
+                // cooldown, caught below so import still returns SS metadata.
+                const feed = await parser.parseString(await fetchArxivXml(arxivApiUrl));
 
                 if (feed.items && feed.items.length > 0) {
                     const item = feed.items[0];

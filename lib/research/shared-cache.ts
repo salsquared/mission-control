@@ -88,6 +88,16 @@ export interface WithSharedCacheOptions {
     store?: ResearchSharedStore;
     /** Upstream host this route ultimately calls (telemetry parity with withCache). */
     upstreamHost?: string;
+    /**
+     * Cold-cache graceful degradation. When the compute throws and there is no
+     * stale entry to serve, this maps the error to a benign payload to return
+     * (200, NOT cached — so the next request retries once upstream recovers).
+     * Return `undefined` to keep the error propagating (→ 500). Used by the
+     * research routes to serve `[]` on arXiv unavailability instead of a 500 +
+     * error-log cascade. Returning undefined for unknown errors preserves the
+     * surfacing of genuine bugs.
+     */
+    fallbackOnError?: (err: unknown) => unknown;
 }
 
 /**
@@ -100,7 +110,7 @@ export function withSharedCache(
     opts: WithSharedCacheOptions,
 ) {
     const store = opts.store ?? researchSharedStore;
-    const { ttlSeconds } = opts;
+    const { ttlSeconds, fallbackOnError } = opts;
 
     return async function (req: Request): Promise<NextResponse> {
         const { key, isRefresh } = keyFor(req);
@@ -114,7 +124,15 @@ export function withSharedCache(
             }
             // In-process dedup: share an in-flight compute with concurrent callers.
             const pending = inFlight.get(key);
-            if (pending) return json(await pending, "HIT");
+            if (pending) {
+                try {
+                    return json(await pending, "HIT");
+                } catch {
+                    // The leader failed (e.g. arXiv cooldown). Fall through to our
+                    // own attempt, which hits the same fast-fail + stale/empty
+                    // fallback path below rather than 500-ing the follower.
+                }
+            }
         }
 
         // Miss-path compute: run the handler, only cache OK JSON. Throwing keeps
@@ -140,6 +158,14 @@ export function withSharedCache(
                 // on an upstream blip (e.g. arXiv 429). Mirrors withCache.
                 L1.set(key, { data: stale.data, expiry: Date.now() + STALE_RETRY_MS });
                 return json(stale.data, "STALE-FALLBACK");
+            }
+            // Cold cache + a known-degradable error (e.g. arXiv unavailable):
+            // serve a benign payload WITHOUT caching it, so the next request
+            // retries once upstream recovers. Quiet — not a 500, not an error.
+            const fb = fallbackOnError?.(err);
+            if (fb !== undefined) {
+                console.info(`[research-shared] ${key} upstream unavailable; serving empty fallback`);
+                return json(fb, "EMPTY-FALLBACK");
             }
             throw err;
         } finally {

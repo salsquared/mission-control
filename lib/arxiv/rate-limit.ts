@@ -19,16 +19,34 @@
  * rate, so the two-tier sum still ~approximates the ceiling. Best-effort — the
  * limiter must never block an arXiv call outright.
  *
+ * CIRCUIT BREAKER (recovery layer). Pacing alone can't recover once arXiv has
+ * already flagged the shared IP: it then 429s EVERY request, so a route 500s,
+ * nothing caches, the next dash load re-fires the search, and arXiv's throttle
+ * window keeps resetting — the block never clears. `noteArxivRateLimited()`
+ * records a cross-tier cooldown (in the same shared file) on any observed 429 /
+ * "Rate exceeded"; while it's active `acquireArxivSlot()` throws
+ * `ArxivRateLimitCooldownError` WITHOUT touching arXiv, so BOTH tiers go quiet
+ * long enough for the IP block to expire. One probe runs after the window; if
+ * still blocked it re-arms. Cooldown lives next to the bucket (shared row +
+ * per-process fallback var), best-effort like everything else here.
+ *
  * Tunables (env):
  *   - `ARXIV_RATE_PER_MIN` — the SHARED sustained rate (one paced line across
  *     all processes). Set ~14 (under arXiv's ~20/min = 1-per-3s). Default 14.
  *   - `ARXIV_RATE_BURST`   — max reservations backed up before acquire rejects.
+ *   - `ARXIV_COOLDOWN_MS`  — how long to stop ALL arXiv calls after a 429.
+ *     Default 900000 (15 min) — far longer than any arXiv throttle window, so
+ *     the block reliably clears; picks are weekly + DB-cached so the lag is moot.
  */
 import { openDb } from "@/lib/shared-sqlite-cache";
+import { ArxivRateLimitCooldownError } from "@/lib/arxiv/errors";
 
 const RATE_PER_MIN = clampInt(process.env.ARXIV_RATE_PER_MIN, 14, 1, 600);
 const BURST_CAP = clampInt(process.env.ARXIV_RATE_BURST, 20, 1, 10_000);
 const REFILL_INTERVAL_MS = 60_000 / RATE_PER_MIN;
+
+// Cross-tier cooldown after an observed 429. Default 15 min (see header).
+const COOLDOWN_MS = clampInt(process.env.ARXIV_COOLDOWN_MS, 900_000, 1_000, 3_600_000);
 
 // Per-process FALLBACK runs at half the shared rate, so dev+prod combined still
 // ~approximates the shared ceiling when the shared file is unavailable on both.
@@ -54,7 +72,20 @@ const BUCKET_DEFAULT_PATH = "data/arxiv-bucket.db";
  *  its slot (0 = go immediately). Throws if the reservation backlog is full. */
 type Consume = (now: number) => number;
 
-async function initSharedBucketAt(path: string): Promise<Consume | null> {
+/** A bucket handle bundles the paced-consume fn with the cross-tier cooldown
+ *  row (same shared file). All methods are synchronous (better-sqlite3). */
+interface SharedBucketHandle {
+    consume: Consume;
+    /** ms epoch the cooldown lasts until; 0 (or past) = no cooldown active. */
+    getCooldownUntil: () => number;
+    /** Extend the cooldown to at least `until` (MAX in SQL — race-safe across
+     *  processes; never shortens an existing, longer cooldown). */
+    bumpCooldownUntil: (until: number) => void;
+    /** Hard-clear the cooldown (test/reset seam only). */
+    clearCooldown: () => void;
+}
+
+async function initSharedBucketAt(path: string): Promise<SharedBucketHandle | null> {
     const db = await openDb(path);
     if (!db) return null;
     try {
@@ -68,6 +99,19 @@ async function initSharedBucketAt(path: string): Promise<Consume | null> {
         // Seed last_refill = 0 so the first consume sees a huge elapsed and just
         // caps at 1 token (works for both real-clock and synthetic `now`).
         db.prepare(`INSERT OR IGNORE INTO arxiv_bucket (id, tokens, last_refill) VALUES (1, 1, 0)`).run();
+
+        // Cooldown row (circuit breaker) lives in the SAME file so both tiers see
+        // one trip. Separate single-row table — no ALTER of the bucket table.
+        db.exec(
+            `CREATE TABLE IF NOT EXISTS arxiv_cooldown (
+                id    INTEGER PRIMARY KEY CHECK (id = 1),
+                until INTEGER NOT NULL
+            );`,
+        );
+        db.prepare(`INSERT OR IGNORE INTO arxiv_cooldown (id, until) VALUES (1, 0)`).run();
+        const selCd = db.prepare(`SELECT until FROM arxiv_cooldown WHERE id = 1`);
+        const bumpCd = db.prepare(`UPDATE arxiv_cooldown SET until = MAX(until, ?) WHERE id = 1`);
+        const clearCd = db.prepare(`UPDATE arxiv_cooldown SET until = 0 WHERE id = 1`);
 
         const sel = db.prepare(`SELECT tokens, last_refill FROM arxiv_bucket WHERE id = 1`);
         const upd = db.prepare(`UPDATE arxiv_bucket SET tokens = ?, last_refill = ? WHERE id = 1`);
@@ -97,10 +141,22 @@ async function initSharedBucketAt(path: string): Promise<Consume | null> {
             return waitMs;
         });
 
-        console.info(`[arxiv-bucket] ready at ${path} (shared, ${RATE_PER_MIN}/min)`);
+        console.info(`[arxiv-bucket] ready at ${path} (shared, ${RATE_PER_MIN}/min, cooldown ${Math.round(COOLDOWN_MS / 1000)}s)`);
         // `.immediate` ⇒ BEGIN IMMEDIATE: acquire the write lock upfront so two
         // processes can't both read-then-write the row and double-grant a slot.
-        return (now: number) => consumeTxn.immediate(now) as number;
+        return {
+            consume: (now: number) => consumeTxn.immediate(now) as number,
+            getCooldownUntil: () => {
+                const r = selCd.get() as { until: number } | undefined;
+                return r ? r.until : 0;
+            },
+            bumpCooldownUntil: (until: number) => {
+                bumpCd.run(until);
+            },
+            clearCooldown: () => {
+                clearCd.run();
+            },
+        };
     } catch (e) {
         console.warn(`[arxiv-bucket] disabled — falling back to per-process:`, e instanceof Error ? e.message : e);
         try {
@@ -112,13 +168,24 @@ async function initSharedBucketAt(path: string): Promise<Consume | null> {
     }
 }
 
-let bucketPromise: Promise<Consume | null> | null = null;
-function getSharedBucket(): Promise<Consume | null> {
+let bucketPromise: Promise<SharedBucketHandle | null> | null = null;
+function getSharedBucket(): Promise<SharedBucketHandle | null> {
     if (!bucketPromise) {
         const path = process.env.ARXIV_BUCKET_PATH ?? BUCKET_DEFAULT_PATH;
         bucketPromise = initSharedBucketAt(path);
     }
     return bucketPromise;
+}
+
+// Per-process cooldown fallback (mirrors the shared row when the file is down,
+// and shadows it so a trip is honored even before the shared write lands).
+const COOLDOWN_KEY = "__mcArxivCooldownUntil";
+const cg = globalThis as unknown as { [COOLDOWN_KEY]?: number };
+function perProcCooldownUntil(): number {
+    return cg[COOLDOWN_KEY] ?? 0;
+}
+function bumpPerProcCooldown(until: number): void {
+    cg[COOLDOWN_KEY] = Math.max(perProcCooldownUntil(), until);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,15 +252,31 @@ async function acquirePerProcessSlot(): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function acquireArxivSlot(): Promise<void> {
-    let consume: Consume | null = null;
+    let handle: SharedBucketHandle | null = null;
     try {
-        consume = await getSharedBucket();
+        handle = await getSharedBucket();
     } catch {
-        consume = null;
+        handle = null;
     }
-    if (consume) {
+
+    // Circuit breaker: if a recent 429 tripped the cooldown, fast-fail WITHOUT
+    // touching arXiv so the IP-level block can clear. Honor whichever of the
+    // shared row / per-process var is further out.
+    let cooldownUntil = perProcCooldownUntil();
+    if (handle) {
         try {
-            const waitMs = consume(Date.now());
+            cooldownUntil = Math.max(cooldownUntil, handle.getCooldownUntil());
+        } catch {
+            /* best-effort */
+        }
+    }
+    if (Date.now() < cooldownUntil) {
+        throw new ArxivRateLimitCooldownError(Math.ceil((cooldownUntil - Date.now()) / 1000));
+    }
+
+    if (handle) {
+        try {
+            const waitMs = handle.consume(Date.now());
             if (waitMs > 0) await sleep(waitMs);
             return;
         } catch (e) {
@@ -207,9 +290,38 @@ export async function acquireArxivSlot(): Promise<void> {
     return acquirePerProcessSlot();
 }
 
-// --- Test seam (scripts/tests/hermetic/arxiv-shared-bucket-smoke.ts) ---
-/** Build an independent shared-bucket consume fn at `path` (simulates a second
- *  tier opening the same file). Returns null if the file can't open. */
-export function _createSharedBucketForTests(path: string): Promise<Consume | null> {
+/**
+ * Trip the cross-tier cooldown after an observed arXiv rate-limit (429 or a
+ * plaintext "Rate exceeded." 200). Best-effort and idempotent: writes the
+ * shared row (so the OTHER tier honors it too) and the per-process var (so it's
+ * honored even if the shared write fails). Never throws.
+ */
+export async function noteArxivRateLimited(durationMs: number = COOLDOWN_MS): Promise<void> {
+    const until = Date.now() + Math.max(0, durationMs);
+    bumpPerProcCooldown(until);
+    try {
+        const handle = await getSharedBucket();
+        handle?.bumpCooldownUntil(until);
+    } catch {
+        /* best-effort — the per-process var still guards this process */
+    }
+}
+
+// --- Test seams (scripts/tests/hermetic/arxiv-shared-bucket-smoke.ts) ---
+/** Build an independent shared-bucket handle at `path` (simulates a second tier
+ *  opening the same file). Returns null if the file can't open. */
+export function _createSharedBucketForTests(path: string): Promise<SharedBucketHandle | null> {
     return initSharedBucketAt(path);
+}
+
+/** Hard-clear the cooldown (both the singleton shared row and the per-process
+ *  var) so a hermetic test can return to the no-cooldown baseline. */
+export async function _resetCooldownForTests(): Promise<void> {
+    cg[COOLDOWN_KEY] = 0;
+    try {
+        const handle = await getSharedBucket();
+        handle?.clearCooldown();
+    } catch {
+        /* best-effort */
+    }
 }

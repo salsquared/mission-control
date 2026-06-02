@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { withSharedCache, researchSharedStore } from '@/lib/research/shared-cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
-import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
+import { fetchArxivXml } from '@/lib/arxiv/fetch';
+import { ArxivUnavailableError } from '@/lib/arxiv/errors';
 import { loggedFetch } from '@/lib/external-fetch';
 import {
     findCurrentHistoricalPick,
@@ -51,22 +52,12 @@ async function getHandler(request: Request) {
             }
 
             // Legacy row (pre-backfill, NULL metadata): one id_list fetch, then
-            // backfill so the next render is free.
-            await acquireArxivSlot();
-            const res = await loggedFetch(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
-
-            // Throw on non-ok (e.g. 429 "Rate exceeded.") so withCache STALE-FALLBACKs
-            // to the last good response instead of falling through to a new search,
-            // which would also be throttled AND would overwrite the user's pick.
-            if (!res.ok) {
-                throw new Error(`arXiv responded ${res.status} ${res.statusText} for id_list=${existingSelection.paperId}`);
-            }
+            // backfill so the next render is free. fetchArxivXml paces, trips the
+            // cooldown on a 429, and throws ArxivUnavailableError (caught below) so
+            // withSharedCache STALE-FALLBACKs to the last good response instead of
+            // falling through to a new search (which would overwrite the pick).
             {
-                const xml = await res.text();
-                // arxiv sometimes returns plaintext "Rate exceeded." with HTTP 200 too.
-                if (!xml.trimStart().startsWith('<')) {
-                    throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
-                }
+                const xml = await fetchArxivXml(`https://export.arxiv.org/api/query?id_list=${existingSelection.paperId}`);
                 // Extract proper entry to avoid matching feed title
                 const entries = xml.split('<entry>');
                 if (entries.length > 1) {
@@ -139,16 +130,8 @@ async function getHandler(request: Request) {
         const fullQuery = `${arxivQuery} AND submittedDate:[${dateFromStr} TO ${dateToStr}]`;
         const fetchUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(fullQuery)}&start=0&max_results=100&sortBy=relevance&sortOrder=descending`;
 
-        await acquireArxivSlot();
-        const res2 = await loggedFetch(fetchUrl);
-        if (!res2.ok) {
-            throw new Error(`arXiv responded ${res2.status} ${res2.statusText} for ${fullQuery}`);
-        }
         {
-            const xml = await res2.text();
-            if (!xml.trimStart().startsWith('<')) {
-                throw new Error(`arXiv non-XML response (likely rate-limited): ${xml.slice(0, 80)}`);
-            }
+            const xml = await fetchArxivXml(fetchUrl);
 
             // Extract all entries
             const entries = xml.split('<entry>');
@@ -236,6 +219,9 @@ async function getHandler(request: Request) {
 
         return NextResponse.json([]);
     } catch (error: any) {
+        // arXiv unavailable (rate-limit / cooldown / blip): re-throw so
+        // withSharedCache serves stale or a quiet empty fallback (no 500 spam).
+        if (error instanceof ArxivUnavailableError) throw error;
         console.error(`Error in historical research API:`, error);
         return NextResponse.json({ error: 'Failed to fetch historical paper', details: error.toString(), stack: error.stack }, { status: 500 });
     }
@@ -244,7 +230,13 @@ async function getHandler(request: Request) {
 // Cache historical responses for 24h (weekly pick; metadata served from DB anyway — Layer 2 / OQ6).
 // Primary upstream is arXiv (Semantic Scholar enrichment is secondary).
 // Cross-tier shared cache so dev+prod don't each fetch (Layer 1).
-const cachedGET = withSharedCache(getHandler, { ttlSeconds: 86400, store: researchSharedStore, upstreamHost: 'export.arxiv.org' });
+const cachedGET = withSharedCache(getHandler, {
+    ttlSeconds: 86400,
+    store: researchSharedStore,
+    upstreamHost: 'export.arxiv.org',
+    // Cold cache + arXiv down → serve [] (uncached) instead of 500; retries next load.
+    fallbackOnError: (err) => (err instanceof ArxivUnavailableError ? [] : undefined),
+});
 export const GET = async (req: Request) => {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server';
 import { withSharedCache, researchSharedStore } from '@/lib/research/shared-cache';
 import { requireLocalOrSession } from '@/lib/auth-guards';
-import { acquireArxivSlot } from '@/lib/arxiv/rate-limit';
-import { loggedFetch, logExternalCall } from '@/lib/external-fetch';
+import { fetchArxivXml } from '@/lib/arxiv/fetch';
+import { ArxivUnavailableError } from '@/lib/arxiv/errors';
+import { loggedFetch } from '@/lib/external-fetch';
 import Parser from 'rss-parser';
 
 const parser = new Parser({
@@ -159,12 +160,12 @@ async function getHandler(request: Request) {
             const arxivApiUrl = `https://export.arxiv.org/api/query?search_query=${searchQuery}&start=0&max_results=${limit}&sortBy=submittedDate&sortOrder=descending`;
 
             // arxiv has a 1-req-per-3s soft policy; over the limit it returns a 200
-            // with plaintext "Rate exceeded." — bypassing rss-parser's normal error
-            // path. Throw on that so withCache serves the stale entry instead of
-            // freezing an empty result for the full TTL.
-            await acquireArxivSlot();
-            logExternalCall(arxivApiUrl);
-            const feed = await parser.parseURL(arxivApiUrl);
+            // with plaintext "Rate exceeded." — which bypasses rss-parser's normal
+            // error path. fetchArxivXml paces, detects that body, trips the
+            // cross-tier cooldown, and throws ArxivUnavailableError (caught below)
+            // so withSharedCache serves stale/empty instead of a 500.
+            const xml = await fetchArxivXml(arxivApiUrl);
+            const feed = await parser.parseString(xml);
             initialPapers = feed.items.map(item => {
                 const rawId = item.id || item.link || Math.random().toString();
                 const paperId = (rawId.split('/abs/')[1] || rawId).replace(/v\d+$/, '');
@@ -212,6 +213,9 @@ async function getHandler(request: Request) {
 
         return NextResponse.json(initialPapers);
     } catch (error) {
+        // arXiv unavailable (rate-limit / cooldown / blip): re-throw so
+        // withSharedCache serves stale or a quiet empty fallback (no 500 spam).
+        if (error instanceof ArxivUnavailableError) throw error;
         console.error(`Error in research aggregator API:`, error);
         return NextResponse.json({ error: 'Failed to fetch research papers' }, { status: 500 });
     }
@@ -220,7 +224,13 @@ async function getHandler(request: Request) {
 // Aggregates HF + arXiv + Semantic Scholar; tag with the primary upstream.
 // Cache 12h — "yesterday"/"week" windows change at most daily (Layer 2 / OQ6).
 // Cross-tier shared cache so dev+prod don't each fetch (Layer 1).
-const cachedGET = withSharedCache(getHandler, { ttlSeconds: 43200, store: researchSharedStore, upstreamHost: 'huggingface.co' });
+const cachedGET = withSharedCache(getHandler, {
+    ttlSeconds: 43200,
+    store: researchSharedStore,
+    upstreamHost: 'huggingface.co',
+    // Cold cache + arXiv down → serve [] (uncached) instead of 500; retries next load.
+    fallbackOnError: (err) => (err instanceof ArxivUnavailableError ? [] : undefined),
+});
 export const GET = async (req: Request) => {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;

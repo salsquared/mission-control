@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>arXiv Rate-Limit — Permanent Fix</h1>
-  <p class="subtitle">Design + implementation plan. arXiv 429s recur because dev and prod run on one box, share one IP, and <strong>never share research-fetch state</strong> — so every paper is fetched twice and the two token buckets burst-collide. This plan removes all three load multipliers. Status: <strong>✅ SHIPPED 2026-05-31 — all 3 layers live on dev + prod (P1–P4 done; cross-tier dedup verified in prod); not pushed to origin</strong>. <strong>All OQ1–OQ10 resolved 2026-05-31</strong> — design fully pinned; cleared to build. (OQ10: a dedicated <code>withSharedCache()</code> wrapper; the generic <code>withCache</code> is left untouched.)</p>
+  <p class="subtitle">Design + implementation plan. arXiv 429s recur because dev and prod run on one box, share one IP, and <strong>never share research-fetch state</strong> — so every paper is fetched twice and the two token buckets burst-collide. This plan removes all three load multipliers. Status: <strong>✅ SHIPPED 2026-05-31 — all 3 layers live on dev + prod (P1–P4 done; cross-tier dedup verified in prod)</strong>. <strong>+ Layer 4 (recovery / cooldown circuit breaker) shipped 2026-06-02</strong> — see §<a href="#layer4">Layer 4</a> (Layers 1–3 only reduce load; they never recovered once arXiv had already IP-throttled us). Committed to <code>main</code>; not pushed to origin. <strong>All OQ1–OQ10 resolved 2026-05-31</strong> — design fully pinned; cleared to build. (OQ10: a dedicated <code>withSharedCache()</code> wrapper; the generic <code>withCache</code> is left untouched.)</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -24,6 +24,7 @@
       <li><a href="#layer2">Layer 2 — persist picks + raise TTLs</a></li>
       <li><a href="#layer1">Layer 1 — shared cross-tier cache</a></li>
       <li><a href="#layer3">Layer 3 — shared cross-tier rate bucket</a></li>
+      <li><a href="#layer4">Layer 4 — recovery (cooldown circuit breaker)</a></li>
       <li><a href="#touch">Touch list, tests &amp; ops</a></li>
       <li><a href="#risks">Risks &amp; rollback</a></li>
       <li><a href="#open-questions">Open questions</a></li>
@@ -198,6 +199,37 @@ export function withSharedCache(
 //   BEST-EFFORT: file/native failure → fall back to the current globalThis bucket.</code></pre>
       <div class="callout warn"><strong>Env semantics change.</strong> <code>ARXIV_RATE_PER_MIN</code> currently means <em>per-process</em> (7 each → ~14 combined). With a shared bucket it becomes the <em>single shared</em> rate — set it to ~<strong>14</strong> (still under arXiv's ~20/min = 1-per-3s) and update the explanatory comments in both <code>.env.development</code> and <code>.env.production</code>. Getting this wrong (leaving 7 as "shared") needlessly halves throughput; leaving 14 as "per-process" re-creates the collision. Call it out in the commit.</div>
       <p>Committed for this effort (OQ4: build now, not gated on measurement). The bucket calls the base's low-level <code>openDb()</code> seam (open / WAL / degrade) and keeps its own single-row <code>BEGIN IMMEDIATE</code> refill logic (OQ9) — no duplicated open/degrade code. Keep the per-process <code>globalThis</code> bucket as the best-effort fallback so a shared-file failure can never block arXiv calls.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="layer4">Layer 4 — recovery (cooldown circuit breaker)</h2></summary>
+    <div class="section-body">
+      <div class="callout"><strong>Follow-up, shipped 2026-06-02.</strong> Layers 1–3 only <em>reduce</em> how often we call arXiv; the original plan said as much — "<em>no layer is load-bearing for correctness; all three are pure optimizations over a working baseline.</em>" That left a real gap: once arXiv has <em>already</em> flagged the shared IP it 429s <em>every</em> request, and nothing here recovered from that. This layer adds the missing recovery.</div>
+
+      <h3>Why pacing alone can't recover</h3>
+      <p>On a fresh week no pick is persisted yet, so <code>review</code> / <code>historical</code> fall through to a fresh arXiv <em>search</em>. That hits an already-throttled IP → <code>429 "Rate exceeded."</code> (proven with a raw <code>curl</code> bypassing all our code — so it's IP-level, not our pacing) → the route 500s → <code>withSharedCache</code> correctly refuses to cache the error → the next dash load re-fires the same search → arXiv's sliding throttle window keeps resetting → <strong>the block never clears</strong>. Pacing at 14/min doesn't help: it limits the <em>rate</em> of pokes, not the fact that we keep poking a wound that only heals if left alone.</p>
+
+      <h3>A cross-tier cooldown that stops ALL arXiv calls after a 429</h3>
+      <p>One single-row cooldown table lives in the <em>same</em> shared bucket file, so a trip on either tier is honored by both:</p>
+      <pre><code class="language-typescript">// lib/arxiv/rate-limit.ts — alongside the arxiv_bucket row
+//   table: arxiv_cooldown(id INTEGER PRIMARY KEY CHECK(id=1), until INTEGER)
+//   noteArxivRateLimited(ms = ARXIV_COOLDOWN_MS):   // called on any observed 429 / "Rate exceeded"
+//     UPDATE arxiv_cooldown SET until = MAX(until, now+ms)   // extend-only, race-safe in SQL
+//     + mirror to a per-process globalThis var (honored even if the shared write fails)
+//   acquireArxivSlot():
+//     if now < max(sharedUntil, perProcUntil):
+//       throw ArxivRateLimitCooldownError   // FAST-FAIL — zero arXiv calls while cooling down
+//     ...otherwise consume a paced slot as before
+// Default ARXIV_COOLDOWN_MS = 900000 (15 min) — far longer than any arXiv throttle window, so
+// the block reliably clears. Picks are weekly + DB-cached (Layer 2), so the recovery lag is moot.</code></pre>
+      <p>While the cooldown is active <strong>both tiers make zero arXiv calls</strong>, so arXiv's window finally elapses and the IP block lifts. Exactly one probe runs after the window; if arXiv is still blocked that probe 429s and re-arms the cooldown, so our request rate while blocked is ≤ one per cooldown period. When the probe succeeds the pick persists and Layer 2 takes over (≈ 0 steady-state arXiv calls).</p>
+
+      <h3>One fetch helper + graceful empty degradation</h3>
+      <p>NEW <code>lib/arxiv/fetch.ts:fetchArxivXml(url)</code> consolidates the acquire → fetch → <code>!ok</code> → non-XML checks that were duplicated across every arXiv caller (review + historical search + <code>id_list</code> paths, the listings route — now <code>parser.parseString(await fetchArxivXml())</code> instead of <code>parseURL</code>, and the user-initiated <code>import</code> route). It trips the cooldown on a 429 / plaintext "Rate exceeded" and throws <code>ArxivUnavailableError</code> (NEW <code>lib/arxiv/errors.ts</code>; <code>ArxivRateLimitCooldownError</code> subclasses it). Each route re-throws that type from its <code>catch</code> (genuine non-arXiv bugs still 500), and <code>withSharedCache</code> gained a <code>fallbackOnError(err)</code> option: on a cold-cache failure with no stale entry it serves the mapped payload (<code>[]</code>, HTTP&nbsp;200, <strong>uncached</strong> so the next request retries) instead of a 500 + error-log cascade. The follower <code>await pending</code> path is guarded so a leader's failure degrades the followers rather than 500-ing them.</p>
+
+      <h3>Verification</h3>
+      <p><code>tsc</code> clean; <code>arxiv-shared-bucket-smoke</code> 12/12 (added cooldown cross-tier-visibility, extend-only, and acquire-fast-fail scenarios; pacing/refill/fallback preserved); <code>research-shared-cache-smoke</code> 14/14; <code>api-docs-smoke</code> in sync (TTLs unchanged). Live on dev :4101 all 3 research routes returned HTTP&nbsp;200 with real data — arXiv recovered the moment we stopped hammering it, which is precisely what this layer now enforces automatically — and this week's picks persisted with metadata. Every piece is best-effort and rollback-safe: drop the <code>noteArxivRateLimited</code> calls and the cooldown is inert; revert <code>fallbackOnError</code> and routes fall back to the prior 500.</p>
     </div>
   </details>
 
