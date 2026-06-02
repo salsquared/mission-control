@@ -43,6 +43,7 @@ export const ApplicationSchema = z.object({
     userId: z.string(),
     company: z.string(),
     role: z.string().nullable(),
+    location: z.string().nullable(),
     status: z.string(),
     kind: z.string().nullable(),
     track: ApplicationTrackSchema,
@@ -99,6 +100,7 @@ export const ApplicationBulkTrackConflictSchema = z.object({
 export const ApplicationPostSchema = z.object({
     company: z.string().min(1),
     role: z.string().min(1).nullable().optional(),
+    location: z.string().nullable().optional(),
     status: ApplicationStatusSchema.default('APPLIED'),
     kind: ApplicationKindSchema.nullable().optional(),
     track: ApplicationTrackSchema,
@@ -111,6 +113,7 @@ export const ApplicationPatchSchema = z.object({
     id: z.string().min(1),
     company: z.string().min(1).optional(),
     role: z.string().nullable().optional(),
+    location: z.string().nullable().optional(),
     status: ApplicationStatusSchema.optional(),
     kind: ApplicationKindSchema.nullable().optional(),
     track: ApplicationTrackSchema.optional(),
@@ -122,6 +125,7 @@ export const ApplicationPatchSchema = z.object({
 }).refine(
     (d) => d.company !== undefined
         || d.role !== undefined
+        || d.location !== undefined
         || d.status !== undefined
         || d.kind !== undefined
         || d.track !== undefined

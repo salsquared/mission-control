@@ -95,6 +95,10 @@ export const applicationSchema = z.object({
   role: z.string().optional().describe(
     "Job title, program name, or role applied for. For colleges, use the program/major (e.g. 'Computer Science BS'). Leave empty if truly not mentioned."
   ),
+  location: z.string().optional().describe(
+    "Where the role/program is based, ONLY if the email explicitly states it — a city/state (e.g. 'Long Beach, CA'), 'Remote', or a hybrid location. Use the most specific location mentioned for THIS role. " +
+    "Omit entirely if the email doesn't say where the job is located. Do NOT guess from the sender's email domain or signature address — a recruiter's office is not necessarily the role's location."
+  ),
   status: z
     .enum([
       "APPLIED",

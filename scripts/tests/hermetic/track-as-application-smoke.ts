@@ -82,6 +82,8 @@ async function main() {
         else pass("Application company carried from posting");
         if (appRow?.role !== posting.title) fail(`Application role mismatch: ${appRow?.role}`);
         else pass("Application role carried from posting.title");
+        if (appRow?.location !== posting.location) fail(`Application location mismatch: ${appRow?.location}, expected ${posting.location}`);
+        else pass("Application location carried from posting.location");
         if (appRow?.postingId !== posting.id) fail("Application postingId not set");
         else pass("Application postingId linked back");
         if (appRow?.kind !== "job") fail(`Application kind ${appRow?.kind}, expected 'job'`);

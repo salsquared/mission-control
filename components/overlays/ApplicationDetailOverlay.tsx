@@ -20,6 +20,7 @@ import {
     UserPlus,
     Hand,
     Columns2,
+    MapPin,
 } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
 import {
@@ -40,7 +41,7 @@ type ApplicationsCache = z.infer<typeof ApplicationsListResponseSchema>;
 type ApplicationPatch = z.infer<typeof ApplicationPatchSchema>;
 type ApplicationEvent = z.infer<typeof ApplicationEventSchema>;
 
-type EditingField = 'company' | 'role' | 'nextSteps' | null;
+type EditingField = 'company' | 'role' | 'location' | 'nextSteps' | null;
 
 const PostingSourceLine: React.FC<{ postingId: string }> = ({ postingId }) => {
     const { data } = useQuery({
@@ -152,6 +153,7 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
         const patch: ApplicationPatch = { id: applicationId };
         if (editingField === 'company') patch.company = val;
         if (editingField === 'role') patch.role = val || null;
+        if (editingField === 'location') patch.location = val || null;
         if (editingField === 'nextSteps') patch.nextSteps = val || null;
         const rollback = optimisticPatch(patch);
         cancelEdit();
@@ -333,6 +335,28 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                             >
                                 {app?.role || <span className="italic text-white/30">Click to add role</span>}
                             </p>
+                        )}
+                        {app && (
+                            editingField === 'location' ? (
+                                <input
+                                    autoFocus
+                                    value={editValue}
+                                    onChange={(e) => setEditValue(e.target.value)}
+                                    onBlur={saveEdit}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') saveEdit(); if (e.key === 'Escape') cancelEdit(); }}
+                                    placeholder="Location (e.g. Long Beach, CA / Remote)"
+                                    className="text-xs bg-black/40 border border-white/20 rounded px-2 py-0.5 text-white w-full mt-1 focus:outline-none focus:border-blue-500/50"
+                                />
+                            ) : (
+                                <p
+                                    onClick={() => startEdit('location', app.location ?? '')}
+                                    className="mt-1 flex items-center gap-1 text-xs text-slate-400 truncate hover:bg-white/5 rounded px-1 -mx-1 cursor-text"
+                                    title="Click to edit location"
+                                >
+                                    <MapPin className="w-3 h-3 shrink-0 text-slate-500" />
+                                    {app.location || <span className="italic text-white/30">Click to add location</span>}
+                                </p>
+                            )
                         )}
                         {app?.postingId && (
                             <PostingSourceLine postingId={app.postingId} />

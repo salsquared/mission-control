@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useCallback, useMemo } from "react";
-import { Briefcase, Plus, CheckSquare, X, ArrowRightLeft, Loader2 } from "lucide-react";
+import { Briefcase, Plus, CheckSquare, X, ArrowRightLeft, Loader2, MapPin } from "lucide-react";
 import { Card } from "../../ui/Card";
 import { KanbanWidget, KanbanColumnDef } from "../../widgets/KanbanWidget";
 import { api } from "@/lib/api-client";
@@ -10,6 +10,7 @@ export interface AppRecord {
     id: string;
     company: string;
     role: string | null;
+    location: string | null;
     status: string;
     nextSteps: string | null;
     lastUpdateAt: string;
@@ -161,6 +162,12 @@ export const ApplicationsKanbanCard: React.FC<ApplicationsKanbanCardProps> = ({
                     {app.company}
                 </h5>
                 <p className="text-sm text-slate-400 line-clamp-1 leading-snug">{app.role || "Unknown Role"}</p>
+                {app.location && (
+                    <p className="mt-0.5 text-xs text-slate-500 line-clamp-1 leading-snug flex items-center gap-1">
+                        <MapPin className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{app.location}</span>
+                    </p>
+                )}
                 {app.nextSteps && (
                     <div className="mt-1.5 text-xs text-slate-400 leading-snug bg-black/20 px-2 py-1.5 rounded-md border border-white/5 line-clamp-2">
                         {app.nextSteps}

@@ -192,6 +192,12 @@ model Application {
   // emails from the same school/employer).
   senderDomain      String?
   role              String?
+  // Job/role location (e.g. "Long Beach, CA" / "Remote"). Free-form display
+  // string, nullable. Populated from JobPosting.location at track-as-application
+  // time and editable inline from the detail sidebar; surfaced on the kanban
+  // card so a tracked role's city is visible at a glance. No normalization /
+  // dedup role — purely informational.
+  location          String?
   status            String
   kind              String? // "job" | "internship" | "college" | "other" — null on legacy rows
   nextSteps         String?

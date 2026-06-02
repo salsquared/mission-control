@@ -31,6 +31,37 @@
         // nextSteps must mention sending availability / scheduling
         return typeof r.nextSteps === 'string' &&
         /avail|sched|reply|time/i.test(r.nextSteps);
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        // This email states no location — the model must NOT invent one
+        // (e.g. from the sender domain). Omitted or empty are both fine.
+        return r.location == null || r.location === '';
+
+- description: "Application email that states a location — must extract it"
+  vars:
+    callsite: email-parser
+    input:
+      emailContent: |
+        Hi Jane,
+
+        Thank you for applying to the Manufacturing Engineer position at Rocket Dynamics. This role is based on-site at our Albuquerque, NM facility.
+
+        We're reviewing applications now and will be in touch with next steps shortly.
+
+        Best,
+        Talent Acquisition
+      subject: "Rocket Dynamics — application received (Manufacturing Engineer)"
+      from: "careers@rocketdynamics.com"
+      sentAt: "2026-05-21T17:00:00.000Z"
+  assert:
+    - type: is-json
+    - type: javascript
+      value: |
+        const r = JSON.parse(output);
+        return r.isApplicationRelated === true &&
+        typeof r.location === 'string' &&
+        /albuquerque/i.test(r.location);
 
 - description: "Marketing email — must classify as NOT application-related"
   vars:

@@ -57,7 +57,7 @@ export async function trackAsApplication(
         // keyword watchlists like "warehouse Los Angeles") become side-track
         // applications; career-track postings stay career.
         select: {
-            id: true, company: true, title: true, status: true, sourceUrl: true, externalId: true,
+            id: true, company: true, title: true, location: true, status: true, sourceUrl: true, externalId: true,
             watchlist: { select: { track: true, canonId: true } },
         },
     });
@@ -141,6 +141,9 @@ export async function trackAsApplication(
                     normalizedCompany: normalizeCompanyName(posting.company),
                     normalizedRole: normalizeRoleName(posting.title),
                     role: posting.title,
+                    // Surface the posting's location on the resulting kanban card
+                    // (informational; nullable when the fetcher didn't extract one).
+                    location: posting.location ?? null,
                     status: "INTERESTED",
                     kind: "job",
                     track: posting.watchlist.track,

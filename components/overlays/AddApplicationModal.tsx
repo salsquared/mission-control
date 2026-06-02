@@ -26,6 +26,7 @@ interface AddApplicationModalProps {
 export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, onClose, onCreated, defaultTrack = "career" }) => {
     const [company, setCompany] = useState("");
     const [role, setRole] = useState("");
+    const [location, setLocation] = useState("");
     const [status, setStatus] = useState<typeof APPLICATION_STATUSES[number]>("APPLIED");
     const [kind, setKind] = useState<typeof APPLICATION_KINDS[number] | "">("");
     const [track, setTrack] = useState<AppTrack>(defaultTrack);
@@ -37,6 +38,7 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, 
     const reset = () => {
         setCompany("");
         setRole("");
+        setLocation("");
         setStatus("APPLIED");
         setKind("");
         setTrack(defaultTrack);
@@ -51,6 +53,7 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, 
             const result = await api.applications.create({
                 company: company.trim(),
                 role: role.trim() || null,
+                location: location.trim() || null,
                 status,
                 kind: kind || null,
                 track,
@@ -107,6 +110,17 @@ export const AddApplicationModal: React.FC<AddApplicationModalProps> = ({ open, 
                             value={role}
                             onChange={(e) => setRole(e.target.value)}
                             placeholder="Senior Engineer"
+                            className="bg-black/40 border border-white/10 rounded-md px-3 py-2 text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/50"
+                        />
+                    </label>
+
+                    <label className="flex flex-col gap-1.5 text-sm">
+                        <span className="text-white/60 text-xs font-medium uppercase tracking-wider">Location</span>
+                        <input
+                            type="text"
+                            value={location}
+                            onChange={(e) => setLocation(e.target.value)}
+                            placeholder="Long Beach, CA / Remote"
                             className="bg-black/40 border border-white/10 rounded-md px-3 py-2 text-white placeholder:text-white/30 focus:outline-none focus:border-blue-500/50"
                         />
                     </label>

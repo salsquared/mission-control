@@ -268,6 +268,12 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 nextSteps: parsed.nextSteps ?? null,
                 role: parsed.role || existingApp.role,
             }),
+            // Fill-the-gap only: set location from the email when the row has
+            // none yet. Never clobber an existing value (a posting-derived
+            // location is higher quality than an email guess, and the user may
+            // have set it by hand). Applies even on a stale-status email — a
+            // location doesn't go stale the way a status does.
+            ...(!existingApp.location && parsed.location ? { location: parsed.location } : {}),
             ...(statusChanged ? { lastUpdateAt: sentAt } : {}),
             ...(senderDomain ? { senderDomain } : {}),
         });
@@ -284,6 +290,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 userId,
                 company: parsed.company,
                 role: parsed.role || "Unknown",
+                location: parsed.location ?? null,
                 status: parsed.status,
                 kind: parsed.kind,
                 // No track signal from the classifier — explicit literal at
@@ -338,6 +345,8 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                     nextSteps: parsed.nextSteps ?? null,
                     role: parsed.role || raced.role,
                 }),
+                // Fill-the-gap only (see the existingApp branch above).
+                ...(!raced.location && parsed.location ? { location: parsed.location } : {}),
                 ...(statusChanged ? { lastUpdateAt: sentAt } : {}),
                 ...(senderDomain ? { senderDomain } : {}),
             });
@@ -553,7 +562,11 @@ function buildEventDrafts(input: {
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 
-function headerValue(
+// Exported (2026-06-01) so the email-location backfill
+// (scripts/backfill-application-location-from-email.ts) can build the SAME
+// classifier input as live ingest — re-implementing the MIME walk in the
+// script would drift from this canonical extraction.
+export function headerValue(
     headers: gmail_v1.Schema$MessagePartHeader[] | undefined,
     name: string
 ): string | undefined {
@@ -567,7 +580,7 @@ function headerValue(
  * Walk the MIME tree and return the first text/plain body. Falls back to
  * text/html (with tags stripped) and finally to the root body.data.
  */
-function extractBody(payload: gmail_v1.Schema$MessagePart | undefined): string {
+export function extractBody(payload: gmail_v1.Schema$MessagePart | undefined): string {
     if (!payload) return "";
 
     const plain = findFirstByMime(payload, "text/plain");
@@ -613,7 +626,7 @@ function stripHtml(html: string): string {
         .trim();
 }
 
-function messageDate(message: gmail_v1.Schema$Message): Date | null {
+export function messageDate(message: gmail_v1.Schema$Message): Date | null {
     if (message.internalDate) {
         const ms = Number(message.internalDate);
         if (Number.isFinite(ms)) return new Date(ms);

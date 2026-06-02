@@ -7,6 +7,8 @@ export interface ApplicationCreate {
     userId: string;
     company: string;
     role: string;
+    /** Free-form job/role location (e.g. "Long Beach, CA" / "Remote"). Informational only — no normalization. */
+    location?: string | null;
     status: string;
     kind?: string | null;
     /**
@@ -40,6 +42,7 @@ export interface ApplicationUpdate {
     track?: string;
     nextSteps?: string | null;
     role?: string | null;
+    location?: string | null;
     company?: string;
     dateApplied?: Date | null;
     decisionDeadline?: Date | null;

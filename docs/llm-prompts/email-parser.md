@@ -17,7 +17,7 @@ You are classifying an email related to a job, internship, or college/university
 
 First, decide whether this email is actually about the user's own application (they submitted something and this is a status update or related message). Marketing, job-board digests, recruiter cold-outreach to someone who never applied, and "we're hiring" company announcements are NOT application-related — set isApplicationRelated=false.
 
-If it IS application-related, extract company/institution, role/program, current status, next steps, and any dates.
+If it IS application-related, extract company/institution, role/program, work location (only if the email states one — never guess it from the sender's address), current status, next steps, and any dates.
 
 For colleges, treat admission/decision/waitlist/deferral language as the corresponding status. Treat supplemental-material requests as ASSESSMENT.
 
@@ -40,6 +40,7 @@ Body:
 ## Notes
 
 - Schema is `applicationSchema` in `lib/email-parser.ts` — relevance gate (`isApplicationRelated`) is the load-bearing field. When false, the caller skips the upsert.
+- `location` (added 2026-06-01) is optional and best-effort — many confirmation emails don't state a location. `lib/applications/ingest.ts` writes it on create, and on update only when the existing row has no location yet (fill-the-gap; never clobbers a posting-derived location, which is higher quality). The one-shot `scripts/backfill-application-location-from-email.ts` re-parses existing Gmail-sourced rows through this same field.
 - Body cap tightened 6 KB → 3 KB on 2026-05-19 alongside the model swap to flash-lite (see `docs/llm-calls.html` change log).
 - College/university handling is calibrated against specific past failures — the FULL OFFICIAL name rule prevents the same school appearing as 'MIT' and 'Massachusetts Institute of Technology' in different emails (would defeat `normalizedCompany` dedup).
 - Tracing wiring: `lunary.trackEvent('llm', 'start' / 'end' / 'error', ...)` with `runId = 'email-parser:<base36-ts>:<random>'`. The Gmail msgId isn't in scope at this layer (caller has it); Lunary just needs uniqueness. See `safeTrack` helper in `lib/email-parser.ts`.

@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-06-01 · 66/66 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-06-02 · 66/66 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -305,6 +305,16 @@
         }
       ]
     },
+    "location": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "status": {
       "default": "APPLIED",
       "type": "string",
@@ -397,6 +407,16 @@
       "minLength": 1
     },
     "role": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "location": {
       "anyOf": [
         {
           "type": "string"

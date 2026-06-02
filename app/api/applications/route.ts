@@ -59,7 +59,7 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
-    const { company, role, status, kind, track, nextSteps, dateApplied, decisionDeadline } = parsed.data;
+    const { company, role, location, status, kind, track, nextSteps, dateApplied, decisionDeadline } = parsed.data;
     const now = new Date();
 
     try {
@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
             userId,
             company,
             role: role ?? '',
+            location: location ?? null,
             status,
             kind: kind ?? null,
             track,
@@ -114,7 +115,7 @@ export async function PATCH(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
-    const { id, company, role, status, kind, track, nextSteps, dateApplied, decisionDeadline, canonId } = parsed.data;
+    const { id, company, role, location, status, kind, track, nextSteps, dateApplied, decisionDeadline, canonId } = parsed.data;
 
     try {
         const existing = await findApplicationByIdForUser(id, userId);
@@ -140,6 +141,7 @@ export async function PATCH(req: NextRequest) {
         if (statusChanged) update.lastUpdateAt = new Date();
         if (company !== undefined) update.company = company;
         if (role !== undefined) update.role = role;
+        if (location !== undefined) update.location = location;
         if (status !== undefined) update.status = status;
         if (kind !== undefined) update.kind = kind;
         if (track !== undefined) update.track = track;
