@@ -15,11 +15,14 @@
  * first, fall through to `findApplicationBySenderDomain` only on miss.
  *
  * IMPORTANT: multi-tenant ATS / admissions platforms (Greenhouse, Lever,
- * Workday, Common App, …) share one root across many distinct employers —
- * dedup'ing on `greenhouse.io` would merge unrelated companies. Those
- * domains are explicitly returned as `null` so the caller skips the fallback.
+ * Workday, Common App, …) AND consumer free-mail providers (gmail.com,
+ * outlook.com, …) share one root across many distinct senders — dedup'ing on
+ * `greenhouse.io` or `gmail.com` would merge unrelated companies. Both are
+ * returned as `null` so the caller skips the fallback. Blocking free-mail also
+ * stops the user's OWN notification emails (From their gmail.com) from being
+ * funneled onto a single app — the 2026-06-02 self-notification loop.
  */
-import { SENDER_DOMAINS } from "@/lib/applications/relevance";
+import { SENDER_DOMAINS, FREE_MAIL_DOMAINS } from "@/lib/applications/relevance";
 
 // "Display Name" <user@host.tld>, or bare user@host.tld, or even
 // `Name <user@host.tld>` with no quotes. The capture group grabs the address
@@ -31,7 +34,12 @@ const ANGLE_ADDRESS = /<([^>]+)>/;
 // occasionally arrive with stray quoting or trailing chars).
 const EMAIL_ADDRESS = /([\w.+-]+@[\w.-]+\.[A-Za-z]{2,})/;
 
-const BLOCKED_ROOTS = new Set(SENDER_DOMAINS.map(d => d.toLowerCase()));
+// Multi-tenant ATS/admissions roots AND consumer free-mail roots are both
+// useless as employer-identity signals — see each list's docstring. Free-mail
+// is dedup-blocked here but (deliberately) NOT a positive relevance signal.
+const BLOCKED_ROOTS = new Set(
+    [...SENDER_DOMAINS, ...FREE_MAIL_DOMAINS].map(d => d.toLowerCase()),
+);
 
 /**
  * Extract the registrable-root domain from a Gmail From header.

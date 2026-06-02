@@ -5,12 +5,14 @@ import { broadcastEvent } from "@/lib/events";
 import { looksRelevant } from "@/lib/applications/relevance";
 import { normalizeCompanyName } from "@/lib/applications/normalize-company";
 import { extractSenderDomain } from "@/lib/applications/sender-domain";
+import { isSelfNotificationEmail, MC_NOTIFICATION_HEADER } from "@/lib/applications/self-notification";
 import {
     findApplicationByCompany,
     findApplicationByCompanyAndRole,
     findApplicationBySenderDomain,
     createApplication,
     updateApplication,
+    type ApplicationUpdate,
 } from "@/lib/repositories/applications";
 import {
     createApplicationEvents,
@@ -24,7 +26,7 @@ import { syncEventToGcal } from "@/lib/calendar/sync";
 export type IngestOutcome =
     | { action: "created"; appId: string }
     | { action: "updated"; appId: string }
-    | { action: "skipped"; reason: "irrelevant" | "low_confidence" | "duplicate" | "already_present" }
+    | { action: "skipped"; reason: "irrelevant" | "low_confidence" | "duplicate" | "already_present" | "self_notification" }
     | { action: "errored"; reason: string };
 
 export interface IngestOptions {
@@ -33,6 +35,42 @@ export interface IngestOptions {
     msgId: string;
     /** When false, suppress SSE broadcast (used by backfill to batch a single invalidation). */
     broadcast?: boolean;
+}
+
+/**
+ * Apply an ingest-driven Application update, tolerating the one P2002 the
+ * dedup heuristics can still induce after the tie-breaker role guard: the
+ * role-blind senderDomain fallback / legacy-NULL-normalizedRole company match
+ * can land on a row whose role differs from the incoming email, and renaming
+ * that row's role then collides with the sibling that legitimately owns
+ * (company, role, track). The email really belongs to that sibling, but
+ * merging two rows is out of scope here — so we degrade gracefully: re-apply
+ * the update WITHOUT the key-affecting fields (role/company), so status /
+ * nextSteps / location / lastEmailMsgId / senderDomain still land on the
+ * matched row and the inbox scan never 500s. Logged so the rare case is
+ * visible. Any non-P2002 error is rethrown unchanged.
+ *
+ * Exported for the hermetic smoke (ingest-tiebreaker-role-guard-smoke.ts).
+ */
+export async function updateApplicationTolerant(
+    id: string,
+    data: ApplicationUpdate,
+    ctx?: { msgId?: string },
+): Promise<void> {
+    try {
+        await updateApplication(id, data);
+    } catch (err: any) {
+        if (err?.code !== "P2002") throw err;
+        // Strip the only fields updateApplication folds into the unique key.
+        const { role: _role, company: _company, ...keySafe } = data;
+        console.warn(
+            `[ingest] update hit @@unique(company,role,track) for app=${id}` +
+            `${ctx?.msgId ? ` msg=${ctx.msgId}` : ""} — a sibling row already ` +
+            `owns that (company, role, track); re-applying status/notes/etc. ` +
+            `WITHOUT the role/company rename so the scan doesn't 500.`,
+        );
+        await updateApplication(id, keySafe);
+    }
 }
 
 /**
@@ -82,6 +120,17 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     const subject = headerValue(message.payload?.headers, "Subject") ?? "";
     const from = headerValue(message.payload?.headers, "From") ?? "";
     const snippet = message.snippet ?? "";
+
+    // Self-notification loop guard (2026-06-02). mission-control sends its own
+    // notification emails From → To the user's own Gmail, so they land back in
+    // the watched INBOX. Without this, the webhook re-ingests our own outbound
+    // mail, classifies it as a fresh interview/offer, fires another email, and
+    // loops (552× on one CalSAWS interview before Gmail's send throttle broke
+    // it). Drop them BEFORE the LLM classifier — cheap and decisive.
+    const mcHeader = headerValue(message.payload?.headers, MC_NOTIFICATION_HEADER);
+    if (isSelfNotificationEmail({ subject, mcHeader })) {
+        return { action: "skipped", reason: "self_notification" };
+    }
 
     if (!looksRelevant({ subject, from, snippet })) {
         return { action: "skipped", reason: "irrelevant" };
@@ -140,11 +189,24 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         // same on both kanbans: prefer the row whose stored senderDomain
         // matches the incoming email. The normalizeCompanyName check guards
         // the CSULB case (domain → unrelated employer with a different name).
+        //
+        // ROLE GUARD (2026-06-01, Rocket Lab repro): the redirect target MUST
+        // also share the incoming role. `existingApp` matched on
+        // normalizeRoleName(incomingRole), so requiring
+        // byDomain.normalizedRole === existingApp.normalizedRole is exactly the
+        // "(company, role) is the same on both kanbans" precondition the comment
+        // above always claimed. Without it, an employer that has many roles but
+        // one senderDomain-stamped row (e.g. Rocket Lab, where only the applied
+        // "Software Intern" row carries rocketlabusa.com) funnels EVERY role's
+        // email onto that one row — and the subsequent role-rename collides with
+        // the sibling that legitimately owns (company, that-role, track),
+        // throwing an unhandled P2002 that 500s the whole inbox scan.
         const byDomain = await findApplicationBySenderDomain(userId, senderDomain);
         if (
             byDomain
             && byDomain.id !== existingApp.id
             && normalizeCompanyName(byDomain.company) === normalizeCompanyName(existingApp.company)
+            && byDomain.normalizedRole === existingApp.normalizedRole
         ) {
             console.info(
                 `[ingest] cross-track tie-breaker msg=${msgId} ` +
@@ -260,7 +322,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         // Notes / role / nextSteps refreshes don't qualify as status changes.
         // When staleStatusUpdate is set the whole branch is skipped anyway.
         const statusChanged = !staleStatusUpdate && parsed.status !== existingApp.status;
-        await updateApplication(existingApp.id, {
+        await updateApplicationTolerant(existingApp.id, {
             kind: parsed.kind ?? existingApp.kind,
             lastEmailMsgId: msgId,
             ...(staleStatusUpdate ? {} : {
@@ -276,7 +338,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             ...(!existingApp.location && parsed.location ? { location: parsed.location } : {}),
             ...(statusChanged ? { lastUpdateAt: sentAt } : {}),
             ...(senderDomain ? { senderDomain } : {}),
-        });
+        }, { msgId });
         appId = existingApp.id;
         action = "updated";
     } else {
@@ -337,7 +399,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 staleStatusUpdate = true;
             }
             const statusChanged = !staleStatusUpdate && parsed.status !== raced.status;
-            await updateApplication(raced.id, {
+            await updateApplicationTolerant(raced.id, {
                 kind: parsed.kind ?? raced.kind,
                 lastEmailMsgId: msgId,
                 ...(staleStatusUpdate ? {} : {
@@ -349,7 +411,7 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
                 ...(!raced.location && parsed.location ? { location: parsed.location } : {}),
                 ...(statusChanged ? { lastUpdateAt: sentAt } : {}),
                 ...(senderDomain ? { senderDomain } : {}),
-            });
+            }, { msgId });
             appId = raced.id;
             action = "updated";
         }

@@ -11,6 +11,11 @@
 import { google } from "googleapis";
 import { prisma } from "@/lib/prisma";
 import { getGoogleAuthClient } from "@/lib/googleapis";
+import {
+    MC_NOTIFICATION_HEADER,
+    MC_NOTIFICATION_HEADER_VALUE,
+    MC_SUBJECT_PREFIX,
+} from "@/lib/applications/self-notification";
 
 export interface EmailMessage {
     from: string;       // "Display Name <addr@gmail.com>" or just "addr@gmail.com"
@@ -20,6 +25,13 @@ export interface EmailMessage {
     text: string;
     /** Optional HTML body. If provided, the message is multipart/alternative. */
     html?: string;
+    /**
+     * Extra RFC 822 headers to emit (e.g. `X-Mission-Control: notification` so
+     * the Gmail webhook can skip our own self-addressed notification mail and
+     * not re-ingest it — see lib/applications/self-notification.ts). Header
+     * names are emitted verbatim; values are RFC 2047-encoded like Subject.
+     */
+    headers?: Record<string, string>;
 }
 
 /**
@@ -51,6 +63,12 @@ export function buildRfc822Message(msg: EmailMessage): string {
     headers.push(`To: ${encodeMimeHeader(msg.to)}`);
     headers.push(`Subject: ${encodeMimeHeader(msg.subject)}`);
     headers.push("MIME-Version: 1.0");
+    // Custom headers (e.g. X-Mission-Control: notification). Emitted before the
+    // Content-Type/body so they sit in the header block. Values RFC 2047-encoded
+    // for non-ASCII safety; pure-ASCII (the common case) passes through.
+    for (const [name, value] of Object.entries(msg.headers ?? {})) {
+        headers.push(`${name}: ${encodeMimeHeader(value)}`);
+    }
 
     if (msg.html) {
         // 32-char hex boundary — Gmail accepts longer but this is plenty.
@@ -143,7 +161,7 @@ interface UserLike {
 export function notificationToEmail(notification: NotificationLike, user: UserLike): EmailMessage | null {
     if (!user.email) return null;
     const fromName = user.name || "Mission Control";
-    const subject = `[mission-control] ${notification.title}`;
+    const subject = `${MC_SUBJECT_PREFIX}${notification.title}`;
     const body = notification.body ?? "";
     const text = body
         ? `${notification.title}\n\n${body}\n\n— mission-control`
@@ -159,6 +177,9 @@ export function notificationToEmail(notification: NotificationLike, user: UserLi
         subject,
         text,
         html,
+        // Lets the Gmail webhook recognize + skip this message when it lands
+        // back in the user's own inbox, breaking the self-notification loop.
+        headers: { [MC_NOTIFICATION_HEADER]: MC_NOTIFICATION_HEADER_VALUE },
     };
 }
 

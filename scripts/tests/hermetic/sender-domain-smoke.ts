@@ -80,6 +80,20 @@ async function main() {
         extractSenderDomain("notify@us.greenhouse.io"),
         null);
 
+    // Consumer free-mail blocklist (2026-06-02 self-notification loop) — MUST
+    // return null so the dedup fallback never funnels unrelated senders (or the
+    // user's own notification mail, From their gmail.com) onto one app.
+    eq(`gmail blocked sal@gmail.com`,        extractSenderDomain("sal@gmail.com"),                  null);
+    eq(`gmail blocked w/ display name`,      extractSenderDomain('"Sal" <sal@gmail.com>'),          null);
+    eq(`googlemail blocked`,                 extractSenderDomain("x@googlemail.com"),               null);
+    eq(`outlook blocked`,                    extractSenderDomain("x@outlook.com"),                  null);
+    eq(`yahoo blocked`,                      extractSenderDomain("x@yahoo.com"),                    null);
+    eq(`icloud blocked`,                     extractSenderDomain("x@icloud.com"),                   null);
+    eq(`proton blocked`,                     extractSenderDomain("x@proton.me"),                    null);
+    // A real employer domain that merely HOSTS on a custom root still resolves —
+    // the block is scoped to the literal free-mail roots, not all mail.
+    eq(`employer domain still resolves`,     extractSenderDomain("careers@stripe.com"),             "stripe.com");
+
     // Malformed / empty inputs → null
     eq(`empty string`,                extractSenderDomain(""),               null);
     eq(`null`,                        extractSenderDomain(null),             null);

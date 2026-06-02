@@ -89,6 +89,39 @@ export const SENDER_DOMAINS: readonly string[] = [
     "technolutions.net",
 ];
 
+// Consumer / free-mail providers. SENDER-DOMAIN-DEDUP BLOCKLIST ONLY — do NOT
+// fold these into SENDER_DOMAINS: that list doubles as a POSITIVE relevance
+// signal (a `from:` match marks an email application-likely), and treating
+// every gmail.com sender as relevant would flood the classifier with personal
+// mail. The dedup fallback (lib/applications/sender-domain.ts) DOES block them,
+// because a personal-mail root is shared by countless unrelated senders and is
+// no more an employer identity than greenhouse.io is. Critically: the user's
+// OWN notification emails are From their own gmail.com, so without this block
+// the senderDomain fallback funnels every re-ingested self-notification onto
+// whatever app happens to carry `gmail.com` (the 2026-06-02 CalSAWS loop).
+export const FREE_MAIL_DOMAINS: readonly string[] = [
+    "gmail.com",
+    "googlemail.com",
+    "outlook.com",
+    "hotmail.com",
+    "live.com",
+    "msn.com",
+    "yahoo.com",
+    "ymail.com",
+    "icloud.com",
+    "me.com",
+    "mac.com",
+    "aol.com",
+    "proton.me",
+    "protonmail.com",
+    "pm.me",
+    "gmx.com",
+    "zoho.com",
+    "mail.com",
+    "hey.com",
+    "fastmail.com",
+];
+
 /**
  * Build a Gmail search query that filters to application-likely messages
  * within the last N days. Used by the backfill route.

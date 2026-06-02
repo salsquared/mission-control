@@ -82,12 +82,23 @@ export async function POST(req: NextRequest) {
         // hammering them with 200 parallel calls invites 429s. ~100ms/call ×
         // 200 = ~20s, well inside Next's default route timeout.
         for (const id of ids) {
-            const outcome = await ingestGmailMessage({
-                userId: user.id,
-                gmail,
-                msgId: id,
-                broadcast: false, // single broadcast at the end
-            });
+            // Per-message isolation (2026-06-01): ingestGmailMessage is meant
+            // to return {action:"errored"} for per-message failures, but an
+            // unforeseen THROW (e.g. a Prisma P2002 from a dedup-heuristic
+            // update collision) must not abort the entire sweep and 500 the
+            // scan. Mirror the Gmail webhook's per-`messagesAdded` try/catch:
+            // one bad email increments `errored` and the loop continues.
+            let outcome: Awaited<ReturnType<typeof ingestGmailMessage>>;
+            try {
+                outcome = await ingestGmailMessage({
+                    userId: user.id,
+                    gmail,
+                    msgId: id,
+                    broadcast: false, // single broadcast at the end
+                });
+            } catch (err: any) {
+                outcome = { action: "errored", reason: err?.message ?? String(err) };
+            }
             counts[outcome.action] = (counts[outcome.action] ?? 0) + 1;
             if (outcome.action === "errored") {
                 console.warn(`[BACKFILL] msg ${id}: ${outcome.reason}`);
