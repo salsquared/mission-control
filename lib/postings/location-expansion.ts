@@ -252,3 +252,63 @@ export function expandLocationFilters(chips: ReadonlyArray<string>): string[] {
     }
     return out;
 }
+
+// A bare 2-letter state/province/country-code suffix needle, e.g. ", CA" /
+// ", NY" / ", ON" / ", UK". These are the only needles that need a trailing
+// word boundary (see locationMatchesChips): SQLite's LIKE — and a naive
+// `includes` — is unanchored, so ", CA" otherwise matches the START of
+// ", Canada" / ", CAN", leaking Canadian postings into a California filter.
+// City needles ("Long Beach", "Glendale, CA") and country/state literals
+// ("California", "United States") are specific enough to match plainly.
+const CODE_SUFFIX_NEEDLE = /^, [a-z]{2}$/;
+
+/**
+ * Boundary-aware location match — the precise counterpart to the loose SQL
+ * `contains` prefilter the postings route runs. Given a posting's `location`
+ * string and the user's raw location chips, returns whether the location
+ * genuinely matches any chip.
+ *
+ * Identical substring semantics to the SQL needles, EXCEPT a bare ", XX"
+ * code suffix must be followed by end-of-string or a non-letter. So
+ * "San Francisco, CA" matches a California filter but "Toronto, CAN" and
+ * "Cambridge, Ontario, Canada" do not. A location that mixes both
+ * (".., Ontario, CAN; San Francisco, CA") still matches on the genuine
+ * ", CA" occurrence — every occurrence is scanned, not just the first.
+ *
+ * Because the matcher only ever TIGHTENS the code-suffix needles relative to
+ * plain `contains`, the SQL `LIKE` prefilter remains a strict superset — so
+ * running this after the DB fetch can only drop false positives, never a true
+ * match, and never under-fetches.
+ */
+export function locationMatchesChips(
+    location: string | null | undefined,
+    chips: ReadonlyArray<string>,
+): boolean {
+    if (chips.length === 0) return true;       // no filter ⇒ everything passes
+    if (!location) return false;               // null location can't match a filter
+    const hay = location.toLowerCase();
+    for (const needle of expandLocationFilters(chips)) {
+        const n = needle.toLowerCase();
+        if (CODE_SUFFIX_NEEDLE.test(n)) {
+            if (codeSuffixMatches(hay, n)) return true;
+        } else if (hay.includes(n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// True if `needle` (a lowercased ", xx" code) occurs in `hay` (lowercased)
+// followed by end-of-string or a non-letter — i.e. as a standalone token, not
+// the prefix of a longer word like "canada"/"can". Scans every occurrence so
+// a single valid one anywhere in a multi-location string counts.
+function codeSuffixMatches(hay: string, needle: string): boolean {
+    let from = 0;
+    for (;;) {
+        const idx = hay.indexOf(needle, from);
+        if (idx === -1) return false;
+        const after = hay[idx + needle.length];
+        if (after === undefined || !/[a-z]/.test(after)) return true;
+        from = idx + 1;
+    }
+}

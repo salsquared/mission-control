@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { JobPostingStatusSchema, EMPLOYMENT_TYPE_VALUES, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { compileNegativeFilters, compileNegativeFiltersFromArray, matchesNegativeFilters } from "@/lib/postings/negative-filters";
-import { expandLocationFilters } from "@/lib/postings/location-expansion";
+import { expandLocationFilters, locationMatchesChips } from "@/lib/postings/location-expansion";
 import { postingDedupKey } from "@/lib/postings/dedup-key";
 import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 
@@ -143,6 +143,12 @@ export async function GET(req: NextRequest) {
         // "Los Angeles" becomes the metro city list, "United States" becomes
         // ", AL"/", AK"/... state-code suffixes, etc. Unknown chips fall
         // through to literal substring match.
+        //
+        // This is a LOOSE prefilter: SQLite's LIKE is unanchored, so a bare
+        // ", CA" code suffix also matches the prefix of ", Canada"/", CAN".
+        // It's intentionally a superset — it bounds the candidate set cheaply
+        // in SQL; the precise word-boundary recheck (locationMatchesChips)
+        // runs on the fetched rows below and drops the false positives.
         const needles = expandLocationFilters(locations);
         conditions.push({
             OR: needles.map(n => ({ location: { contains: n } })),
@@ -171,13 +177,22 @@ export async function GET(req: NextRequest) {
             globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
         );
 
-        const filtered = includeFiltered
+        const negativeFiltered = includeFiltered
             ? rows
             : rows.filter(r => {
                 if (globalRegexes.length > 0 && matchesNegativeFilters(r, globalRegexes)) return false;
                 const perWatchlist = compileNegativeFilters(r.watchlist.negativeFilters);
                 return !matchesNegativeFilters(r, perWatchlist);
             });
+
+        // Precise location re-check: the SQL clause above is a loose superset
+        // (unanchored LIKE), so a ", CA" needle leaks ", Canada"/", CAN" rows.
+        // Re-apply the user's location chips with word-boundary semantics to
+        // drop those false positives. Applies even when includeFiltered — a
+        // location chip is an explicit user filter, not a negative-filter.
+        const filtered = locations.length > 0
+            ? negativeFiltered.filter(r => locationMatchesChips(r.location, locations))
+            : negativeFiltered;
 
         // Cross-watchlist dedup. JobPosting's unique key is per-watchlist
         // (@@unique([watchlistId, externalId])), so N overlapping watchlists

@@ -13,7 +13,7 @@
  *
  *   npx tsx scripts/tests/hermetic/location-expansion-smoke.ts
  */
-import { expandLocationFilter, expandLocationFilters } from "@/lib/postings/location-expansion";
+import { expandLocationFilter, expandLocationFilters, locationMatchesChips } from "@/lib/postings/location-expansion";
 
 let passes = 0;
 let fails = 0;
@@ -164,6 +164,54 @@ function testUserCase() {
     else pass("user case: 'Long Beach, CA' matches 'Los Angeles' metro");
 }
 
+// ─── Boundary-aware matching (locationMatchesChips) ──────────────────────
+
+function assertMatch(location: string | null, chips: string[], expected: boolean, label: string) {
+    const got = locationMatchesChips(location, chips);
+    if (got !== expected) fail(`${label}: locationMatchesChips(${JSON.stringify(location)}, ${JSON.stringify(chips)}) expected ${expected}, got ${got}`);
+    else pass(`${label}: ${expected ? "matched" : "rejected"} as expected`);
+}
+
+function testCaliforniaRejectsCanada() {
+    // The reported bug: the "California" chip expands to a bare ", CA" needle,
+    // and unanchored LIKE matched the prefix of ", Canada" / ", CAN". The
+    // boundary-aware matcher must reject pure-Canada locations.
+    const ca = ["California"];
+    assertMatch("Cambridge, Ontario, Canada", ca, false, "California ⊅ 'Cambridge, Ontario, Canada'");
+    assertMatch("CAN - Richmond, Canada", ca, false, "California ⊅ 'CAN - Richmond, Canada'");
+    assertMatch("Toronto, CAN", ca, false, "California ⊅ 'Toronto, CAN'");
+    assertMatch("Canada, Remote", ca, false, "California ⊅ 'Canada, Remote'");
+    // ...but genuine California locations still match.
+    assertMatch("Long Beach, CA", ca, true, "California ⊇ 'Long Beach, CA'");
+    assertMatch("San Francisco, CA | New York, NY", ca, true, "California ⊇ 'San Francisco, CA | New York, NY'");
+    assertMatch("Long Beach, California", ca, true, "California ⊇ 'Long Beach, California' (literal)");
+    // A multi-location string mixing Canada AND a real CA city still matches
+    // on the genuine ", CA" occurrence (every occurrence is scanned).
+    assertMatch("London, UK; Ontario, CAN; San Francisco, CA", ca, true, "California ⊇ mixed CAN + 'San Francisco, CA'");
+}
+
+function testLAMetroMatch() {
+    const la = ["Los Angeles"];
+    assertMatch("Long Beach, CA", la, true, "Los Angeles ⊇ 'Long Beach, CA'");
+    assertMatch("Pasadena, CA", la, true, "Los Angeles ⊇ 'Pasadena, CA'");
+    assertMatch("Cambridge, Ontario, Canada", la, false, "Los Angeles ⊅ 'Cambridge, Ontario, Canada'");
+}
+
+function testUSCountryRejectsCanada() {
+    // "United States" expands to all ", XX" state-code suffixes — the same
+    // ", CA" collision risk. Must reject Canadian rows but keep US ones.
+    const us = ["United States"];
+    assertMatch("Long Beach, CA", us, true, "United States ⊇ 'Long Beach, CA'");
+    assertMatch("Brooklyn, NY", us, true, "United States ⊇ 'Brooklyn, NY'");
+    assertMatch("Toronto, CAN", us, false, "United States ⊅ 'Toronto, CAN'");
+}
+
+function testEmptyChipsAndNullLocation() {
+    assertMatch("Anywhere", [], true, "no chips ⇒ everything matches");
+    assertMatch(null, ["California"], false, "null location ⇒ no match under a filter");
+    assertMatch(null, [], true, "null location ⇒ matches when no filter");
+}
+
 function main() {
     testLAExpansion();
     testNYCExpansion();
@@ -182,6 +230,10 @@ function main() {
     testBatchDedup();
     testBatchPreservesUnion();
     testUserCase();
+    testCaliforniaRejectsCanada();
+    testLAMetroMatch();
+    testUSCountryRejectsCanada();
+    testEmptyChipsAndNullLocation();
     console.log(`\n${passes}/${passes + fails} steps passed`);
     if (fails > 0) {
         console.error(`${fails} failure(s).`);
