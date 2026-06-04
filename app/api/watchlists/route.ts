@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { WatchlistPostSchema, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig, resolveCreatePayload } from "@/lib/watchlists/hydrate";
+import { watchlistConfigKey } from "@/lib/company-directory";
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 
 export const runtime = "nodejs";
@@ -103,6 +104,38 @@ export async function POST(req: NextRequest) {
     const resolved = resolveCreatePayload(parsed.data.config, parsed.data.directoryKey ?? null);
 
     try {
+        // Backstop dedup: block adding the same job board twice. The "Watch
+        // company" picker already disables already-added directory entries
+        // client-side (via watchlistConfigKey → an "Added" chip), but the
+        // Advanced / Find-roles tabs can POST a raw config that collides — e.g.
+        // the greenhouse "apex" board got added once as "Apex Space" and again
+        // as "Apex", yielding two company badges + a duplicated feed row for
+        // one board. watchlistConfigKey is null for keyword aggregators
+        // (linkedin / indeed) and careers-page, so those overlap freely; only
+        // board-identified ATS kinds are deduped. Identity is user-scoped and
+        // track-agnostic — same as the modal's existingKeys.
+        const newKey = watchlistConfigKey(resolved.config);
+        if (newKey) {
+            const existing = await prisma.watchlist.findMany({
+                where: { userId },
+                select: { id: true, name: true, config: true, directoryKey: true },
+            });
+            for (const w of existing) {
+                let cfg;
+                try {
+                    cfg = hydrateWatchlistConfig({ config: w.config, directoryKey: w.directoryKey });
+                } catch {
+                    continue; // unparseable legacy row can't meaningfully collide
+                }
+                if (watchlistConfigKey(cfg) === newKey) {
+                    return NextResponse.json(
+                        { error: `That job board is already watched as "${w.name}".`, existingId: w.id },
+                        { status: 409 },
+                    );
+                }
+            }
+        }
+
         const row = await prisma.watchlist.create({
             data: {
                 userId,

@@ -1,8 +1,9 @@
 "use client";
 import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search, AlertTriangle } from "lucide-react";
 import { api, queryKeys, type PostingsListFilter } from "@/lib/api-client";
+import { findDuplicateBoardGroups } from "@/lib/watchlists/duplicate-boards";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
 import { useAppStore, type PostingEmploymentType, type PostingFilters } from "@/components/providers/state";
@@ -188,6 +189,18 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
         return Array.from(byKey.values()).sort((a, b) => a.localeCompare(b));
     }, [watchlistsData]);
 
+    // Duplicate-board tripwire. We deliberately do NOT merge company badges (a
+    // collapsed duplicate would hide the failure — the exact reason the
+    // "Apex / Apex Space" bug went unnoticed). Instead we FLAG when two
+    // watchlists target the same job board (same kind + slug) so a dedup
+    // failure stays visible. The POST route now blocks creating a colliding
+    // board, but a pre-existing dup / hand-edited row / directory flip could
+    // still surface one — this is the in-app signal for that.
+    const duplicateBoards = useMemo(
+        () => findDuplicateBoardGroups((watchlistsData?.watchlists ?? []).map(w => w.config)),
+        [watchlistsData],
+    );
+
     // Auto-prune stale company selections (e.g. a watchlist was deleted while
     // its name was selected, or the suffix-cleanup migration retitled rows).
     // Render-time adjustment to match the page-reset pattern below. Only
@@ -356,6 +369,29 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
                     </button>
                 )}
             </div>
+
+            {duplicateBoards.length > 0 && (
+                <div className="mb-3 rounded-lg border border-amber-400/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-snug text-amber-200/90 shrink-0">
+                    <div className="flex items-start gap-1.5">
+                        <AlertTriangle className="w-3.5 h-3.5 mt-px shrink-0" />
+                        <div>
+                            <span className="font-semibold">
+                                Possible duplicate watchlist{duplicateBoards.length > 1 ? "s" : ""}
+                            </span>
+                            {" — "}
+                            {duplicateBoards.map((d, i) => (
+                                <span key={d.key}>
+                                    {i > 0 && "; "}
+                                    {d.names.length > 1
+                                        ? `“${d.names.join("” + “")}” point at the same board`
+                                        : `“${d.names[0] ?? d.key}” has ${d.count} watchlists for one board`}
+                                </span>
+                            ))}
+                            {". Badges aren’t merged — review in Watchlists."}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {filtersOpen && (
                 <div className="mb-3 rounded-lg border border-white/10 bg-black/30 px-3 py-2 flex flex-col gap-2 shrink-0">

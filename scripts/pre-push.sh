@@ -69,6 +69,8 @@ SUITES=(
     "scripts/tests/hermetic/user-rate-limit-smoke.ts"
     "scripts/tests/hermetic/email-message-smoke.ts"
     "scripts/tests/hermetic/watchlist-hermetic-smoke.ts"
+    "scripts/tests/hermetic/watchlist-dedup-board-smoke.ts"
+    "scripts/tests/hermetic/duplicate-boards-smoke.ts"
     "scripts/tests/hermetic/negative-filters-smoke.ts"
     "scripts/tests/hermetic/track-as-application-smoke.ts"
     "scripts/tests/hermetic/notification-dispatch-smoke.ts"
