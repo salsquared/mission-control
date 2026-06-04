@@ -21,8 +21,15 @@ export const Section: React.FC<SectionProps> = ({ title, description, children, 
     // individually) so the whole section — header + cards — gets a consistent
     // gutter. It sits INSIDE each view's scroll container, so the scrollbar
     // stays flush to the frame's right edge while content is inset.
+    //
+    // The gutter width is read from the `--section-gutter` CSS var (default 2rem,
+    // == the old px-8). The active shell owns it: MobileShell shrinks it to
+    // 0.5rem (px-2); DesktopShell leaves the default. Driving it off whichever
+    // shell mounted — not a parallel CSS breakpoint — keeps the gutter and the
+    // desktop/mobile swap (the single `isMobile` matchMedia in useMobileLayout)
+    // in lockstep, so they can never transition at different widths.
     return (
-        <div className="last:mb-0 px-8">
+        <div className="last:mb-0 px-[var(--section-gutter,2rem)]">
             <div className="mb-4">
                 <h2 className="text-2xl font-bold text-white tracking-tight">{title}</h2>
                 {description && <p className="text-sm text-muted-foreground mt-1">{description}</p>}

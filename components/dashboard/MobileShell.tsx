@@ -172,7 +172,14 @@ export const MobileShell: React.FC<MobileShellProps> = ({ carousel, baseDashes }
                 style={{
                     paddingTop: "calc(2.75rem + env(safe-area-inset-top))",
                     paddingBottom: "calc(2.5rem + env(safe-area-inset-bottom))",
-                }}
+                    // Tighten the Section horizontal gutter (0.5rem, == Tailwind
+                    // px-2) for every view in the carousel. Section reads
+                    // `--section-gutter` (default 2rem on desktop); overriding it
+                    // here is what shrinks the gutter in tandem with the
+                    // mobile-shell swap, rather than via a separate CSS breakpoint
+                    // that could drift.
+                    "--section-gutter": "0.5rem",
+                } as React.CSSProperties}
             >
                 <motion.div
                     className="relative w-full h-full [&_*]:touch-pan-y"
