@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Post-Mortem — Self-Notification Mail Loop (the 500+ email event)</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Post-Mortem — The Self-Notification Mail Loop</h1>
+  <p class="subtitle">On 2026-06-02, mission-control sent itself ~552 emails about a single CalSAWS interview in ~20 minutes, created roughly that many Google Calendar events, and burned ~$0.66 of Gemini tokens — entirely on its own outbound mail, classified as if it were new. This is the full account: what happened, why every existing defense failed to stop it, what was cleaned up, what was <em>not</em>, and how to keep it from ever recurring.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#summary">Summary (TL;DR)</a></li>
+      <li><a href="#timeline">Timeline</a></li>
+      <li><a href="#rootcause">Root cause &amp; why every defense failed</a></li>
+      <li><a href="#blast">Blast radius</a></li>
+      <li><a href="#cost">The $0.66 — token-cost mechanism</a></li>
+      <li><a href="#clusters">Anatomy of the calendar clutter (date feedback loop)</a></li>
+      <li><a href="#fix">The fix</a></li>
+      <li><a href="#cleanup">Cleanup performed</a></li>
+      <li><a href="#unaddressed">Unaddressed remediation</a></li>
+      <li><a href="#prevention">Prevention &amp; follow-ups</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="summary">Summary (TL;DR)</h2></summary>
+    <div class="section-body">
+      <h3>What happened</h3>
+      <p>mission-control sends its application notifications (OFFER / REJECTION / INTERVIEW_SCHEDULED / ASSESSMENT_REQUESTED) <strong>from → to the user's own Gmail</strong> (<code>lib/email/send.ts:notificationToEmail</code> — both <code>from</code> and <code>to</code> are <code>user.email</code>). Those emails land back in the same INBOX the Gmail push webhook watches. With no marker to distinguish our own outbound mail from a genuine inbound email, the webhook re-ingested mission-control's own notification, the LLM classified it as a <em>fresh</em> interview, fired another notification, sent another email — and looped.</p>
+      <div class="callout danger"><strong>One real CalSAWS interview reminder seeded a self-amplifying loop that ran 552× in ~20 minutes</strong> (2026-06-02 03:29–03:49 UTC, ~1,102 webhook deliveries in the window). It was <em>not</em> stopped by any of our code — only by Gmail's own outbound send throttle (<code>User-rate limit exceeded … (Mail sending)</code>). Until the fix shipped, it was dormant, not solved: any new genuine notification could have re-triggered it.</p></div>
+      <h3>The damage, in one line each</h3>
+      <ul>
+        <li><strong>Real inbox:</strong> ~552 actual <code>[mission-control] …</code> emails delivered to the user's Gmail.</li>
+        <li><strong>Real calendar:</strong> on the order of ~552 Google Calendar events created (one per looped INTERVIEW_SCHEDULED event — each a distinct <code>ApplicationEvent</code>, so gcal's idempotency did <em>not</em> collapse them).</li>
+        <li><strong>Tokens:</strong> ~$0.66 of Gemini spend on uncached classifier calls — a working LLM cache would have made it ~$0.00.</li>
+        <li><strong>Database:</strong> 1,229 prod + 668 dev junk <code>ApplicationEvent</code> rows and 559 prod + 323 dev <code>Notification</code> rows across 4 prod apps, since cleaned.</li>
+      </ul>
+      <h3>Status</h3>
+      <p>The <strong>code fix is shipped and live</strong> (commit <code>7ae5a6c</code>, both tiers redeployed). The <strong>database is clean</strong>. But two side-effects that escaped the database — the real Google Calendar events and the real Gmail messages — were <strong>never cleaned and have no programmatic cleanup path</strong> (see §9). Those are the only open items.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="timeline">Timeline</h2></summary>
+    <div class="section-body">
+      <h3>2026-06-02 (UTC)</h3>
+      <table>
+        <thead><tr><th>Time</th><th>Event</th></tr></thead>
+        <tbody>
+          <tr><td><code>03:26:42</code></td><td><strong>Seed.</strong> A genuine CalSAWS interview reminder arrives in the inbox and is correctly ingested as <code>INTERVIEW_SCHEDULED</code>.</td></tr>
+          <tr><td><code>03:26–03:29</code></td><td>The interview event fires a <strong>critical-tier</strong> notification → mission-control sends an email <em>to the user's own address</em> with subject <code>[mission-control] California Statewide … Interview</code>.</td></tr>
+          <tr><td><code>03:29</code></td><td><strong>Loop begins.</strong> That self-addressed email lands in the watched INBOX. Gmail push fires the webhook → ingest re-classifies it as a fresh interview → another notification → another email.</td></tr>
+          <tr><td><code>03:29–03:49</code></td><td><strong>~20 minutes of runaway.</strong> ~1,102 webhook deliveries; 552 <code>INTERVIEW_SCHEDULED</code> events stack onto the one CalSAWS app; each iteration is a distinct Gmail <code>msgId</code>, defeating the per-message dedup. The <code>gmail.com</code> sender-domain magnet (§3.2) funnels stray re-ingests onto 3 other apps too.</td></tr>
+          <tr><td><code>03:49</code></td><td><strong>Halt — by Gmail, not by us.</strong> Gmail's outbound send rate limit trips (<code>User-rate limit exceeded … (Mail sending)</code>) and the send leg of the loop can no longer fire. The loop goes dormant.</td></tr>
+          <tr><td><code>~04:24</code></td><td><strong>Triage + DB cleanup.</strong> User: "why did I get spammed with emails from mission-control?" Root-caused from <code>prod.db</code> + logs; both DBs backed up; junk rows deleted (§8).</td></tr>
+          <tr><td>later 06-02</td><td><strong>Fix shipped + redeployed.</strong> Commit <code>7ae5a6c</code> lands the self-notification guard; <code>pm2 restart</code> on both tiers; guard confirmed live in the prod bundle (§7).</td></tr>
+        </tbody>
+      </table>
+      <div class="callout"><strong>Confirmed NOT caused by tests.</strong> Hermetic smokes run on <code>dev.db</code> with <code>EMAIL_ENABLED=0</code> against throwaway users. The loop ran on the deployed prod bundle via the realtime webhook — logs show only <code>[GMAIL WEBHOOK]</code> entries, zero <code>[BACKFILL]</code>.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="rootcause">Root cause &amp; why every defense failed</h2></summary>
+    <div class="section-body">
+      <h3>The loop</h3>
+      <p>The architecture has a closed cycle: <strong>notifications are self-addressed</strong>, <strong>the inbox is watched</strong>, and <strong>the webhook ingests everything in the inbox</strong> — including our own outbound mail. Nothing marked an email as "this is mine, don't re-ingest it."</p>
+      <pre class="mermaid">
+flowchart TB
+  seed["Real CalSAWS interview email<br/>(03:26:42)"] --> ingest["ingestGmailMessage()<br/>LLM classifies → INTERVIEW_SCHEDULED"]
+  ingest --> ev["create ApplicationEvent<br/>(new id each time)"]
+  ev --> notify["dispatchNotification()<br/>tier = critical"]
+  notify --> send["send.ts: notificationToEmail<br/>from = to = user.email<br/>subject [mission-control] …"]
+  send --> inbox["lands in the watched INBOX"]
+  inbox -->|"Gmail push webhook"| ingest
+  ev --> gcal["syncEventToGcal()<br/>one calendar event per event id"]
+  send -. "after ~552 sends" .-> throttle["Gmail send throttle<br/>(the ONLY thing that stopped it)"]
+      </pre>
+      <h3>Why the per-message dedup didn't stop it</h3>
+      <p>Ingest is idempotent per message via <code>@@unique([applicationId, emailMsgId, kind])</code>. But <strong>every loop iteration was a brand-new outbound email with a brand-new <code>msgId</code></strong>, so each re-ingest was — to that constraint — a legitimately distinct message. The dedup that protects against webhook <em>redelivery</em> is structurally blind to a loop that <em>generates new messages</em>.</p>
+      <h3>Why quiet hours didn't throttle it</h3>
+      <p><code>INTERVIEW_SCHEDULED</code> dispatches at the <strong>critical</strong> tier (<code>lib/repositories/applicationEvents.ts</code> → <code>dispatchNotification({ tier: "critical" })</code>), and critical tier <strong>bypasses quiet hours</strong> by design (<code>lib/notifications/dispatch.ts</code>: the quiet-hours gate is skipped when <code>tier === "critical"</code>). So the loop ran at full speed regardless of time of day.</p>
+      <h3>The amplifier — free-mail was not a dedup blocklist root</h3>
+      <p>The sender-domain dedup fallback (<code>lib/applications/sender-domain.ts</code>) blocked multi-tenant ATS roots (<code>greenhouse.io</code>, <code>lever.co</code>, …) but <strong>not consumer free-mail roots like <code>gmail.com</code></strong>. The user's own notifications are <em>from</em> their <code>gmail.com</code> address, so every re-ingested self-notification resolved to <code>senderDomain = gmail.com</code>, and the fallback funneled them onto whatever app happened to carry that domain. That's how a CalSAWS loop leaked junk events onto Delta Air Lines, the LA Dodgers, and a test row too.</p>
+      <div class="callout warn"><strong>The decisive failure was the missing self-identification.</strong> Dedup, quiet hours, and the sender-domain heuristic are all <em>downstream</em> mitigations — none of them is designed to recognize "this email is mine." The system had no way to tell its own voice from the world's.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="blast">Blast radius</h2></summary>
+    <div class="section-body">
+      <h3>What the loop touched</h3>
+      <table>
+        <thead><tr><th>Surface</th><th>Impact</th><th>Recoverable?</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Real Gmail inbox</strong></td><td>~552 actual <code>[mission-control] …</code> emails delivered to the user.</td><td>Manual only — no stored message IDs (§9).</td></tr>
+          <tr><td><strong>Real Google Calendar</strong></td><td>~552 calendar events (one per looped INTERVIEW_SCHEDULED). gcal idempotency keys off <code>ApplicationEvent.id</code>, and each loop iteration created a <em>new</em> event row → a new key → a new calendar event.</td><td>No programmatic path; IDs now lost (§9).</td></tr>
+          <tr><td><strong>Gemini tokens</strong></td><td>~$0.66 of classifier spend (§5).</td><td>Spent — unrecoverable, but now prevented.</td></tr>
+          <tr><td><strong>prod.db</strong></td><td>1,229 junk <code>ApplicationEvent</code> rows + 559 junk <code>Notification</code> rows across 4 apps (CalSAWS, Bell Smoke [test], Delta Air Lines, LA Dodgers).</td><td><strong>Cleaned</strong> (§8).</td></tr>
+          <tr><td><strong>dev.db</strong></td><td>668 junk <code>ApplicationEvent</code> rows + 323 junk <code>Notification</code> rows across 2 apps.</td><td><strong>Cleaned</strong> (§8).</td></tr>
+        </tbody>
+      </table>
+      <p class="note">The 552 figure is the <code>INTERVIEW_SCHEDULED</code> count on the single CalSAWS app, which is the source of the calendar clutter. The larger 1,229 / 668 DB row counts include the companion <code>EMAIL_RECEIVED</code> (and other) events that share each loop <code>msgId</code> across all affected apps.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="cost">The $0.66 — token-cost mechanism</h2></summary>
+    <div class="section-body">
+      <h3>Where the money went</h3>
+      <p>Every re-ingested email ran the LLM classifier <code>lib/email-parser.ts:parseApplicationEmail</code> (model: <code>gemini-3.1-flash-lite</code>; ~600 input + ~180 output tokens per call — the 3 KB-trimmed body plus prompt wrapper, returning the full application schema). At ≥552 calls (and likely ~2× that, since the ~1,102 webhook deliveries imply <em>both</em> the dev and prod tiers were ingesting the same mailbox), that adds up to the observed ~$0.66. Classifier retries also pay the cost.</p>
+      <h3>Why the cache barely helped (corrected)</h3>
+      <p><code>parseApplicationEmail</code> routes through <code>llmCached()</code>, whose key is content-addressed: model + <strong>rendered prompt</strong> + output-schema fingerprint. The rendered prompt includes the email's own send time as the date-resolution <em>anchor</em> (<code>sentAt.toISOString()</code>), and each of the 552 looped self-notifications was sent at a distinct moment — so they had <strong>distinct cache keys</strong> and were <em>not</em> collapsible into one. (An earlier draft of this doc wrongly claimed a working cache would have driven the cost to ~$0.00 — corrected here after noticing the parsed interview times in the calendar varied per call.) What the cache <em>would</em> have deduped is the part that genuinely repeats: the Gmail push fan-out delivers each single message to <strong>both</strong> the dev and prod webhooks ~simultaneously (same <code>msgId</code> / <code>sentAt</code> / body → same key → single-flight: one tier leads, the other follows). That roughly <strong>halves</strong> the ~1,102 calls back toward ~552, so a healthy cache would have made the loop cost ~$0.33, not ~$0.00. The cache is a duplicate-suppressor, not a loop-breaker — only the self-notification guard <em>prevents</em> the loop.</p>
+      <div class="callout warn"><strong>Why the calendar events landed at many different times.</strong> The cache being off meant dev and prod parsed each looped email independently, doubling the parses — but the <em>spread</em> of times (the ~552 events landed on 399 distinct times across four months, not one) comes from a date <strong>feedback loop</strong> plus a timezone-serialization flip in the LLM's output. Full forensic breakdown in §6.</div>
+      <div class="callout danger"><strong>The cache was disabled at the time — and had been for days.</strong> Prod logs showed <code>[llm-cache] disabled … no such column: value</code>. This was <strong>schema drift</strong>, not the better-sqlite3 ABI mismatch first suspected: the 2026-05-31 refactor that re-homed the LLM cache onto the generic base renamed its payload column <code>result → value</code> and added <code>expiry</code>, but kept the same table name in the same <code>data/llm-cache.db</code> file. <code>CREATE TABLE IF NOT EXISTS</code> no-ops on the pre-existing old-shape table, so the first prepared statement referencing <code>value</code> threw <code>no such column: value</code>, which the best-effort store caught and degraded to <em>uncached, permanently and invisibly</em>. With the cache live, the loop's token cost would have been roughly <em>halved</em> (the simultaneous dev+prod fan-out of each message deduped), not eliminated — the distinct per-message send-time anchors kept the 552 looped emails from collapsing further. The disabled cache amplified the bill ~2×; it didn't cause it. <em>(Fixed 2026-06-04 — the base now detects column drift on init and rebuilds the table rather than silently disabling; see §10.)</em></p></div>
+      <h3>Rate limiting did not help the cost</h3>
+      <p><code>acquireGeminiSlot()</code> (default 12 req/min) <em>paced</em> the calls but does not reduce per-call token spend — cost is <code>calls × tokens-per-call</code> regardless of how they're spread over time. Pacing only changed how long the loop took to burn the money, not how much it burned.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="clusters">Anatomy of the calendar clutter — a date feedback loop</h2></summary>
+    <div class="section-body">
+      <h3>What the calendar actually shows</h3>
+      <p>You noticed the ~500 loop events sit at <em>many different</em> times, bundled into clusters, even though the real interview was a single fixed time. The data confirms it — and it isn't random LLM jitter. Reconstructed from the pre-cleanup backup (<code>prod.db.pre-mailloop-cleanup-20260602T042424Z</code>; remember the calendar event start <em>is</em> <code>ApplicationEvent.scheduledAt</code> verbatim, so the DB is a faithful mirror of what was on the calendar):</p>
+      <ul>
+        <li><strong>552</strong> looped <code>INTERVIEW_SCHEDULED</code> events (488 titled "California Statewide Automated Welfare System" + 64 "CalSAWS" — the LLM even flip-flopped the company name mid-loop).</li>
+        <li><strong>399 distinct parsed times</strong>, smeared across <strong>four months</strong> — 2026-02-06 to 2026-06-03 — not bunched at one time.</li>
+        <li>The <strong>real interview was 2026-06-03, 11:00 AM</strong> — the <em>latest</em> time in the whole set, and one of only <strong>2</strong> events whose <code>rawText</code> is human-written. Every other event drifted <em>earlier</em>.</li>
+      </ul>
+      <table>
+        <thead><tr><th>Parsed-time month</th><th># events</th></tr></thead>
+        <tbody>
+          <tr><td>2026-02</td><td>99</td></tr>
+          <tr><td>2026-03</td><td>149</td></tr>
+          <tr><td>2026-04</td><td>139</td></tr>
+          <tr><td>2026-05</td><td>143</td></tr>
+          <tr><td>2026-06 <em>(incl. the true 6/3 11:00 AM)</em></td><td>22</td></tr>
+        </tbody>
+      </table>
+      <h3>Why it drifted — three bugs compounding</h3>
+      <p>So: is it "the LLM parsing dates wrong" or "something else"? <strong>Both, specifically.</strong> The LLM mis-serializes the time, but the app keeps handing the LLM its own previous output to re-parse. Neither alone produces a four-month walk.</p>
+      <ul>
+        <li><strong>1 — Feedback fuel: the notification body re-encodes the parsed time.</strong> <code>lib/repositories/applicationEvents.ts:61</code> builds the INTERVIEW_SCHEDULED notification body as <code>event.scheduledAt.toLocaleString()</code>. So every self-notification email literally contained the <em>previous</em> iteration's parsed timestamp as <code>M/D/YYYY, h:mm:ss AM/PM</code>. Proof: <strong>550 of the 552</strong> events' <code>rawText</code> (the wording the LLM says it read) are in that exact <code>toLocaleString</code> shape; the only 2 that aren't are the genuine human seeds (<code>06/03/2026 at 11:00 AM</code> and an earlier <code>04/22/2026 at 9:15 AM</code>).</li>
+        <li><strong>2 — Timezone flip: the LLM serializes the wall-clock time as UTC half the time.</strong> The parser asks for ISO 8601. Given a zone-less wall-clock time (<code>5/9/2026, 9:00:00 AM</code>), the LLM inconsistently emitted it as local (<code>…T09:00:00</code>) or UTC (<code>…T09:00:00Z</code>). Reading a Pacific wall-clock time as UTC shifts the stored instant earlier by Pacific's offset. Proof: <strong>every</strong> drifted <code>rawText</code> resolved to exactly <strong>two</strong> times, <strong>7 h apart</strong> (106 rawTexts, the PDT dates) or <strong>8 h apart</strong> (36, the PST dates) — i.e. precisely Pacific's UTC offset <em>for that date's season</em>. A random misread wouldn't be season-correct; a local↔UTC confusion is, exactly.</li>
+        <li><strong>3 — 552 iterations random-walk the date backward.</strong> Each UTC-misread subtracts ~7–8 h; the <code>toLocaleString</code> of the new (earlier) time then feeds the next email, so the error compounds. Crossing midnight again and again marched the date backward ~117 days, from the true 6/3 to 2/6. The "clusters" you saw are the stops on that walk: each intermediate time is a small cluster, doubled by its local-vs-UTC pair → 399 distinct values.</li>
+      </ul>
+      <div class="callout danger"><strong>Latent beyond the loop.</strong> Bug #2 isn't loop-specific — even a single <em>genuine</em> interview email can land 7–8 h off if the LLM appends a stray <code>Z</code>. The loop merely sampled it 552× and made it impossible to miss. Hardening the date serialization (and not feeding a re-parseable timestamp back into notification bodies) is tracked in §10.</div>
+      <h3>How this was reconstructed</h3>
+      <p>The loop's DB rows were deleted in the cleanup (§8) and the live calendar is now partially hand-deleted, so this was derived from the <strong>pre-cleanup backup</strong> — <code>~/backups/mission-control/prod.db.pre-mailloop-cleanup-20260602T042424Z</code> — grouping the 552 CalSAWS <code>INTERVIEW_SCHEDULED</code> rows by <code>scheduledAt</code> and by <code>notes</code> (= the LLM's <code>rawText</code>). Each surviving calendar event's description still carries that <code>rawText</code>, so any remaining events can be spot-checked the same way.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="fix">The fix</h2></summary>
+    <div class="section-body">
+      <h3>Two-signal self-notification guard (commit <code>7ae5a6c</code>)</h3>
+      <p>The real fix gives the system a way to recognize its own voice. New module <code>lib/applications/self-notification.ts</code> defines the shared constants and the predicate:</p>
+      <pre><code class="language-typescript">export const MC_NOTIFICATION_HEADER = "X-Mission-Control";
+export const MC_NOTIFICATION_HEADER_VALUE = "notification";
+export const MC_SUBJECT_PREFIX = "[mission-control] ";
+
+export function isSelfNotificationEmail(args: { subject?: string | null; mcHeader?: string | null }): boolean {
+  if ((args.mcHeader ?? "").trim().toLowerCase() === MC_NOTIFICATION_HEADER_VALUE) return true; // primary
+  if ((args.subject ?? "").startsWith(MC_SUBJECT_PREFIX)) return true;                          // fallback
+  return false;
+}</code></pre>
+      <ul>
+        <li><strong>Stamp on send.</strong> <code>lib/email/send.ts</code> now emits an <code>X-Mission-Control: notification</code> header on every notification (<code>EmailMessage</code> gained a <code>headers?</code> field; <code>buildRfc822Message</code> writes them into the RFC 822 header block) and uses the shared <code>MC_SUBJECT_PREFIX</code>.</li>
+        <li><strong>Skip on ingest.</strong> <code>lib/applications/ingest.ts</code> checks <code>isSelfNotificationEmail</code> and returns <code>{ action: "skipped", reason: "self_notification" }</code> <strong>before</strong> the <code>looksRelevant</code> filter and the LLM classifier — so a self-notification costs zero tokens. The header is the primary signal; the subject prefix is the fallback for notification mail already sitting in the inbox that pre-dates the header.</li>
+        <li><strong>Kill the amplifier.</strong> New <code>FREE_MAIL_DOMAINS</code> in <code>lib/applications/relevance.ts</code> (20 consumer roots) is folded into <code>sender-domain.ts</code>'s <code>BLOCKED_ROOTS</code>, so <code>gmail.com</code> et al. resolve to <code>null</code> and never funnel mail onto one app. This is a <strong>dedup-blocklist-only</strong> change — deliberately <em>not</em> added to <code>SENDER_DOMAINS</code>, which doubles as a positive relevance signal (widening it would flood the classifier with personal mail).</li>
+      </ul>
+      <h3>Defense in depth — two independent signals</h3>
+      <p>The header is robust to a user genuinely titling a real email <code>[mission-control] …</code>; the subject prefix catches notifications that predate the header. Either one trips the skip.</p>
+      <h3>Tests</h3>
+      <p>New hermetic smoke <code>self-notification-loop-guard-smoke.ts</code> (20/20) — including a <strong>closed-loop round-trip</strong> that asserts what <code>notificationToEmail</code> produces is exactly what <code>isSelfNotificationEmail</code> flags after passing through <code>buildRfc822Message</code> — plus an extended <code>sender-domain-smoke.ts</code> (free-mail → <code>null</code>). Both wired into <code>scripts/pre-push.sh</code>; full hermetic gate 101/101, <code>tsc --noEmit</code> clean.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="cleanup">Cleanup performed</h2></summary>
+    <div class="section-body">
+      <h3>Database (done)</h3>
+      <p>Both DBs were backed up first to <code>~/backups/mission-control/{prod,dev}.db.pre-mailloop-cleanup-20260602T042424Z</code>. Then the loop's junk rows — every <code>ApplicationEvent</code> sharing a <code>[mission-control]%</code>-titled <code>EMAIL_RECEIVED</code> <code>msgId</code>, plus the companion looped events and notifications — were deleted:</p>
+      <table>
+        <thead><tr><th>Table</th><th>prod.db</th><th>dev.db</th></tr></thead>
+        <tbody>
+          <tr><td>Loop <code>ApplicationEvent</code> rows</td><td>1,229</td><td>668</td></tr>
+          <tr><td>Loop <code>Notification</code> rows</td><td>559</td><td>323</td></tr>
+        </tbody>
+      </table>
+      <p>The free-mail <code>senderDomain</code> magnets were nulled. Genuine events were preserved — CalSAWS was restored to its true history (<code>APPLIED ×1 / EMAIL_RECEIVED ×2 / INTERVIEW_SCHEDULED ×2</code>, status <code>INTERVIEW</code>), with zero orphan notifications left on prod.</p>
+      <h3>Deploy (done)</h3>
+      <p><code>npm run build</code> (clean; <code>self_notification</code> confirmed present in <code>.next/server</code>), then <code>pm2 restart mission-control</code> + <code>mission-control-dev</code> — both tiers returned HTTP 200 with the guard live.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="unaddressed">Unaddressed remediation</h2></summary>
+    <div class="section-body">
+      <h3>The clutter the user still sees</h3>
+      <p>The database cleanup removed the <em>rows</em>, but the loop's two external side-effects were never cleaned and currently have <strong>no programmatic cleanup path</strong>. This is the gap between "the bug is fixed" and "the mess is gone."</p>
+      <div class="callout danger"><strong>~552 orphaned Google Calendar events remain.</strong> <code>deleteEventFromGcal(userId, gcalEventId)</code> exists in <code>lib/calendar/sync.ts</code>, but it is only called from the manual per-event DELETE handler in <code>app/api/applications/events/route.ts</code> — there is no batch cleanup. Worse, the calendar event IDs lived in <code>ApplicationEvent.gcalEventId</code>, and those rows were deleted in §8, so the IDs are <strong>lost</strong>. Programmatic cleanup-by-stored-ID is no longer possible; it now requires a Calendar API sweep that matches the loop window / title pattern, or manual deletion in Google Calendar.</p></div>
+      <div class="callout danger"><strong>~552 orphaned Gmail messages remain in the inbox.</strong> Notifications do not persist the Gmail <code>messageId</code> of what they sent (<code>Notification</code> records <code>emailSentAt</code> / <code>emailError</code> but not the message ID), so there is no reverse mapping to delete them. Cleanup is a manual Gmail search-and-delete (e.g. <code>subject:"[mission-control]"</code> in the loop window), or a one-off script over the Gmail API matching that query.</p></div>
+      <h3>The reason for the gap</h3>
+      <p>Both side-effects are <em>fire-and-forget</em>: the system writes to Calendar / Gmail and records only a success checkpoint, never a handle it could use to undo. Cleaning the DB rows is what severed the only stored link to the external artifacts. A future "delete-by-handle" capability (store the sent <code>messageId</code>; sweep gcal by stored IDs before deleting their rows) is what would have made this recoverable.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="prevention">Prevention &amp; follow-ups</h2></summary>
+    <div class="section-body">
+      <h3>Shipped (this incident)</h3>
+      <ul>
+        <li><strong>Self-notification guard</strong> — the loop is structurally broken: our own mail is recognized and skipped before classification.</li>
+        <li><strong>Free-mail dedup block</strong> — the sender-domain amplifier that spread junk across apps is closed.</li>
+        <li><strong>Hermetic coverage</strong> — a closed-loop round-trip smoke now fails the push if the guard ever regresses.</li>
+      </ul>
+      <h3>Recommended hardening (not yet done)</h3>
+      <ul>
+        <li><strong>Notification circuit breaker (defense in depth).</strong> The guard fixes <em>this</em> loop, but a per-app / per-window cap on outbound notifications (e.g. "no more than N sends for one application in M minutes") would catch the <em>next</em> unforeseen amplification before it sends 552 emails. The decisive lesson is that the only thing that stopped this was an external throttle — we should own that limit.</li>
+        <li><strong>Fix the LLM cache <span style="color:#4ade80">[done — 2026-06-04]</span>.</strong> Root cause was <strong>schema drift</strong> (column <code>result → value</code> + added <code>expiry</code> from the 2026-05-31 refactor), not a better-sqlite3 ABI mismatch — and the failure was <em>silent</em>: a drifted column threw at <code>db.prepare()</code>, was caught as a generic init error, and disabled the cache for days. Fixed in <code>lib/shared-sqlite-cache.ts:reconcileSchema()</code>: on init the base now compares the on-disk columns to the expected set and, on a mismatch, <strong>drops + rebuilds the table loudly</strong> (the data is throwaway) instead of disabling. A new hermetic smoke <code>shared-cache-schema-drift-smoke.ts</code> seeds the old schema and asserts the self-heal + warning + actual caching. This repairs the live cache on the next deploy and makes any future drift self-correct rather than billing silently. Note its scope: the cache suppresses <em>duplicate-input</em> spend (e.g. the dev+prod fan-out of one message), so it would have ~halved this loop's cost — but it would <em>not</em> have stopped the loop, whose emails each had a distinct send-time anchor → distinct key. The self-notification guard is the loop fix; the cache is the duplicate-spend defense.</li>
+        <li><strong>Make date extraction timezone-safe (and stop feeding the parser its own output).</strong> The four-month calendar drift (§6) had two roots beyond the loop itself: (a) the INTERVIEW_SCHEDULED notification body is <code>scheduledAt.toLocaleString()</code> (<code>lib/repositories/applicationEvents.ts:61</code>), so the email re-encoded the parsed time for the next parse to chew on; and (b) the LLM inconsistently serialized a zone-less wall-clock time as UTC vs local (a 7–8 h flip). The self-notification guard kills the feedback, but the timezone sloppiness is <em>latent</em> — a single genuine interview email can still land 7–8 h off. Pin the parser to emit zone-explicit ISO (or normalize extracted times against the email's own timezone), and reconsider embedding a re-parseable timestamp in notification bodies.</li>
+        <li><strong>Store undo handles.</strong> Persist the sent notification's Gmail <code>messageId</code>, and sweep gcal events by stored ID <em>before</em> deleting their <code>ApplicationEvent</code> rows — so a future cleanup can actually remove external artifacts (see §9).</li>
+        <li><strong>One-off cleanup of the existing clutter.</strong> A throwaway Gmail + Calendar API sweep over the 2026-06-02 03:29–03:49 UTC window matching <code>[mission-control]</code> / the CalSAWS interview title would clear the ~552 calendar events and inbox messages that still remain.</li>
+      </ul>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

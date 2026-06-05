@@ -136,17 +136,70 @@ const DEFAULT_POLL_MS = 150;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-function buildInternalStore(db: Db, table: string): InternalStore {
-    db.exec(`
-        CREATE TABLE IF NOT EXISTS ${table} (
-            key         TEXT PRIMARY KEY,
-            value       TEXT,
-            status      TEXT NOT NULL,
-            expiry      INTEGER,
-            reserved_at INTEGER NOT NULL,
-            done_at     INTEGER
-        );
-    `);
+// The canonical column set every shared-cache table must have. Kept in lockstep
+// with tableDdl() — reconcileSchema() rebuilds any on-disk table whose columns
+// drift from this set.
+const TABLE_COLUMNS = ["key", "value", "status", "expiry", "reserved_at", "done_at"] as const;
+
+function tableDdl(table: string): string {
+    return `CREATE TABLE IF NOT EXISTS ${table} (
+        key         TEXT PRIMARY KEY,
+        value       TEXT,
+        status      TEXT NOT NULL,
+        expiry      INTEGER,
+        reserved_at INTEGER NOT NULL,
+        done_at     INTEGER
+    );`;
+}
+
+/**
+ * Reconcile the on-disk table with the schema THIS code expects — rebuilding it
+ * on drift instead of letting a column mismatch silently disable the cache.
+ *
+ * Why this exists (2026-06-04). The cache file outlives the code. When the
+ * 2026-05-31 refactor re-homed the LLM cache onto this base it renamed the
+ * payload column `result`→`value` and added `expiry`, but kept the SAME table
+ * name in the SAME file (`data/llm-cache.db`). `CREATE TABLE IF NOT EXISTS`
+ * no-ops on the pre-existing old-shape table, so the very next prepared
+ * statement (`SELECT … value … FROM ${table}`) threw `no such column: value` —
+ * caught by initStore() as a generic init failure → the store returned null →
+ * EVERY llm call ran uncached, permanently and invisibly (one warn in a
+ * 500-deep ring buffer). It sat broken from 05-31 until the 06-02
+ * self-notification spam made the wasted Gemini spend visible.
+ *
+ * The data here is throwaway — content-addressed (llm-cache) or TTL'd
+ * (research-cache), never load-bearing — so the right response to a shape
+ * mismatch is REBUILD, not disable: drop the drifted table and recreate it
+ * fresh, LOUDLY, so a future schema change self-heals on the next start. If the
+ * DROP/CREATE itself throws (e.g. a read-only file) it propagates to initStore()
+ * and degrades to uncached — the correct fallback for a genuine env failure.
+ *
+ * Returns true when a drifted table was rebuilt (asserted by the hermetic smoke).
+ */
+function reconcileSchema(db: Db, table: string, label: string): boolean {
+    db.exec(tableDdl(table)); // create fresh when absent; no-op when already present
+    const cols: string[] = db
+        .prepare(`PRAGMA table_info("${table}")`)
+        .all()
+        .map((r: { name: string }) => r.name);
+    const have = [...cols].sort();
+    const want = [...TABLE_COLUMNS].sort();
+    const matches = have.length === want.length && have.every((c, i) => c === want[i]);
+    if (matches) return false;
+    console.warn(
+        `[${label}] SCHEMA DRIFT on table "${table}" — on-disk columns ` +
+        `[${cols.join(", ")}] != expected [${TABLE_COLUMNS.join(", ")}]. ` +
+        `Dropping + rebuilding (cache data is throwaway / rebuildable). This ` +
+        `self-heal replaces the old behavior where a drifted column silently ` +
+        `disabled the cache and ran every call uncached.`,
+    );
+    db.exec(`DROP TABLE IF EXISTS ${table};`);
+    db.exec(tableDdl(table));
+    return true;
+}
+
+function buildInternalStore(db: Db, table: string, label: string): InternalStore {
+    reconcileSchema(db, table, label);
     db.exec(`CREATE INDEX IF NOT EXISTS idx_${table}_done_at ON ${table}(done_at);`);
 
     const getStmt = db.prepare(
@@ -225,7 +278,7 @@ export function createSharedCache(config: SharedCacheConfig): SharedCache {
             return null;
         }
         try {
-            const store = buildInternalStore(db, config.table);
+            const store = buildInternalStore(db, config.table, config.label);
             console.info(`[${config.label}] ready at ${resolvePath(process.cwd(), path)} (WAL, table=${config.table})`);
             return store;
         } catch (e) {
