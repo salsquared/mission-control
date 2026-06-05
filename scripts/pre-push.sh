@@ -95,6 +95,7 @@ SUITES=(
     "scripts/tests/hermetic/ingest-cross-track-dedup-smoke.ts"
     "scripts/tests/hermetic/ingest-tiebreaker-role-guard-smoke.ts"
     "scripts/tests/hermetic/ingest-roleless-merge-smoke.ts"
+    "scripts/tests/hermetic/match-role-subset-smoke.ts"
     "scripts/tests/hermetic/stale-status-ingest-smoke.ts"
     "scripts/tests/hermetic/notification-dedup-smoke.ts"
     "scripts/tests/hermetic/gcal-idempotency-smoke.ts"

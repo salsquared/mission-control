@@ -67,6 +67,14 @@ const PHRASES: readonly string[] = [
 export const SENDER_DOMAINS: readonly string[] = [
     // ATS platforms
     "greenhouse.io",
+    // Greenhouse sends NOTIFICATION MAIL from greenhouse-mail.io (e.g.
+    // no-reply@us.greenhouse-mail.io), NOT greenhouse.io — that's only the
+    // job-board web host (boards.greenhouse.io). Without this entry every
+    // Greenhouse-routed email slips past the sender-domain dedup blocklist and
+    // gets `greenhouse-mail.io` stamped as a bogus per-employer identity,
+    // merging unrelated Greenhouse employers (an Astranis confirmation landed
+    // on a Muon Space card, 2026-06-04). Doubles as a positive relevance signal.
+    "greenhouse-mail.io",
     "lever.co",
     "hire.lever.co",
     "myworkday.com",

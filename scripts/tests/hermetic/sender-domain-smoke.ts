@@ -79,6 +79,16 @@ async function main() {
     eq(`greenhouse sub.notify@us.greenhouse.io blocked`,
         extractSenderDomain("notify@us.greenhouse.io"),
         null);
+    // Greenhouse's actual NOTIFICATION-MAIL domain (2026-06-04 Astranis→Muon
+    // Space mis-merge regression). Greenhouse sends from greenhouse-mail.io,
+    // NOT greenhouse.io — every employer using Greenhouse shares this root, so
+    // it MUST be blocked or unrelated employers funnel onto one card.
+    eq(`greenhouse-mail root no-reply@greenhouse-mail.io blocked`,
+        extractSenderDomain("no-reply@greenhouse-mail.io"),
+        null);
+    eq(`greenhouse-mail us.* subdomain no-reply@us.greenhouse-mail.io blocked`,
+        extractSenderDomain("no-reply@us.greenhouse-mail.io"),
+        null);
 
     // Consumer free-mail blocklist (2026-06-02 self-notification loop) — MUST
     // return null so the dedup fallback never funnels unrelated senders (or the

@@ -62,11 +62,11 @@ const BLOCKED_ROOTS = new Set(
  *   extractSenderDomain('"CSULB Admissions" <admissions@apply.csulb.edu>')
  *     // → "csulb.edu"
  *   extractSenderDomain("no-reply@us.greenhouse-mail.io")
- *     // → null  (greenhouse-mail.io is NOT on the blocklist — but the
- *     //         strict greenhouse.io entry would catch any direct match.
- *     //         The example below is more representative.)
+ *     // → null  (greenhouse-mail.io IS blocklisted — it's the domain
+ *     //         Greenhouse sends notification mail from; the suffix loop
+ *     //         catches the us.* subdomain)
  *   extractSenderDomain("notify@boards.greenhouse.io")
- *     // → null  (greenhouse.io is blocked)
+ *     // → null  (greenhouse.io is blocked — the job-board web host)
  *   extractSenderDomain("")  // → null
  */
 export function extractSenderDomain(fromHeader: string | null | undefined): string | null {

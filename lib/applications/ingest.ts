@@ -4,10 +4,12 @@ import { parseApplicationEmail, type ParsedApplicationEmail } from "@/lib/email-
 import { broadcastEvent } from "@/lib/events";
 import { looksRelevant } from "@/lib/applications/relevance";
 import { normalizeCompanyName } from "@/lib/applications/normalize-company";
+import { findUniqueRoleSuperset } from "@/lib/applications/match-role-subset";
 import { extractSenderDomain } from "@/lib/applications/sender-domain";
 import { isSelfNotificationEmail, MC_NOTIFICATION_HEADER } from "@/lib/applications/self-notification";
 import {
     findApplicationByCompany,
+    findApplicationsByCompany,
     findApplicationByCompanyAndRole,
     findApplicationBySenderDomain,
     createApplication,
@@ -253,6 +255,43 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             existingApp = byCompany;
         }
     }
+    // Lenient role-subset fallback (2026-06-04, Astranis→Muon Space repro).
+    // The primary (company, role) lookup is strict on normalizedRole, so a
+    // confirmation email that drops a term suffix the tracked posting carried —
+    // "Software Engineer Intern - Data Platform (Summer 2026)" (tracked) vs
+    // "Software Engineer Intern - Data Platform" (email) — misses the existing
+    // card and (with the senderDomain dedup correctly skipped for ATS mail)
+    // would spawn a duplicate. When the incoming role's normalized token set is
+    // a STRICT SUBSET of exactly ONE existing role at this employer, merge into
+    // it. The "exactly one superset" gate is the safety: a generic short role
+    // that is a subset of several siblings (e.g. "Software Engineering Intern"
+    // matching four Hermeus specializations) stays ambiguous and falls through
+    // to create rather than guessing. Skipped when the incoming role normalizes
+    // to empty — that's the roleless case the company-only branch above owns.
+    let roleMatchedLeniently = false;
+    if (!existingApp) {
+        const candidates = await findApplicationsByCompany(userId, parsed.company);
+        const { match, supersetCount } = findUniqueRoleSuperset(incomingRole, candidates);
+        if (match) {
+            existingApp = match;
+            roleMatchedLeniently = true;
+            console.info(
+                `[ingest] lenient role-subset match msg=${msgId} ` +
+                `app=${match.id} (track=${match.track}, ` +
+                `role=${JSON.stringify(match.role)}) — incoming role ` +
+                `${JSON.stringify(incomingRole)} is a strict token-subset of the ` +
+                `only ${JSON.stringify(parsed.company)} candidate; merged instead ` +
+                `of creating a duplicate`,
+            );
+        } else if (supersetCount > 1) {
+            console.info(
+                `[ingest] lenient role-subset AMBIGUOUS msg=${msgId} ` +
+                `incoming=${JSON.stringify(incomingRole)} is a subset of ` +
+                `${supersetCount} ${JSON.stringify(parsed.company)} roles — ` +
+                `declining; will fall through to senderDomain/create`,
+            );
+        }
+    }
     if (!existingApp && senderDomain) {
         const byDomain = await findApplicationBySenderDomain(userId, senderDomain);
         if (byDomain) {
@@ -328,7 +367,13 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
             ...(staleStatusUpdate ? {} : {
                 status: parsed.status,
                 nextSteps: parsed.nextSteps ?? null,
-                role: parsed.role || existingApp.role,
+                // On a lenient role-subset match the incoming role is a degraded
+                // (term-stripped) version of the tracked one — keep the richer
+                // stored role rather than overwriting "… (Summer 2026)" with the
+                // email's bare "…". Exact/roleless matches keep prior behavior.
+                role: roleMatchedLeniently
+                    ? existingApp.role
+                    : (parsed.role || existingApp.role),
             }),
             // Fill-the-gap only: set location from the email when the row has
             // none yet. Never clobber an existing value (a posting-derived

@@ -174,6 +174,32 @@ export async function findApplicationByCompany(
     return rows[0] ?? null;
 }
 
+/**
+ * 2026-06-04 lenient role-drift fallback. Returns EVERY application for an
+ * employer (any track), most-recently-updated first — unlike the singular
+ * `findApplicationByCompany`, which collapses to one row.
+ *
+ * Used by ingest.ts's subset-role fallback: when the strict (company, role)
+ * lookup misses because a confirmation email dropped a term suffix the tracked
+ * posting carried (e.g. posting "… (Summer 2026)" vs the email's bare "…"), the
+ * caller compares the incoming role's token set against every existing role at
+ * the employer and merges only when exactly one is a strict superset. Scoped to
+ * the indexed normalizedCompany key — a legacy NULL-normalizedCompany row is
+ * invisible here, which is acceptable: the lenient path is best-effort and
+ * declines (falls through to senderDomain / create) when it finds nothing.
+ */
+export async function findApplicationsByCompany(
+    userId: string,
+    company: string,
+): Promise<Application[]> {
+    const key = normalizeCompanyName(company);
+    if (!key) return [];
+    return prisma.application.findMany({
+        where: { userId, normalizedCompany: key },
+        orderBy: { lastUpdateAt: "desc" },
+    });
+}
+
 export function createApplication(data: ApplicationCreate): Promise<Application> {
     // PA-3 + 2026-05-27: persist BOTH normalized keys alongside the raw
     // company/role so future lookups hit the
