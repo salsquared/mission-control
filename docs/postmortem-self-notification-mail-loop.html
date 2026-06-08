@@ -28,6 +28,9 @@
       <li><a href="#cleanup">Cleanup performed</a></li>
       <li><a href="#unaddressed">Unaddressed remediation</a></li>
       <li><a href="#prevention">Prevention &amp; follow-ups</a></li>
+      <li><a href="#plan">Hardening — implementation plan</a></li>
+      <li><a href="#oq">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
     </ol>
   </details>
 
@@ -45,7 +48,7 @@
         <li><strong>Database:</strong> 1,229 prod + 668 dev junk <code>ApplicationEvent</code> rows and 559 prod + 323 dev <code>Notification</code> rows across 4 prod apps, since cleaned.</li>
       </ul>
       <h3>Status</h3>
-      <p>The <strong>code fix is shipped and live</strong> (commit <code>7ae5a6c</code>, both tiers redeployed). The <strong>database is clean</strong>. But two side-effects that escaped the database — the real Google Calendar events and the real Gmail messages — were <strong>never cleaned and have no programmatic cleanup path</strong> (see §9). Those are the only open items.</p>
+      <p>The <strong>code fix is shipped and live</strong> (commit <code>7ae5a6c</code>, both tiers redeployed). The <strong>database is clean</strong>, and as of 2026-06-04 the two external side-effects are cleaned too: the calendar turned out to be recoverable (only ~28 of the looped events ever reached Google Calendar — the loop synced only future-dated events while the date-drift walked <em>backward</em> into the past — and those were deleted), and the looped Gmail messages had already been deleted by the user (see §9). The <strong>only open items now are the defensive hardening follow-ups</strong> — a notification circuit breaker, timezone-safe date extraction, and undo handles — planned in §11.</p>
     </div>
   </details>
 
@@ -102,8 +105,8 @@ flowchart TB
       <table>
         <thead><tr><th>Surface</th><th>Impact</th><th>Recoverable?</th></tr></thead>
         <tbody>
-          <tr><td><strong>Real Gmail inbox</strong></td><td>~552 actual <code>[mission-control] …</code> emails delivered to the user.</td><td>Manual only — no stored message IDs (§9).</td></tr>
-          <tr><td><strong>Real Google Calendar</strong></td><td>~552 calendar events (one per looped INTERVIEW_SCHEDULED). gcal idempotency keys off <code>ApplicationEvent.id</code>, and each loop iteration created a <em>new</em> event row → a new key → a new calendar event.</td><td>No programmatic path; IDs now lost (§9).</td></tr>
+          <tr><td><strong>Real Gmail inbox</strong></td><td>~552 actual <code>[mission-control] …</code> emails delivered to the user.</td><td>Manual only — no stored message IDs. <strong>Done 2026-06-04</strong> (user-deleted; §9).</td></tr>
+          <tr><td><strong>Real Google Calendar</strong></td><td>~552 calendar events (one per looped INTERVIEW_SCHEDULED). gcal idempotency keys off <code>ApplicationEvent.id</code>, and each loop iteration created a <em>new</em> event row → a new key → a new calendar event.</td><td>Only ~28 of the ~552 ever reached gcal (future-dated only). <strong>Done 2026-06-04</strong> (deleted via Calendar API; §9).</td></tr>
           <tr><td><strong>Gemini tokens</strong></td><td>~$0.66 of classifier spend (§5).</td><td>Spent — unrecoverable, but now prevented.</td></tr>
           <tr><td><strong>prod.db</strong></td><td>1,229 junk <code>ApplicationEvent</code> rows + 559 junk <code>Notification</code> rows across 4 apps (CalSAWS, Bell Smoke [test], Delta Air Lines, LA Dodgers).</td><td><strong>Cleaned</strong> (§8).</td></tr>
           <tr><td><strong>dev.db</strong></td><td>668 junk <code>ApplicationEvent</code> rows + 323 junk <code>Notification</code> rows across 2 apps.</td><td><strong>Cleaned</strong> (§8).</td></tr>
@@ -205,14 +208,14 @@ export function isSelfNotificationEmail(args: { subject?: string | null; mcHeade
   </details>
 
   <details class="section" open>
-    <summary><h2 id="unaddressed">Unaddressed remediation</h2></summary>
+    <summary><h2 id="unaddressed">External-artifact cleanup <span style="color:#4ade80">[resolved — 2026-06-04]</span></h2></summary>
     <div class="section-body">
-      <h3>The clutter the user still sees</h3>
-      <p>The database cleanup removed the <em>rows</em>, but the loop's two external side-effects were never cleaned and currently have <strong>no programmatic cleanup path</strong>. This is the gap between "the bug is fixed" and "the mess is gone."</p>
-      <div class="callout danger"><strong>~552 orphaned Google Calendar events remain.</strong> <code>deleteEventFromGcal(userId, gcalEventId)</code> exists in <code>lib/calendar/sync.ts</code>, but it is only called from the manual per-event DELETE handler in <code>app/api/applications/events/route.ts</code> — there is no batch cleanup. Worse, the calendar event IDs lived in <code>ApplicationEvent.gcalEventId</code>, and those rows were deleted in §8, so the IDs are <strong>lost</strong>. Programmatic cleanup-by-stored-ID is no longer possible; it now requires a Calendar API sweep that matches the loop window / title pattern, or manual deletion in Google Calendar.</p></div>
-      <div class="callout danger"><strong>~552 orphaned Gmail messages remain in the inbox.</strong> Notifications do not persist the Gmail <code>messageId</code> of what they sent (<code>Notification</code> records <code>emailSentAt</code> / <code>emailError</code> but not the message ID), so there is no reverse mapping to delete them. Cleanup is a manual Gmail search-and-delete (e.g. <code>subject:"[mission-control]"</code> in the loop window), or a one-off script over the Gmail API matching that query.</p></div>
-      <h3>The reason for the gap</h3>
-      <p>Both side-effects are <em>fire-and-forget</em>: the system writes to Calendar / Gmail and records only a success checkpoint, never a handle it could use to undo. Cleaning the DB rows is what severed the only stored link to the external artifacts. A future "delete-by-handle" capability (store the sent <code>messageId</code>; sweep gcal by stored IDs before deleting their rows) is what would have made this recoverable.</p>
+      <h3>What was still outstanding after the DB cleanup</h3>
+      <p>The §8 database cleanup removed the <em>rows</em>, but the loop's two external side-effects — the real Google Calendar events and the real Gmail messages — survived it and, at the time this post-mortem was first written, had <strong>no programmatic cleanup path</strong> (the row deletion had severed the only stored link to them). Both have since been cleaned; the detail below is preserved because it explains <em>why</em> the calendar turned out far smaller than feared, and seeds the "store undo handles" hardening in §11.</p>
+      <div class="callout"><strong>Calendar — cleaned (only ~28 events ever reached gcal, not ~552).</strong> The loop synced a calendar event <em>only</em> for a future-dated <code>scheduledAt</code> (the <code>ingest.ts</code> gate), and the date-drift random-walk (§6) marched the parsed times <em>backward</em> into the past — so the vast majority never qualified for a gcal write. Reconstruction from the pre-cleanup backup confirmed only <strong>~28</strong> looped events (14 prod + 14 dev, all dated 6/2–6/3) were ever created on the calendar. The calendar event id is <code>sha1(ApplicationEvent.id)</code> (<code>gcalIdempotencyId</code>), validated against the 14 stored <code>gcalEventId</code>s, so they were addressable after all. <strong>27 were deleted via the Calendar API</strong> (the 28th the user had already removed); the window now holds only genuine events. (The ~552 figure is the count of looped <em>emails / DB rows</em>, not calendar events.)</p></div>
+      <div class="callout"><strong>Gmail — already cleaned by the user.</strong> The looped <code>[mission-control] …</code> messages had already been deleted from the inbox by the time cleanup ran; a <code>subject:"[mission-control]"</code> search returns zero CalSAWS threads. The remaining matches are ~8 unrelated mid-May smoke-test emails, deletable manually. Note the app cannot delete them programmatically anyway: its Gmail scope is <code>gmail.readonly</code> + <code>gmail.send</code> (no <code>gmail.modify</code>), and the interactive MCP Gmail connection is read-only too — so inbox deletion is user-side until a scope bump (tracked as deferred in §11, Fix C).</p></div>
+      <h3>The lesson that survives — fire-and-forget side-effects need stored handles</h3>
+      <p>This was recoverable largely by luck (the future-dated gate kept the calendar small; the user had already cleared Gmail). The underlying gap is real: both side-effects are <em>fire-and-forget</em> — the system writes to Calendar / Gmail and records only a success checkpoint, never a handle it could use to undo. Notifications don't persist the sent Gmail <code>messageId</code> (only <code>emailSentAt</code> / <code>emailError</code>), and deleting an <code>ApplicationEvent</code> row throws away its <code>gcalEventId</code> before any gcal sweep. The "store undo handles" item in §11 (Fix C) closes this so a future incident is cleanable by design, not by luck.</p>
     </div>
   </details>
 
@@ -226,12 +229,125 @@ export function isSelfNotificationEmail(args: { subject?: string | null; mcHeade
         <li><strong>Hermetic coverage</strong> — a closed-loop round-trip smoke now fails the push if the guard ever regresses.</li>
       </ul>
       <h3>Recommended hardening (not yet done)</h3>
+      <p>Three of these remain open: the <strong>notification circuit breaker</strong>, <strong>timezone-safe date extraction</strong>, and <strong>storing undo handles</strong>. They are worked into an actionable build plan — with the design decisions still to settle and a phased task checklist — in <a href="#plan">§11</a>.</p>
       <ul>
-        <li><strong>Notification circuit breaker (defense in depth).</strong> The guard fixes <em>this</em> loop, but a per-app / per-window cap on outbound notifications (e.g. "no more than N sends for one application in M minutes") would catch the <em>next</em> unforeseen amplification before it sends 552 emails. The decisive lesson is that the only thing that stopped this was an external throttle — we should own that limit.</li>
+        <li><strong>Notification circuit breaker (defense in depth).</strong> The guard fixes <em>this</em> loop, but a cap on outbound notifications would catch the <em>next</em> unforeseen amplification before it sends 552 emails. The decisive lesson is that the only thing that stopped this was an external throttle — we should own that limit. <em>Design now settled (§11 / §12):</em> two layers — a <strong>global per-user backstop (≤ 10 emails / 1 min)</strong> plus an extensible <strong>per-feature registry</strong>, today only <code>applications</code> scoped <strong>per-application (≤ 1 email / 10 min)</strong>.</li>
         <li><strong>Fix the LLM cache <span style="color:#4ade80">[done — 2026-06-04]</span>.</strong> Root cause was <strong>schema drift</strong> (column <code>result → value</code> + added <code>expiry</code> from the 2026-05-31 refactor), not a better-sqlite3 ABI mismatch — and the failure was <em>silent</em>: a drifted column threw at <code>db.prepare()</code>, was caught as a generic init error, and disabled the cache for days. Fixed in <code>lib/shared-sqlite-cache.ts:reconcileSchema()</code>: on init the base now compares the on-disk columns to the expected set and, on a mismatch, <strong>drops + rebuilds the table loudly</strong> (the data is throwaway) instead of disabling. A new hermetic smoke <code>shared-cache-schema-drift-smoke.ts</code> seeds the old schema and asserts the self-heal + warning + actual caching. This repairs the live cache on the next deploy and makes any future drift self-correct rather than billing silently. Note its scope: the cache suppresses <em>duplicate-input</em> spend (e.g. the dev+prod fan-out of one message), so it would have ~halved this loop's cost — but it would <em>not</em> have stopped the loop, whose emails each had a distinct send-time anchor → distinct key. The self-notification guard is the loop fix; the cache is the duplicate-spend defense.</li>
         <li><strong>Make date extraction timezone-safe (and stop feeding the parser its own output).</strong> The four-month calendar drift (§6) had two roots beyond the loop itself: (a) the INTERVIEW_SCHEDULED notification body is <code>scheduledAt.toLocaleString()</code> (<code>lib/repositories/applicationEvents.ts:61</code>), so the email re-encoded the parsed time for the next parse to chew on; and (b) the LLM inconsistently serialized a zone-less wall-clock time as UTC vs local (a 7–8 h flip). The self-notification guard kills the feedback, but the timezone sloppiness is <em>latent</em> — a single genuine interview email can still land 7–8 h off. Pin the parser to emit zone-explicit ISO (or normalize extracted times against the email's own timezone), and reconsider embedding a re-parseable timestamp in notification bodies.</li>
         <li><strong>Store undo handles.</strong> Persist the sent notification's Gmail <code>messageId</code>, and sweep gcal events by stored ID <em>before</em> deleting their <code>ApplicationEvent</code> rows — so a future cleanup can actually remove external artifacts (see §9).</li>
-        <li><strong>One-off cleanup of the existing clutter.</strong> A throwaway Gmail + Calendar API sweep over the 2026-06-02 03:29–03:49 UTC window matching <code>[mission-control]</code> / the CalSAWS interview title would clear the ~552 calendar events and inbox messages that still remain.</li>
+        <li><strong>One-off cleanup of the existing clutter <span style="color:#4ade80">[done — 2026-06-04]</span>.</strong> The ~28 looped calendar events that actually reached gcal were deleted via the Calendar API, and the looped inbox messages had already been removed by the user — see §9 for the full account (the "~552 events" feared here turned out to be ~28, because the loop only synced future-dated events while the drift walked into the past).</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="plan">Hardening — implementation plan</h2></summary>
+    <div class="section-body">
+      <p>The three follow-ups from §10 that are still open — a <strong>notification circuit breaker</strong>, <strong>timezone-safe date extraction</strong>, and <strong>stored undo handles</strong>. This is the actionable plan. Per this repo's design-doc convention the <a href="#oq">Open Questions (§12)</a> must be resolved before any code is written; the <a href="#tasks">Tasks checklist (§13)</a> is the build order once they are. Each fix is grounded in the current code with file:line anchors.</p>
+
+      <h3>Goals &amp; non-goals</h3>
+      <ul>
+        <li><strong>Goal.</strong> Own the outbound-volume limit that today only Gmail's external throttle owns; make extracted interview times timezone-correct independent of any loop; make Calendar/Gmail side-effects undoable by storing a handle at write time.</li>
+        <li><strong>Non-goals (v1).</strong> An automated "undo a past loop window" batch tool; a <code>gmail.modify</code> scope bump for programmatic inbox deletion (needs re-consent — deferred). Keep v1 minimal, manual, deterministic; defer automation until the load-bearing pieces are in.</li>
+      </ul>
+
+      <h3>Fix A — notification circuit breaker</h3>
+      <p><strong>Why.</strong> Nothing in the app caps outbound notifications. The decisive lesson of this incident is that the <em>only</em> thing that stopped the loop at 552 was Gmail's own send-rate limit — an external throttle we don't control. We should own that limit.</p>
+      <p><strong>Where.</strong> <code>lib/notifications/dispatch.ts:dispatchNotification</code> — the email side-channel fires at lines 122–128, after the in-app row is created. The breaker gates that side-channel.</p>
+      <p><strong>v1 design — two layers, both must pass (deterministic, DB-backed).</strong> This is the project's <em>first</em> outbound-notification limiter, so it's built as a two-tier abstraction from the start: a global backstop every feature inherits, plus a per-feature registry. Before firing the email channel the breaker evaluates both limits; if <em>either</em> is at/over cap it skips the send, records <code>emailError = "circuit breaker: &lt;layer&gt; &lt;N&gt;/&lt;window&gt;"</code>, still creates the in-app row, and emits one <code>console.warn</code>.</p>
+      <ol>
+        <li><strong>Global (per-user) backstop — ≤ 10 emails / 1 min across all of mission-control.</strong> Counts every emailed <code>Notification</code> for the user in the trailing minute, <em>regardless of feature</em>. This is the catch-all that would have stopped the 552-loop at 10. Cheap: the existing <code>@@index([userId, createdAt])</code> covers a count of in-window rows with a non-null <code>emailSentAt</code>.</li>
+        <li><strong>Per-feature limiter (registry) — today only <code>applications</code>, scoped per-application at ≤ 1 email / 10 min.</strong> A small registry maps a <em>feature</em> → <code>{ scopeKey(dispatch), cap, windowMs }</code>. The <code>applications</code> feature keys on the <code>applicationId</code> in the dispatch payload, so a single job card can email at most once per 10 minutes — the surgical limit the loop most needed. Future features (postings per-watchlist, system alerts, …) register their own rule later; until they do, they're covered by the global backstop alone.</li>
+      </ol>
+      <p>Both checks are per-tier (dev.db / prod.db are separate), so each tier self-caps independently — total outbound is bounded at <code>2 ×</code> each cap, which is enough; the goal is "not 552," not a cross-tier global lock. Reuses the existing <code>Notification</code> table as the ledger — no token bucket, no extra SQLite file — plus one nullable indexed <code>scopeKey</code> column for the per-feature layer (OQ3).</p>
+      <div class="callout"><strong>Why DB-count, not the in-memory rate buckets.</strong> The existing <code>acquireGeminiSlot</code> / <code>acquireArxivSlot</code> buckets are process-memory (or single-row best-effort) and pace <em>throughput</em>; a breaker needs a <em>durable</em> count that survives restart and is queryable for the "tripped" decision. The <code>Notification</code> rows already are that ledger (<code>emailSentAt</code> + <code>createdAt</code> for the global layer; an indexed <code>scopeKey</code> for the per-feature layer — OQ3).</p></div>
+
+      <h3>Fix B — timezone-safe date extraction</h3>
+      <p><strong>Why (latent beyond the loop).</strong> Per §6, the parser asks for a bare "ISO 8601" timestamp and the LLM inconsistently serialized a zone-less wall-clock as UTC (<code>…Z</code>) vs local — a 7–8 h flip for Pacific times. The self-notification guard kills the <em>feedback loop</em>, but a <em>single genuine</em> interview email can still land 7–8 h off. Independent bug, still live.</p>
+      <p><strong>Where.</strong> <code>lib/email-parser.ts</code>: the schema's <code>extractedDates[].startsAt</code> describe-string (lines 129–134) and the <code>generateObject</code> call (line 212, <strong>no <code>temperature</code></strong> → model default → non-deterministic jitter). The extracted instant is mapped verbatim to <code>ApplicationEvent.scheduledAt</code> at <code>lib/applications/ingest.ts:633</code>, which becomes the gcal event start at <code>lib/calendar/sync.ts:74</code>.</p>
+      <ul>
+        <li><strong>B1 — pin determinism (cheap).</strong> Set <code>temperature: 0</code> on the <code>generateObject</code> call. Cuts the run-to-run jitter that smeared the 552 parses across 399 times. The cross-tier cache key is <code>model + prompt + schema</code> — temperature does not affect it, so caching is unchanged.</li>
+        <li><strong>B2 — make the instant zone-correct (the real fix).</strong> Three approaches (OQ5): <em>(i) prompt-only</em> — pass the user's IANA tz into the prompt and instruct "emit an explicit UTC offset; never bare-<code>Z</code> a wall-clock time"; <em>(ii) app-side normalization</em> — when <code>startsAt</code> is zone-less or bare-<code>Z</code> but <code>rawText</code> carried no timezone, re-interpret the wall-clock components in <code>USER_TIMEZONE</code> (already derived at <code>lib/calendar/sync.ts:29</code>); <em>(iii) schema change</em> — return wall-clock + a separate tz field and combine app-side (most robust; needs a Promptfoo update).</li>
+        <li><strong>B3 — stop feeding the parser its own output (now mostly moot).</strong> The INTERVIEW_SCHEDULED notification body is <code>event.scheduledAt.toLocaleString()</code> (<code>lib/repositories/applicationEvents.ts:61</code>), which is what re-encoded the prior parse for the next one. The self-notification guard already breaks that loop, so this is belt-and-suspenders — keep or drop is OQ6.</li>
+      </ul>
+      <div class="callout warn"><strong>Output-shape gate.</strong> Any change to the parser schema or prompt (B2-i / B2-iii, possibly B1's prompt) requires amending <code>eval/suites/email-parser.yaml</code> and running <code>npm run test:prompts</code> before push (per CLAUDE.md — not in the pre-push gate, burns real Gemini tokens).</p></div>
+
+      <h3>Fix C — store undo handles</h3>
+      <p><strong>Why.</strong> §9 was recoverable by luck. The system writes to Gmail/Calendar and keeps only a success checkpoint, never a handle to undo. Store the handle at write time so a future incident is cleanable by design.</p>
+      <ul>
+        <li><strong>C1 — persist the sent Gmail <code>messageId</code>.</strong> <code>SendResult.messageId</code> already exists (<code>lib/email/send.ts:101</code>, set from <code>res.data.id</code> at line 134) but <code>dispatchNotificationEmail</code> drops it — the success branch writes only <code>emailSentAt</code> / <code>emailError</code> (lines 219–222). Add <code>Notification.emailMessageId String?</code> (migration on <strong>both</strong> dev.db + prod.db) and write it on the success path. Gives notifications → inbox-message a reverse map.</li>
+        <li><strong>C2 — sweep gcal before deleting rows.</strong> <code>deleteEventFromGcal(userId, gcalEventId)</code> exists (<code>lib/calendar/sync.ts:258</code>) but is wired only to the manual per-event DELETE handler. Add a reusable <code>purgeApplicationEvents(eventIds)</code> that deletes the gcal events by their stored <code>gcalEventId</code> <em>first</em>, then the <code>ApplicationEvent</code> rows — and route any future bulk cleanup through it (the §8 cleanup deleted rows directly, which is exactly what lost the IDs).</li>
+        <li><strong>C3 — deferred.</strong> A <code>gmail.modify</code> scope bump to enable programmatic inbox deletion (re-consent required — OQ7), and a batch "undo a loop window" admin tool. Out of v1 scope.</li>
+      </ul>
+
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="oq">Open Questions</h2></summary>
+    <div class="section-body">
+      <h3>Decisions to settle before coding</h3>
+      <p>Resolve these with the user <em>before</em> writing any code (per the repo's design-doc convention). Each carries a proposal; the build order in <a href="#tasks">§13</a> assumes the proposals unless overridden.</p>
+      <ul>
+        <li><strong>OQ1 — breaker scope. <span style="color:#4ade80">[RESOLVED 2026-06-04]</span></strong> <em>Two layers, both enforced.</em> A <strong>global per-user</strong> limit across <em>all</em> of mission-control (the backstop), and a <strong>per-feature</strong> limiter via an extensible registry — today only the <code>applications</code> feature, scoped <strong>per-application</strong>. Rationale: this is the project's first outbound-notification system; the user wants other features (postings, system, …) to use the same notification/email plumbing later, so the global cap is a feature-agnostic backstop and each feature declares its own scoped rule. For now only <code>applications</code> is registered.</li>
+        <li><strong>OQ2 — breaker cap/window. <span style="color:#4ade80">[RESOLVED 2026-06-04]</span></strong> <em>Global (per-user):</em> <strong>≤ 10 emails / 1 min</strong> across the whole app. <em>Per-application (the <code>applications</code> feature):</em> <strong>≤ 1 email / 10 min</strong> per job card. Throttling a genuine burst above the global rate is acceptable — critical-tier bursts are rare, and the in-app row still lands even when the email is suppressed.</li>
+        <li><strong>OQ3 — breaker counting (per-feature layer). <span style="color:#fbbf24">[open]</span></strong> The global layer needs only <code>userId</code> + <code>emailSentAt</code> (already indexed). The per-feature layer must count by scope — for <code>applications</code>, by <code>applicationId</code>, which today lives only inside the <code>Notification.payload</code> JSON. Options: <em>(a)</em> filter the JSON (<code>payload LIKE %"applicationId":"…"%</code> — no migration, slower, brittle); <em>(b)</em> add an indexed generic <code>Notification.scopeKey String?</code> (e.g. <code>"application:&lt;id&gt;"</code>) written by the dispatcher. <em>Proposal:</em> (b) — the registry model (OQ1) makes per-feature scoping a recurring, first-class need, so a generic indexed <code>scopeKey</code> every future feature reuses beats a per-feature JSON probe.</li>
+        <li><strong>OQ4 — trip behavior.</strong> Drop the email channel only and keep the in-app row (confirm), and/or surface a single "circuit breaker tripped" system notification so a silent suppression isn't itself invisible?</li>
+        <li><strong>OQ5 — Fix B approach.</strong> Prompt-only (B2-i), app-side normalization (B2-ii), or schema + tz field (B2-iii)? <em>Proposal:</em> B1 (temperature:0) + B2-ii (normalize in <code>USER_TIMEZONE</code>) — deterministic, no schema/Promptfoo churn.</li>
+        <li><strong>OQ6 — Fix B3.</strong> Keep or drop the re-parseable <code>toLocaleString()</code> timestamp in notification bodies now that the guard exists?</li>
+        <li><strong>OQ7 — Fix C scope.</strong> Is a <code>gmail.modify</code> re-consent in scope now, or strictly defer (store handles only in v1)?</li>
+      </ul>
+
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+      <h3>Build order</h3>
+      <p>Phased checklist for the three fixes designed in <a href="#plan">§11</a>, gated on the <a href="#oq">§12</a> decisions. Each phase is independently shippable.</p>
+      <ul class="task-list">
+        <li>☐ <strong>P1 — Circuit breaker</strong> <span class="note">(two layers: global per-user backstop + per-feature registry)</span>
+          <ul>
+            <li>☐ P1.1 Decisions: scope (OQ1) + caps (OQ2) <strong>settled</strong> — global ≤ 10 / 1 min, per-application ≤ 1 / 10 min; <code>scopeKey</code> mechanism (OQ3) and trip-behavior (OQ4) still to confirm</li>
+            <li>☐ P1.2 Schema: add indexed <code>Notification.scopeKey String?</code> (pending OQ3) — migration on dev.db <em>and</em> prod.db; dispatcher writes <code>"&lt;feature&gt;:&lt;id&gt;"</code> (e.g. <code>application:&lt;applicationId&gt;</code>) from the payload</li>
+            <li>☐ P1.3 Build the per-feature registry: <code>{ feature → { scopeKey(dispatch), cap, windowMs } }</code>; register <code>applications</code> → (applicationId, 1, 10 min)</li>
+            <li>☐ P1.4 Gate the email channel in <code>dispatchNotification</code>, before the side-channel fires
+              <ul>
+                <li>☐ P1.4.1 Global check — count emailed <code>Notification</code>s for the user in the trailing 60 s; suppress if ≥ 10</li>
+                <li>☐ P1.4.2 Per-feature check — resolve the dispatch's feature + <code>scopeKey</code>, count in-window for that scope; suppress if at/over the registered cap</li>
+                <li>☐ P1.4.3 On suppress: skip the send, record <code>emailError</code>, keep the in-app row, one warn log</li>
+                <li>☐ P1.4.4 (if OQ4 = yes) emit a single de-duped "breaker tripped" system notification</li>
+              </ul>
+            </li>
+            <li>☐ P1.5 Hermetic smoke: 11th global send in-window suppressed; 2nd send for one application within 10 min suppressed; a <em>different</em> application unaffected; the in-app row always lands</li>
+            <li>☐ P1.6 Wire the smoke into <code>scripts/pre-push.sh</code> SUITES</li>
+          </ul>
+        </li>
+        <li>☐ <strong>P2 — Timezone-safe dates</strong>
+          <ul>
+            <li>☐ P2.1 Set <code>temperature: 0</code> on the parser <code>generateObject</code> call (B1)</li>
+            <li>☐ P2.2 Implement the chosen B2 approach (OQ5)
+              <ul>
+                <li>☐ P2.2.1 Thread <code>USER_TIMEZONE</code> / offset into the parser inputs</li>
+                <li>☐ P2.2.2 Normalize a zone-less / bare-<code>Z</code> wall-clock to the user's tz before storing <code>scheduledAt</code></li>
+              </ul>
+            </li>
+            <li>☐ P2.3 (OQ6) Adjust the INTERVIEW_SCHEDULED notification body if dropping <code>toLocaleString()</code></li>
+            <li>☐ P2.4 Update <code>eval/suites/email-parser.yaml</code> + run <code>npm run test:prompts</code> (if schema/prompt touched)</li>
+            <li>☐ P2.5 Hermetic smoke: a bare-<code>Z</code> Pacific wall-clock resolves to the correct local instant (no 7–8 h drift)</li>
+          </ul>
+        </li>
+        <li>☐ <strong>P3 — Undo handles</strong>
+          <ul>
+            <li>☐ P3.1 Add <code>Notification.emailMessageId String?</code> — migration on dev.db <em>and</em> prod.db</li>
+            <li>☐ P3.2 Persist <code>result.messageId</code> on the success path of <code>dispatchNotificationEmail</code></li>
+            <li>☐ P3.3 Add <code>purgeApplicationEvents(eventIds)</code> — gcal-sweep-by-stored-id, <em>then</em> row delete</li>
+            <li>☐ P3.4 Route any future bulk cleanup through the helper (never raw-delete event rows)</li>
+            <li>☐ P3.5 Hermetic smoke: the purge helper calls <code>deleteEventFromGcal</code> before the row delete, and tolerates a missing <code>gcalEventId</code></li>
+            <li>☐ P3.6 (deferred, OQ7) <code>gmail.modify</code> scope bump + batch "undo a loop window" tool</li>
+          </ul>
+        </li>
       </ul>
     </div>
   </details>
