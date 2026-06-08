@@ -218,7 +218,11 @@ export async function dispatchNotificationEmail(notificationId: string): Promise
     if (result.ok) {
         await prisma.notification.update({
             where: { id: notificationId },
-            data: { emailSentAt: new Date(), emailError: null },
+            // Fix C (undo handles, postmortem §11): persist the sent Gmail
+            // messageId so a future cleanup can map this notification back to the
+            // inbox message it produced. result.messageId is normally set on a
+            // real send; it's undefined only in odd Gmail-API responses.
+            data: { emailSentAt: new Date(), emailError: null, emailMessageId: result.messageId ?? null },
         }).catch(() => undefined);
     } else {
         await prisma.notification.update({

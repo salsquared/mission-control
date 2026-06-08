@@ -92,6 +92,10 @@ SUITES=(
     "scripts/tests/hermetic/normalize-company-smoke.ts"
     "scripts/tests/hermetic/sender-domain-smoke.ts"
     "scripts/tests/hermetic/self-notification-loop-guard-smoke.ts"
+    # postmortem §11 hardening (circuit breaker / tz-safe dates / undo handles)
+    "scripts/tests/hermetic/circuit-breaker-smoke.ts"
+    "scripts/tests/hermetic/datetime-normalize-smoke.ts"
+    "scripts/tests/hermetic/purge-application-events-smoke.ts"
     "scripts/tests/hermetic/ingest-cross-track-dedup-smoke.ts"
     "scripts/tests/hermetic/ingest-tiebreaker-role-guard-smoke.ts"
     "scripts/tests/hermetic/ingest-roleless-merge-smoke.ts"

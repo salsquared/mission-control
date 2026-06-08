@@ -217,6 +217,12 @@ export async function parseApplicationEmail(
         model: getProvider()(MODEL_ID),
         schema: applicationSchema,
         prompt,
+        // Fix B/B1 (postmortem §11): pin determinism. This is a mechanical
+        // extraction, not a generative task — temperature:0 removes the run-to-
+        // run jitter that smeared the 552 looped parses across ~399 distinct
+        // interview times. The cross-tier cache key is model+prompt+schema, so
+        // temperature does not affect it — caching behavior is unchanged.
+        temperature: 0,
       });
 
       safeTrack("end", {

@@ -8,7 +8,7 @@ import {
     ApplicationEventPatchSchema,
     APPLICATION_EVENT_KINDS,
 } from "@/lib/schemas/applicationEvents";
-import { syncEventToGcal, deleteEventFromGcal } from "@/lib/calendar/sync";
+import { syncEventToGcal, purgeApplicationEvents } from "@/lib/calendar/sync";
 
 export const runtime = "nodejs";
 
@@ -163,10 +163,9 @@ export async function DELETE(req: NextRequest) {
         return NextResponse.json({ error: "Event not found" }, { status: 404 });
     }
 
-    if (existing.gcalEventId) {
-        await deleteEventFromGcal(userId, existing.gcalEventId);
-    }
-    await prisma.applicationEvent.delete({ where: { id } });
+    // Fix C: gcal-sweep-before-delete via the canonical helper (never a raw
+    // row delete that would orphan the calendar event).
+    await purgeApplicationEvents([id]);
     broadcastEvent({ model: "CalendarEvent", action: "delete", id, timestamp: Date.now() });
     return NextResponse.json({ success: true }, { status: 200 });
 }

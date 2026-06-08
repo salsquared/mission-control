@@ -643,11 +643,29 @@ model Notification {
   // so the in-app `/api/notifications/test` and legacy callers stay
   // unaffected (SQLite allows multiple NULLs in a unique column).
   dedupKey    String?   @unique
+  // Fix A (circuit breaker — docs/postmortem-self-notification-mail-loop.html §11).
+  // Generic per-feature rate-limit grouping label in the form "<feature>:<id>"
+  // (e.g. "application:<applicationId>"), written by dispatchNotification from
+  // the feature registry (lib/notifications/circuit-breaker.ts). DISTINCT from
+  // dedupKey: dedupKey is @unique = at-most-once-ever; scopeKey is non-unique
+  // and indexed so the breaker can count recent emailed notifications within a
+  // feature's scope. NULL when the dispatch's feature isn't registered (or has
+  // no scope id in its payload).
+  scopeKey       String?
+  // Fix C (store undo handles — same postmortem §11). The Gmail messageId of
+  // the sent notification email, persisted on the success path of
+  // dispatchNotificationEmail so a future cleanup can map a notification back
+  // to the inbox message it produced. NULL when no email was sent (in-app-only
+  // tier, EMAIL_ENABLED muted, breaker-suppressed, or a failed send).
+  emailMessageId String?
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
   @@index([userId, readAt])
+  // Fix A: the breaker's per-feature count is `WHERE userId = ? AND scopeKey = ?
+  // AND createdAt >= ?` — this index makes it an exact-prefix lookup.
+  @@index([userId, scopeKey, createdAt])
 }
 
 // PB-6: Pub/Sub at-least-once dedup. Each Gmail webhook envelope carries a

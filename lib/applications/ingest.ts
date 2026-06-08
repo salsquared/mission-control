@@ -23,7 +23,8 @@ import {
     NOTIFY_EVENT_KINDS,
     type ApplicationEventDraft,
 } from "@/lib/repositories/applicationEvents";
-import { syncEventToGcal } from "@/lib/calendar/sync";
+import { syncEventToGcal, USER_TIMEZONE } from "@/lib/calendar/sync";
+import { normalizeExtractedDateTime } from "@/lib/applications/normalize-datetime";
 
 export type IngestOutcome =
     | { action: "created"; appId: string }
@@ -630,9 +631,15 @@ function buildEventDrafts(input: {
     let assessmentEmitted = false;
     for (const dateEntry of parsed.extractedDates ?? []) {
         if (!dateEntry.startsAt) continue;
-        const startsAt = new Date(dateEntry.startsAt);
+        // Fix B/B2-ii (postmortem §11): re-interpret a bare-Z / zone-less
+        // wall-clock against the user's IANA zone so "Tuesday at 2pm" lands at
+        // 2pm local, not 2pm UTC (the 7–8 h calendar drift from §6). No-op when
+        // the value carried a real offset or the rawText named a timezone.
+        const startsAt = new Date(normalizeExtractedDateTime(dateEntry.startsAt, dateEntry.rawText, USER_TIMEZONE));
         if (Number.isNaN(startsAt.getTime())) continue;
-        const endsAt = dateEntry.endsAt ? new Date(dateEntry.endsAt) : null;
+        const endsAt = dateEntry.endsAt
+            ? new Date(normalizeExtractedDateTime(dateEntry.endsAt, dateEntry.rawText, USER_TIMEZONE))
+            : null;
         const validEnd = endsAt && !Number.isNaN(endsAt.getTime()) ? endsAt : null;
 
         if (dateEntry.kind === "INTERVIEW" && !interviewEmitted) {

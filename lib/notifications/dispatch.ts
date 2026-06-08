@@ -26,6 +26,7 @@ import { prisma } from "@/lib/prisma";
 import type { Notification } from "@prisma/client";
 import type { NotificationKind, NotificationTier } from "@/lib/schemas/notifications";
 import { isInQuietHours } from "@/lib/notifications/quiet-hours";
+import { checkOutboundEmailBreaker, resolveScopeKey } from "@/lib/notifications/circuit-breaker";
 
 export interface DispatchInput {
     userId: string;
@@ -65,6 +66,16 @@ function defaultChannelsForTier(tier: NotificationTier): string {
     }
 }
 
+/** True when the comma-sep channel set includes the email channel. */
+function hasEmail(channels: string): boolean {
+    return channels.split(",").map(c => c.trim()).includes("email");
+}
+
+/** Drop the email channel from a comma-sep set (used by quiet-hours + breaker). */
+function stripEmail(channels: string): string {
+    return channels.split(",").map(c => c.trim()).filter(c => c !== "email").join(",");
+}
+
 /**
  * Create a Notification + fire any side-channels the tier warrants.
  *
@@ -91,9 +102,42 @@ export async function dispatchNotification(input: DispatchInput): Promise<Notifi
             end: settings.quietHoursEnd,
             timezone: settings.quietHoursTimezone,
         })) {
-            channels = channels.split(",").map(c => c.trim()).filter(c => c !== "email").join(",");
+            channels = stripEmail(channels);
         }
     }
+
+    // Fix A — outbound-email circuit breaker (docs/postmortem-self-notification-mail-loop.html §11).
+    // Runs only when this dispatch would actually email (post-quiet-hours). On a
+    // trip we strip "email" so the in-app row still lands but no send fires
+    // (OQ4), and stamp emailError so the suppression is diagnosable. Note:
+    // critical tier is NOT exempt — the 552-loop was all critical-tier mail, so
+    // exempting it would defeat the breaker's whole purpose. Best-effort: a
+    // breaker-query failure FAILS OPEN (emails as normal) — a defense-in-depth
+    // limiter must never block a notification on its own error.
+    let breakerError: string | null = null;
+    if (hasEmail(channels)) {
+        try {
+            const verdict = await checkOutboundEmailBreaker({
+                userId: input.userId,
+                kind: input.kind,
+                payload: input.payload,
+            });
+            if (verdict.tripped) {
+                channels = stripEmail(channels);
+                breakerError = `circuit breaker: ${verdict.reason}`;
+                console.warn(
+                    `[notifications] circuit breaker tripped for user ${input.userId} ` +
+                    `(${verdict.reason}); email suppressed, in-app row kept`,
+                );
+            }
+        } catch (e) {
+            console.warn("[notifications] circuit breaker check failed (failing open):", e);
+        }
+    }
+
+    // Fix A — per-feature scope label, persisted so the breaker can count by
+    // scope on the next dispatch. Null when this feature isn't registered.
+    const scopeKey = resolveScopeKey({ userId: input.userId, kind: input.kind, payload: input.payload });
 
     let row: Notification;
     try {
@@ -106,6 +150,10 @@ export async function dispatchNotification(input: DispatchInput): Promise<Notifi
                 body: input.body ?? null,
                 payload: JSON.stringify(input.payload ?? {}),
                 channels,
+                scopeKey,
+                // Set at creation when the breaker tripped (channels already had
+                // "email" stripped above, so the send block below won't fire).
+                emailError: breakerError,
                 dedupKey: input.dedupKey ?? null,
             },
         });
@@ -119,7 +167,7 @@ export async function dispatchNotification(input: DispatchInput): Promise<Notifi
         throw e;
     }
 
-    if (channels.split(",").map(c => c.trim()).includes("email")) {
+    if (hasEmail(channels)) {
         // Lazy import to avoid pulling googleapis into bundles that don't
         // need it (the dispatcher itself is server-only but lazy-loading
         // the heavy email path keeps cold-start fast for non-email callers).

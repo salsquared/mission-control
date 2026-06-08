@@ -269,6 +269,44 @@ export async function deleteEventFromGcal(userId: string, gcalEventId: string): 
     }
 }
 
+/**
+ * Fix C (store undo handles — docs/postmortem-self-notification-mail-loop.html §11).
+ *
+ * Delete a batch of ApplicationEvents *cleanly*: sweep each event's mirrored
+ * Google Calendar entry by its stored `gcalEventId` FIRST, then delete the rows.
+ * The §8 incident cleanup deleted rows directly, which threw away the
+ * `gcalEventId`s and left ~28 orphaned calendar events that had to be cleared by
+ * hand. Any bulk ApplicationEvent deletion (admin cleanup, future "undo a loop
+ * window" tooling, the per-event DELETE route) MUST go through this helper so a
+ * row is never removed before its external artifact.
+ *
+ * Tolerant by design: events with a null `gcalEventId` skip the gcal call;
+ * deleteEventFromGcal already treats 404/410 as success. Best-effort on the gcal
+ * leg — a calendar API hiccup is logged but never blocks the row deletion.
+ * Returns counts for callers/tests to assert against.
+ */
+export async function purgeApplicationEvents(
+    eventIds: string[]
+): Promise<{ deletedRows: number; gcalSwept: number }> {
+    if (eventIds.length === 0) return { deletedRows: 0, gcalSwept: 0 };
+
+    const events = await prisma.applicationEvent.findMany({
+        where: { id: { in: eventIds } },
+        select: { id: true, gcalEventId: true, application: { select: { userId: true } } },
+    });
+
+    let gcalSwept = 0;
+    for (const ev of events) {
+        if (ev.gcalEventId) {
+            await deleteEventFromGcal(ev.application.userId, ev.gcalEventId);
+            gcalSwept++;
+        }
+    }
+
+    const res = await prisma.applicationEvent.deleteMany({ where: { id: { in: eventIds } } });
+    return { deletedRows: res.count, gcalSwept };
+}
+
 function buildDescription(event: ApplicationEvent, ctx?: GcalSyncContext): string {
     const parts: string[] = [];
     if (ctx?.company) parts.push(`Company: ${ctx.company}`);
