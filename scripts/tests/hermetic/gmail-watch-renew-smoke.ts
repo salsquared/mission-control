@@ -12,6 +12,9 @@
  *   Error isolation (stub throws for one user):
  *     5. One user throwing does not abort the sweep — a sibling still arms.
  *     6. The thrown user is counted in `failed`, not `renewed`.
+ *   Transient-network classification (drives the scheduler's cold-boot retry):
+ *     7. A network-class throw (ENOTFOUND) increments `networkFailures`.
+ *     8. A non-network throw (revoked token) does NOT — `failed` only.
  *
  * NOTE: dev.db may carry a real google account (the dev user), so the run's
  * absolute `processed`/`renewed` totals are not asserted — only membership /
@@ -88,6 +91,30 @@ async function main() {
         check("5b. sibling user (E) still armed after A threw", calls2.get(U.E) === 1, `calls2(E)=${calls2.get(U.E)}`);
         check("6a. thrown user counted in failed (>= 1)", (r2?.failed ?? 0) >= 1, `failed=${r2?.failed}`);
         check("6b. successes still counted in renewed (>= 1)", (r2?.renewed ?? 0) >= 1, `renewed=${r2?.renewed}`);
+        // The generic Error in scenario 2 is NOT a network fault — it must not
+        // be classified retryable, or the scheduler would loop on permanent ones.
+        check("6c. a non-network throw is not counted in networkFailures", (r2?.networkFailures ?? -1) === 0, `networkFailures=${r2?.networkFailures}`);
+
+        // --- Scenario 3: transient-network classification ---
+        // A DNS-class error (the cold-boot ENOTFOUND) must increment
+        // networkFailures so the scheduler retries; a revoked-token-style error
+        // must not. Only U.A throws; the real dev account (if any) returns ok.
+        const netErr = Object.assign(new Error("getaddrinfo ENOTFOUND gmail.googleapis.com"), { code: "ENOTFOUND" });
+        const netStub = async (userId: string) => {
+            if (userId === U.A) throw netErr;
+            return { historyId: "100", expiration: "200" };
+        };
+        const r3 = await runGmailWatchRenew(netStub);
+        check("7a. ENOTFOUND counted in networkFailures (>= 1)", r3.networkFailures >= 1, `networkFailures=${r3.networkFailures}`);
+        check("7b. ENOTFOUND also counted in failed (>= 1)", r3.failed >= 1, `failed=${r3.failed}`);
+
+        const authStub = async (userId: string) => {
+            if (userId === U.A) throw new Error("invalid_grant: Token has been expired or revoked.");
+            return { historyId: "100", expiration: "200" };
+        };
+        const r4 = await runGmailWatchRenew(authStub);
+        check("8a. revoked-token throw NOT counted in networkFailures (== 0)", r4.networkFailures === 0, `networkFailures=${r4.networkFailures}`);
+        check("8b. revoked-token throw still counted in failed (>= 1)", r4.failed >= 1, `failed=${r4.failed}`);
     } finally {
         // Cascade would remove accounts on user delete, but be explicit.
         await prisma.account.deleteMany({ where: { userId: { in: userIds } } });

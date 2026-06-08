@@ -132,7 +132,22 @@ const JOBS: IntervalJob[] = [
         // unset — see lib/gmail/watch.ts + docs/archive/gmail-realtime-push.html.
         intervalMs: 24 * 60 * 60 * 1000,
         run: async () => {
-            const r = await runGmailWatchRenew();
+            // Cold-boot resilience: PM2's boot LaunchDaemon
+            // (/Library/LaunchDaemons/pm2.sal.plist) can resurrect this
+            // scheduler before the network/DNS is ready, so the startup re-arm
+            // fails with ENOTFOUND and real-time Gmail push then sits dark until
+            // the next daily tick (~24h). Retry with backoff while a failure
+            // still looks like a transient network fault — register is
+            // idempotent (re-arming an already-armed mailbox is a no-op), and a
+            // non-network failure (e.g. revoked token) leaves networkFailures at
+            // 0 so we fall through immediately instead of looping.
+            const RETRY_BACKOFFS_MS = [15_000, 45_000, 120_000, 300_000];
+            let r = await runGmailWatchRenew();
+            for (let i = 0; r.networkFailures > 0 && i < RETRY_BACKOFFS_MS.length; i++) {
+                console.warn(`[gmail-watch-renew] ${r.networkFailures} transient network failure(s) — retry ${i + 1}/${RETRY_BACKOFFS_MS.length} in ${RETRY_BACKOFFS_MS[i] / 1000}s`);
+                await new Promise((res) => setTimeout(res, RETRY_BACKOFFS_MS[i]));
+                r = await runGmailWatchRenew();
+            }
             if (r.processed > 0) {
                 console.info(`[gmail-watch-renew] ${r.renewed}/${r.processed} re-armed, ${r.failed} failed`);
             }

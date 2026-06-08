@@ -19,6 +19,38 @@ export interface GmailWatchRenewResult {
     processed: number;
     renewed: number;
     failed: number;
+    /** Subset of `failed` whose error looks like a transient network/DNS fault
+     *  (so the scheduler should retry it). The cold-boot case: PM2's boot
+     *  LaunchDaemon resurrects this scheduler before the network/DNS is up, so
+     *  the startup re-arm fails with ENOTFOUND and push goes dark until the next
+     *  daily tick unless we retry. See scheduler/index.ts. */
+    networkFailures: number;
+}
+
+// Error codes/messages that mean "the network wasn't reachable", not "Gmail
+// rejected us" — the ones worth retrying. A revoked token / 4xx is NOT here, so
+// the scheduler's retry loop falls through immediately instead of looping.
+const TRANSIENT_NETWORK_PATTERNS = [
+    "ENOTFOUND",     // DNS name not yet resolvable (the cold-boot race)
+    "EAI_AGAIN",     // DNS temporary failure
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "ENETUNREACH",
+    "EHOSTUNREACH",
+    "fetch failed",  // undici wrapper when the underlying cause is a network error
+    "socket hang up",
+];
+
+function isTransientNetworkError(e: unknown): boolean {
+    const code = (e as { code?: unknown })?.code;
+    const causeCode = (e as { cause?: { code?: unknown } })?.cause?.code;
+    const haystack = [
+        typeof code === "string" ? code : "",
+        typeof causeCode === "string" ? causeCode : "",
+        (e as Error)?.message ?? String(e),
+    ].join(" ");
+    return TRANSIENT_NETWORK_PATTERNS.some((p) => haystack.includes(p));
 }
 
 export async function runGmailWatchRenew(
@@ -32,14 +64,16 @@ export async function runGmailWatchRenew(
 
     let renewed = 0;
     let failed = 0;
+    let networkFailures = 0;
     for (const userId of userIds) {
         try {
             if (await register(userId)) renewed++;
         } catch (e) {
             failed++;
+            if (isTransientNetworkError(e)) networkFailures++;
             console.warn(`[gmail-watch-renew] failed for user ${userId}:`, (e as Error)?.message ?? e);
         }
     }
 
-    return { processed: userIds.length, renewed, failed };
+    return { processed: userIds.length, renewed, failed, networkFailures };
 }
