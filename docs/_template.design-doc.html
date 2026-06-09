@@ -131,7 +131,7 @@ flowchart TB
       <h3>Implementation checklist</h3>
       <div class="callout warn"><strong>Author this section only after every OQ is resolved.</strong> Tasks are the implementation of the decisions above — writing a checklist while OQs are still open bakes in forks that haven't been chosen. Until then, keep the section a stub: the heading plus a one-line "pending OQ resolution." The filled-in example below is a <em>format reference</em> for once the Open Questions are settled.</div>
       <p>The execution plan, and the <strong>last</strong> section of the doc. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;…</code> (one dot per level). Break every phase down to <strong>at least 2 nested levels</strong> — a flat list hides real work. Mark done by adding <code>checked</code> to the <code>&lt;input&gt;</code>.</p>
-      <p><strong>Author the checklist for parallel fan-out.</strong> The plan should be dispatchable to <strong>multiple agents working concurrently</strong>, so carve it into <strong>non-overlapping</strong> slices — two parallel tasks must never edit the same file. In each task body, state its <strong>file/module scope</strong> and tag it either <em>Parallel-safe</em> (naming the siblings it can run alongside) or <em>Depends on</em> <code>P&lt;id&gt;</code> (what must land first). Aim for the shape that maximizes concurrency: a small <strong>foundation</strong> phase lands the shared substrate (schema, core helper) first — usually the one serial bottleneck — then the dependent surfaces fan out as <strong>file-disjoint, parallel</strong> tasks. Group and order the list so a coordinator can read off which task ids spawn together in each wave.</p>
+      <p><strong>Author the checklist for parallel fan-out.</strong> The plan should be dispatchable to <strong>multiple agents working concurrently</strong>, so carve it into <strong>non-overlapping</strong> slices — two parallel tasks must never edit the same file. In each task body, state its <strong>file/module scope</strong> and tag it either <em>Parallel-safe</em> (naming the siblings it can run alongside) or <em>Depends on</em> <code>P&lt;id&gt;</code> (what must land first). Aim for the shape that maximizes concurrency: a small <strong>foundation</strong> phase lands the shared substrate (schema, core helper) first — usually the one serial bottleneck — then the dependent surfaces fan out as <strong>file-disjoint, parallel</strong> tasks. Group and order the list so a coordinator can read off which task ids spawn together in each wave. Then <strong>close the Tasks section with the required <em>Parallelization &amp; critical path</em> subsection below</strong> — a dependency DAG, a file-contention table, and the critical path. It's a standard part of every Tasks section, derived from the checklist automatically; never wait to be asked for it.</p>
 
       <details class="task" open>
         <summary>
@@ -222,6 +222,27 @@ flowchart TB
           </details>
         </div>
       </details>
+
+      <h3>Parallelization &amp; critical path</h3>
+      <p><strong>Required whenever the checklist exists</strong> — this is what makes the plan dispatchable to multiple agents, so derive it from the task list above as a matter of course (don't wait to be asked). Three parts: a dependency DAG, a file-contention table, and the critical path / waves.</p>
+      <pre class="mermaid">
+flowchart LR
+  P1["P1 foundation<br/>serial bottleneck"] --> P21["P2.1 API route"]
+  P1 --> P22["P2.2 card / view"]
+  P21 --> P31["P3.1 smoke"]
+  P22 --> P31
+      </pre>
+      <p>Edges read "must finish before"; siblings with no edge between them fan out to parallel agents. Validate the diagram renders before committing.</p>
+      <p><strong>File contention</strong> — two tasks that touch the same file can't run in parallel; give each file a single owner or serialize the tasks that share it.</p>
+      <table>
+        <thead><tr><th>File / module</th><th>Tasks touching it</th><th>Parallel?</th></tr></thead>
+        <tbody>
+          <tr><td><code>&lt;shared schema&gt;</code></td><td>P1.1, P1.2</td><td>serialize — one migration</td></tr>
+          <tr><td><code>&lt;route file&gt;</code></td><td>P2.1</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>&lt;card file&gt;</code></td><td>P2.2</td><td>sole owner — parallel-safe</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Waves &amp; critical path.</strong> <em>Start immediately</em> (no deps): &lt;task ids&gt;. <em>Independent tracks</em>: &lt;track A&gt; &#8741; &lt;track B&gt;. <em>Critical path</em>: <code>P1 → P2.x → P3.1</code> — the longest dependency chain, i.e. the floor on wall-clock even with unlimited agents. Flag the most-constrained node so it's scheduled first.</p>
     </div>
   </details>
 
