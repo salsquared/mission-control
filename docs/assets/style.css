@@ -230,12 +230,21 @@ pre code.hljs { color: var(--text); padding: 0; background: transparent; }
 /* ── Open-question detail — the options / lean / status (or decided rationale)
    that follows an OQ. The *question* alone lives in the highlighted .callout
    banner; this sits just below it as regular body text, hugging the banner and
-   indented to align with the callout's text. Keep the banner to the question. */
+   indented to align with the callout's text. Keep the banner to the question.
+   For an open OQ, .oq-detail is a <div> wrapping the options as a <ul.oq-options>
+   list (one per line for legibility) + a trailing Lean/Status <p>; for a decided
+   OQ it's a single <p> of rationale. */
 .oq-detail {
   margin: -1rem 0 1.5rem;
   padding-left: calc(1rem + 3px);
   color: var(--text);
 }
+/* When .oq-detail wraps blocks, keep it hugging the banner and don't let inner
+   block margins reopen the ~0.5rem gap the negative top margin buys. */
+.oq-detail > :first-child { margin-top: 0; }
+.oq-detail > :last-child { margin-bottom: 0; }
+.oq-options { margin: 0 0 0.5rem; padding-left: 1.25rem; }
+.oq-options li { margin: 0.25rem 0; }
 
 blockquote {
   border-left: 3px solid var(--border);
