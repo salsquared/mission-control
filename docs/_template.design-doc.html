@@ -93,34 +93,34 @@ flowchart TB
     <summary><h2 id="open-questions">Open Questions</h2></summary>
     <div class="section-body">
       <h3>Unresolved decisions</h3>
-      <p>Genuine design forks not yet settled — pulled from real conditional choices in the plan (scope cuts, deferred abstractions, "verify load-bearing first" items). Don't pad with fake questions. Each is <code>OQ&lt;n&gt;</code>: put the <strong>question alone</strong> in the highlighted <code>callout</code> banner, then a following <code>&lt;div class="oq-detail"&gt;</code> holding the options as a <code>&lt;ul class="oq-options"&gt;</code> list. <strong>Letter every option</strong> — lead each <code>&lt;li&gt;</code> with <code>&lt;strong&gt;(a)&lt;/strong&gt;</code>, <code>(b)</code>, … so each choice is nameable (<code>OQ&lt;n&gt;a</code>, <code>OQ&lt;n&gt;b</code>) and one bulleted line reads far better than an inline "A vs B" sentence. The trailing <em>Lean:</em> line (and, once settled, the <strong>✓ Decided.</strong> line) must <strong>name the pick by its letter first</strong> — e.g. <em>Lean:</em> <strong>(b)</strong> — then say what that means and give <strong>at least one sentence of justification</strong>. Keep the banner to the question, not the discussion. <strong>Resolve all OQs with the user before writing implementation code.</strong> Deciding an OQ <strong>appends, never replaces</strong>: keep the lettered <code>oq-options</code> list under the question (the record of what was weighed), swap the trailing <em>Lean:</em>/<em>Status:</em> line for the <strong>✓ Decided.</strong> line (still leading with the chosen letter), and flip the banner to <code>callout tip</code>.</p>
+      <p>Genuine design forks not yet settled — pulled from real conditional choices in the plan (scope cuts, deferred abstractions, "verify load-bearing first" items). Don't pad with fake questions. <strong>One OQ = one decision:</strong> its lettered options are mutually exclusive and the reader picks <strong>exactly one</strong>. If a fork actually bundles independent sub-decisions, <strong>split them into separate OQs</strong> — an eligibility choice, a trigger choice, and a notification choice are three OQs, not one OQ with three "options" (bundled sub-decisions read like pick-one options and mislead the reviewer). Each is <code>OQ&lt;n&gt;</code>: put the <strong>question alone</strong> in the highlighted <code>callout</code> banner, then a following <code>&lt;div class="oq-detail"&gt;</code> holding the options as a <code>&lt;ul class="oq-options"&gt;</code> list. <strong>Letter every option</strong> — lead each <code>&lt;li&gt;</code> with <code>&lt;strong&gt;(a)&lt;/strong&gt;</code>, <code>(b)</code>, … so each choice is nameable (<code>OQ&lt;n&gt;a</code>, <code>OQ&lt;n&gt;b</code>). <strong>Make each option self-contained enough to decide on:</strong> name the approach, then state the <strong>concrete change</strong> it makes (what schema/code/UI it adds or alters, and where) and the <strong>effect</strong> that change has, then its trade-offs as <em>Pros:</em> / <em>Cons:</em>. A bare label ("add a column") is useless — to choose between options the reader needs what each one <em>does</em> and what it <em>costs</em>; one descriptive bullet per option beats an inline "A vs B" sentence. The trailing <em>Lean:</em> line (and, once settled, the <strong>✓ Decided.</strong> line) must <strong>name the pick by its letter first</strong> — e.g. <em>Lean:</em> <strong>(b)</strong> — then say what that means and give <strong>at least one sentence of justification</strong> that weighs the trade-offs above. Keep the banner to the question, not the discussion. <strong>Resolve all OQs with the user before writing implementation code.</strong> Deciding an OQ <strong>appends, never replaces</strong>: keep the lettered <code>oq-options</code> list under the question (the record of what was weighed), swap the trailing <em>Lean:</em>/<em>Status:</em> line for the <strong>✓ Decided.</strong> line (still leading with the chosen letter), and flip the banner to <code>callout tip</code>.</p>
 
       <div class="callout"><strong>OQ1 — &lt;the first undecided fork&gt;?</strong></div>
       <div class="oq-detail">
         <ul class="oq-options">
-          <li><strong>(a)</strong> &lt;option A&gt;</li>
-          <li><strong>(b)</strong> &lt;option B&gt;</li>
+          <li><strong>(a)</strong> <strong>&lt;name the approach&gt;.</strong> &lt;The concrete change it makes — what schema/code/UI it adds or alters, and where&gt;, which &lt;the effect that produces for the user or system&gt;. <em>Pros:</em> &lt;what it buys&gt;. <em>Cons:</em> &lt;the cost, risk, or what it gives up&gt;.</li>
+          <li><strong>(b)</strong> <strong>&lt;name the alternative&gt;.</strong> &lt;The concrete change&gt;, which &lt;its effect&gt;. <em>Pros:</em> &lt;upside&gt;. <em>Cons:</em> &lt;downside&gt;.</li>
         </ul>
-        <p><em>Lean:</em> <strong>(a)</strong> — &lt;what picking it means&gt;, because &lt;one-sentence reason it wins&gt;. <em>Status:</em> open.</p>
+        <p><em>Lean:</em> <strong>(a)</strong> — &lt;what picking it means&gt;, because &lt;one-sentence reason it wins on the trade-offs above&gt;. <em>Status:</em> open.</p>
       </div>
 
       <div class="callout"><strong>OQ2 — &lt;the second undecided fork&gt;?</strong></div>
       <div class="oq-detail">
         <ul class="oq-options">
-          <li><strong>(a)</strong> &lt;option A&gt;</li>
-          <li><strong>(b)</strong> &lt;option B&gt;</li>
-          <li><strong>(c)</strong> &lt;option C&gt;</li>
+          <li><strong>(a)</strong> <strong>&lt;approach A&gt;.</strong> &lt;Concrete change + its effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
+          <li><strong>(b)</strong> <strong>&lt;approach B&gt;.</strong> &lt;Concrete change + its effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
+          <li><strong>(c)</strong> <strong>&lt;approach C&gt;.</strong> &lt;Concrete change + its effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
         </ul>
-        <p><em>Lean:</em> <strong>(b)</strong> — &lt;what picking it means&gt;, because &lt;one-sentence reason it wins&gt;. <em>Status:</em> open.</p>
+        <p><em>Lean:</em> <strong>(b)</strong> — &lt;what picking it means&gt;, because &lt;one-sentence reason it wins on the trade-offs above&gt;. <em>Status:</em> open.</p>
       </div>
 
       <div class="callout tip"><strong>OQ3 — &lt;a fork that's already been settled&gt;?</strong></div>
       <div class="oq-detail">
         <ul class="oq-options">
-          <li><strong>(a)</strong> &lt;option A&gt;</li>
-          <li><strong>(b)</strong> &lt;option B&gt;</li>
+          <li><strong>(a)</strong> <strong>&lt;approach A&gt;.</strong> &lt;Concrete change + its effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
+          <li><strong>(b)</strong> <strong>&lt;approach B&gt;.</strong> &lt;Concrete change + its effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
         </ul>
-        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — &lt;what we're doing&gt;, because &lt;one-sentence rationale from the conversation&gt;. <em>(Decided state — options kept; the decision names the pick by letter and is appended below them.)</em></p>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — &lt;what we're doing&gt;, because &lt;one-sentence rationale from the conversation, weighing the trade-offs above&gt;. <em>(Decided state — options kept; the decision names the pick by letter and is appended below them.)</em></p>
       </div>
     </div>
   </details>

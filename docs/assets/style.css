@@ -247,7 +247,7 @@ pre code.hljs { color: var(--text); padding: 0; background: transparent; }
    label so it's nameable (OQ5a, OQ5b) and the Lean/Decision can cite the pick by
    letter. The label replaces the list marker, so suppress the bullet. */
 .oq-options { margin: 0 0 0.5rem; padding-left: 0; list-style: none; }
-.oq-options li { margin: 0.25rem 0; }
+.oq-options li { margin: 0.5rem 0; }
 .oq-options li > strong:first-child { color: var(--sky); margin-right: 0.35rem; }
 
 blockquote {
