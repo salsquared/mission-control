@@ -243,8 +243,12 @@ pre code.hljs { color: var(--text); padding: 0; background: transparent; }
    block margins reopen the ~0.5rem gap the negative top margin buys. */
 .oq-detail > :first-child { margin-top: 0; }
 .oq-detail > :last-child { margin-bottom: 0; }
-.oq-options { margin: 0 0 0.5rem; padding-left: 1.25rem; }
+/* Each option is lettered — lead every <li> with an accented <strong>(a)</strong>
+   label so it's nameable (OQ5a, OQ5b) and the Lean/Decision can cite the pick by
+   letter. The label replaces the list marker, so suppress the bullet. */
+.oq-options { margin: 0 0 0.5rem; padding-left: 0; list-style: none; }
 .oq-options li { margin: 0.25rem 0; }
+.oq-options li > strong:first-child { color: var(--sky); margin-right: 0.35rem; }
 
 blockquote {
   border-left: 3px solid var(--border);
