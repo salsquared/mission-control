@@ -227,6 +227,16 @@ pre code.hljs { color: var(--text); padding: 0; background: transparent; }
 .callout.danger { background: rgba(239, 68, 68, 0.08); border-left-color: var(--red); }
 .callout.danger strong { color: var(--red); }
 
+/* ── Open-question detail — the options / lean / status (or decided rationale)
+   that follows an OQ. The *question* alone lives in the highlighted .callout
+   banner; this sits just below it as regular body text, hugging the banner and
+   indented to align with the callout's text. Keep the banner to the question. */
+.oq-detail {
+  margin: -1rem 0 1.5rem;
+  padding-left: calc(1rem + 3px);
+  color: var(--text);
+}
+
 blockquote {
   border-left: 3px solid var(--border);
   margin: 1.25rem 0;
