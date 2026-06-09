@@ -9,7 +9,7 @@
  * SQLite file BOTH tiers open, and either returns a cached result, leads the
  * computation, or waits for the other tier's in-flight one.
  *
- * As of the arXiv rate-limit work (docs/arxiv-rate-limit-fix.html Layer 1, OQ8),
+ * As of the arXiv rate-limit work (docs/archive/arxiv-rate-limit-fix.html Layer 1, OQ8),
  * the store + single-flight protocol live in the generic base
  * `lib/shared-sqlite-cache.ts`; this module is now a thin adapter: it owns the
  * content-addressed `cacheKey` and the no-expiry semantics (a `done` row is

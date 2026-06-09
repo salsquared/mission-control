@@ -27,7 +27,7 @@ import { pruneLlmCache, type LlmCachePruneResult } from "@/lib/ai/llm-cache";
 import { researchSharedStore } from "@/lib/research/shared-cache";
 
 // The research cross-tier cache (data/research-cache.db) is a sibling adapter
-// over the same shared-sqlite base (docs/arxiv-rate-limit-fix.html Layer 1), so
+// over the same shared-sqlite base (docs/archive/arxiv-rate-limit-fix.html Layer 1), so
 // it's pruned here too rather than wiring a separate scheduler job. Its entries
 // are short-TTL (12h/24h) and the base sweeps expired `done` rows on read; this
 // just bounds disk + GCs crashed-leader `pending` tombstones. Best-effort.

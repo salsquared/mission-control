@@ -10,7 +10,7 @@
  *
  * PRIMARY: a single shared token bucket in `data/arxiv-bucket.db` (both tiers +
  * schedulers open it), each consume gated by a `BEGIN IMMEDIATE` transaction so
- * one paced line serves everyone (docs/arxiv-rate-limit-fix.html Layer 3,
+ * one paced line serves everyone (docs/archive/arxiv-rate-limit-fix.html Layer 3,
  * OQ4/OQ9 — reuses the shared-base `openDb()` seam, keeps its own single-row
  * table + transaction logic rather than the keyed-store shape).
  *

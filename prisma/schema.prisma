@@ -33,7 +33,7 @@ model SelectedHistoricalPaper {
   weekStart DateTime // Represents the week it was selected for
 
   // Cached paper metadata, persisted at pick time so re-rendering the weekly
-  // pick costs zero arXiv/Semantic-Scholar calls (docs/arxiv-rate-limit-fix.html
+  // pick costs zero arXiv/Semantic-Scholar calls (docs/archive/arxiv-rate-limit-fix.html
   // Layer 2). Nullable so pre-backfill rows migrate clean — a NULL title triggers
   // one legacy id_list fetch that then backfills the row. citationCount is
   // accepted-stale (OQ1): captured once, never refreshed.

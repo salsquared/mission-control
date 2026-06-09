@@ -1,5 +1,5 @@
 /**
- * Shared cross-tier SQLite cache base (docs/arxiv-rate-limit-fix.html Layer 1, OQ5/OQ7).
+ * Shared cross-tier SQLite cache base (docs/archive/arxiv-rate-limit-fix.html Layer 1, OQ5/OQ7).
  *
  * dev (:4101/dev.db) and prod (:3101/prod.db) — plus both schedulers — run the
  * SAME code on one box against the SAME data. Anything cacheable that each tier

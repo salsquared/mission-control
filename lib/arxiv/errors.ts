@@ -1,5 +1,5 @@
 /**
- * Typed arXiv failure signals (docs/arxiv-rate-limit-fix.html — recovery layer).
+ * Typed arXiv failure signals (docs/archive/arxiv-rate-limit-fix.html — recovery layer).
  *
  * These let the research routes distinguish "arXiv is unavailable, degrade
  * gracefully" from a genuine bug. A route catching `ArxivUnavailableError`

@@ -1,6 +1,6 @@
 /**
  * Hermetic smoke for the shared cross-tier arXiv rate bucket
- * (lib/arxiv/rate-limit.ts — docs/arxiv-rate-limit-fix.html Layer 3, OQ4/OQ9).
+ * (lib/arxiv/rate-limit.ts — docs/archive/arxiv-rate-limit-fix.html Layer 3, OQ4/OQ9).
  *
  * Fully hermetic: no network, no PM2. Uses its OWN temp bucket file, a synthetic
  * clock, and `_createSharedBucketForTests` to stand up TWO independent consume
