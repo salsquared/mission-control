@@ -30,7 +30,7 @@
     <summary><h2 id="context">Context &amp; problem</h2></summary>
     <div class="section-body">
 
-      <div class="callout tip"><strong>Status: design — all open questions (OQ1–OQ9) decided (2026-06-09); Tasks checklist authored, ready to implement.</strong> Three independent pillars, all requested in one ask.</div>
+      <div class="callout tip"><strong>Status: in implementation — all OQs decided (2026-06-09); Step 0 (schema + <code>CLOSED</code> enum foundation) landed on <code>feat/closed-jobs</code>; Tracks A/B/C ready to fan out.</strong> Three independent pillars, all requested in one ask.</div>
 
       <h3>Problem</h3>
       <p>Three related pain points around job opportunities that have closed (no longer taking applications):</p>
@@ -370,7 +370,7 @@ flowchart LR
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P1.1.1</span>
                   <span class="task-title">Add field + migration</span>
                 </summary>
@@ -389,14 +389,14 @@ flowchart LR
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.2</span>
               <span class="task-title"><code>JobPosting.lastProbedAt DateTime?</code> (C3 rotation key)</span>
             </summary>
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P1.2.1</span>
                   <span class="task-title">Add field + migration</span>
                 </summary>
@@ -404,7 +404,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P1.2.2</span>
                   <span class="task-title">Scheduler-only — no payload threading</span>
                 </summary>
@@ -433,7 +433,7 @@ flowchart LR
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P2.1.1</span>
                   <span class="task-title">Add <code>'CLOSED'</code> to <code>APPLICATION_STATUSES</code></span>
                 </summary>

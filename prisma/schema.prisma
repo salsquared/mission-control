@@ -198,6 +198,12 @@ model Application {
   // card so a tracked role's city is visible at a glance. No normalization /
   // dedup role — purely informational.
   location          String?
+  // Closed-jobs feature (2026-06-09): direct job-posting URL for one-click open
+  // from the kanban card / detail overlay. Populated from JobPosting.sourceUrl
+  // at track-as-application time; editable for manually-added apps that have no
+  // linked posting (the link-less rows the feature targets). Purely a link —
+  // no dedup / normalization role.
+  url               String?
   status            String
   kind              String? // "job" | "internship" | "college" | "other" — null on legacy rows
   nextSteps         String?
@@ -607,6 +613,12 @@ model JobPosting {
   firstSeenAt          DateTime  @default(now())
   lastSeenAt           DateTime  @default(now())
   removedAt            DateTime?
+  // Closed-jobs C3 (2026-06-09): rolling cursor for the budgeted re-probe of
+  // still-listed postings (Gap A). Distinct from lastSeenAt, which the fetch
+  // bumps on every sighting — this tracks "last liveness-probed", so the C3
+  // sweep can select status="new" ORDER BY lastProbedAt ASC (nulls first) and
+  // stamp it on everything it probes. Null = never probed (sorts first).
+  lastProbedAt         DateTime?
   raw                  String // JSON of the raw extracted fields, for debugging
 
   watchlist   Watchlist    @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
@@ -614,6 +626,9 @@ model JobPosting {
 
   @@unique([watchlistId, externalId])
   @@index([status, lastSeenAt])
+  // Closed-jobs C3 (2026-06-09): supports the re-probe sweep's
+  // status="new" ORDER BY lastProbedAt ASC rotation.
+  @@index([status, lastProbedAt])
 }
 
 model Notification {

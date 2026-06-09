@@ -1,9 +1,14 @@
 import { z } from 'zod';
 
-// Canonical status values — mirrors the LLM classifier enum in lib/email-parser.ts.
-// INTERESTED is the pre-applied state (story S5.5): a posting tracked from the
-// watchlist feed but not yet sent. Living before APPLIED keeps the kanban order
-// chronological from interest → applied → ... → outcome.
+// Canonical status values — a SUPERSET of the LLM classifier enum in
+// lib/email-parser.ts. INTERESTED is the pre-applied state (story S5.5): a
+// posting tracked from the watchlist feed but not yet sent. Living before
+// APPLIED keeps the kanban order chronological from interest → applied → ... →
+// outcome. CLOSED (2026-06-09, closed-jobs feature, OQ1) is the terminal
+// "the opportunity itself ended" state — distinct from DECLINED (I said no)
+// and REJECTED (they said no). It is set ONLY by hand or by the close-detection
+// cascade (a confirmed-closed JobPosting closing its linked INTERESTED card),
+// never emitted by the email classifier, so it stays OUT of the parser enum.
 export const APPLICATION_STATUSES = [
     'INTERESTED',
     'APPLIED',
@@ -15,6 +20,7 @@ export const APPLICATION_STATUSES = [
     'ACCEPTED',
     'DECLINED',
     'REJECTED',
+    'CLOSED',
 ] as const;
 export const ApplicationStatusSchema = z.enum(APPLICATION_STATUSES);
 
@@ -44,6 +50,8 @@ export const ApplicationSchema = z.object({
     company: z.string(),
     role: z.string().nullable(),
     location: z.string().nullable(),
+    // Closed-jobs Pillar B (2026-06-09): direct job-posting URL for one-click open.
+    url: z.string().nullable(),
     status: z.string(),
     kind: z.string().nullable(),
     track: ApplicationTrackSchema,
@@ -101,6 +109,7 @@ export const ApplicationPostSchema = z.object({
     company: z.string().min(1),
     role: z.string().min(1).nullable().optional(),
     location: z.string().nullable().optional(),
+    url: z.string().nullable().optional(),
     status: ApplicationStatusSchema.default('APPLIED'),
     kind: ApplicationKindSchema.nullable().optional(),
     track: ApplicationTrackSchema,
@@ -114,6 +123,7 @@ export const ApplicationPatchSchema = z.object({
     company: z.string().min(1).optional(),
     role: z.string().nullable().optional(),
     location: z.string().nullable().optional(),
+    url: z.string().nullable().optional(),
     status: ApplicationStatusSchema.optional(),
     kind: ApplicationKindSchema.nullable().optional(),
     track: ApplicationTrackSchema.optional(),
@@ -126,6 +136,7 @@ export const ApplicationPatchSchema = z.object({
     (d) => d.company !== undefined
         || d.role !== undefined
         || d.location !== undefined
+        || d.url !== undefined
         || d.status !== undefined
         || d.kind !== undefined
         || d.track !== undefined

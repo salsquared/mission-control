@@ -64,6 +64,8 @@ SUITES=(
     "scripts/tests/hermetic/events-broadcast-regression-smoke.ts"
     "scripts/tests/hermetic/contacts-smoke.ts"
     "scripts/tests/hermetic/bulk-track-smoke.ts"
+    # Closed-jobs feature foundation (2026-06-09): CLOSED status enum
+    "scripts/tests/hermetic/application-status-enum-smoke.ts"
     "scripts/tests/hermetic/compensation-smoke.ts"
     "scripts/tests/hermetic/quiet-hours-smoke.ts"
     "scripts/tests/hermetic/user-rate-limit-smoke.ts"

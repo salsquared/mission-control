@@ -9,6 +9,8 @@ export interface ApplicationCreate {
     role: string;
     /** Free-form job/role location (e.g. "Long Beach, CA" / "Remote"). Informational only — no normalization. */
     location?: string | null;
+    /** Closed-jobs Pillar B (2026-06-09): direct posting URL. Set from posting.sourceUrl at track-as-application time; editable for manual apps. */
+    url?: string | null;
     status: string;
     kind?: string | null;
     /**
@@ -43,6 +45,7 @@ export interface ApplicationUpdate {
     nextSteps?: string | null;
     role?: string | null;
     location?: string | null;
+    url?: string | null;
     company?: string;
     dateApplied?: Date | null;
     decisionDeadline?: Date | null;
