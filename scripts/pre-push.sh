@@ -64,8 +64,11 @@ SUITES=(
     "scripts/tests/hermetic/events-broadcast-regression-smoke.ts"
     "scripts/tests/hermetic/contacts-smoke.ts"
     "scripts/tests/hermetic/bulk-track-smoke.ts"
-    # Closed-jobs feature foundation (2026-06-09): CLOSED status enum
+    # Closed-jobs feature (2026-06-09): CLOSED status enum + Pillar C->A cascade
+    # + manual-close stickiness. (C0 audit lives under scripts/tests/probes/ — live, not gated.)
     "scripts/tests/hermetic/application-status-enum-smoke.ts"
+    "scripts/tests/hermetic/cascade-close-smoke.ts"
+    "scripts/tests/hermetic/closed-posting-sticky-smoke.ts"
     "scripts/tests/hermetic/compensation-smoke.ts"
     "scripts/tests/hermetic/quiet-hours-smoke.ts"
     "scripts/tests/hermetic/user-rate-limit-smoke.ts"

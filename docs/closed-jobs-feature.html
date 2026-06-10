@@ -30,7 +30,7 @@
     <summary><h2 id="context">Context &amp; problem</h2></summary>
     <div class="section-body">
 
-      <div class="callout tip"><strong>Status: in implementation — all OQs decided (2026-06-09); Step 0 (schema + <code>CLOSED</code> enum foundation) landed on <code>feat/closed-jobs</code>; Tracks A/B/C ready to fan out.</strong> Three independent pillars, all requested in one ask.</div>
+      <div class="callout tip"><strong>Status: built — all OQs decided (2026-06-09); Step 0 + Tracks A/B/C all landed on <code>feat/closed-jobs</code> (5 commits); integration green (<code>tsc</code> clean, 11/11 smokes). Remaining: P6.2 (prod build + <code>pm2 restart</code> + PR to <code>main</code>).</strong> Three independent pillars, all requested in one ask.</div>
 
       <h3>Problem</h3>
       <p>Three related pain points around job opportunities that have closed (no longer taking applications):</p>
@@ -354,7 +354,7 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P1</span>
           <span class="task-title">Phase 1 — Schema foundations (additive, both DBs)</span>
         </summary>
@@ -363,7 +363,7 @@ flowchart LR
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.1</span>
               <span class="task-title"><code>Application.url String?</code> (Pillar B data)</span>
             </summary>
@@ -378,7 +378,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P1.1.2</span>
                   <span class="task-title">Thread through read path</span>
                 </summary>
@@ -417,7 +417,7 @@ flowchart LR
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P2</span>
           <span class="task-title">Phase 2 — Pillar A: manual CLOSED on both surfaces</span>
         </summary>
@@ -426,7 +426,7 @@ flowchart LR
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.1</span>
               <span class="task-title">Kanban Closed column (<code>OQ2</code>)</span>
             </summary>
@@ -441,7 +441,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P2.1.2</span>
                   <span class="task-title">Add Closed column to <code>pipelineColumns</code></span>
                 </summary>
@@ -452,14 +452,14 @@ flowchart LR
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.2</span>
               <span class="task-title">Feed mark-closed + closed surfacing (<code>OQ3</code>)</span>
             </summary>
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P2.2.1</span>
                   <span class="task-title">Mark-closed control on <code>PostingRow</code></span>
                 </summary>
@@ -467,7 +467,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P2.2.2</span>
                   <span class="task-title">Collapsed "Recently closed (N)" section</span>
                 </summary>
@@ -475,7 +475,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P2.2.3</span>
                   <span class="task-title">Stickiness smoke (verify, don't build)</span>
                 </summary>
@@ -488,7 +488,7 @@ flowchart LR
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P3</span>
           <span class="task-title">Phase 3 — Pillar B: one-click job link</span>
         </summary>
@@ -496,14 +496,14 @@ flowchart LR
           <p>Depends on P1.1. Populate the URL, then surface it on the card face and in the detail overlay.</p>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P3.1</span>
               <span class="task-title">Populate <code>url</code></span>
             </summary>
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.1.1</span>
                   <span class="task-title">At track-as-application time</span>
                 </summary>
@@ -511,7 +511,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.1.2</span>
                   <span class="task-title">Editable for manual apps</span>
                 </summary>
@@ -521,14 +521,14 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P3.2</span>
               <span class="task-title">Surface the link</span>
             </summary>
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.2.1</span>
                   <span class="task-title">Card-face <code>ExternalLink</code> button</span>
                 </summary>
@@ -536,7 +536,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.2.2</span>
                   <span class="task-title">Detail-overlay "Open posting ↗"</span>
                 </summary>
@@ -549,7 +549,7 @@ flowchart LR
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P4</span>
           <span class="task-title">Phase 4 — Pillar C → A cascade</span>
         </summary>
@@ -557,14 +557,14 @@ flowchart LR
           <p>One shared helper, two callers. Decisions: <code>OQ7</code> (<code>INTERESTED</code>-only), <code>OQ8</code> (probe + manual both cascade), <code>OQ9</code> (fold into the closure summary).</p>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P4.1</span>
               <span class="task-title">Shared helper <code>closeApplicationsForClosedPostings</code></span>
             </summary>
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P4.1.1</span>
                   <span class="task-title">Select + close (<code>OQ7</code>)</span>
                 </summary>
@@ -572,7 +572,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P4.1.2</span>
                   <span class="task-title">Event + broadcast</span>
                 </summary>
@@ -582,7 +582,7 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P4.2</span>
               <span class="task-title">Probe caller (<code>source:"probe"</code>)</span>
             </summary>
@@ -590,7 +590,7 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P4.3</span>
               <span class="task-title">Manual posting-close caller (<code>source:"ms"</code>, <code>OQ8</code>)</span>
             </summary>
@@ -598,7 +598,7 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P4.4</span>
               <span class="task-title">Fold into closure summary (<code>OQ9</code>)</span>
             </summary>
@@ -606,7 +606,7 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P4.5</span>
               <span class="task-title">Cascade smoke</span>
             </summary>
@@ -617,7 +617,7 @@ flowchart LR
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P5</span>
           <span class="task-title">Phase 5 — Pillar C: sharper close-detection</span>
         </summary>
@@ -625,14 +625,14 @@ flowchart LR
           <p>C0 runs first to size the rest; C1/C2 improve verdict accuracy; C3 (committed, <code>OQ5</code>) closes Gap A and reuses the P4 cascade. Sal's minimal-v1 rule: measure before widening.</p>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P5.1</span>
               <span class="task-title">C0 — diagnose (do first)</span>
             </summary>
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P5.1.1</span>
                   <span class="task-title">Audit script under <code>scripts/tests/probes/</code></span>
                 </summary>
@@ -640,7 +640,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P5.1.2</span>
                   <span class="task-title">Output: rate + phrases</span>
                 </summary>
@@ -650,7 +650,7 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P5.2</span>
               <span class="task-title">C1 — expand &amp; curate markers</span>
             </summary>
@@ -658,7 +658,7 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P5.3</span>
               <span class="task-title">C2 — prefer structured ATS state</span>
             </summary>
@@ -666,14 +666,14 @@ flowchart LR
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P5.4</span>
               <span class="task-title">C3 — periodic re-probe sweep (Gap A)</span>
             </summary>
             <div class="task-body">
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P5.4.1</span>
                   <span class="task-title">Rotating selection</span>
                 </summary>
@@ -681,7 +681,7 @@ flowchart LR
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P5.4.2</span>
                   <span class="task-title">Verdict handling = stale path</span>
                 </summary>
@@ -702,7 +702,7 @@ flowchart LR
           <p>Gate, build, deploy, document.</p>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P6.1</span>
               <span class="task-title">Hermetic smokes wired into <code>pre-push.sh</code></span>
             </summary>
@@ -785,7 +785,7 @@ DATABASE_URL="file:./prod.db" npx prisma migrate deploy</code></pre>
         <li><strong>P2.2.3 smoke</strong> — a manually-closed-but-listed posting is neither revived (<code>:330</code>) nor stale-selected (<code>:466</code>). Append to <code>SUITES</code>.</li>
       </ol>
       <pre><code class="language-bash">git commit -- components/cards/applications/ApplicationsKanbanCard.tsx \
-  components/cards/applications/ApplicationDetailOverlay.tsx \
+  components/overlays/ApplicationDetailOverlay.tsx \
   components/cards/applications/NewPostingsCard.tsx \
   lib/postings/track-as-application.ts lib/api-client.ts \
   scripts/tests/hermetic/closed-posting-sticky-smoke.ts scripts/pre-push.sh</code></pre>
