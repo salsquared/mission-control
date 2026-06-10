@@ -79,8 +79,12 @@ const POLITE_UA = "mission-control-watcher/1.0 (+https://mc.local; personal job-
 const LINKEDIN_CLOSED_MARKERS = [
     "no longer accepting applications",
     "job is no longer available",
+    "this job is no longer available",
     "position is no longer",
+    "position is no longer available",
     "this job has been removed",
+    "this job has expired",
+    "no longer active",
 ];
 const LINKEDIN_ALIVE_MARKERS = [
     "top-card-layout",
@@ -88,14 +92,47 @@ const LINKEDIN_ALIVE_MARKERS = [
     "apply-button",
     "jobs-apply-button",
 ];
+// Ashby renders the posting as a SPA whose initial state is embedded in a
+// `window.__appData` JSON blob carrying a tier-4 `"isListed":<bool>` flag (the
+// only liveness signal Ashby sends on purpose — see C0 audit / probeAshby's
+// JSON-first path below). The string markers here are the tier-3 fallback for
+// the rendered-banner case and for any page that omits the blob.
 const ASHBY_CLOSED_MARKERS = [
     "posting could not be found",
     "this job is no longer",
     "this position is no longer",
+    "this position has been filled",
+    "no longer accepting applications",
+    "this job posting is no longer available",
+    "this position is no longer available",
+];
+// Stable structural strings present on a live Ashby posting page. Used to gate
+// "alive" — a 200 that has neither a closed marker nor any of these (e.g. a
+// consent / error interstitial) falls to "unknown" rather than "alive".
+const ASHBY_ALIVE_MARKERS = [
+    "window.__appdata", // the embedded SPA state blob (lowercased)
+    "\"islisted\":true",
+    "ashby_jb_posting", // posting widget container id seen on live pages
+    "application-form",
 ];
 const WORKDAY_CLOSED_MARKERS = [
     "job is no longer",
+    "this job is no longer available",
     "position has been filled",
+    "this position has been filled",
+    "no longer accepting applications",
+    "posting has been removed",
+    "the job posting you are looking for",
+];
+// Live Workday postings render a data-automation-id="jobPostingPage" container
+// (server-side, before hydration). Gate "alive" on a real posting marker so a
+// Cloudflare interstitial / login wall that slips past the redirect check
+// doesn't read as a live posting. (The CXS JSON probe below is preferred when
+// the URL is parseable; this is the HTML fallback's gate.)
+const WORKDAY_ALIVE_MARKERS = [
+    "jobpostingpage",           // data-automation-id="jobPostingPage"
+    "data-automation-id=\"job", // jobPostingHeader / jobPostingDescription etc.
+    "applybutton",              // data-automation-id="applyButton" / "adventureButton"
 ];
 const INDEED_CLOSED_MARKERS = [
     "this job has expired",
@@ -103,6 +140,8 @@ const INDEED_CLOSED_MARKERS = [
     "this job posting is no longer available",
     "we couldn't find this job",
     "this job is no longer available",
+    "this position has been filled",
+    "position is no longer available",
 ];
 const INDEED_ALIVE_MARKERS = [
     "jobsearch-jobinfoheader",
@@ -266,14 +305,80 @@ async function probeAshby(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
             const segments = u.pathname.split("/").filter(Boolean);
             if (u.host.includes("ashbyhq.com") && segments.length < 2) return "closed";
         } catch { /* ignore */ }
+        // C2 — tier-4 structured state. Ashby embeds the posting's open/closed
+        // flag in the SPA's `window.__appData` JSON as `"isListed":<bool>`
+        // (confirmed against the live page + the public posting-api job-board
+        // payload, C0 audit 2026-06-09). Trust it over the HTML heuristics when
+        // present: an unlisted posting is closed; an explicitly-listed one is a
+        // strong alive signal (handled below via the alive-marker gate, which
+        // includes `"islisted":true`). The flag is whitespace-insensitive in
+        // the minified blob, so match both compact forms.
+        if (bodyLower.includes("\"islisted\":false") || bodyLower.includes("\"islisted\": false")) return "closed";
         for (const m of ASHBY_CLOSED_MARKERS) {
             if (bodyLower.includes(m)) return "closed";
         }
+        // C1 — require positive evidence of a real posting page before calling
+        // a 200 "alive". Mirrors the LinkedIn/Indeed gate: a consent/error
+        // interstitial that lacks both a closed marker AND any alive marker is
+        // ambiguous → "unknown" (re-probe next tick) rather than a false alive.
+        const hasAliveMarker = ASHBY_ALIVE_MARKERS.some(m => bodyLower.includes(m));
+        if (!hasAliveMarker) return "unknown";
         return null;
     }, onRateLimit);
 }
 
+/**
+ * Workday source URLs look like
+ *   https://<tenant>.<dc>.myworkdayjobs.com/<locale>/<site>/job/<loc>/<title>_<req>
+ * Workday's own SPA fetches the posting through the CXS detail endpoint
+ *   https://<host>/wday/cxs/<tenant>/<site>/job/<loc>/<title>_<req>
+ * which returns structured JSON: a removed posting 404s, a live one returns
+ * 200 with `jobPostingInfo.posted` / `canApply` booleans (C2 tier-4 — the only
+ * liveness signal Workday sends on purpose; confirmed via C0 audit 2026-06-09).
+ * Returns null when the URL doesn't fit the canonical shape (so the caller
+ * falls back to the HTML probe).
+ */
+const WORKDAY_HOST_RE = /^([a-z0-9-]+)\.[a-z0-9-]+\.myworkdayjobs\.com$/i;
+function deriveWorkdayCxsUrl(sourceUrl: string): string | null {
+    let u: URL;
+    try { u = new URL(sourceUrl); } catch { return null; }
+    const hostMatch = u.host.match(WORKDAY_HOST_RE);
+    if (!hostMatch) return null;
+    const tenant = hostMatch[1];
+    const segs = u.pathname.split("/").filter(Boolean);
+    // Expect [locale, site, "job", ...rest]; need at least the "job" segment.
+    const jobIdx = segs.indexOf("job");
+    if (jobIdx < 1 || jobIdx === segs.length - 1) return null; // no site before, or nothing after "job"
+    const site = segs[jobIdx - 1];
+    const jobPath = segs.slice(jobIdx).join("/"); // "job/<loc>/<title>_<req>"
+    return `https://${u.host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/${jobPath}`;
+}
+
 async function probeWorkday(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
+    // C2 — prefer the structured CXS JSON endpoint over the HTML scrape.
+    const cxsUrl = deriveWorkdayCxsUrl(p.sourceUrl);
+    if (cxsUrl) {
+        const r = await probeViaHttpStatus(cxsUrl, timeoutMs, LINKEDIN_UA, ({ bodyLower }) => {
+            // 200 from CXS — read the tier-4 flags. `posted:false` (record
+            // exists but the posting was taken down) is the unambiguous removal
+            // signal → closed. Booleans are emitted minified; accept whitespace
+            // variants. We deliberately do NOT close on `canApply:false` alone:
+            // a live posting can disable apply (paused / region-gated) while
+            // still being a real, viewable opening — closing on it would
+            // re-introduce the false-close the gate exists to kill. Both
+            // `posted:true` and `canApply:true` are positive alive evidence.
+            if (/"posted"\s*:\s*false/.test(bodyLower)) return "closed";
+            if (/"posted"\s*:\s*true/.test(bodyLower) || /"canapply"\s*:\s*true/.test(bodyLower)) return "alive";
+            // 200 but no recognizable flag (shape drift) → don't conclude from
+            // CXS; signal ambiguity and let the HTML fallback below try.
+            return "unknown";
+        }, onRateLimit);
+        // 404/410 on CXS → posting removed (closed). 200 with a flag → trust it.
+        // "unknown" → CXS was inconclusive (shape drift / blocked): fall back
+        // to the HTML probe rather than concluding from a half-read payload.
+        if (r === "closed" || r === "alive") return r;
+    }
+    // HTML fallback (CXS unavailable / inconclusive / non-canonical URL).
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, LINKEDIN_UA /* Workday + Cloudflare hates non-browser UAs */, ({ finalUrl, bodyLower }) => {
         // Redirected to a Workday auth gate → posting is no longer publicly listed.
         if (/\/(login|portal\/login)\b/i.test(finalUrl)) return "closed";
@@ -282,6 +387,11 @@ async function probeWorkday(p: ProbeInput, timeoutMs: number, onRateLimit?: Rate
         for (const m of WORKDAY_CLOSED_MARKERS) {
             if (bodyLower.includes(m)) return "closed";
         }
+        // C1 — require a live-posting marker before declaring alive, so a
+        // Cloudflare interstitial / partial body that kept the /job/ URL
+        // doesn't read as a live posting. Ambiguous 200 → "unknown".
+        const hasAliveMarker = WORKDAY_ALIVE_MARKERS.some(m => bodyLower.includes(m));
+        if (!hasAliveMarker) return "unknown";
         return null;
     }, onRateLimit);
 }
