@@ -151,6 +151,12 @@ export async function trackAsApplication(
                     // so jobs from a role-watchlist land on the right canon.
                     canonId: posting.watchlist.canonId ?? null,
                     postingId: posting.id,
+                    // Closed-jobs Pillar B (P3.1): carry the posting's URL onto
+                    // the application so the kanban card face + detail overlay
+                    // get a one-click "open in new tab" link even after the
+                    // source JobPosting is pruned. Manual apps populate this via
+                    // the POST/PATCH route instead.
+                    url: posting.sourceUrl ?? null,
                     // High-precision dedup hint for "same job, different
                     // posting row" — populated from the source ATS's stable
                     // identifier.

@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useCallback, useMemo } from "react";
-import { Briefcase, Plus, CheckSquare, X, ArrowRightLeft, Loader2, MapPin } from "lucide-react";
+import { Briefcase, Plus, CheckSquare, X, ArrowRightLeft, Loader2, MapPin, ExternalLink } from "lucide-react";
 import { Card } from "../../ui/Card";
 import { KanbanWidget, KanbanColumnDef } from "../../widgets/KanbanWidget";
 import { api } from "@/lib/api-client";
@@ -14,6 +14,8 @@ export interface AppRecord {
     status: string;
     nextSteps: string | null;
     lastUpdateAt: string;
+    /** Closed-jobs Pillar B: one-click job link surfaced on the card face. */
+    url: string | null;
 }
 
 // MB Phase 4. Per-track presentation. The kanban columns (status flow) are
@@ -48,7 +50,11 @@ const pipelineColumns: AppKanbanColumnDef[] = [
     { id: "offer", title: "Offer", statuses: ["OFFER"], filterFn: (app) => ["OFFER"].includes(app.status), defaultTargetStatus: "OFFER", colorClass: "bg-emerald-500/20 text-emerald-400 border border-emerald-500/20" },
     { id: "accepted", title: "Accepted", statuses: ["ACCEPTED"], filterFn: (app) => ["ACCEPTED"].includes(app.status), defaultTargetStatus: "ACCEPTED", colorClass: "bg-green-500/20 text-green-400 border border-green-500/20" },
     { id: "declined", title: "Declined", statuses: ["DECLINED"], filterFn: (app) => ["DECLINED"].includes(app.status), defaultTargetStatus: "DECLINED", colorClass: "bg-orange-500/20 text-orange-400 border border-orange-500/20" },
-    { id: "rejected", title: "Rejected", statuses: ["REJECTED"], filterFn: (app) => ["REJECTED"].includes(app.status), defaultTargetStatus: "REJECTED", colorClass: "bg-slate-500/20 text-slate-400 border border-slate-500/20" }
+    { id: "rejected", title: "Rejected", statuses: ["REJECTED"], filterFn: (app) => ["REJECTED"].includes(app.status), defaultTargetStatus: "REJECTED", colorClass: "bg-slate-500/20 text-slate-400 border border-slate-500/20" },
+    // Closed-jobs OQ2: standalone terminal column after Rejected, muted zinc
+    // hue (distinct from Rejected's slate). Set by hand or by the close-detection
+    // cascade when a linked listing is confirmed closed.
+    { id: "closed", title: "Closed", statuses: ["CLOSED"], filterFn: (app) => ["CLOSED"].includes(app.status), defaultTargetStatus: "CLOSED", colorClass: "bg-zinc-500/20 text-zinc-400 border border-zinc-500/20" }
 ];
 
 interface ApplicationsKanbanCardProps {
@@ -158,8 +164,22 @@ export const ApplicationsKanbanCard: React.FC<ApplicationsKanbanCardProps> = ({
                         />
                     </div>
                 )}
-                <h5 className="font-bold text-slate-100 truncate flex items-center gap-2 leading-tight">
-                    {app.company}
+                <h5 className="font-bold text-slate-100 flex items-center gap-2 leading-tight">
+                    <span className="truncate">{app.company}</span>
+                    {app.url && (
+                        <a
+                            href={app.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            // stopPropagation: opening the link must NOT also
+                            // open the detail overlay (the card's onClick).
+                            onClick={(e) => e.stopPropagation()}
+                            className="shrink-0 text-white/40 hover:text-cyan-300 transition-colors"
+                            title="Open job posting in a new tab"
+                        >
+                            <ExternalLink className="w-3 h-3" />
+                        </a>
+                    )}
                 </h5>
                 <p className="text-sm text-slate-400 line-clamp-1 leading-snug">{app.role || "Unknown Role"}</p>
                 {app.location && (
