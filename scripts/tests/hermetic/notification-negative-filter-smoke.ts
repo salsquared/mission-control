@@ -96,7 +96,7 @@ async function snapshotGlobalNegativeFilters(): Promise<{ existed: boolean; raw:
     return { existed: true, raw: row.globalNegativeFilters };
 }
 
-async function setGlobalNegativeFilters(patterns: string[]): Promise<void> {
+async function setGlobalNegativeFilters(patterns: string[], fallbackUserId: string): Promise<void> {
     _resetNegativeFilterCache(); // ensure new patterns get compiled (cache is keyed by JSON string)
     const json = JSON.stringify(patterns);
     const existing = await prisma.globalSetting.findUnique({ where: { id: "global" } });
@@ -106,9 +106,12 @@ async function setGlobalNegativeFilters(patterns: string[]): Promise<void> {
             data: { globalNegativeFilters: json },
         });
     } else {
+        // userId required since the P2 scoping (one settings row per user);
+        // the throwaway smoke user owns the bootstrap row on a fresh DB.
         await prisma.globalSetting.create({
             data: {
                 id: "global",
+                userId: fallbackUserId,
                 isDarkMode: true,
                 viewHuesEnabled: true,
                 viewHues: "{}",
@@ -165,7 +168,7 @@ async function main() {
         } else pass(`dedup: "Sr\\." stays distinct from "Sr" (regex metachars preserved)`);
 
         await prisma.user.create({ data: { id: userId, email: `negfilt-smoke-${tag}@example.invalid` } });
-        await setGlobalNegativeFilters(["Senior", "Lead"]);
+        await setGlobalNegativeFilters(["Senior", "Lead"], userId);
 
         // ────────────────────────────────────────────────────────────────
         // Part 1: per-posting dispatch (notificationMode='each')
@@ -377,7 +380,7 @@ async function main() {
         // on lastDigestAt and makes count assertions flaky. The job-watcher
         // path is per-posting so the assertions are about individual
         // dispatches, immune to watermark races.
-        await setGlobalNegativeFilters(["Senior", "Lead", "Manager"]);
+        await setGlobalNegativeFilters(["Senior", "Lead", "Manager"], userId);
 
         // 4 fixture postings on a SIDE-tracked watchlist. Every global
         // pattern applies regardless of track now, so:

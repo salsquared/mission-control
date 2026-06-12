@@ -12,7 +12,8 @@ datasource db {
 
 model SavedPaper {
   id          String   @id @default(cuid())
-  paperId     String   @unique
+  userId      String
+  paperId     String
   title       String
   summary     String
   url         String
@@ -23,6 +24,12 @@ model SavedPaper {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Per-user library (P2 / OQ2a): the same arXiv paper can be saved by two
+  // different users, so the legacy global `paperId @unique` became this
+  // compound per-user key (its leftmost prefix doubles as the userId index).
+  @@unique([userId, paperId])
   @@index([status, topic])
 }
 
@@ -67,7 +74,13 @@ model SelectedReviewPaper {
 }
 
 model GlobalSetting {
-  id                    String   @id @default("global")
+  // One row PER USER (P2.3 / OQ2a) — the pre-scoping singleton design keyed
+  // on id='global' is retired. The legacy row kept its 'global' id and was
+  // backfilled to the owner account; new users get cuid ids. All reads/writes
+  // key on the unique userId, never on id (lib/notifications/dispatch.ts's
+  // quiet-hours read of id='global' still resolves to the owner's row).
+  id                    String   @id @default(cuid())
+  userId                String   @unique
   isDarkMode            Boolean  @default(true)
   viewHuesEnabled       Boolean  @default(true)
   viewHues              String   @default("{}") // JSON: Record<string, number>
@@ -85,6 +98,8 @@ model GlobalSetting {
   quietHoursTimezone    String?
   version               Int      @default(0) // bumped on every write; client sends as If-Match
   updatedAt             DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 // --- NextAuth Models --- //
@@ -138,6 +153,10 @@ model User {
   profileSnapshots    ProfileSnapshot[]
   resumeUploads       ResumeUpload[]
   canons              Canon[]
+  tasks               Task[]
+  lifeGoals           LifeGoal[]
+  savedPapers         SavedPaper[]
+  globalSetting       GlobalSetting?
 }
 
 model VerificationToken {
@@ -497,6 +516,7 @@ model ResumeUpload {
 
 model Task {
   id        String    @id @default(cuid())
+  userId    String
   text      String
   status    String // "TODO", "IN_PROGRESS", "DONE"
   priority  String? // "BLOCKER", "HIGH", "MEDIUM", "LOW"
@@ -511,17 +531,25 @@ model Task {
   parent   Task?   @relation("TaskToTask", fields: [parentId], references: [id])
   children Task[]  @relation("TaskToTask")
 
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
   @@index([status])
   @@index([position])
 }
 
 model LifeGoal {
   id            String   @id @default(cuid())
+  userId        String
   text          String
   estimatedTime String?
   completed     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model CacheEntry {

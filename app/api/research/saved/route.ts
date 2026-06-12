@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { resolveScopedUserId } from '@/lib/user-scope';
 import { broadcastEvent } from '@/lib/events';
 import { findSavedPapers, upsertSavedPaper, deleteSavedPaper } from '@/lib/repositories/saved-papers';
 import {
@@ -8,9 +9,16 @@ import {
     SavedPaperListQuerySchema,
 } from '@/lib/schemas/saved-papers';
 
+// P2.2 (OQ2a): every handler scopes to the session user (or the LAN owner
+// fallback — see lib/user-scope.ts).
+const NO_USER = () =>
+    NextResponse.json({ error: 'No user account resolvable for this request' }, { status: 401 });
+
 export async function GET(request: Request) {
     const guard = await requireLocalOrSession(request);
     if ('error' in guard) return guard.error;
+    const userId = await resolveScopedUserId(guard);
+    if (!userId) return NO_USER();
 
     try {
         const { searchParams } = new URL(request.url);
@@ -22,7 +30,7 @@ export async function GET(request: Request) {
             return NextResponse.json({ error: queryParsed.error.issues }, { status: 400 });
         }
 
-        const savedPapers = await findSavedPapers(queryParsed.data);
+        const savedPapers = await findSavedPapers(userId, queryParsed.data);
 
         return NextResponse.json(savedPapers);
     } catch (error) {
@@ -34,6 +42,8 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
     const guard = await requireLocalOrSession(request);
     if ('error' in guard) return guard.error;
+    const userId = await resolveScopedUserId(guard);
+    if (!userId) return NO_USER();
 
     try {
         const parsed = SavedPaperPostSchema.safeParse(await request.json());
@@ -42,7 +52,7 @@ export async function POST(request: Request) {
         }
         const { paperId, title, summary, url, authors, publishedAt, topic, status } = parsed.data;
 
-        const paper = await upsertSavedPaper({
+        const paper = await upsertSavedPaper(userId, {
             paperId,
             title: title || "Unknown Title",
             summary: summary || "",
@@ -64,6 +74,8 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
     const guard = await requireLocalOrSession(request);
     if ('error' in guard) return guard.error;
+    const userId = await resolveScopedUserId(guard);
+    if (!userId) return NO_USER();
 
     try {
         const { searchParams } = new URL(request.url);
@@ -75,7 +87,7 @@ export async function DELETE(request: Request) {
         }
         const { paperId } = queryParsed.data;
 
-        await deleteSavedPaper(paperId);
+        await deleteSavedPaper(userId, paperId);
 
         broadcastEvent({ model: 'SavedPaper', action: 'delete', id: paperId, timestamp: Date.now() });
         return NextResponse.json({ success: true });

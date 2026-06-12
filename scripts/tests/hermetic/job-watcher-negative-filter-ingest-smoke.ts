@@ -94,7 +94,9 @@ async function main() {
         await prisma.globalSetting.upsert({
             where: { id: "global" },
             update: { globalNegativeFilters: JSON.stringify(["Senior"]) },
-            create: { id: "global", globalNegativeFilters: JSON.stringify(["Senior"]) },
+            // userId required since the P2 scoping (one settings row per user);
+            // the throwaway smoke user owns the bootstrap row on a fresh DB.
+            create: { id: "global", userId, globalNegativeFilters: JSON.stringify(["Senior"]) },
         });
 
         const wlConfig = JSON.stringify({

@@ -1,19 +1,30 @@
 import { NextResponse } from "next/server";
 import { requireLocalOrSession } from "@/lib/auth-guards";
+import { resolveScopedUserId } from "@/lib/user-scope";
 import {
     parseGlobalSetting,
     serializeGlobalSetting,
-    findGlobalSetting,
+    findGlobalSettingForUser,
     upsertGlobalSettingWithVersion,
 } from "@/lib/repositories/settings";
 import { SettingsPostSchema } from "@/lib/schemas/settings";
 
+// P2.3 (OQ2a): settings are one row per user (the legacy id='global' row is
+// the owner's). The If-Match optimistic-concurrency contract is unchanged —
+// ThemeProvider needs no client change; a user with no row yet gets
+// `data: null` on GET (same as the pre-rework fresh-DB behavior) and a
+// version-1 bootstrap on first POST.
+const NO_USER = () =>
+    NextResponse.json({ error: 'No user account resolvable for this request' }, { status: 401 });
+
 export async function GET(req: Request) {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;
+    const userId = await resolveScopedUserId(guard);
+    if (!userId) return NO_USER();
 
     try {
-        const row = await findGlobalSetting();
+        const row = await findGlobalSettingForUser(userId);
         if (!row) {
             return NextResponse.json({ data: null });
         }
@@ -27,6 +38,8 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
     const guard = await requireLocalOrSession(req);
     if ('error' in guard) return guard.error;
+    const userId = await resolveScopedUserId(guard);
+    if (!userId) return NO_USER();
 
     try {
         // Optimistic concurrency: client must send the version it last saw as
@@ -47,7 +60,7 @@ export async function POST(req: Request) {
         }
         const serialized = serializeGlobalSetting(parsed.data);
 
-        const result = await upsertGlobalSettingWithVersion(serialized, expectedVersion);
+        const result = await upsertGlobalSettingWithVersion(userId, serialized, expectedVersion);
         if (!result.ok) {
             return NextResponse.json(
                 { error: 'Version mismatch', currentVersion: result.currentVersion },

@@ -5,6 +5,7 @@ import type { GlobalSetting } from '@prisma/client';
 // Re-exported below for backward compat with server callers that still import
 // it from here.
 import { normalizeNegativeFilterForDedup } from '@/lib/postings/negative-filters';
+import { resolveOwnerUserId } from '@/lib/user-scope';
 
 // Negative filters are stored on a single `globalNegativeFilters` JSON
 // column (legacy name kept to avoid a prisma migration). One shared list
@@ -40,20 +41,40 @@ export type UpsertResult =
     | { ok: true; newVersion: number }
     | { ok: false; currentVersion: number };
 
-export function findGlobalSetting(): Promise<GlobalSetting | null> {
+// P2.3 (OQ2a): GlobalSetting is one row PER USER, keyed on the unique userId.
+// The pre-scoping singleton kept its legacy id 'global' and was backfilled to
+// the owner account, so owner reads land on the same row as before.
+export function findGlobalSettingForUser(userId: string): Promise<GlobalSetting | null> {
+    return prisma.globalSetting.findUnique({ where: { userId } });
+}
+
+// Session-less owner read for non-request contexts: the scheduler jobs
+// (job-watcher / posting-digest / classify-pending sweeps) and the postings
+// feed read ONE settings row for negative filters + hidden watchlists, and
+// have no session to scope by. Resolves the owner account (memoized in
+// lib/user-scope.ts), falling back to the legacy singleton row so a DB where
+// the owner can't be resolved still behaves exactly as before the rework.
+export async function findGlobalSetting(): Promise<GlobalSetting | null> {
+    const ownerId = await resolveOwnerUserId();
+    if (ownerId) {
+        const row = await prisma.globalSetting.findUnique({ where: { userId: ownerId } });
+        if (row) return row;
+    }
     return prisma.globalSetting.findUnique({ where: { id: 'global' } });
 }
 
 // Atomic conditional update keyed on the version column. Returns the new
 // version on success, or the current server-side version on conflict so the
-// client can refetch and reconcile. Bootstraps a fresh row on first write
-// (when no row exists) regardless of the expected version.
+// client can refetch and reconcile. Bootstraps a fresh row on the user's
+// first write (when they have no row yet) regardless of the expected version
+// — same If-Match contract as the legacy single-row design.
 export async function upsertGlobalSettingWithVersion(
+    userId: string,
     serialized: Partial<GlobalSetting>,
     expectedVersion: number
 ): Promise<UpsertResult> {
     const updated = await prisma.globalSetting.updateMany({
-        where: { id: 'global', version: expectedVersion },
+        where: { userId, version: expectedVersion },
         data: { ...serialized, version: { increment: 1 } },
     });
 
@@ -62,12 +83,21 @@ export async function upsertGlobalSettingWithVersion(
     }
 
     // Either the row doesn't exist (bootstrap) or version mismatched.
-    const current = await prisma.globalSetting.findUnique({ where: { id: 'global' } });
+    const current = await prisma.globalSetting.findUnique({ where: { userId } });
     if (!current) {
-        const created = await prisma.globalSetting.create({
-            data: { id: 'global', ...serialized, version: 1 },
-        });
-        return { ok: true, newVersion: created.version };
+        try {
+            const created = await prisma.globalSetting.create({
+                data: { userId, ...serialized, version: 1 },
+            });
+            return { ok: true, newVersion: created.version };
+        } catch {
+            // Unique(userId) race: someone else bootstrapped between our read
+            // and create — surface it as a version conflict so the client
+            // refetches (same path as a concurrent-write mismatch).
+            const raced = await prisma.globalSetting.findUnique({ where: { userId } });
+            if (raced) return { ok: false, currentVersion: raced.version };
+            throw new Error('GlobalSetting bootstrap failed');
+        }
     }
     return { ok: false, currentVersion: current.version };
 }

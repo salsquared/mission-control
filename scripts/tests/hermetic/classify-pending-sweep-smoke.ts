@@ -269,7 +269,8 @@ async function main() {
         await prisma.globalSetting.upsert({
             where: { id: "global" },
             update: { globalNegativeFilters: JSON.stringify(["Senior"]) },
-            create: { id: "global", globalNegativeFilters: JSON.stringify(["Senior"]) },
+            // userId required since the P2 scoping (one settings row per user).
+            create: { id: "global", userId: user.id, globalNegativeFilters: JSON.stringify(["Senior"]) },
         });
 
         const mock6 = makeMockChat(parsed => parsed.map(p => (p.company.startsWith(`${TAG}-Co`) ? "full-time" : null)));
