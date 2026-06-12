@@ -3,6 +3,12 @@ import GoogleProvider from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "./prisma";
 import { registerGmailWatch } from "./gmail/watch";
+import { isAllowedSignInEmail, isAllowlistConfigured } from "./auth-allowlist";
+
+// P1.1 (OQ1a): warn ONCE per process when the sign-in allowlist is unset —
+// fail-open so a fresh machine can still sign in, but loudly, so the gap
+// is visible in the in-app log viewer.
+let warnedAllowlistUnset = false;
 
 export const authOptions: NextAuthOptions = {
     adapter: PrismaAdapter(prisma) as any,
@@ -37,7 +43,25 @@ export const authOptions: NextAuthOptions = {
     ],
     secret: process.env.NEXTAUTH_SECRET,
     callbacks: {
-        async signIn({ account }) {
+        async signIn({ user, account }) {
+            // P1.1 (OQ1a) sign-in allowlist — runs BEFORE any token persist so
+            // a disallowed Google account never writes to the Account row. The
+            // app is publicly exposed via the Cloudflare tunnel, so without
+            // this gate ANY Google account could establish a session.
+            const allowlistEnv = process.env.ALLOWED_SIGNIN_EMAILS;
+            if (!isAllowlistConfigured(allowlistEnv)) {
+                if (!warnedAllowlistUnset) {
+                    warnedAllowlistUnset = true;
+                    console.warn(
+                        "[auth] ALLOWED_SIGNIN_EMAILS is unset/empty — sign-in allowlist DISABLED (fail-open): " +
+                        "ANY Google account can sign in. Set ALLOWED_SIGNIN_EMAILS in .env (comma-separated) to lock this down."
+                    );
+                }
+            } else if (!isAllowedSignInEmail(user?.email, allowlistEnv)) {
+                console.warn(`[auth] sign-in REJECTED for ${user?.email ?? "<no email>"} — not in ALLOWED_SIGNIN_EMAILS`);
+                return false;
+            }
+
             // PrismaAdapter doesn't update tokens on re-sign-in to an already-
             // linked account, so a fresh refresh_token from Google would be
             // silently discarded. Persist it (and the new access_token /

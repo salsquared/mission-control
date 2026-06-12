@@ -38,6 +38,23 @@ const nextConfig: NextConfig = {
   // Same treatment for the Radix primitives and framer-motion, which are
   // also heavy barrels touched by many files. Next 14+ feature, stable in
   // Next 16.
+  // P1.4 — baseline security headers on every response. The app is publicly
+  // reachable via the Cloudflare tunnel, so deny framing (clickjacking),
+  // MIME sniffing, and cross-origin referrer leakage. Deliberately no CSP
+  // (inline styles/scripts + CDN-loaded doc tooling make a meaningful policy
+  // a separate project).
+  async headers() {
+    return [
+      {
+        source: '/(.*)',
+        headers: [
+          { key: 'X-Frame-Options', value: 'DENY' },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+        ],
+      },
+    ];
+  },
   experimental: {
     optimizePackageImports: [
       'lucide-react',
