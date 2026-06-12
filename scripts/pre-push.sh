@@ -42,151 +42,50 @@ export LUNARY_PUBLIC_KEY=""
 export FETCHER_HEALTH_PATH="${TMPDIR:-/tmp}/fh-prepush-$$.db"
 trap 'rm -f "$FETCHER_HEALTH_PATH" "$FETCHER_HEALTH_PATH"-wal "$FETCHER_HEALTH_PATH"-shm' EXIT
 
-# Suites are listed in dependency order: pure ones first so they fail fast.
-# All entries live under scripts/tests/hermetic/ — no PM2, no real network.
-SUITES=(
-    "scripts/tests/hermetic/url-guard-smoke.ts"
-    "scripts/tests/hermetic/route-auth-smoke.ts"
-    "scripts/tests/hermetic/fetcher-unit-smoke.ts"
-    "scripts/tests/hermetic/liveness-probe-smoke.ts"
-    "scripts/tests/hermetic/resume-select-smoke.ts"
-    "scripts/tests/hermetic/resume-diff-smoke.ts"
-    "scripts/tests/hermetic/skills-gap-smoke.ts"
-    "scripts/tests/hermetic/profile-merge-smoke.ts"
-    "scripts/tests/hermetic/profile-snapshots-smoke.ts"
-    "scripts/tests/hermetic/archive-spans-smoke.ts"
-    "scripts/tests/hermetic/resume-uploads-smoke.ts"
-    "scripts/tests/hermetic/bullet-assist-smoke.ts"
-    "scripts/tests/hermetic/prompt-render-smoke.ts"
-    "scripts/tests/hermetic/job-watcher-classifier-regression-smoke.ts"
-    "scripts/tests/hermetic/job-watcher-scale-regression-smoke.ts"
-    "scripts/tests/hermetic/fetcher-partial-regression-smoke.ts"
-    "scripts/tests/hermetic/events-broadcast-regression-smoke.ts"
-    "scripts/tests/hermetic/contacts-smoke.ts"
-    "scripts/tests/hermetic/bulk-track-smoke.ts"
-    # Closed-jobs feature (2026-06-09): CLOSED status enum + Pillar C->A cascade
-    # + manual-close stickiness. (C0 audit lives under scripts/tests/probes/ — live, not gated.)
-    "scripts/tests/hermetic/application-status-enum-smoke.ts"
-    "scripts/tests/hermetic/cascade-close-smoke.ts"
-    "scripts/tests/hermetic/closed-posting-sticky-smoke.ts"
-    "scripts/tests/hermetic/compensation-smoke.ts"
-    "scripts/tests/hermetic/quiet-hours-smoke.ts"
-    "scripts/tests/hermetic/user-rate-limit-smoke.ts"
-    "scripts/tests/hermetic/email-message-smoke.ts"
-    "scripts/tests/hermetic/watchlist-hermetic-smoke.ts"
-    "scripts/tests/hermetic/watchlist-dedup-board-smoke.ts"
-    "scripts/tests/hermetic/duplicate-boards-smoke.ts"
-    "scripts/tests/hermetic/negative-filters-smoke.ts"
-    "scripts/tests/hermetic/track-as-application-smoke.ts"
-    "scripts/tests/hermetic/notification-dispatch-smoke.ts"
-    "scripts/tests/hermetic/stale-nudge-smoke.ts"
-    "scripts/tests/hermetic/posting-digest-smoke.ts"
-    "scripts/tests/hermetic/posting-parse-cache-smoke.ts"
-    "scripts/tests/hermetic/posting-spa-extract-smoke.ts"
-    "scripts/tests/hermetic/synthesize-skip-guard-smoke.ts"
-    "scripts/tests/hermetic/notification-negative-filter-smoke.ts"
-    "scripts/tests/hermetic/deadline-nudge-smoke.ts"
-    "scripts/tests/hermetic/find-app-by-company-smoke.ts"
-    "scripts/tests/hermetic/find-app-by-company-role-stale-key-smoke.ts"
-    "scripts/tests/hermetic/normalized-company-not-null-smoke.ts"
-    "scripts/tests/hermetic/company-directory-smoke.ts"
-    "scripts/tests/hermetic/watchlist-hydrate-smoke.ts"
-    "scripts/tests/hermetic/employment-type-smoke.ts"
-    "scripts/tests/hermetic/webhook-dedup-smoke.ts"
-    "scripts/tests/hermetic/ingest-retry-smoke.ts"
-    "scripts/tests/hermetic/normalize-company-smoke.ts"
-    "scripts/tests/hermetic/sender-domain-smoke.ts"
-    "scripts/tests/hermetic/self-notification-loop-guard-smoke.ts"
-    # postmortem §11 hardening (circuit breaker / tz-safe dates / undo handles)
-    "scripts/tests/hermetic/circuit-breaker-smoke.ts"
-    "scripts/tests/hermetic/datetime-normalize-smoke.ts"
-    "scripts/tests/hermetic/purge-application-events-smoke.ts"
-    "scripts/tests/hermetic/ingest-cross-track-dedup-smoke.ts"
-    "scripts/tests/hermetic/ingest-tiebreaker-role-guard-smoke.ts"
-    "scripts/tests/hermetic/ingest-roleless-merge-smoke.ts"
-    "scripts/tests/hermetic/match-role-subset-smoke.ts"
-    "scripts/tests/hermetic/stale-status-ingest-smoke.ts"
-    "scripts/tests/hermetic/notification-dedup-smoke.ts"
-    "scripts/tests/hermetic/gcal-idempotency-smoke.ts"
-    "scripts/tests/hermetic/webhook-prune-smoke.ts"
-    "scripts/tests/hermetic/gmail-watch-renew-smoke.ts"
-    "scripts/tests/hermetic/gmail-webhook-404-recovery-smoke.ts"
-    "scripts/tests/hermetic/app-race-dedup-smoke.ts"
-    "scripts/tests/hermetic/gemini-rate-limit-smoke.ts"
-    "scripts/tests/hermetic/llm-cache-smoke.ts"
-    "scripts/tests/hermetic/shared-cache-schema-drift-smoke.ts"
-    "scripts/tests/hermetic/research-shared-cache-smoke.ts"
-    "scripts/tests/hermetic/arxiv-shared-bucket-smoke.ts"
-    "scripts/tests/hermetic/fetcher-health-store-smoke.ts"
-    "scripts/tests/hermetic/logs-store-smoke.ts"
-    "scripts/tests/hermetic/cache-smoke.ts"
-    "scripts/tests/hermetic/classify-employment-type-smoke.ts"
-    "scripts/tests/hermetic/classify-pending-sweep-smoke.ts"
-    "scripts/tests/hermetic/job-watcher-negative-filter-ingest-smoke.ts"
-    "scripts/tests/hermetic/job-watcher-crawl-pacing-smoke.ts"
-    "scripts/tests/hermetic/discovery-suggest-smoke.ts"
-    "scripts/tests/hermetic/location-expansion-smoke.ts"
-    # M8.4 / M8.5 Wave 1
-    "scripts/tests/hermetic/pipeline-picker-smoke.ts"
-    "scripts/tests/hermetic/resume-from-application-smoke.ts"
-    "scripts/tests/hermetic/resume-list-smoke.ts"
-    "scripts/tests/hermetic/auto-tag-merge-smoke.ts"
-    "scripts/tests/hermetic/bullet-remove-tag-smoke.ts"
-    # M8.5 Wave 2
-    "scripts/tests/hermetic/auto-tag-smoke.ts"
-    "scripts/tests/hermetic/resume-rewrite-fold-in-smoke.ts"
-    # M8.4 polish (canonical resume naming)
-    "scripts/tests/hermetic/resume-labels-smoke.ts"
-    # Find Roles edit (group-by-search)
-    "scripts/tests/hermetic/find-roles-grouping-smoke.ts"
-    # M7.7 — bullet tag/AI UX refactor
-    "scripts/tests/hermetic/bullet-pin-tag-smoke.ts"
-    "scripts/tests/hermetic/bullet-rewrite-text-only-smoke.ts"
-    "scripts/tests/hermetic/bullet-tag-suggest-smoke.ts"
-    # M7.8 — per-entity scratchpad (profile half)
-    "scripts/tests/hermetic/scratchpad-patch-smoke.ts"
-    "scripts/tests/hermetic/bullet-assist-scratchpad-smoke.ts"
-    # M8.6 — resume-gen scratchpad synthesis
-    "scripts/tests/hermetic/scratchpad-synth-smoke.ts"
-    # M7.9 — profile tagline + LLM draft
-    "scripts/tests/hermetic/tagline-patch-smoke.ts"
-    "scripts/tests/hermetic/tagline-draft-smoke.ts"
-    "scripts/tests/hermetic/resume-tagline-smoke.ts"
-    # 1-page resume prune
-    "scripts/tests/hermetic/resume-one-page-prune-smoke.ts"
-    # Current/most-recent education is always included + leads (2026-05-31)
-    "scripts/tests/hermetic/resume-current-education-smoke.ts"
-    # Multi-role per company (2026-05-27 fix for track-as-application 500)
-    "scripts/tests/hermetic/normalize-role-smoke.ts"
-    "scripts/tests/hermetic/track-as-application-multi-role-smoke.ts"
-    "scripts/tests/hermetic/ingest-multi-role-per-company-smoke.ts"
-    # Cross-watchlist posting dedup (2026-05-28): feed collapses + flip-siblings
-    # on track, both keyed on normalizedCompany+normalizedRole (URL/title drift)
-    "scripts/tests/hermetic/track-as-application-sibling-flip-smoke.ts"
-    "scripts/tests/hermetic/watchlist-delete-canon-cascade-smoke.ts"
-    # Profile extras filter (2026-05-27 Languages/Hobbies always show)
-    "scripts/tests/hermetic/profile-extras-filter-smoke.ts"
-    # API reference stays in sync with route code (2026-05-28)
-    "scripts/tests/hermetic/api-docs-smoke.ts"
-    # Canonical resumes ("Canons") — keyword split, repo CRUD, entity-scoped
-    # staleness (2026-05-30, docs/archive/canonical-resumes.html §7)
-    "scripts/tests/hermetic/canon-keyword-split-smoke.ts"
-    # Watchlist keyword list → LinkedIn/Indeed boolean OR query (comma-list UX,
-    # OR/quotes added only at fetch time — lib/watchlists/keyword-query.ts)
-    "scripts/tests/hermetic/keyword-query-smoke.ts"
-    "scripts/tests/hermetic/canon-crud-smoke.ts"
-    "scripts/tests/hermetic/canon-staleness-smoke.ts"
-    "scripts/tests/hermetic/canon-specialize-smoke.ts"
-    # Manual resume-builder data layer — resolveSelection/resolveExtras +
-    # getCanonSelection/saveCanonSelection round-trip (docs/archive/resume-manual-builder.html P4.1)
-    "scripts/tests/hermetic/canon-manual-selection-smoke.ts"
+# Suites are discovered by glob: every scripts/tests/hermetic/*.ts runs on
+# every push, in deterministic (sorted) order, so a new smoke auto-registers
+# the moment the file lands — no hand-maintained list to forget to update,
+# and no "skip (not found)" path by construction (the glob only yields files
+# that exist). The ONLY way a hermetic file stays out of the gate is an
+# explicit entry in EXCLUDED below, with the reason documented inline.
+#
+# EXCLUDED — basename + REASON (keep both; an undocumented exclusion is a bug):
+#   resume-render-smoke.ts  — requires a local Chrome/Chromium install for the
+#                             PDF render path; not hermetic on machines without
+#                             it. Run manually: npx tsx scripts/tests/hermetic/resume-render-smoke.ts
+#   profile-repo-smoke.ts   — mutates dev.db (writes real Profile rows through
+#                             the live Prisma dev database); unsafe to run on
+#                             every push against a working dev DB.
+EXCLUDED=(
+    "resume-render-smoke.ts"
+    "profile-repo-smoke.ts"
 )
 
-for suite in "${SUITES[@]}"; do
-    if [ ! -f "$suite" ]; then
-        echo "  ⚠ skip: $suite (not found)"
+is_excluded() {
+    local base="$1" ex
+    for ex in "${EXCLUDED[@]}"; do
+        if [ "$base" = "$ex" ]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# LC_ALL=C pins glob/sort collation so the order is identical on every machine.
+SUITES=()
+while IFS= read -r suite; do
+    if is_excluded "$(basename "$suite")"; then
         continue
     fi
+    SUITES+=("$suite")
+done < <(ls scripts/tests/hermetic/*.ts 2>/dev/null | LC_ALL=C sort)
+
+if [ "${#SUITES[@]}" -eq 0 ]; then
+    echo "  ✗ No hermetic suites found under scripts/tests/hermetic/ — refusing to pass an empty gate."
+    exit 1
+fi
+
+for suite in "${SUITES[@]}"; do
     echo "  ▸ $suite"
     if ! npx tsx "$suite" > /tmp/mc-pre-push.log 2>&1; then
         echo "  ✗ FAILED — last 30 lines:"
