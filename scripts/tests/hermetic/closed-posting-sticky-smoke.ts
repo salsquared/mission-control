@@ -22,6 +22,12 @@
  *       assert the row is still 'closed' afterward — so a manually-closed
  *       posting that reappears in the source feed is NOT revived to 'new'.
  *
+ *   (c) OQ5a — the same seen-again shape never clears pendingClosedAt either:
+ *       fetch-presence is NOT alive evidence (on aggregator feeds a card
+ *       lingers in search results after the posting closes), so a row mid-way
+ *       through the two-tick close confirmation keeps its pending stamp when
+ *       the fetch re-sees it. Only an explicit "alive" probe verdict clears it.
+ *
  * Throwaway watchlist + postings with unique ids (concurrent-safe); full
  * cleanup in finally.
  *
@@ -157,6 +163,36 @@ async function main() {
             fail("(b) closed row reappeared in stale selection after lastSeenAt bump");
         } else {
             pass("(b) closed row stays excluded from stale selection after the bump");
+        }
+
+        // ── (c) Seen-again preserves pendingClosedAt (OQ5a) ─────────────────
+        // A 'new' row that took its first closed probe verdict last tick is
+        // mid-confirmation: pendingClosedAt set, status untouched. The watcher's
+        // seen-again update (lastSeenAt only) must not clear the stamp —
+        // fetch-presence isn't alive evidence.
+        const firstStrikeAt = new Date(Date.now() - 60 * 60 * 1000);
+        await prisma.jobPosting.update({
+            where: { id: newId },
+            data: { pendingClosedAt: firstStrikeAt },
+        });
+        // Replicate the watcher's seen-again update shape verbatim.
+        await prisma.jobPosting.update({
+            where: { id: newId },
+            data: { lastSeenAt: new Date() },
+        });
+        const pendingAfterSeen = await prisma.jobPosting.findUniqueOrThrow({
+            where: { id: newId },
+            select: { status: true, pendingClosedAt: true },
+        });
+        if (pendingAfterSeen.pendingClosedAt?.getTime() !== firstStrikeAt.getTime()) {
+            fail("(c) seen-again cleared/changed pendingClosedAt — fetch-presence must not count as alive evidence", pendingAfterSeen.pendingClosedAt);
+        } else {
+            pass("(c) seen-again preserves pendingClosedAt (fetch-presence is not alive evidence)");
+        }
+        if (pendingAfterSeen.status !== "new") {
+            fail(`(c) pending row's status changed by seen-again — expected 'new', got '${pendingAfterSeen.status}'`);
+        } else {
+            pass("(c) pending row stays status='new' until a second closed verdict confirms");
         }
     } finally {
         // Postings cascade-delete with the watchlist; delete explicitly anyway

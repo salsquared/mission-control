@@ -619,6 +619,14 @@ model JobPosting {
   // sweep can select status="new" ORDER BY lastProbedAt ASC (nulls first) and
   // stamp it on everything it probes. Null = never probed (sorts first).
   lastProbedAt         DateTime?
+  // Closed-jobs P3.2 (OQ5a, 2026-06-12): first closed verdict awaiting
+  // confirmation; second consecutive closed verdict flips status. Set by the
+  // job-watcher when a probe returns "closed" on a row not already pending;
+  // cleared by an explicit "alive" verdict (fetch-presence is NOT alive
+  // evidence on aggregator feeds, so it never clears this); "unknown" leaves
+  // it untouched. Manual feed-close (postings PATCH) bypasses this entirely —
+  // user action confirms itself.
+  pendingClosedAt      DateTime?
   raw                  String // JSON of the raw extracted fields, for debugging
 
   watchlist   Watchlist    @relation(fields: [watchlistId], references: [id], onDelete: Cascade)

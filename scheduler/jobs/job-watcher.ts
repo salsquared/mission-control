@@ -363,6 +363,11 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             // by cross-watchlist reuse above. Promote a null stored value
             // to a non-null raw value when the heuristic / cross-watchlist
             // reuse improves later.
+            //
+            // OQ5a: deliberately do NOT clear pendingClosedAt here —
+            // fetch-presence is not alive evidence (on aggregator feeds a
+            // card lingers in search results after the posting closes).
+            // Only an explicit "alive" probe verdict clears the stamp.
             await prisma.jobPosting.update({
                 where: { id: existing.id },
                 data: {
@@ -480,6 +485,16 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // fetch-but-live postings (LinkedIn's 24h window) never false-close.
     // "unknown" results leave the row alone; the next tick re-probes.
     //
+    // OQ5a (P3.2, 2026-06-12): a single "closed" verdict no longer flips the
+    // row — it requires TWO CONSECUTIVE closed verdicts across ticks. The
+    // first stamps JobPosting.pendingClosedAt (no status change, no cascade,
+    // not counted in `closed`); the second, on a still-pending row, confirms
+    // the close. An explicit "alive" verdict clears the pending stamp;
+    // fetch-presence does NOT (on aggregator feeds a listing sighting isn't
+    // alive evidence); "unknown" preserves it (absence of evidence neither
+    // confirms nor clears). Manual feed-close (postings PATCH) bypasses this
+    // entirely — user action confirms itself.
+    //
     // SAFETY 1 — skip on empty fetch: a benign source hiccup (SPA mis-
     // render, CDN flap) would otherwise mark every existing row stale.
     // SAFETY 2 — skip on partial fetch: pagination broke mid-crawl; the
@@ -510,7 +525,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 status: { notIn: ["closed", "hidden"] },
                 lastSeenAt: { lt: sixHoursAgo },
             },
-            select: { id: true, externalId: true, sourceUrl: true },
+            select: { id: true, externalId: true, sourceUrl: true, pendingClosedAt: true },
         });
         const toProbe = staleCandidates.filter(c => !seenExternalIds.has(c.externalId));
         for (const c of toProbe) staleProbedExternalIds.add(c.externalId);
@@ -519,26 +534,50 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 toProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl })),
                 watchlist.kind as WatchlistKind,
             );
+            // OQ5a two-tick partition: a closed verdict on a row already
+            // stamped pendingClosedAt (a prior tick's verdict) CONFIRMS the
+            // close; on an unstamped row it's the FIRST STRIKE — stamp only.
             const confirmedClosedIds: string[] = [];
+            const firstStrikeClosedIds: string[] = [];
             const aliveIds: string[] = [];
             for (const c of toProbe) {
                 const verdict = probeResults.get(c.externalId) ?? "unknown";
-                if (verdict === "closed") confirmedClosedIds.push(c.id);
-                else if (verdict === "alive") aliveIds.push(c.id);
-                // "unknown" → leave the row alone; the next tick re-evaluates.
+                if (verdict === "closed") {
+                    if (c.pendingClosedAt != null) confirmedClosedIds.push(c.id);
+                    else firstStrikeClosedIds.push(c.id);
+                } else if (verdict === "alive") aliveIds.push(c.id);
+                // "unknown" → leave the row alone (pendingClosedAt untouched);
+                // the next tick re-evaluates.
             }
             // Race-guard: a probe round can take minutes on LinkedIn
             // (30 probes × 1.5 s = 45 s) or seconds on Workday. If during
             // the probe window the user clicks "Hide" on a row, their
             // manual action must beat the gate. Re-assert "still non-
             // terminal" in the WHERE so a concurrent user UPDATE wins.
+            if (firstStrikeClosedIds.length > 0) {
+                // First closed verdict — stamp pendingClosedAt only. No status
+                // change, no cascade, no closed-count, no notification: the
+                // next tick's verdict decides.
+                await prisma.jobPosting.updateMany({
+                    where: {
+                        id: { in: firstStrikeClosedIds },
+                        status: { notIn: ["closed", "hidden"] },
+                    },
+                    data: { pendingClosedAt: runAt },
+                });
+            }
             if (confirmedClosedIds.length > 0) {
                 const closeResult = await prisma.jobPosting.updateMany({
                     where: {
                         id: { in: confirmedClosedIds },
                         status: { notIn: ["closed", "hidden"] },
+                        // Re-assert still-pending: a concurrent process (manual
+                        // run in the Next.js tier vs the scheduler) may have
+                        // cleared the stamp on alive evidence during the probe
+                        // window — its evidence wins.
+                        pendingClosedAt: { not: null },
                     },
-                    data: { status: "closed", removedAt: runAt },
+                    data: { status: "closed", removedAt: runAt, pendingClosedAt: null },
                 });
                 closed = closeResult.count;
                 // Pillar C → A cascade (OQ7/OQ8): close linked INTERESTED cards
@@ -558,15 +597,17 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                         id: { in: aliveIds },
                         status: { notIn: ["closed", "hidden"] },
                     },
-                    data: { lastSeenAt: runAt },
+                    // Explicit alive evidence clears a pending close stamp.
+                    data: { lastSeenAt: runAt, pendingClosedAt: null },
                 });
                 refreshedAlive = aliveResult.count;
             }
-            const skipped = toProbe.length - confirmedClosedIds.length - aliveIds.length;
-            if (skipped > 0 || refreshedAlive > 0 || closed > 0) {
+            const skipped = toProbe.length - confirmedClosedIds.length - firstStrikeClosedIds.length - aliveIds.length;
+            if (skipped > 0 || refreshedAlive > 0 || closed > 0 || firstStrikeClosedIds.length > 0) {
                 console.info(
                     `[job-watcher] probe-gate watchlist=${watchlistId} kind=${watchlist.kind}: ` +
-                    `candidates=${toProbe.length} closed=${closed} alive=${refreshedAlive} unknown=${skipped}`,
+                    `candidates=${toProbe.length} closed=${closed} pending=${firstStrikeClosedIds.length} ` +
+                    `alive=${refreshedAlive} unknown=${skipped}`,
                 );
             }
         }
@@ -584,10 +625,13 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         // PROBE_PROFILES concurrency/delay + probeBatch's 429-abort flag +
         // arXiv-style cooldown awareness (all internal to probeBatch).
         //
-        // Verdict handling is IDENTICAL to the stale path:
-        //   closed  → status="closed" + the Pillar C → A cascade (source:probe)
-        //   alive   → bump lastSeenAt
-        //   unknown → leave the row alone.
+        // Verdict handling is IDENTICAL to the stale path (incl. the OQ5a
+        // two-tick confirmation):
+        //   closed  → first verdict stamps pendingClosedAt; a second
+        //             consecutive one flips status="closed" + the Pillar
+        //             C → A cascade (source:probe)
+        //   alive   → bump lastSeenAt + clear pendingClosedAt
+        //   unknown → leave the row alone (pendingClosedAt preserved).
         // OQ6a: lastProbedAt is stamped on EVERY candidate selected into the
         // take-window — probed AND skipped — so the column means "last
         // considered by a probe sweep", not "actually probed". Stamping the
@@ -603,7 +647,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 // never-considered row (lastProbedAt = NULL) is picked up first.
                 orderBy: { lastProbedAt: "asc" },
                 take: c3Budget,
-                select: { id: true, externalId: true, sourceUrl: true },
+                select: { id: true, externalId: true, sourceUrl: true, pendingClosedAt: true },
             });
             // Within-tick skip rules:
             //   - staleProbedExternalIds (ALL kinds): the stale-probe already
@@ -627,23 +671,40 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                     watchlist.kind as WatchlistKind,
                     { profile: { maxPerTick: c3Budget } },
                 );
-                const c3ClosedIds: string[] = [];
+                // OQ5a two-tick partition — same rule as the stale path above.
+                const c3ConfirmedClosedIds: string[] = [];
+                const c3FirstStrikeIds: string[] = [];
                 const c3AliveIds: string[] = [];
                 for (const c of c3ToProbe) {
                     const verdict = c3Results.get(c.externalId) ?? "unknown";
-                    if (verdict === "closed") c3ClosedIds.push(c.id);
-                    else if (verdict === "alive") c3AliveIds.push(c.id);
-                    // "unknown" → leave the row; lastProbedAt stamped below.
+                    if (verdict === "closed") {
+                        if (c.pendingClosedAt != null) c3ConfirmedClosedIds.push(c.id);
+                        else c3FirstStrikeIds.push(c.id);
+                    } else if (verdict === "alive") c3AliveIds.push(c.id);
+                    // "unknown" → leave the row (pendingClosedAt preserved);
+                    // lastProbedAt stamped below.
                 }
                 let c3Closed = 0;
-                if (c3ClosedIds.length > 0) {
+                if (c3FirstStrikeIds.length > 0) {
+                    // First closed verdict — stamp only; the next sweep decides.
+                    await prisma.jobPosting.updateMany({
+                        where: { id: { in: c3FirstStrikeIds }, status: { notIn: ["closed", "hidden"] } },
+                        data: { pendingClosedAt: runAt },
+                    });
+                }
+                if (c3ConfirmedClosedIds.length > 0) {
                     const r = await prisma.jobPosting.updateMany({
-                        where: { id: { in: c3ClosedIds }, status: { notIn: ["closed", "hidden"] } },
-                        data: { status: "closed", removedAt: runAt },
+                        where: {
+                            id: { in: c3ConfirmedClosedIds },
+                            status: { notIn: ["closed", "hidden"] },
+                            // Same concurrent-alive race-guard as the stale path.
+                            pendingClosedAt: { not: null },
+                        },
+                        data: { status: "closed", removedAt: runAt, pendingClosedAt: null },
                     });
                     c3Closed = r.count;
                     closed += c3Closed;
-                    const cascade = await closeApplicationsForClosedPostings(c3ClosedIds, {
+                    const cascade = await closeApplicationsForClosedPostings(c3ConfirmedClosedIds, {
                         at: runAt,
                         source: "probe",
                     }).catch(e => {
@@ -655,14 +716,16 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 if (c3AliveIds.length > 0) {
                     await prisma.jobPosting.updateMany({
                         where: { id: { in: c3AliveIds }, status: { notIn: ["closed", "hidden"] } },
-                        data: { lastSeenAt: runAt },
+                        // Explicit alive evidence clears a pending close stamp.
+                        data: { lastSeenAt: runAt, pendingClosedAt: null },
                     });
                 }
-                const c3Unknown = c3ToProbe.length - c3ClosedIds.length - c3AliveIds.length;
-                if (c3Closed > 0 || c3Unknown > 0 || c3AliveIds.length > 0) {
+                const c3Unknown = c3ToProbe.length - c3ConfirmedClosedIds.length - c3FirstStrikeIds.length - c3AliveIds.length;
+                if (c3Closed > 0 || c3Unknown > 0 || c3AliveIds.length > 0 || c3FirstStrikeIds.length > 0) {
                     console.info(
                         `[job-watcher] C3 re-probe watchlist=${watchlistId} kind=${watchlist.kind}: ` +
-                        `probed=${c3ToProbe.length} closed=${c3Closed} alive=${c3AliveIds.length} unknown=${c3Unknown}`,
+                        `probed=${c3ToProbe.length} closed=${c3Closed} pending=${c3FirstStrikeIds.length} ` +
+                        `alive=${c3AliveIds.length} unknown=${c3Unknown}`,
                     );
                 }
             }

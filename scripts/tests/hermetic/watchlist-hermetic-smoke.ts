@@ -185,8 +185,27 @@ async function main() {
         else pass("third run: 1 new posting");
         if (r3.seenAgain !== 2) fail(`third run: expected 2 seenAgain, got ${r3.seenAgain}`);
         else pass("third run: 2 seenAgain");
-        if (r3.closed !== 1) fail(`third run: expected 1 closed (Designer), got ${r3.closed}`);
-        else pass("third run: 1 closed posting");
+        // OQ5a two-tick close confirmation: the first closed probe verdict
+        // (fixture 404s the Designer URL) stamps pendingClosedAt only — no
+        // status flip, no closed-count.
+        if (r3.closed !== 0) fail(`third run: expected 0 closed (first strike is pending-only, OQ5a), got ${r3.closed}`);
+        else pass("third run: 0 closed — first closed verdict stamps pending only (OQ5a)");
+
+        const designerPending = await prisma.jobPosting.findUnique({ where: { id: designer.id } });
+        if (designerPending?.status !== "new") fail(`Designer should still be status=new after first strike, got ${designerPending?.status}`);
+        else pass("Designer still status=new after first closed verdict");
+        if (!designerPending?.pendingClosedAt) fail("Designer pendingClosedAt not stamped on first closed verdict");
+        else pass("Designer pendingClosedAt stamped on first closed verdict");
+        if (designerPending?.removedAt) fail("Designer removedAt must not be set on first strike");
+        else pass("Designer removedAt still null after first strike");
+
+        // ─── Fourth run: second consecutive closed verdict → confirmed close ───
+        const r4 = await runWatchlist(watchlistId);
+        if (r4.error) return fail("fourth run errored", r4.error);
+        if (r4.newPostings !== 0) fail(`fourth run: expected 0 new, got ${r4.newPostings}`);
+        else pass("fourth run: 0 new (steady state)");
+        if (r4.closed !== 1) fail(`fourth run: expected 1 closed (Designer confirmed, OQ5a), got ${r4.closed}`);
+        else pass("fourth run: 1 closed — second consecutive verdict confirms (OQ5a)");
 
         // Verify the Designer posting is now closed
         const designerAfter = await prisma.jobPosting.findUnique({ where: { id: designer.id } });
@@ -194,14 +213,16 @@ async function main() {
         else pass("Designer posting now status=closed");
         if (!designerAfter?.removedAt) fail("Designer removedAt not set");
         else pass("Designer removedAt set");
+        if (designerAfter?.pendingClosedAt) fail("Designer pendingClosedAt should be cleared on the confirmed flip");
+        else pass("Designer pendingClosedAt cleared on the confirmed flip");
 
-        // ─── Fourth run: same as third, no new actions ───
-        const r4 = await runWatchlist(watchlistId);
-        if (r4.error) return fail("fourth run errored", r4.error);
-        if (r4.newPostings !== 0) fail(`fourth run: expected 0 new, got ${r4.newPostings}`);
-        else pass("fourth run: 0 new (steady state)");
-        if (r4.closed !== 0) fail(`fourth run: expected 0 closed (already closed), got ${r4.closed}`);
-        else pass("fourth run: already-closed posting not re-closed");
+        // ─── Fifth run: same fixture, no new actions ───
+        const r4b = await runWatchlist(watchlistId);
+        if (r4b.error) return fail("steady-state run errored", r4b.error);
+        if (r4b.newPostings !== 0) fail(`steady-state run: expected 0 new, got ${r4b.newPostings}`);
+        else pass("steady-state run: 0 new");
+        if (r4b.closed !== 0) fail(`steady-state run: expected 0 closed (already closed), got ${r4b.closed}`);
+        else pass("steady-state run: already-closed posting not re-closed");
 
         // ─── Empty-fetch safety: fixture returns 0 postings → must NOT mass-close ───
         // This is the bug from the code review: when seenExternalIds is empty,

@@ -22,6 +22,13 @@
  *       detail page flips the row to status="closed" even though the search
  *       feed still lists it (listing-presence ≠ detail-page-open).
  *
+ *   (c) OQ5a — two-tick close confirmation. The first "closed" verdict only
+ *       stamps pendingClosedAt (status stays "new", RunResult.closed === 0);
+ *       the second consecutive one flips the row. The tick-2 fetch re-seeing
+ *       the row (seen-again lastSeenAt bump) does NOT clear the pending stamp
+ *       — fetch-presence isn't alive evidence on an aggregator feed. An
+ *       "alive" verdict (row B) keeps pendingClosedAt null throughout.
+ *
  * Throwaway user + watchlists + postings with unique ids (concurrent-safe);
  * full cleanup + global-negative-filter restore in finally.
  */
@@ -264,35 +271,75 @@ async function main() {
             });
         }
 
+        // ── aggregator tick 1 — first closed verdict stamps pending only ──
         const probeLogMark3 = fetchLog.length;
         const rLi = await runWatchlist(liWatchlist.id);
-        if (rLi.error) fail(`(b) aggregator tick errored: ${rLi.error}`);
-        else pass("(b) aggregator tick ran clean");
+        if (rLi.error) fail(`(b) aggregator tick 1 errored: ${rLi.error}`);
+        else pass("(b) aggregator tick 1 ran clean");
 
         const liProbes = fetchCountSince(probeLogMark3, "/jobs/view/");
         if (liProbes === 2) pass("(b) OQ7a aggregator: BOTH fetch-seen rows were GET-probed (seen-exclusion dropped for linkedin)");
         else fail(`(b) OQ7a aggregator: expected 2 posting-URL probes, got ${liProbes}`);
 
-        const rowA = await prisma.jobPosting.findUnique({
+        let rowA = await prisma.jobPosting.findUnique({
             where: { watchlistId_externalId: { watchlistId: liWatchlist.id, externalId: liRows[0].externalId } },
         });
-        const rowB = await prisma.jobPosting.findUnique({
+        let rowB = await prisma.jobPosting.findUnique({
             where: { watchlistId_externalId: { watchlistId: liWatchlist.id, externalId: liRows[1].externalId } },
         });
-        if (rowA?.status === "closed" && rowA.removedAt != null) {
-            pass("(b) OQ7a aggregator: still-listed posting with closed-marker detail page flipped to status='closed'");
+        if (rowA?.status === "new" && rowA.pendingClosedAt != null) {
+            pass("(c) OQ5a tick 1: closed-marker row got pendingClosedAt stamped, status still 'new' (no one-tick flip)");
         } else {
-            fail(`(b) OQ7a aggregator: expected row A closed, got status='${rowA?.status}' removedAt=${rowA?.removedAt}`);
+            fail(`(c) OQ5a tick 1: expected row A status='new' + pendingClosedAt set, got status='${rowA?.status}' pendingClosedAt=${rowA?.pendingClosedAt}`);
         }
-        if (rowB?.status === "new") pass("(b) OQ7a aggregator: live posting stays status='new'");
-        else fail(`(b) OQ7a aggregator: expected row B 'new', got '${rowB?.status}'`);
+        if (rowA?.removedAt == null) pass("(c) OQ5a tick 1: removedAt NOT set on first strike");
+        else fail("(c) OQ5a tick 1: removedAt set on first strike — should wait for confirmation");
+        if (rowB?.status === "new" && rowB.pendingClosedAt == null) {
+            pass("(c) OQ5a tick 1: alive row stays 'new' with pendingClosedAt null");
+        } else {
+            fail(`(c) OQ5a tick 1: expected row B 'new' + null pending, got status='${rowB?.status}' pendingClosedAt=${rowB?.pendingClosedAt}`);
+        }
         if (rowA?.lastProbedAt != null && rowB?.lastProbedAt != null) {
             pass("(b) OQ6a aggregator: both probed rows got lastProbedAt stamped");
         } else {
             fail("(b) OQ6a aggregator: probed rows missing lastProbedAt stamp");
         }
-        if (rLi.closed === 1) pass("(b) RunResult.closed === 1 (C3 close counted)");
-        else fail(`(b) RunResult.closed expected 1, got ${rLi.closed}`);
+        if (rLi.closed === 0) pass("(c) OQ5a tick 1: RunResult.closed === 0 (first strike not counted as a close)");
+        else fail(`(c) OQ5a tick 1: RunResult.closed expected 0, got ${rLi.closed}`);
+
+        // ── aggregator tick 2 — second consecutive closed verdict confirms ──
+        // The search feed still lists row A, so the tick-2 fetch re-sees it
+        // (seen-again lastSeenAt bump). The flip below therefore also proves
+        // fetch-presence does NOT clear pendingClosedAt.
+        const probeLogMark4 = fetchLog.length;
+        const rLi2 = await runWatchlist(liWatchlist.id);
+        if (rLi2.error) fail(`(c) aggregator tick 2 errored: ${rLi2.error}`);
+        else pass("(c) aggregator tick 2 ran clean");
+
+        const liProbes2 = fetchCountSince(probeLogMark4, "/jobs/view/");
+        if (liProbes2 === 2) pass("(c) OQ5a tick 2: both rows GET-probed again (pending row stays in the C3 rotation)");
+        else fail(`(c) OQ5a tick 2: expected 2 posting-URL probes, got ${liProbes2}`);
+
+        rowA = await prisma.jobPosting.findUnique({
+            where: { watchlistId_externalId: { watchlistId: liWatchlist.id, externalId: liRows[0].externalId } },
+        });
+        rowB = await prisma.jobPosting.findUnique({
+            where: { watchlistId_externalId: { watchlistId: liWatchlist.id, externalId: liRows[1].externalId } },
+        });
+        if (rowA?.status === "closed" && rowA.removedAt != null) {
+            pass("(c) OQ5a tick 2: second consecutive closed verdict flipped the still-listed row to status='closed' (fetch-presence did not clear pending)");
+        } else {
+            fail(`(c) OQ5a tick 2: expected row A closed, got status='${rowA?.status}' removedAt=${rowA?.removedAt}`);
+        }
+        if (rowA?.pendingClosedAt == null) pass("(c) OQ5a tick 2: pendingClosedAt cleared on the confirmed flip");
+        else fail(`(c) OQ5a tick 2: pendingClosedAt still set after flip: ${rowA?.pendingClosedAt}`);
+        if (rowB?.status === "new" && rowB.pendingClosedAt == null) {
+            pass("(c) OQ5a tick 2: live posting stays status='new', pendingClosedAt still null");
+        } else {
+            fail(`(c) OQ5a tick 2: expected row B 'new' + null pending, got status='${rowB?.status}' pendingClosedAt=${rowB?.pendingClosedAt}`);
+        }
+        if (rLi2.closed === 1) pass("(c) OQ5a tick 2: RunResult.closed === 1 (only the ACTUAL flip counted)");
+        else fail(`(c) OQ5a tick 2: RunResult.closed expected 1, got ${rLi2.closed}`);
 
         // ── membership sanity: the aggregator set is exactly {linkedin, indeed} ──
         if (AGGREGATOR_KINDS.has("linkedin") && AGGREGATOR_KINDS.has("indeed") && AGGREGATOR_KINDS.size === 2) {
