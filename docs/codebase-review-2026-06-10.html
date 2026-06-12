@@ -1,0 +1,732 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Codebase Review — 2026-06-10</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Codebase Review — 2026-06-10</h1>
+  <p class="subtitle">Full-codebase audit: security, correctness bugs, operational risks, and refactor opportunities. Run as five parallel review agents (API surface + auth · core <code>lib/</code> · scheduler + scripts · frontend · config/schema/deps), with every high-severity claim spot-verified against source before inclusion. State at review time: branch <code>feat/closed-jobs</code> @ <code>99ccb5a</code> (PR&nbsp;#1 open to <code>main</code>) plus uncommitted working-tree churn in <code>lib/notifications/*</code>, <code>lib/calendar/sync.ts</code>, <code>lib/applications/normalize-datetime.ts</code>.</p>
+
+  <div class="callout tip"><strong>Headline.</strong> The codebase held up well: every API route is auth-guarded, the Pub/Sub OIDC verification is real, the LAN-bypass guard resists Host/XFF spoofing, SSRF/path-traversal guards exist and are used, and Zod covers every mutating route. The findings below are the exceptions — 3 high-severity security items, 3 high-severity bugs (two of them on the open PR&nbsp;#1), and a tail of mediums/lows.</div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#scope">Scope &amp; method</a></li>
+      <li><a href="#security">Security findings</a></li>
+      <li><a href="#bugs">Correctness bugs</a></li>
+      <li><a href="#ops">Operational &amp; process risks</a></li>
+      <li><a href="#refactor">Refactor &amp; cleanup</a></li>
+      <li><a href="#solid">Verified solid</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#fix-order">Suggested fix order</a></li>
+    </ol>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="scope">Scope &amp; method</h2></summary>
+    <div class="section-body">
+      <h3>Review lanes</h3>
+      <p>Five read-only agents swept disjoint slices of the repo; their findings were then deduplicated, and every HIGH claim was re-verified by reading the cited source lines directly (none of the HIGHs below is relayed unverified). Two findings were independently reported by two different lanes (the bot-wall false-close), which raised confidence before verification.</p>
+      <table>
+        <thead>
+          <tr><th>Lane</th><th>Scope</th><th>Headline finding</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>API surface + auth</td><td>every <code>app/api/**/route.ts</code>, <code>lib/auth.ts</code>, <code>lib/auth-guards.ts</code>, webhook OIDC</td><td>no sign-in allowlist + 4 unscoped global tables</td></tr>
+          <tr><td>Core <code>lib/</code></td><td>ingest, notifications, caches, rate limits, liveness, email/calendar</td><td>side-effect checkpoints stamp on failure</td></tr>
+          <tr><td>Scheduler + scripts</td><td><code>scheduler/</code>, <code>pre-push.sh</code>, <code>backup-db.sh</code>, utility scripts</td><td>C3 re-probe sweep inert + cursor jam</td></tr>
+          <tr><td>Frontend</td><td><code>components/</code>, store, React Query, a11y, conventions</td><td>scraped-SVG XSS on the AI dash</td></tr>
+          <tr><td>Config / schema / deps</td><td><code>prisma/schema.prisma</code>, <code>next.config.ts</code>, <code>package.json</code>, secrets hygiene, <code>npm audit</code></td><td>Next 16.1.1 pinned behind security fixes</td></tr>
+        </tbody>
+      </table>
+      <h3>Severity scale</h3>
+      <p><strong>HIGH</strong> — exploitable from the public tunnel, or user-visible data corruption / silent feature failure. <strong>MEDIUM</strong> — real but bounded by circumstance (single-user blast radius, needs a precondition, or degrades rather than breaks). <strong>LOW</strong> — latent, cosmetic, or accepted-by-design but worth recording.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="security">Security findings</h2></summary>
+    <div class="section-body">
+
+      <h3>Open sign-in + unscoped global tables</h3>
+      <p><strong>HIGH</strong> · <code>lib/auth.ts:40-78</code> · The <code>signIn</code> callback returns <code>true</code> unconditionally — there is no email/domain allowlist. Any Google account on the internet can complete OAuth through <code>ms-prod.salsquared.xyz</code> and get a valid NextAuth session minted by <code>PrismaAdapter</code>.</p>
+      <p>User-scoped data (applications, resumes, profile, Gmail-derived rows) is <em>not</em> exposed — those routes filter by <code>session.user.id</code>. But four tables have <strong>no <code>userId</code> column</strong>: <code>Task</code>, <code>LifeGoal</code>, <code>GlobalSetting</code>, <code>SavedPaper</code> (<code>prisma/schema.prisma:498/518/69/13</code>). Any authenticated stranger can read and mutate the owner's tasks, life goals, dash settings, and saved papers via <code>/api/tasks</code>, <code>/api/goals</code>, <code>/api/settings</code>, <code>/api/research/saved</code> — and burn Gemini/Gmail quota on the un-rate-limited <code>/api/research/import</code> and <code>/api/applications/backfill</code>.</p>
+      <div class="callout danger"><strong>Fix.</strong> Gate sign-in on an owner allowlist (mechanism: OQ1) and scope the four global tables per <code>userId</code> (scope: OQ2) — both decided in §7. Decision-free regardless: add <code>checkUserRateLimit</code> to <code>research/import</code> + <code>backfill</code>.</div>
+
+      <h3>Next.js 16.1.1 pinned behind security fixes</h3>
+      <p><strong>HIGH</strong> · <code>package.json:61</code> · <code>next</code> is exact-pinned at <code>16.1.1</code>; <code>npm audit</code> reports a batch of advisories fixed in 16.2.x — RSC cache poisoning (GHSA-wfc6-r584-vfw7), XSS via CSP nonces, request smuggling in rewrites, SSRF via WebSocket upgrades, several DoS. The app is publicly reachable through the Cloudflare tunnel, so the cache-poisoning/XSS/DoS class is live. The middleware-bypass advisories do <em>not</em> apply (no <code>middleware.ts</code> — auth is route-level).</p>
+      <p><strong>Fix:</strong> bump <code>next</code> + <code>eslint-config-next</code> to 16.2.9 (a minor within v16) and re-run the hermetic gate. Never run <code>npm audit fix --force</code> here — it would downgrade <code>next-auth</code> to v3.</p>
+
+      <h3>Scraped-SVG XSS on the AI dash</h3>
+      <p><strong>HIGH</strong> · <code>app/api/ai/llmleaderboard/route.ts:77</code> → <code>components/cards/ai/LLMLeaderboardCard.tsx:135</code> · The leaderboard route scrapes lmarena.ai and returns <strong>raw SVG markup</strong> per org (<code>$.html(svgNode)</code>); the card injects it with <code>dangerouslySetInnerHTML</code>, 50 rows per render. <code>innerHTML</code> won't run <code>&lt;script&gt;</code>, but it <em>does</em> wire SVG event-handler attributes (<code>onload=</code>, <code>onerror=</code>, <code>&lt;animate onbegin=&gt;</code>) — a compromised or simply redesigned upstream page means arbitrary JS in an authenticated session whose cookies guard Gmail-scoped APIs.</p>
+      <p><strong>Fix:</strong> sanitize server-side (DOMPurify with an SVG allowlist) before returning <code>orgLogo</code>, or map <code>orgName</code> → local logo assets and drop the scraped markup — strategy choice is OQ3. The other two <code>dangerouslySetInnerHTML</code> uses in the repo (<code>app/layout.tsx:47</code>, <code>lib/resumes/templates/ats-plain.tsx:189</code>) are static constants — fine.</p>
+
+      <h3>Probe redirects are fetched before validation</h3>
+      <p><strong>MEDIUM</strong> · <code>lib/postings/liveness.ts:186-214</code> + <code>lib/security/url-guard.ts:124-127</code> · Liveness probes use <code>redirect: "follow"</code> and only validate <code>res.url</code> <em>after</em> the chain completes. A malicious or compromised posting host can 302 the probe into <code>http://127.0.0.1:3101/…</code> or the LAN — the GET is <em>issued</em> to the internal target; <code>assertSafeResponseUrl</code> merely refuses to read the body. Note <code>requireLocalOrSession</code> trusts localhost, so a redirect to <code>localhost:3101</code> is an authenticated-equivalent GET. <code>sourceUrl</code> is partially third-party-controlled (scraped careers pages / ATS data).</p>
+      <p><strong>Fix:</strong> switch to a manual-redirect loop that runs <code>assertExternalHttpUrl</code> on each <code>Location</code> before following (cap ~5 hops). DNS rebinding stays a documented out-of-scope residual.</p>
+
+      <h3>No security response headers</h3>
+      <p><strong>MEDIUM</strong> · <code>next.config.ts</code> (absent) · Nothing sets <code>X-Frame-Options</code>/<code>frame-ancestors</code>, <code>X-Content-Type-Options</code>, <code>Referrer-Policy</code>, or any CSP — on an app serving authenticated pages with session cookies over a public tunnel. Clickjacking is live today.</p>
+      <p><strong>Fix:</strong> add a <code>headers()</code> block in <code>next.config.ts</code> (<code>X-Frame-Options: DENY</code>, <code>nosniff</code>, <code>Referrer-Policy: strict-origin-when-cross-origin</code>) or set them at the Cloudflare layer; CSP optional given Next's inline scripts.</p>
+
+      <h3><code>MC_LIVENESS_BYPASS</code> unguarded in prod</h3>
+      <p><strong>MEDIUM</strong> · <code>lib/postings/liveness.ts:458-462</code> · The hermetic-test override short-circuits all probes. If it ever leaks into the prod scheduler env (an <code>ecosystem.config.cjs</code> edit, an <code>--update-env</code> mishap), <code>MC_LIVENESS_BYPASS=closed</code> mass-closes every stale candidate <em>and cascades kanban cards</em> with zero network evidence. The comment says "production MUST NOT set this"; nothing enforces it.</p>
+      <p><strong>Fix:</strong> refuse the bypass (loud warn, return null) when <code>MC_SCHEDULER_TIER === "prod"</code> or <code>NODE_ENV === "production"</code>.</p>
+
+      <h3>Lower-severity security notes</h3>
+      <table>
+        <thead>
+          <tr><th>Sev</th><th>Where</th><th>Issue / fix</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>LOW</td><td><code>lib/email/send.ts:60-97</code></td><td>RFC&nbsp;822 builder passes pure-ASCII header values through verbatim — no CRLF strip. Mitigated upstream today (titles flow through <code>normalizeCompanyName</code>), but one new callsite away from header injection. Strip <code>[\r\n]</code> in <code>buildRfc822Message</code>.</td></tr>
+          <tr><td>LOW</td><td><code>package.json</code></td><td><code>nodemailer</code> is an unused direct dep carrying a no-fix-available SMTP-injection advisory (sending goes through <code>gmail.users.messages.send</code>). Remove it + <code>@types/nodemailer</code>; also unused: <code>@gradio/client</code>, likely <code>react-is</code>.</td></tr>
+          <tr><td>LOW</td><td><code>scripts/backup-db.sh:81-85</code></td><td>With no age recipient configured, <code>prod.db</code> (plaintext Gmail refresh tokens) uploads to Drive unencrypted with only a stderr warning cron will swallow. Consider dispatching an in-app notification on fail-open.</td></tr>
+          <tr><td>LOW</td><td><code>lib/postings/liveness.ts:272</code></td><td><code>GREENHOUSE_URL_RE</code> host match is unanchored at the label boundary (<code>evilgreenhouse.io</code> matches). Not exploitable (API host is fixed), but tighten to <code>\.greenhouse\.io</code>.</td></tr>
+          <tr><td>LOW</td><td><code>app/api/gmail/webhook/route.ts:30-40</code></td><td>OIDC signer-identity assertion is env-gated on <code>PUBSUB_SERVICE_ACCOUNT_EMAIL</code> — it IS set today, so enforcement is active. Recorded so it's never removed and fresh-machine recovery sets it before exposing the route.</td></tr>
+          <tr><td>LOW</td><td><code>qs</code> 6.15.1 (transitive)</td><td>Moderate DoS in <code>qs.stringify</code>, narrow trigger; plain <code>npm audit fix</code> clears it.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="bugs">Correctness bugs</h2></summary>
+    <div class="section-body">
+
+      <h3>C3 re-probe sweep: inert at steady state + cursor jam</h3>
+      <p><strong>HIGH</strong> · <code>scheduler/jobs/job-watcher.ts:581-650</code> · <strong>On <code>feat/closed-jobs</code> — fix before merging PR&nbsp;#1.</strong> Two compounding problems, verified in source:</p>
+      <ul>
+        <li><strong>Selection contradicts Gap&nbsp;A.</strong> The C3 comment says its purpose is closed-but-<em>still-listed</em> postings (rows the fetch keeps returning, so they never go stale). But the candidate filter excludes everything in <code>seenExternalIds</code> — i.e. exactly the still-listed rows. For aggregator kinds (LinkedIn/Indeed), "present in the search feed" ≠ "detail page still accepting applications"; that conflation is the gap C3 was built to close. As written, C3 can only probe rows absent from this fetch but &lt;6h fresh — a sliver the stale probe reaches 6h later anyway.</li>
+        <li><strong>Cursor jam.</strong> <code>take: c3Budget</code> happens <em>before</em> the seen/staleProbed filter, and <code>lastProbedAt</code> is stamped only on rows actually probed. Filtered-out rows keep <code>lastProbedAt = NULL</code> forever, so they permanently occupy the front of the <code>ORDER BY lastProbedAt ASC</code> window. At steady state (window full of currently-listed rows) <code>c3ToProbe</code> is empty every tick and the rotation never advances — C3 does literally nothing.</li>
+      </ul>
+      <p><strong>Fix:</strong> stamp <code>lastProbedAt</code> (or a separate cursor field) on skipped candidates too — or filter <em>before</em> <code>take</code> — and drop the <code>seenExternalIds</code> exclusion for aggregator kinds (keep it for first-party ATS kinds, where feed presence genuinely implies alive). Consider also stamping <code>lastProbedAt</code> in the stale-probe path so stale-probed-alive rows don't sit at the cursor front. (Cursor mechanics: OQ6; seen-exclusion scope: OQ7.)</p>
+
+      <h3>Bot-wall redirects read as "closed" — amplified by the cascade</h3>
+      <p><strong>HIGH</strong> · <code>lib/postings/liveness.ts:243</code> (LinkedIn), <code>:260</code> (Indeed), <code>:384-385</code> (Workday HTML fallback) · Flagged independently by two lanes; verified. <code>probeLinkedin</code> returns <code>"closed"</code> whenever the final URL lacks <code>/jobs/view/</code> — and this check fires <em>before</em> the carefully-gated body-marker logic (which correctly returns <code>"unknown"</code> without positive alive evidence). LinkedIn routinely 302s guest scrapes to <code>/authwall</code> or <code>/signup</code> when bot-detecting — an HTTP&nbsp;200 after follow, no 429 — which therefore reads as positive closure evidence. Same shape for Indeed (off <code>/viewjob</code> → closed) and the Workday fallback (<code>/login</code> redirect → closed).</p>
+      <p>Pre-cascade this only flipped a posting row; with Pillar&nbsp;C→A, a single bad verdict now auto-moves the linked INTERESTED kanban card to CLOSED — user-visible. This re-introduces the false-close class the 2026-05-25 probe gate was built to kill, through the one heuristic with no positive-evidence requirement:</p>
+      <pre class="mermaid">
+flowchart LR
+  probe["GET sourceUrl<br/>(guest scrape)"] -->|"302 to authwall / login,<br/>HTTP 200 after follow"| check["finalUrl lacks /jobs/view/"]
+  check --> verdict["verdict: closed"]
+  verdict --> flip["JobPosting.status = closed"]
+  flip --> cascade["closeApplicationsForClosedPostings()"]
+  cascade --> card["linked INTERESTED card → CLOSED<br/>(user-visible kanban move)"]
+      </pre>
+      <p><strong>Fix:</strong> classify redirect targets — authwall/login/signup/challenge/consent hosts+paths → <code>"unknown"</code>; only a redirect to the board root / jobs-search page counts as <code>"closed"</code>. Optionally require two consecutive closed verdicts across ticks before flipping. (Classification: OQ4; confirmation policy: OQ5.)</p>
+
+      <h3>Ingest side-effect checkpoints stamp on failure</h3>
+      <p><strong>HIGH</strong> · <code>lib/applications/ingest.ts:489-520</code> + <code>lib/calendar/sync.ts:55-147</code> + <code>lib/repositories/applicationEvents.ts:70-92</code> · <code>syncEventToGcal</code> is internally best-effort: auth failure and API failure are caught and return <code>null</code> instead of throwing. Ingest's <code>try { await syncEventToGcal(…); stamp gcalSyncedAt } catch {…}</code> therefore <em>always</em> stamps the checkpoint — the catch is dead code. A transient Gcal outage or expired token permanently marks the interview event as mirrored, and the documented contract ("failure leaves the checkpoint null so the next ingest retries", PB-5 + CLAUDE.md) is broken: the calendar event is silently never created.</p>
+      <p>Same defeat for <code>notifiedAt</code>: <code>maybeNotifyForApplicationEvent</code> swallows <code>dispatchNotification</code> errors internally (<code>console.warn</code> only), so a failed OFFER/INTERVIEW notification is stamped as delivered and never retried. At-most-once still holds (dedupKey); at-least-once — the checkpoint's stated purpose — does not.</p>
+      <p><strong>Fix:</strong> gate each stamp on the side-effect's return value (non-null gcal id / success boolean), or add a <code>throwOnError</code> mode for the ingest caller. (Mechanism: OQ8.)</p>
+
+      <h3>Errored Gmail messages are permanently dropped</h3>
+      <p><strong>MEDIUM</strong> · <code>app/api/gmail/webhook/route.ts:118-147</code> + <code>lib/email-parser.ts:212-226</code> · When <code>ingestGmailMessage</code> returns <code>{action:"errored"}</code> (gmail.get failure, classifier failure), the loop counts it, advances <code>lastSyncedHistoryId</code> to the envelope id, and 200s. Pub/Sub redelivery is dedup-blocked by <code>WebhookDelivery</code>, and the next push resumes <em>past</em> the message. Compounding: <code>parseApplicationEmail</code> has no retry — unlike <code>chatJSON</code>'s <code>withRetry</code> — so one transient Gemini 429 loses the email until a manual "Scan Inbox".</p>
+      <p><strong>Fix:</strong> don't advance the watermark past the oldest errored message (or persist errored msgIds for a scheduler retry sweep), and give the email parser the same <code>withRetry</code> treatment as <code>chatJSON</code>. (Recovery policy: OQ9.)</p>
+
+      <h3>dev + prod both mirror the same email to one Google Calendar</h3>
+      <p><strong>MEDIUM</strong> · <code>lib/calendar/sync.ts:106-131</code> · Both tiers receive the same Gmail push, ingest into their own DBs, and mirror future events to the user's single primary calendar. The idempotency id is <code>sha1(ApplicationEvent.id)</code> — a per-tier cuid — so within-tier dedup cannot work across tiers: one interview email ⇒ two calendar events. Email has the <code>EMAIL_ENABLED</code> master switch; Gcal writes have no analog.</p>
+      <p><strong>Fix:</strong> add a <code>GCAL_SYNC_ENABLED</code> master switch (0 in <code>.env.development</code>), or dedup via an <code>extendedProperties</code> query keyed on something cross-tier-stable (<code>emailMsgId + kind</code>). (OQ10.)</p>
+
+      <h3>Scheduler: overlap, P2021 blindness, non-atomic cascade</h3>
+      <p><strong>MEDIUM</strong> · three related gaps:</p>
+      <ul>
+        <li><code>scheduler/index.ts:216-241</code> — <code>setInterval</code> with no "still running" flag: a slow job-watcher tick (per-watchlist crawl + up to 30 probes × 1.5s + jitter) overlaps its next tick. The per-watchlist <code>RUNNING</code> map dedups same-watchlist work, but two interleaved loops defeat the fragile-source serial pacing and double external load. Three-line guard fixes it.</li>
+        <li><code>scheduler/index.ts:222-229</code> vs <code>job-watcher.ts:793-799</code> — <code>runDueWatchlists</code> converts every per-watchlist throw into a <code>RunResult.error</code>, so a P2021 from inside <code>processOneInner</code> never reaches the scheduler's schema-behind disable handler → the exact every-10-minutes error spam the mechanism exists to prevent. Bonus: a thrown <code>processOneInner</code> never updates <code>lastRunAt</code>/<code>lastError</code>, so the watchlist retries every tick.</li>
+        <li><code>job-watcher.ts:521-539</code> + <code>scheduler/index.ts:244-250</code> — posting close and cascade are separate statements, SIGTERM is an immediate <code>process.exit(0)</code> (every <code>pm2 restart</code>), and a cascade throw is swallowed. A posting can land <code>status="closed"</code> with its INTERESTED card never cascaded — and nothing ever revisits it (the helper is only called with just-closed ids). <strong>Fix:</strong> a cheap idempotent reconcile at the top of each run: <code>Application.status="INTERESTED" AND posting.status="closed"</code> → cascade.</li>
+      </ul>
+
+      <h3>Frontend: dash-restore race + render-phase store write</h3>
+      <p><strong>MEDIUM</strong> · two items:</p>
+      <ul>
+        <li><code>components/dashboard/useDashCarousel.ts:51-94</code> + <code>components/providers/ThemeProvider.tsx:36-48</code> — <code>dashOrder</code> is a cross-device field, so at mount it's still the code default; the mount effect resolves the persisted <code>activeViewId</code> to an <em>index</em> against that default order. When <code>/api/settings</code> hydrates a custom order, <code>orderedDashes</code> re-sorts but the index doesn't move — the visible dash silently flips, and the <code>setActiveViewId</code> effect then overwrites the persisted last-viewed dash with the wrong one. <strong>Fix:</strong> resolve the restore after settings hydration, or track the current dash by id, not index. (Approach: OQ11.)</li>
+        <li><code>components/cards/applications/NewPostingsCard.tsx:227-233</code> — the stale-company auto-prune calls <code>setPostingFilters(…)</code> (a Zustand store write) during render; the store synchronously notifies other subscribers mid-render. Move into a <code>useEffect</code> or prune at display time without persisting.</li>
+      </ul>
+
+      <h3>Lower-severity bugs</h3>
+      <table>
+        <thead>
+          <tr><th>Sev</th><th>Where</th><th>Issue</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>LOW</td><td><code>lib/applications/ingest.ts:430-462</code></td><td>P2002 race-loser path passes <code>previousStatus = null</code>, so the timeline silently misses the STATUS_CHANGED transition; the same branch also lacks the lenient-match role-preservation logic the main path has (drift — see Refactor).</td></tr>
+          <tr><td>LOW</td><td><code>lib/applications/normalize-datetime.ts:24,34</code></td><td>Date-only ISO strings (<code>2026-06-15</code>) bypass the wall-clock re-interpretation (parse as UTC midnight = previous evening local); the offset regex false-positives on plain time ranges like "14:30-15:30", suppressing the fix exactly when it's needed.</td></tr>
+          <tr><td>LOW</td><td><code>lib/notifications/circuit-breaker.ts:101-135</code></td><td>Count-then-insert TOCTOU: N concurrent dispatches can each pass the check before any row lands — bounded overshoot (~2-4), defense-in-depth layer, acceptable; worth a comment.</td></tr>
+          <tr><td>LOW</td><td><code>lib/shared-sqlite-cache.ts:133-135</code></td><td>Follower <code>MAX_WAIT</code> (8s) &lt; lease (30s, sized to worst-case compute): the Gmail dev+prod fan-out double-bills Gemini exactly when the leader is slow. Pass <code>maxWaitMs ≥ lease</code> from <code>llmCached</code>.</td></tr>
+          <tr><td>LOW</td><td><code>lib/ai/rate-limit.ts:20-24</code></td><td>Gemini bucket is per-process and four processes now call Gemini: 4×12 = 48/min potential vs the 15/min free tier. The shared-file bucket pattern already exists for arXiv (architecture: OQ14).</td></tr>
+          <tr><td>LOW</td><td><code>lib/cache.ts:294-311, 52-66</code></td><td>Cache key is not query-order-normalized (doc says "sorted query" — it isn't), and the stale-fallback mostly can't fire (expired L1 entries are pruned 5-minutely; <code>readCachedDataIgnoringExpiry</code> exists but isn't wired into the fallback).</td></tr>
+          <tr><td>LOW</td><td><code>scheduler/jobs/job-watcher.ts:657-677</code></td><td>Closure-summary dedup key is per-watchlist-per-day: a later same-day tick that closes more postings (and cascades cards) dispatches null — cards appear in CLOSED with no notification.</td></tr>
+          <tr><td>LOW</td><td><code>prisma/schema.prisma</code></td><td><code>Task</code> self-relation defaults to <code>SetNull</code> — deleting a parent silently flattens children to top level; <code>Watchlist</code> delete cascades all its <code>JobPosting</code> rows and <code>SetNull</code>s <code>Application.postingId</code> (one-way severance, mitigated by copied fields); no <code>@@unique([userId, name])</code> on Watchlist.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="ops">Operational &amp; process risks</h2></summary>
+    <div class="section-body">
+
+      <h3>The pre-push gate is leaky</h3>
+      <p><strong>MEDIUM</strong> · <code>scripts/pre-push.sh:47-198</code> · Two hermetic files exist but are not in <code>SUITES</code> and never run: <code>profile-repo-smoke.ts</code>, <code>resume-render-smoke.ts</code> — CLAUDE.md's "every file under hermetic/ runs on every push" is currently false (if exclusion is intentional — Chrome dependency, dev.db mutation — document it in the script). And a missing suite file prints "skip (not found)" and <em>continues</em>: a renamed or deleted test silently un-gates the push instead of failing it. Exit-code handling for present-and-failing suites is sound. (Enumeration policy: OQ13.)</p>
+
+      <h3>Backup chain robustness</h3>
+      <p><strong>MEDIUM</strong> · <code>scripts/backup-db.sh:46-53, 112-138</code> · <code>set -e</code> + bare <code>rclone copy</code> means one transient Drive failure kills the script mid-chain (resumes tarball + local prune never run). The Drive side is never pruned (unbounded growth; local is 30-day). No post-snapshot <code>PRAGMA integrity_check</code>. The snapshot itself is done right (<code>sqlite3 .backup</code>, correct for a live WAL DB).</p>
+
+      <h3>Cross-tier external load</h3>
+      <p><strong>MEDIUM</strong> · Both schedulers run job-watcher against their own DBs; if dev.db carries copies of prod watchlists, LinkedIn/Indeed get 2× crawls and 2× probes from one IP with no cross-tier pacing (jitter and the 429-abort are per-process). The codebase already solved this class for arXiv (<code>lib/arxiv/rate-limit.ts</code> shared-file bucket); fragile-source crawls have no equivalent. Cheapest mitigation: deactivate duplicate watchlists on dev.</p>
+
+      <h3>Docs-vs-code drift</h3>
+      <p><strong>MEDIUM</strong> · The most surprising one: CLAUDE.md says <code>.env.development</code> / <code>.env.production</code> are "checked-in non-secret runtime config" — <strong>they are not tracked and never were</strong> (<code>.gitignore:41</code> <code>.env*</code> ignores both; zero git history). A fresh clone silently loses all runtime config (<code>EMAIL_ENABLED</code>, <code>PUBSUB_AUDIENCE</code>, rate limits, <code>DATABASE_URL</code>). Either force-add them (contents verified non-secret) and narrow <code>.gitignore</code>, or fix CLAUDE.md and add <code>.example</code> files (decision: OQ12). Smaller drift: <code>lib/cache.ts</code> doesn't sort the query string despite the doc claiming it; CLAUDE.md still describes <code>Window.tsx</code> as a hierarchy layer and the store as owning "screenshots" (both dead — see Refactor); stray inert line <code>s</code> at <code>.env.production:37</code>.</p>
+
+      <h3>Retention gaps</h3>
+      <p><strong>LOW</strong> · <code>JobPosting</code> has no prune job — closed/hidden rows accumulate forever (SpaceX-scale watchlists = thousands of rows) while every other store has one. <code>package.json</code>'s <code>migrate:prod</code> is a one-keystroke prod-DB migration with no confirmation gate (deliberate, but it's the most dangerous script in the file).</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="refactor">Refactor &amp; cleanup</h2></summary>
+    <div class="section-body">
+
+      <h3>High-payoff extractions</h3>
+      <ul>
+        <li><code>lib/applications/ingest.ts:365-388</code> vs <code>:447-460</code> — the existing-app update and the P2002 race-loser update are near-identical ~20-line blocks that have <em>already drifted once</em> (the race branch lacks the <code>roleMatchedLeniently</code> role-preservation — a real small bug). Extract one <code>applyParsedUpdate(app, parsed, opts)</code> helper; the extraction fixes the drift.</li>
+        <li><code>lib/ai/rate-limit.ts:30-101</code> vs <code>lib/arxiv/rate-limit.ts:195-248</code> — the per-process token bucket (state shape, refill, drain, queue-cap throw) is duplicated verbatim modulo constants. Extract <code>createProcessBucket({ratePerMin, cap, burst})</code>; consider promoting Gemini to the shared-file bucket while there (see the 4-process math above).</li>
+        <li><code>scheduler/index.ts</code> — fold the overlap guard + P2021 detection into one <code>wrapJob(job)</code> helper so both fixes land once for all 11 jobs.</li>
+        <li><code>scheduler/jobs/job-watcher.ts:342-360</code> — seen-again postings are updated with serial per-row <code>update</code>s: a 1,700-posting tenant pays 1,700 sequential UPDATEs per crawl per tier. Partition into <code>updateMany</code> groups — the biggest single DB-load win in the scheduler.</li>
+      </ul>
+
+      <h3>Dead code &amp; unused deps</h3>
+      <ul>
+        <li><code>components/Window.tsx</code> — zero imports anywhere; still documented as an architecture layer. Delete or re-justify.</li>
+        <li><code>viewScreenshots</code> / <code>setViewScreenshot</code> in <code>components/providers/state/index.ts:153-279</code> — zero consumers, yet persisted to localStorage and carried forward by <code>migrate</code> forever (stale base64 screenshots = quota risk). Drop in a v10 migration; update CLAUDE.md.</li>
+        <li>Unused deps: <code>nodemailer</code> (+ types, carries an advisory), <code>@gradio/client</code>, <code>react-is</code> (verify the recharts peer-pin story first). <code>lib/resumes/select.ts:174-176</code> has a dead empty <code>else if</code> branch.</li>
+      </ul>
+
+      <h3>Consolidations</h3>
+      <ul>
+        <li>Two parallel fetch wrappers: <code>lib/fetcher-client.ts</code> vs <code>lib/api-client.ts:jsonFetch</code> — duplicated stale-fallback toast + error-shape logic; 5 views still use the untyped one. Fold into api-client.</li>
+        <li>Three Gemini stacks: <code>@google/genai</code> (chatJSON) vs <code>@ai-sdk/google</code> + <code>ai</code> (email parser). Two SDKs calling one API; consolidation also lets the parser inherit <code>withRetry</code>. <code>axios</code> is used by exactly one route (<code>llmleaderboard</code>) where <code>fetch</code> would do.</li>
+        <li><code>components/cards/FetcherHealthCard.tsx:44-237</code> — the one card (of 23) hand-rolling chrome instead of wrapping <code>ui/Card</code>, plus the same hand-rolled header pattern inline in <code>InternalView.tsx:240-329</code>. Exactly the drift CLAUDE.md warns about.</li>
+        <li>Verbatim-duplicated version-history popover in <code>GenerateResumeCard.tsx:615-665</code> and <code>CanonsCard.tsx:460-495</code> — extract to <code>components/ui/</code>.</li>
+      </ul>
+
+      <h3>Frontend perf notes</h3>
+      <p><code>MobileShell</code> keeps prev+current+next dashes mounted; AIView/SpaceView each fire ~29 parallel <code>company-news</code> queries, so being <em>adjacent</em> on mobile triggers the full fan-out, and InternalView's 5s system poll keeps running while merely adjacent. Gate queries on visibility (<code>enabled:</code>) or placeholder the adjacent slots. The polling inventory is otherwise sane and the news card's whole-card overlay link needs an <code>aria-label</code> (systemic — dozens of instances).</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="solid">Verified solid</h2></summary>
+    <div class="section-body">
+
+      <h3>Auth &amp; guards</h3>
+      <ul>
+        <li><strong>Route coverage is complete</strong> — every handler under <code>app/api/**</code> calls a guard (<code>requireLocalOrSession</code>, <code>requireSession</code>, session-or-service-token, or OIDC); the full route→guard table was built and no unguarded handler exists. Guards run <em>outside</em> <code>withCache</code>, so cache hits can't bypass auth.</li>
+        <li><strong><code>requireLocalOrSession</code> resists spoofing</strong> — the LAN bypass requires both a local <code>Host</code> (impossible through the Cloudflare edge) and every <code>X-Forwarded-For</code> hop private (Cloudflare appends the real client IP, defeating injection). Residual config dependency: no <code>httpHostHeader</code> origin override in cloudflared.</li>
+        <li><strong>Webhook OIDC is real verification</strong> — <code>jose.jwtVerify</code> against Google's JWKS with issuer + audience + RS256 pinned, plus signer-email + <code>email_verified</code> assertions and envelope-level dedup before any side effect.</li>
+        <li>Service-token compare is constant-time with length pre-check; resume download routes are owner-scoped at the row, filenames sanitized (no traversal, no header injection).</li>
+      </ul>
+
+      <h3>Pipelines &amp; protocols</h3>
+      <ul>
+        <li><strong>Ingest idempotency core</strong> — per-event unique + P2002-skip + re-fetch-then-fire-unstamped is correctly structured (the checkpoint bugs are in the side-effect <em>callers</em>, not the protocol). Dedup chain order is internally consistent; <code>findUniqueRoleSuperset</code>'s strict-superset + ambiguity gate is correct.</li>
+        <li><strong>shared-sqlite-cache single-flight</strong> — reserve via <code>INSERT…DO NOTHING</code>, conditional lease steal, error-path release (never caches errors), loud <code>reconcileSchema</code> drop-rebuild: sound.</li>
+        <li><strong>arXiv stack</strong> — <code>BEGIN IMMEDIATE</code> shared bucket, MAX-extended cooldown, single choke-point fetch detecting both 429 and plaintext rate-limit bodies: coherent end to end.</li>
+        <li><strong>probeBatch</strong> internals (cap-overflow → unknown, shared 429-abort, per-probe try/catch), <strong>posting-digest watermark</strong> logic, <strong>quiet-hours</strong> wrap-midnight math, <strong>track-as-application</strong> transactional create: all check out. SSRF literal guard canonicalizes IP-literal bypasses correctly.</li>
+      </ul>
+
+      <h3>Schema, secrets, config</h3>
+      <ul>
+        <li>Indexes match the real query patterns on every heavy table (including <code>[userId, scopeKey, createdAt]</code> matching the circuit-breaker query exactly); cascade design is coherent for single-user.</li>
+        <li>No secret-looking strings in any tracked file or in the git history of the env files; no DB/log/build artifacts tracked; <code>.gitignore</code> coverage matches the backup design.</li>
+        <li><code>tsconfig</code> strict on (consider <code>noUncheckedIndexedAccess</code> later); <code>next.config.ts</code> externals + watch ignores correct; no <code>next/image</code> usage so the image-optimizer advisory class is moot; the store's per-device/cross-device persist partition matches the documented split, with versioned migration.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <h3>Unresolved decisions</h3>
+      <p>Every finding above whose fix has more than one defensible shape gets an OQ here — <strong>one OQ = one decision</strong>, lettered options, mutually exclusive, pick exactly one. Findings with a single obvious fix (Next bump, <code>MC_LIVENESS_BYPASS</code> prod guard, security headers, unused-dep removal, manual-redirect SSRF loop, pre-push fail-on-missing, dead-code deletion) carry no OQ and wait in the fix list. <strong>Resolve all OQs before the fix list in the next section is authored</strong> — a checklist written against open forks bakes in unchosen decisions.</p>
+
+      <div class="callout tip"><strong>OQ1 — Where should the sign-in allowlist live? (→ §2.1)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Env-var allowlist.</strong> The <code>signIn</code> callback returns <code>profile.email === process.env.OWNER_EMAIL</code> (or membership in a comma-separated <code>ALLOWED_SIGNIN_EMAILS</code>), which bounces every other Google account at the OAuth door on both tiers. <em>Pros:</em> one-line diff, no schema change, instantly effective, config sits with the other secrets in untracked <code>.env</code>. <em>Cons:</em> one more required env var (fresh-machine recovery must set it — same class as <code>PUBSUB_SERVICE_ACCOUNT_EMAIL</code>); adding a second account later means an env edit + restart.</li>
+          <li><strong>(b)</strong> <strong>DB-driven allowlist.</strong> Only emails already present in <code>User</code> (or rows with an <code>allowed</code> flag) may sign in, bootstrapped from the existing owner row, which makes sign-in policy travel with the database instead of the environment. <em>Pros:</em> no new env var; future multi-account is a row insert, no restart. <em>Cons:</em> more code (bootstrap/first-user logic), and a wiped or restored-empty DB locks everyone out — a recovery footgun.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-11):</strong> <strong>(a)</strong> — env-var allowlist in the <code>signIn</code> callback. The threat is "anyone on the internet can sign in", not account lifecycle; the one-line env check closes it immediately and matches how the webhook already gates its signer via env (<code>PUBSUB_SERVICE_ACCOUNT_EMAIL</code>).</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ2 — Scope the four global tables (Task, LifeGoal, GlobalSetting, SavedPaper) per userId? (→ §2.1)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Scope all four.</strong> Add <code>userId</code> (+ index) to each table, backfill existing rows to the owner, derive the id from the session in each route, and filter every repo query — so even an authenticated stranger sees only their own (empty) rows and the data model becomes genuinely multi-user-correct. <em>Pros:</em> defense-in-depth independent of OQ1; removes the four standing exceptions to the "everything is user-scoped" rule. <em>Cons:</em> one migration + four repos + their routes; <code>GlobalSetting</code>'s single-row <code>id='global'</code> design (and the <code>/api/settings</code> If-Match optimistic-concurrency path) must be reworked to per-user rows.</li>
+          <li><strong>(b)</strong> <strong>Scope three, keep GlobalSetting global.</strong> <code>Task</code>/<code>LifeGoal</code>/<code>SavedPaper</code> get <code>userId</code>; the settings row stays single-row global, protected only by the OQ1 allowlist. <em>Pros:</em> closes the personal-content exposure while avoiding the settings-row + concurrency rework; smaller diff. <em>Cons:</em> keeps one unscoped mutable surface — anyone who ever passes the allowlist can still rewrite dash order/hues (app config, not personal data).</li>
+          <li><strong>(c)</strong> <strong>Don't scope; rely on OQ1 alone.</strong> No schema change; the allowlist is the single gate. <em>Pros:</em> zero migration work. <em>Cons:</em> single-layered defense; the review's HIGH finding stays mitigated rather than fixed.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-11):</strong> <strong>(a)</strong> — scope all four tables per <code>userId</code> (one migration, backfill existing rows to the owner, session-derived filtering in every repo/route), including the <code>GlobalSetting</code> per-user rework of the single-row <code>id='global'</code> + If-Match path. Defense-in-depth lands independent of the OQ1 allowlist and the four standing exceptions to "everything is user-scoped" disappear.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ3 — Org-logo strategy for the LLM leaderboard? (→ §2.3)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Sanitize the scraped SVG server-side.</strong> Add DOMPurify (or equivalent) with an SVG allowlist in the route, stripping scripts/event-handler attributes/<code>foreignObject</code> before returning <code>orgLogo</code>; the card keeps <code>dangerouslySetInnerHTML</code>. <em>Pros:</em> keeps automatic logo coverage for new orgs; change isolated to one route. <em>Cons:</em> new dependency + allowlist to maintain; SVG sanitizer bypasses have history — the trust boundary stays "remote markup into the DOM".</li>
+          <li><strong>(b)</strong> <strong>Local logo map.</strong> Ship a small <code>orgName → /public/logos/*.svg</code> map (initials fallback for unknowns) and drop <code>orgLogo</code> from the API payload entirely, so no remote markup is ever injected. <em>Pros:</em> eliminates the vulnerability class instead of filtering it; smaller payloads; the lmarena org set is small and slow-moving. <em>Cons:</em> a new org renders logo-less until a file is added by hand.</li>
+          <li><strong>(c)</strong> <strong>Drop logos.</strong> Render rank/name/score only. <em>Pros:</em> zero work, zero risk. <em>Cons:</em> visual downgrade on a card whose logos are purely cosmetic.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-11):</strong> <strong>(b)</strong> — local logo map with an initials fallback, dropping <code>orgLogo</code> from the API payload entirely. Eliminating the remote-markup injection surface beats filtering it, and the upkeep of an occasional new logo file is trivial for a personal dashboard.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ4 — How should off-path probe redirects be classified? (→ §3.2)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Interstitial blocklist → unknown.</strong> Keep "off-path ⇒ closed" but first match the final URL against known interstitial hosts/paths (<code>/authwall</code>, <code>/checkpoint</code>, <code>/uas/login</code>, <code>/signup</code>, consent/challenge pages) and return <code>"unknown"</code> for those. <em>Pros:</em> small diff per probe fn; preserves the legitimate "redirected to the search page = closed" signal at full speed. <em>Cons:</em> the blocklist chases LinkedIn/Indeed URL churn; an unlisted interstitial still false-closes.</li>
+          <li><strong>(b)</strong> <strong>Positive-evidence only.</strong> An off-path redirect is never <code>"closed"</code> by itself — return <code>"unknown"</code> unless the final URL is the board's search/root page (small allowlist) or a body closed-marker hits. <em>Pros:</em> structurally fail-safe (unknown leaves the row alone), and consistent with the probe gate's "close only on positive evidence of removal" principle. <em>Cons:</em> genuinely-closed postings that redirect somewhere unrecognized take longer to detect (wait for a marker hit or another pass).</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-11):</strong> <strong>(b)</strong> — positive-evidence only: an off-path redirect by itself never yields <code>"closed"</code>; the probe returns <code>"unknown"</code> unless the final URL is the board's search/root page (small allowlist) or a body closed-marker hits. An uncategorized redirect is absence of evidence, and the cascade amplifies any mistake into a user-visible kanban move — slower detection is the cheaper error.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ5 — Require confirmation before flipping a posting to closed? (→ §3.2)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Two consecutive closed verdicts.</strong> Persist a pending-closed marker (column or counter) and flip <code>status="closed"</code> (+ cascade) only when a second consecutive probe also says closed, which makes a one-off bot-wall or transient page glitch incapable of closing anything. <em>Pros:</em> false-positive cost drops sharply exactly where the cascade raised it. <em>Cons:</em> time-to-close doubles (≥2 probe cycles); a little new state + smoke coverage.</li>
+          <li><strong>(b)</strong> <strong>Single verdict suffices once OQ4 lands.</strong> Trust the sharpened redirect classification; no new state. <em>Pros:</em> closures detected on first probe; no schema/semantics change. <em>Cons:</em> any residual false "closed" (e.g. a closed-marker phrase appearing in unrelated page boilerplate) still flips and cascades immediately.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-11):</strong> <strong>(a)</strong> — two consecutive closed verdicts before flipping (and cascading). Chosen as the safest option even with OQ4's positive-evidence classification in place: while the close-detection system is still proving itself, a false close moving a kanban card is the error to over-protect against, and one extra probe cycle of latency on real closures is a cheap premium.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ6 — C3 cursor mechanics: how does the rotation advance past skipped rows? (→ §3.1)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Stamp skipped candidates too.</strong> Anything the window selected but the tick filtered out gets <code>lastProbedAt = runAt</code> alongside the actually-probed rows, so the <code>ORDER BY lastProbedAt ASC</code> window always advances. <em>Pros:</em> ~3-line fix, no schema change. <em>Cons:</em> <code>lastProbedAt</code> stops meaning "actually probed" and becomes "last considered by a sweep" — the field's comment and any future reader (audit script) must respect that.</li>
+          <li><strong>(b)</strong> <strong>Filter before take.</strong> Exclude seen/stale-probed externalIds in the SQL <code>where</code> so the window only ever selects probe-able rows and the budget is fully spent each tick. <em>Pros:</em> <code>lastProbedAt</code> stays honest. <em>Cons:</em> <code>seenExternalIds</code> can be hundreds of ids per watchlist — a big <code>notIn</code> array per tick (workable in SQLite, but clunky and grows with feed size).</li>
+          <li><strong>(c)</strong> <strong>Separate cursor column.</strong> Add e.g. <code>c3ConsideredAt</code> and rotate on it, keeping <code>lastProbedAt</code> purely factual. <em>Pros:</em> clean semantics for both fields. <em>Cons:</em> a migration + extra state for marginal benefit over (a).</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-11):</strong> <strong>(a)</strong> — stamp <code>lastProbedAt = runAt</code> on skipped candidates too, so the <code>ORDER BY lastProbedAt ASC</code> window always advances. Cheapest correct fix; nothing load-bearing reads <code>lastProbedAt</code> as probe evidence today (the index exists for the rotation), so updating the field's comment to "last considered by a probe sweep" is enough.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ7 — Should C3 probe postings the current fetch still lists? (→ §3.1)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Yes, for aggregator kinds only.</strong> Drop the <code>seenExternalIds</code> exclusion for LinkedIn/Indeed-style feeds (where "listed in search" ≠ "detail page still accepting applications") and keep it for first-party ATS kinds (Greenhouse/Lever/Ashby/Workday, where the fetch hits the employer's own API and listed reliably means open). <em>Pros:</em> restores C3's stated Gap-A purpose exactly where the feed-vs-detail divergence exists, without wasting budget re-probing first-party rows. <em>Cons:</em> per-kind branching; aggregator probe volume rises (still budget-capped).</li>
+          <li><strong>(b)</strong> <strong>Yes, for all kinds.</strong> Drop the exclusion everywhere — C3 becomes a pure rotation over <code>status="new"</code>. <em>Pros:</em> simplest mental model and code. <em>Cons:</em> burns probe budget re-confirming first-party postings the fetch confirmed milliseconds earlier.</li>
+          <li><strong>(c)</strong> <strong>No — keep the exclusion.</strong> Accept that C3 only covers rows absent from the current fetch but not yet stale. <em>Pros:</em> zero change. <em>Cons:</em> Gap A stays open and C3 stays mostly inert — the review's finding persists.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-11):</strong> <strong>(a)</strong> — drop the <code>seenExternalIds</code> exclusion for aggregator kinds only (LinkedIn/Indeed-style feeds), keep it for first-party ATS kinds (Greenhouse/Lever/Ashby/Workday). It matches where the actual gap is: first-party feed presence is real liveness evidence, aggregator feed presence is not.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ8 — How should ingest learn a side-effect failed before stamping its checkpoint? (→ §3.3)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Return-value gating.</strong> <code>syncEventToGcal</code> already returns <code>string | null</code>; ingest stamps <code>gcalSyncedAt</code> only on non-null, and <code>maybeNotifyForApplicationEvent</code> gains a success boolean gated the same way. <em>Pros:</em> smallest diff; the helpers keep their swallow-internally contract for other callers. <em>Cons:</em> a null/false return conflates "failed — retry" with legitimate no-ops (kind not notify-worthy, breaker-suppressed email, dedup-null) — each no-op must still stamp or the event re-fires forever, so the skip-vs-fail distinction leaks into the caller.</li>
+          <li><strong>(b)</strong> <strong>throwOnError mode.</strong> Give the helpers an opt-in flag to rethrow real failures (no-ops still return normally); ingest passes it, and its existing per-event <code>try/catch</code> — already written and commented "will retry next ingest" — becomes live again. <em>Pros:</em> ingest's code was authored against exactly this contract; the skip-vs-fail distinction stays inside the helper that knows it. <em>Cons:</em> touches both helpers' signatures; other callers keep the swallowing default and must never accidentally opt in.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-12):</strong> <strong>(b)</strong> — opt-in <code>throwOnError</code> mode on <code>syncEventToGcal</code> and <code>maybeNotifyForApplicationEvent</code> (default stays swallow-internally, so no other caller changes): real failures rethrow, benign no-ops (dedup-null, breaker/quiet-hours-stripped email, no <code>scheduledAt</code>) return normally, and ingest's existing per-event try/catch + stamp code becomes correct exactly as written. Keeps the success/no-op/failure taxonomy in the helpers that know it, matches the convention <code>dispatchNotification</code> already follows (null = benign, throw = real failure), and future contract mistakes fail loud instead of silent — the original bug was a silent contract mismatch between these exact layers.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ9 — Recovery policy for messages that error during webhook ingest? (→ §3.4)</strong></div>
+      <div class="oq-detail">
+        <p><strong>What "errored" actually covers.</strong> <code>ingestGmailMessage</code> returns <code>errored</code> on a <code>gmail.get</code> failure (<code>ingest.ts:120</code>), a classifier failure (<code>:154</code>), or a rare P2002-recovery dead end (<code>:437</code>); the webhook also catches unexpected per-message throws (<code>route.ts:131-137</code>). Adding <code>withRetry</code> to <code>parseApplicationEmail</code> is decision-free and happens regardless, which shrinks the residual to: multi-minute Gemini outages, quota exhaustion, deterministic parser crashes on a specific email (poison), and DB-locked windows. Three facts from the code constrain the options: (1) the route flattens all history records and advances the watermark <em>once</em>, to the envelope id, after the loop (<code>route.ts:117-152</code>) — there is no per-record bookkeeping today; (2) a <strong>C4 stale-history fallback already exists</strong>: if the watermark is older than Gmail's retained history window (~7 days), <code>history.list</code> 404s and the route re-seeds the watermark to the envelope id, acks 200, and designates manual Scan Inbox as the recovery (<code>route.ts:97-115</code>); (3) the backfill (<code>/api/applications/backfill</code>) already re-runs the same idempotent ingest over a relevance-filtered 180-day window, capped at 200 messages — re-running it cannot duplicate anything.</p>
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Hold the watermark.</strong> Track per-history-record success in the webhook loop and advance <code>lastSyncedHistoryId</code> only to the record before the oldest errored message; the resume logic already prefers the older of (checkpoint, envelope), so every subsequent push re-walks from the held point and re-attempts. Already-ingested messages re-walk as cheap checkpoint skips, but each walk re-pays a <code>gmail.get</code> per message past the hold point, and the errored message itself re-pays a full parse (a Gemini call × its retries) on <em>every</em> push until it succeeds. <em>Pros:</em> transient blips (minutes–hours) self-heal on the next push with no new tables; at-least-once holds within Gmail's retention window. <em>Cons:</em> the guarantee <strong>silently expires at the C4 horizon</strong> — hold past ~7 days and the existing 404 handler force-advances the watermark, abandoning the held range to manual backfill anyway, so (a) converges to (c) with extra moving parts; needs the per-record bookkeeping the loop doesn't have; a poison message means repeated parse spend + added latency on every push for up to a week; dev and prod wedge independently (separate watermarks).</li>
+          <li><strong>(b)</strong> <strong>Errored-message retry queue.</strong> New table (e.g. <code>FailedIngest(msgId @id, userId, firstFailedAt, attempts, lastError)</code>) written on an errored outcome; a scheduler job (the registry already runs 11) retries each row through the same idempotent ingest with backoff (15m → 1h → 6h, cap ~5 attempts), dispatches one dedupKey'd notification on final give-up, drops the row on a <code>gmail.get</code> 404 (email deleted), and prunes like <code>WebhookDelivery</code> (30d). The watermark advances exactly as today. <em>Pros:</em> poison handled structurally (attempt cap + notify, no repeated webhook-path spend); webhook latency stays flat; failures become a visible inventory (surfaceable on the Internal Systems dash); immune to the 7-day horizon since retry is by msgId, not historyId. <em>Cons:</em> the most machinery — migration + table + scheduler job + smoke; a second ingest entry point to keep consistent.</li>
+          <li><strong>(c)</strong> <strong>Accept the drop, loudly.</strong> Keep today's watermark behavior; on an errored outcome dispatch a dedupKey'd in-app notification ("N emails failed ingest today — run Scan Inbox to recover") instead of today's ring-buffer <code>console.warn</code>; recovery is the existing one-click idempotent backfill. <em>Pros:</em> near-zero new machinery; consistent with the system's own design — the C4 path already names Scan Inbox as the recovery for the analogous history-gap case; a failure burst (Gemini outage) becomes one counted notification rather than silence. <em>Cons:</em> at-least-once stays unmet between the failure and the user clicking; edge: backfill finds messages via the relevance-shaped Gmail query (<code>buildGmailQuery</code>), so a failed message that query wouldn't match isn't re-found (rare — the query approximates the same relevance gate the webhook path applies).</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-12):</strong> <strong>(b)</strong> — errored-message retry queue, with the schedule tuned for minimal Gemini spend per Sal's requirement ("the solution which calls Gemini the least and retries as little as possible automatically"): <strong>exponential ×4 backoff</strong> (5&nbsp;m → 20&nbsp;m → ~1.3&nbsp;h → ~5.3&nbsp;h → ~21&nbsp;h → ~3.6&nbsp;d), attempt cap ~6 — cumulatively ~4.7&nbsp;days, comfortably inside the 7-day ceiling, each scheduled attempt paying exactly <strong>one</strong> parse call (no inner <code>withRetry</code> on queue retries — the backoff <em>is</em> the retry). <strong>Every failed attempt sounds an alarm — alarm side built now, delivery deferred.</strong> Each failure emits a per-attempt alarm event carrying which attempt just failed and <strong>at what time the next retry is scheduled</strong> ("Email ingest failed (attempt 3/6) — retrying ~14:05"; the final one announces give-up + Scan Inbox as manual recovery). For now only the alarm side is built — the queue row carries <code>nextRetryAt</code>/<code>attempts</code>/<code>lastError</code> and each failure logs a structured warn — and it deliberately does <strong>not</strong> plug into the notification dispatcher yet (per Sal 2026-06-12: the notification system hasn't been refactored into a robust feature; hold back). Routing these alarms into notifications/the frontend is a noted follow-up once that refactor lands. Worst case per failed message: ≤7 parse calls, ever. Chosen over (a) because (a)'s retry cadence is coupled to incoming pushes — it re-pays a parse on every new email, uncontrollably, then silently expires at the C4 horizon; the queue is the only option whose retry timing we control, making it the minimal-automatic-token design that still recovers without manual action.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ10 — How to stop the dev+prod double calendar mirror? (→ §3.5)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong><code>GCAL_SYNC_ENABLED</code> master switch.</strong> Mirror the <code>EMAIL_ENABLED</code> pattern in <code>lib/calendar/sync.ts</code>, set <code>0</code> in <code>.env.development</code> — dev stops writing to the real calendar entirely. <em>Pros:</em> trivial, symmetric with the proven email switch; also stops dev-side calendar noise generally. <em>Cons:</em> dev's calendar path goes untested unless the env is flipped; doesn't dedup if both tiers are ever intentionally enabled.</li>
+          <li><strong>(b)</strong> <strong>Cross-tier-stable idempotency.</strong> Key the gcal event identity on <code>sha1(emailMsgId + kind)</code> (or an <code>extendedProperties</code> lookup) instead of the per-tier <code>ApplicationEvent.id</code>, so both tiers converge on one event no matter who writes first. <em>Pros:</em> structural dedup with no env to remember. <em>Cons:</em> changes the idempotency scheme (existing events don't match the new key — needs a migration story) and adds Google API work per sync.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-12):</strong> <strong>(a)</strong> — <code>GCAL_SYNC_ENABLED</code> master switch in <code>lib/calendar/sync.ts</code>, <code>1</code> in <code>.env.production</code> / <code>0</code> in <code>.env.development</code>. Same proven pattern as <code>EMAIL_ENABLED</code>, one env line, and dev writing to a real personal calendar is wrong regardless of dedup.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ11 — Dash-restore fix approach? (→ §3.7)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Track the active dash by id.</strong> Refactor <code>useDashCarousel</code> to hold the current dash id and resolve the index lazily against whatever <code>orderedDashes</code> currently is, so re-sorts can never reinterpret the position. <em>Pros:</em> structural — eliminates the whole class (settings hydration, live cross-device order edits, future order mutations). <em>Cons:</em> a slightly larger refactor of the carousel's index math.</li>
+          <li><strong>(b)</strong> <strong>Gate restore on settings hydration.</strong> <code>ThemeProvider</code> exposes a <code>hydrated</code> flag; the restore effect waits for it before resolving <code>activeViewId</code> → index. <em>Pros:</em> minimal diff. <em>Cons:</em> index stays the source of truth, so the bug class survives any other order mutation mid-session.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-12):</strong> <strong>(a)</strong> — refactor <code>useDashCarousel</code> to track the active dash by id, resolving the index lazily against the current order. Ids are already the persistence currency (<code>activeViewId</code>); making them the runtime currency removes the race instead of sequencing around it, and covers live cross-device order edits too.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ12 — Resolve the .env.development / .env.production tracked-vs-ignored contradiction? (→ §4.4)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Track them.</strong> <code>git add -f</code> both files and narrow <code>.gitignore</code> from <code>.env*</code> to <code>.env</code> + <code>.env*.local</code>, so a fresh clone carries runtime config and CLAUDE.md's documented design becomes true. <em>Pros:</em> restores the documented intent; config changes get history and review (the stray <code>s</code> line would have been caught). <em>Cons:</em> the ignore stops being a catch-all — one careless secret pasted into a tracked env file lands in git history permanently (rotation + history rewrite to undo).</li>
+          <li><strong>(b)</strong> <strong>Keep ignored; fix the docs.</strong> Correct CLAUDE.md, add tracked secret-free <code>.env.development.example</code> / <code>.env.production.example</code>, and note the copy step in the backup-recovery runbook. <em>Pros:</em> the safe-by-default ignore stays; the config surface is documented without ever risking history. <em>Cons:</em> fresh-machine setup keeps a manual copy step; the live files continue drifting without history.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-12):</strong> <strong>(b)</strong> — keep <code>.env*</code> ignored; correct CLAUDE.md, add tracked secret-free <code>.env.development.example</code> / <code>.env.production.example</code>, and document the copy step in the backup-recovery runbook. An accidentally-committed secret is irreversible while a documented copy step is a one-time minor cost; the asymmetry decides it.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ13 — Pre-push hermetic suite enumeration? (→ §4.1)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Glob + explicit exclusion list.</strong> Enumerate <code>scripts/tests/hermetic/*.ts</code> at run time minus a documented <code>EXCLUDED</code> array (render-smoke: Chrome dependency; profile-repo-smoke: mutates dev.db), which makes CLAUDE.md's "every file runs on every push" structurally true — a new smoke is gated the moment the file exists, and the missing-file failure mode disappears. <em>Pros:</em> the drift class this review caught (two files silently un-gated) becomes impossible. <em>Cons:</em> a slow or flaky new file slows every push by default (arguably the point); exclusions need discipline.</li>
+          <li><strong>(b)</strong> <strong>Keep the explicit SUITES allowlist, fail hard.</strong> Exit 1 on a missing file, add the two stragglers (or document their exclusion), keep appending manually. <em>Pros:</em> explicit control of gate contents and run order. <em>Cons:</em> add-a-file-forget-the-array drift stays possible — it already happened once.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-12):</strong> <strong>(a)</strong> — glob <code>scripts/tests/hermetic/*.ts</code> at run time minus a documented <code>EXCLUDED</code> array (render-smoke: Chrome dependency; profile-repo-smoke: mutates dev.db). Structure beats discipline — the convention is already documented as "every file runs on every push", the drift already happened once, and globbing makes the claim structurally true while eliminating the missing-file silent-skip mode.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ14 — Gemini rate-limit architecture? (→ §3.8 lows / §5.1)</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Shared-file bucket (arXiv pattern).</strong> Move <code>acquireGeminiSlot</code> onto a single-row bucket in <code>data/</code> via the existing <code>openDb()</code> seam so all four processes share one 12–15/min line, with the per-process fallback at half rate on shared-file failure. <em>Pros:</em> actually enforces the provider cap; the pattern, protocol, and code shape already exist in <code>lib/arxiv/rate-limit.ts</code>; pairs naturally with the §5.1 token-bucket dedup refactor. <em>Cons:</em> a real chunk of work + smokes; one more shared <code>data/*.db</code> file.</li>
+          <li><strong>(b)</strong> <strong>Config-only stopgap.</strong> Drop <code>GEMINI_RATE_PER_MIN</code> to ~3 per process (4×3 = 12 &lt; 15). <em>Pros:</em> one env line today. <em>Cons:</em> each process gets a quarter of the real budget even when the others are idle — backfills and webhook fan-outs slow down for no global benefit.</li>
+          <li><strong>(c)</strong> <strong>Leave as-is.</strong> The shared LLM cache dedups identical cross-tier calls and 429s are retried. <em>Pros:</em> zero work. <em>Cons:</em> distinct-input bursts (the 4×12 = 48/min worst case) can still 429-storm during heavy ingest — the documented free-tier math is simply wrong today.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-12):</strong> <strong>(a)</strong> — shared-file bucket on the arXiv pattern: <code>acquireGeminiSlot</code> moves onto a single-row bucket in <code>data/</code> via the existing <code>openDb()</code> seam so all four processes share one provider-cap line, with the per-process fallback at half rate on shared-file failure. Folded into the §5.1 token-bucket extraction so the dedup refactor and the sharing land as one change; it complements OQ9's queue — the queue minimizes retry spend, the shared bucket stops first-attempt bursts from collectively exceeding the provider cap.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="fix-order">Suggested fix order</h2></summary>
+    <div class="section-body">
+      <h3>Remediation checklist</h3>
+      <div class="callout tip"><strong>All fourteen OQs decided (OQ1–OQ7 on 2026-06-11, OQ8–OQ14 on 2026-06-12)</strong> — this checklist is cut from those decisions plus the OQ-independent fixes, structured for parallel fan-out: tasks are file-disjoint where possible and tagged <em>Parallel-safe</em> or <em>Depends on P&lt;id&gt;</em>.</div>
+      <div class="callout warn"><strong>Branch strategy.</strong> P3 lands on <code>feat/closed-jobs</code> and ships with PR&nbsp;#1 (it fixes bugs in that PR's own feature). P2, P4.3, and P5.1 touch <code>prisma/schema.prisma</code> or <code>scheduler/jobs/job-watcher.ts</code>, which PR&nbsp;#1 also touches — they wait for the merge. Everything else is branch-independent and can land any time.</div>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Security quick wins</span>
+        </summary>
+        <div class="task-body">
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.1</span><span class="task-title">OQ1a — env-var sign-in allowlist</span></summary>
+            <div class="task-body"><p><code>lib/auth.ts</code>: <code>signIn</code> gates on <code>ALLOWED_SIGNIN_EMAILS</code> (comma list, owner-only to start); extract a pure <code>isAllowedSignInEmail()</code> helper + hermetic smoke; set the env on both tiers + restart. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.2</span><span class="task-title">Bump next + eslint-config-next to 16.2.9</span></summary>
+            <div class="task-body"><p><code>package.json</code> + lockfile; whole-project <code>tsc</code>, hermetic gate, prod <code>npm run build</code>. Never <code>npm audit fix --force</code> (downgrades next-auth). <em>Parallel-safe (sole owner of package.json until P1.6).</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.3</span><span class="task-title">OQ3b — local org-logo map</span></summary>
+            <div class="task-body"><p>Drop <code>orgLogo</code> from <code>app/api/ai/llmleaderboard/route.ts</code>; <code>LLMLeaderboardCard.tsx</code> renders from an <code>orgName → /public/logos/*.svg</code> map with an initials fallback; the <code>dangerouslySetInnerHTML</code> goes away. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.4</span><span class="task-title">Security headers</span></summary>
+            <div class="task-body"><p><code>headers()</code> block in <code>next.config.ts</code>: <code>X-Frame-Options: DENY</code>, <code>X-Content-Type-Options: nosniff</code>, <code>Referrer-Policy: strict-origin-when-cross-origin</code>. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.5</span><span class="task-title">Rate-limit the un-throttled token-spend routes</span></summary>
+            <div class="task-body"><p><code>checkUserRateLimit</code> on <code>app/api/research/import</code> + <code>app/api/applications/backfill</code>. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.6</span><span class="task-title">CRLF header strip + unused-dep removal</span></summary>
+            <div class="task-body"><p>Strip <code>[\r\n]</code> in <code>buildRfc822Message</code> (<code>lib/email/send.ts</code>); <code>npm uninstall nodemailer @types/nodemailer @gradio/client</code> (grep-verify <code>react-is</code> first). <em>Depends on P1.2 (package.json contention).</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">OQ2a — userId-scope the four global tables</span>
+        </summary>
+        <div class="task-body">
+          <p><em>Depends on PR #1 merge (schema migration serialization).</em> One wrinkle to design in P2.2: <code>requireLocalOrSession</code> admits LAN requests with no session — scoped queries from LAN resolve to the sole owner account (single-user fallback) rather than 401ing the kiosk use-case.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">Migration + backfill</span></summary>
+            <div class="task-body">
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title">Schema: userId + index on Task, LifeGoal, GlobalSetting, SavedPaper</span></summary>
+                <div class="task-body"><p>Additive migration applied to BOTH dev.db and prod.db (stop the four PM2 procs to clear the SQLite lock, migrate, restart).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.2</span><span class="task-title">Backfill existing rows to the owner user id</span></summary>
+                <div class="task-body"><p>Idempotent script (existence-guarded), run against both DBs, then make <code>userId</code> required.</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Repos + routes derive userId from session</span></summary>
+            <div class="task-body"><p><code>lib/repositories/{tasks,goals,settings,saved-papers}.ts</code> + <code>app/api/{tasks,goals,settings,research/saved}</code>; LAN-bypass fallback per the note above. <em>Depends on P2.1.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">GlobalSetting per-user rework</span></summary>
+            <div class="task-body"><p>Replace the single-row <code>id='global'</code> design with per-user rows; keep the <code>/api/settings</code> If-Match optimistic-concurrency contract so ThemeProvider needs no client change. <em>Depends on P2.2.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">Smokes + apis.html regen</span></summary>
+            <div class="task-body"><p>Hermetic scoping smoke (stranger-user sees empty sets); <code>npm run gen:api-docs</code> — the settings/tasks request surfaces change, so a stale <code>apis.html</code> would fail the push gate. <em>Depends on P2.3.</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Close-detection hardening (on feat/closed-jobs, pre-merge)</span>
+        </summary>
+        <div class="task-body">
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">liveness.ts: OQ4b redirects + SSRF loop + bypass guard</span></summary>
+            <div class="task-body"><p>Single owner of <code>lib/postings/liveness.ts</code>: positive-evidence redirect classification (off-path → <code>"unknown"</code> unless board search/root allowlist or closed-marker); manual-redirect loop running <code>assertExternalHttpUrl</code> on each hop (cap 5); refuse <code>MC_LIVENESS_BYPASS</code> when <code>MC_SCHEDULER_TIER === "prod"</code>. <em>Parallel-safe (alongside P3.3).</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">OQ5a — two-tick close confirmation</span></summary>
+            <div class="task-body">
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.2.1</span><span class="task-title">Schema: JobPosting.pendingClosedAt</span></summary>
+                <div class="task-body"><p>Additive migration, both DBs; first closed verdict stamps it, alive/unknown clears it.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.2.2</span><span class="task-title">job-watcher: flip + cascade only on second consecutive closed verdict</span></summary>
+                <div class="task-body"><p>Applies to both the stale-probe and C3 paths; manual feed-close stays immediate (user action is its own confirmation).</p></div>
+              </details>
+              <p><em>Depends on P3.3 (same job-watcher.ts owner, sequenced).</em></p>
+            </div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">OQ6a + OQ7a — C3 cursor + seen-exclusion scope</span></summary>
+            <div class="task-body"><p><code>job-watcher.ts</code>: stamp <code>lastProbedAt = runAt</code> on skipped candidates (comment renamed to "last considered by a probe sweep"); keep probing fetch-seen postings for aggregator kinds, keep the exclusion for first-party ATS kinds. <em>Parallel-safe (alongside P3.1).</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.4</span><span class="task-title">Smokes + ship PR #1</span></summary>
+            <div class="task-body"><p>Extend <code>liveness-probe-smoke</code> (authwall/login/signup fixtures), <code>cascade-close-smoke</code> (two-tick + steady-state cursor advance); <code>tsc</code>; push (full gate) → merge PR&nbsp;#1 → prod <code>npm run build</code> + <code>pm2 restart</code> all four procs. <em>Depends on P3.1–P3.3.</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P4</span>
+          <span class="task-title">Ingest pipeline integrity</span>
+        </summary>
+        <div class="task-body">
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">OQ8b — throwOnError checkpoint gating</span></summary>
+            <div class="task-body"><p>Opt-in rethrow in <code>lib/calendar/sync.ts</code> + <code>lib/repositories/applicationEvents.ts</code> (benign no-ops still return normally); <code>ingest.ts</code> passes the flag so its existing catch + stamp logic becomes live; hermetic smoke pinning checkpoint-stays-null-on-failure. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">withRetry on parseApplicationEmail</span></summary>
+            <div class="task-body"><p><code>lib/email-parser.ts</code> — same backoff shape as <code>chatJSON</code>; each attempt still awaits <code>acquireGeminiSlot</code>. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.3</span><span class="task-title">OQ9b — FailedIngest retry queue (alarm side only)</span></summary>
+            <div class="task-body">
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.3.1</span><span class="task-title">Schema: FailedIngest table</span></summary>
+                <div class="task-body"><p><code>FailedIngest(msgId @id, userId, firstFailedAt, attempts, lastError, nextRetryAt)</code>, both DBs.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.3.2</span><span class="task-title">Webhook writes a row on every errored outcome</span></summary>
+                <div class="task-body"><p><code>app/api/gmail/webhook/route.ts</code> — watermark behavior unchanged.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.3.3</span><span class="task-title">Scheduler retry job — ×4 backoff, cap 6</span></summary>
+                <div class="task-body"><p>Due rows re-ingest with the parser's inner retry disabled (one parse call per attempt); 5&nbsp;m → 20&nbsp;m → ~1.3&nbsp;h → ~5.3&nbsp;h → ~21&nbsp;h → ~3.6&nbsp;d; per-attempt structured-warn alarm naming the next retry time, give-up alarm naming Scan Inbox; <code>gmail.get</code> 404 → drop row; prune ≥30&nbsp;d. Notification/frontend delivery deliberately deferred (notification-system hold).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.3.4</span><span class="task-title">Hermetic smoke (backoff math, cap, alarm shape)</span></summary>
+                <div class="task-body"><p>Auto-registered by P5.3's glob.</p></div>
+              </details>
+              <p><em>Depends on P4.2 + PR #1 merge (schema serialization).</em></p>
+            </div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.4</span><span class="task-title">OQ10a — GCAL_SYNC_ENABLED master switch</span></summary>
+            <div class="task-body"><p><code>lib/calendar/sync.ts</code> checks it before any gcal write (recorded skip reason, mirroring <code>EMAIL_ENABLED</code>); <code>1</code> in prod env, <code>0</code> in dev env + the P6.4 example files. <em>Depends on P4.1 (same file).</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P5</span>
+          <span class="task-title">Scheduler + infra robustness</span>
+        </summary>
+        <div class="task-body">
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.1</span><span class="task-title">wrapJob() + cascade reconcile sweep</span></summary>
+            <div class="task-body"><p><code>scheduler/index.ts</code>: one wrapper adds the overlap guard + P2021 surfacing for all 11 jobs; job-watcher gains a top-of-run idempotent reconcile (<code>INTERESTED</code> apps whose posting is closed → cascade). <em>Depends on PR #1 merge (job-watcher churn).</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.2</span><span class="task-title">OQ14a — shared Gemini bucket + bucket dedup</span></summary>
+            <div class="task-body"><p>Extract <code>createProcessBucket</code> (dedups <code>lib/ai/rate-limit.ts</code> vs <code>lib/arxiv/rate-limit.ts</code>); move <code>acquireGeminiSlot</code> onto a single-row shared bucket (<code>data/gemini-bucket.db</code> via <code>openDb()</code>), per-process fallback at half rate; smoke. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.3</span><span class="task-title">OQ13a — pre-push glob + EXCLUDED array</span></summary>
+            <div class="task-body"><p><code>scripts/pre-push.sh</code> enumerates <code>hermetic/*.ts</code> minus documented exclusions (render-smoke: Chrome; profile-repo-smoke: mutates dev.db). <em>Parallel-safe — land early so every later smoke auto-registers.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.4</span><span class="task-title">Backup chain hardening</span></summary>
+            <div class="task-body"><p><code>scripts/backup-db.sh</code>: per-step rclone failure tolerance (local snapshot always completes), Drive-side prune, post-snapshot <code>PRAGMA integrity_check</code>. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.5</span><span class="task-title">withCache key sort + stale-fallback wiring</span></summary>
+            <div class="task-body"><p><code>lib/cache.ts</code>: <code>params.sort()</code>; fall back to <code>readCachedDataIgnoringExpiry</code> when the L1 stale entry is gone. <em>Parallel-safe.</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P6</span>
+          <span class="task-title">Frontend + docs hygiene</span>
+        </summary>
+        <div class="task-body">
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P6.1</span><span class="task-title">OQ11a — dash-by-id carousel refactor</span></summary>
+            <div class="task-body"><p><code>useDashCarousel.ts</code> tracks the active dash id, resolving the index lazily against the current order. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P6.2</span><span class="task-title">NewPostingsCard render-phase store write → effect</span></summary>
+            <div class="task-body"><p><code>NewPostingsCard.tsx:227</code>. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P6.3</span><span class="task-title">Dead code</span></summary>
+            <div class="task-body"><p>Delete <code>components/Window.tsx</code>; drop <code>viewScreenshots</code> + v10 persist migration (<code>state/index.ts</code>); remove the empty <code>else if</code> in <code>lib/resumes/select.ts</code>. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P6.4</span><span class="task-title">OQ12b — docs + .env examples</span></summary>
+            <div class="task-body"><p>Add tracked <code>.env.development.example</code> / <code>.env.production.example</code> (incl. <code>GCAL_SYNC_ENABLED</code>, <code>ALLOWED_SIGNIN_EMAILS</code>); correct CLAUDE.md (env "checked-in" claim, Window layer, store screenshots, cache "sorted query" wording); backup-recovery runbook gains the copy step; delete the stray <code>s</code> line in <code>.env.production</code>. Single owner of CLAUDE.md. <em>Depends on P5.5 + P6.3 (documents their end state).</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P7</span>
+          <span class="task-title">Verify &amp; ship</span>
+        </summary>
+        <div class="task-body"><p>Whole-project <code>tsc --noEmit</code>; full hermetic gate; prod <code>npm run build</code> + <code>pm2 restart</code> all four procs <code>--update-env</code>; flip this checklist's boxes + update <code>docs/next_steps.md</code>; commits pathspec-scoped per track. <em>Depends on everything above.</em></p></div>
+      </details>
+
+      <h3>Parallelization &amp; critical path</h3>
+      <pre class="mermaid">
+flowchart TB
+  P11["P1.1 sign-in allowlist"]
+  P12["P1.2 Next bump"] --> P16["P1.6 CRLF strip + dep removals"]
+  P31["P3.1 liveness: redirects + SSRF + bypass guard"] --> P34["P3.4 smokes + ship PR #1"]
+  P33["P3.3 C3 cursor + seen-exclusion"] --> P32["P3.2 two-tick close confirmation"]
+  P32 --> P34
+  P34 --> MERGE(["PR #1 merged + prod deployed"])
+  MERGE --> P21["P2.1 scoping migration + backfill"]
+  P21 --> P22["P2.2 repos + routes"]
+  P22 --> P23["P2.3 GlobalSetting per-user rework"]
+  P23 --> P24["P2.4 smokes + apis.html regen"]
+  P41["P4.1 throwOnError checkpoints"] --> P44["P4.4 GCAL_SYNC_ENABLED"]
+  P42["P4.2 parser withRetry"] --> P43["P4.3 FailedIngest retry queue"]
+  MERGE --> P43
+  MERGE --> P51["P5.1 wrapJob + reconcile sweep"]
+  LEAVES["P1.3 · P1.4 · P1.5 · P5.4 · P5.5 · P6.2 · P6.3<br/>(independent leaves)"] --> P64["P6.4 docs + .env examples"]
+  P24 --> P7["P7 verify &amp; ship"]
+  P43 --> P7
+  P44 --> P7
+  P51 --> P7
+  P16 --> P7
+  P11 --> P7
+  P52["P5.2 shared Gemini bucket"] --> P7
+  P53["P5.3 pre-push glob"] --> P7
+  P61["P6.1 dash-by-id"] --> P7
+  P64 --> P7
+      </pre>
+      <table>
+        <thead>
+          <tr><th>Contended file/module</th><th>Tasks touching it</th><th>Resolution</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>prisma/schema.prisma</code> + migrations</td><td>P3.2.1, P2.1.1, P4.3.1</td><td>Serialize: P3.2.1 on <code>feat/closed-jobs</code>, the other two only after PR&nbsp;#1 merges (any order between them, one migration at a time)</td></tr>
+          <tr><td><code>scheduler/jobs/job-watcher.ts</code></td><td>P3.2, P3.3, P5.1</td><td>One owner: P3.3 → P3.2 (pre-merge), P5.1 post-merge</td></tr>
+          <tr><td><code>lib/calendar/sync.ts</code></td><td>P4.1, P4.4</td><td>Same owner, sequenced P4.1 → P4.4</td></tr>
+          <tr><td><code>package.json</code></td><td>P1.2, P1.6</td><td>Sequenced P1.2 → P1.6</td></tr>
+          <tr><td><code>scripts/pre-push.sh</code></td><td>P5.3 vs every smoke-adding task</td><td>Land P5.3 first — the glob makes later smoke registration automatic</td></tr>
+          <tr><td><code>lib/postings/liveness.ts</code></td><td>P3.1 only</td><td>Sole owner — safe</td></tr>
+          <tr><td>CLAUDE.md + runbooks</td><td>P6.4 only</td><td>Sole owner — safe (runs last among docs)</td></tr>
+          <tr><td>env files + <code>.example</code>s</td><td>P1.1, P4.4, P6.4</td><td>Tiny edits; coordinate via P6.4 as the final author of the examples</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Waves.</strong> <em>Wave 1 (start immediately, all parallel):</em> P1.1–P1.5, P3.1 ∥ P3.3, P4.1, P4.2, P5.2, P5.3 (land early), P5.4, P5.5, P6.1–P6.3. <em>Wave 2:</em> P1.6, P3.2, P3.4 (ships PR&nbsp;#1), P4.4, P6.4. <em>Wave 3 (post-merge):</em> P2.1 → P2.2 → P2.3 → P2.4, P4.3, P5.1. <em>Wave 4:</em> P7 fan-in. <strong>Critical path:</strong> P3.3 → P3.2 → P3.4 → merge → P2.1 → P2.2 → P2.3 → P2.4 → P7 — the OQ2a scoping chain is the wall-clock floor, and <strong>P2.3 (GlobalSetting per-user rework) is the most-constrained node</strong> (schema + route + If-Match concurrency in one change). <code>prisma/schema.prisma</code> is the busiest contended file (three migrations across two branches); everything else fans out freely.</p>
+
+    </div><!-- /.section-body -->
+  </details><!-- /section: fix order -->
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  // Syntax-highlight every <pre><code> (auto-detects, or honors a
+  // class="language-xxx" hint). Mermaid blocks are <pre class="mermaid"> with
+  // no inner <code>, so hljs skips them.
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,   // sections start collapsed; render lazily on open (below)
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  // Mermaid can't measure a diagram inside a collapsed (display:none) <details>,
+  // so render each only once its section is visible. mermaid.run() tags nodes
+  // with data-processed, and the :not() guard prevents re-processing.
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');     // bounded viewport (CSS) before measuring
+    svgPanZoom(svg, {
+      controlIcons: true,               // built-in zoom in / out / reset buttons
+      fit: true, center: true,          // show the whole diagram first
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });       // await so the SVG exists before pan/zoom
+    nodes.forEach(attachPanZoom);
+  }
+  // Render any diagrams already visible at load (sections that start open).
+  renderVisibleMermaid(document);
+  // …and render on first expand of each collapsible section.
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  // Keep the copyright year current without editing every doc.
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
