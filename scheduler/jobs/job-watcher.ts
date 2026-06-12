@@ -8,6 +8,11 @@
  *   - `runWatchlist(id)` — invoked by `POST /api/watchlists/[id]/run`; processes
  *     one watchlist immediately, regardless of cadence.
  *
+ * Plus one housekeeping helper, `reconcileClosedPostingCascade()` — invoked by
+ * the scheduler at the top of every job-watcher tick (before the crawl pass)
+ * to re-fire the Pillar C → A cascade for INTERESTED cards whose posting is
+ * already closed but whose cascade was missed (P5.1).
+ *
  * SSE broadcasts: `runWatchlist` runs in-process to the Next.js server when
  * called from the route, so `broadcastEvent` reaches connected SSE clients.
  * The scheduler process (separate from Next.js) doesn't have SSE clients;
@@ -809,6 +814,68 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
  */
 export async function runWatchlist(id: string): Promise<RunResult> {
     return processOne(id, { broadcast: true });
+}
+
+/**
+ * P5.1 — idempotent top-of-run reconcile sweep (cascade catch-up).
+ *
+ * The Pillar C → A cascade fires inline when job-watcher confirms a posting
+ * closed (stale-probe + C3 paths above) and when the user closes a posting
+ * via the feed PATCH. Both call sites warn-swallow a cascade failure, and a
+ * process crash between the posting flip and the cascade loses it entirely —
+ * leaving an INTERESTED card pointing at a closed posting forever. This sweep
+ * catches those rows: every INTERESTED application whose linked JobPosting is
+ * status="closed" gets the SAME cascade re-run (close-from-posting.ts — the
+ * logic is not duplicated here, so eligibility stays INTERESTED-only / OQ7).
+ *
+ * Postings merely in the OQ5a two-tick pending state (pendingClosedAt set,
+ * status still "new") are NOT swept — the status="closed" relation filter
+ * excludes them by construction; only a confirmed close cascades.
+ *
+ * Idempotent: a second run finds no INTERESTED+closed pairs (the first run
+ * moved them to CLOSED) and the cascade itself re-asserts status='INTERESTED'
+ * in its UPDATE WHERE, so a concurrent user drag still wins. Logs only when
+ * something was actually reconciled; silent on the no-op steady state.
+ *
+ * `opts` is an injectable seam for the hermetic smoke (same pattern as
+ * RunDueDeps above): `userId` scopes the sweep to throwaway rows so the
+ * pre-push run can never touch real dev.db data; `at` pins event timestamps
+ * for deterministic asserts. The scheduler passes nothing.
+ */
+export async function reconcileClosedPostingCascade(
+    opts: { userId?: string; at?: Date } = {},
+): Promise<{ closedAppIds: string[] }> {
+    const orphans = await prisma.application.findMany({
+        where: {
+            status: "INTERESTED",
+            ...(opts.userId ? { userId: opts.userId } : {}),
+            // Fully-closed postings only — a null relation (postingId unset)
+            // or a pendingClosedAt-stamped row (status still "new") never
+            // matches. "hidden" is a user-curation state, not a close; it
+            // does not cascade here either (parity with the inline call sites,
+            // which only cascade on a confirmed status="closed" flip).
+            posting: { is: { status: "closed" } },
+        },
+        select: { id: true, postingId: true },
+    });
+    if (orphans.length === 0) return { closedAppIds: [] };
+
+    const postingIds = [...new Set(orphans.flatMap(o => (o.postingId ? [o.postingId] : [])))];
+    const cascade = await closeApplicationsForClosedPostings(postingIds, {
+        at: opts.at ?? new Date(),
+        // Distinct provenance: tells a reader the ORIGINAL cascade was missed
+        // and this row was healed by the sweep, not closed in-band. The
+        // ApplicationEvent.syncSource column is a free string ("probe" and
+        // "ms" are the in-band values).
+        source: "reconcile",
+    });
+    if (cascade.closedAppIds.length > 0) {
+        console.info(
+            `[job-watcher] reconcile sweep closed ${cascade.closedAppIds.length} INTERESTED app(s) ` +
+            `whose posting had already closed — apps=[${cascade.closedAppIds.join(", ")}]`,
+        );
+    }
+    return cascade;
 }
 
 // Scraped aggregators (LinkedIn, Indeed) bot-detect on bursts; their fetchers
