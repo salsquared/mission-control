@@ -15,6 +15,11 @@
  *   - gcal REAL failure: the throwaway user has no Google Account rows, so
  *     getGoogleAuthClient throws (auth failure).
  *   - gcal BENIGN no-op: an event with no scheduledAt has nothing to mirror.
+ *   - gcal MUTE (OQ10a): GCAL_SYNC_ENABLED !== "1" is a benign no-op too —
+ *     null, never a throw, even with throwOnError (a muted tier's checkpoint
+ *     intentionally stamps; see lib/calendar/sync.ts). Section (d) pins the
+ *     flag to "1" so the real-failure taxonomy stays reachable; section (e)
+ *     exercises unset / "0" / "1". Both save+restore process.env.
  *
  * Never sends mail: the REAL-failure path dies before a row exists, the
  * dedup path returns null before the send block, and EMAIL_ENABLED=0 in the
@@ -129,34 +134,79 @@ async function main() {
                 rows.length === 1 && rows[0].id === preexisting.id, rows.map(r => r.id));
         }
 
-        // ── (d) gcal: throwOnError taxonomy ─────────────────────────────────
+        // ── (d) gcal: throwOnError taxonomy (under GCAL_SYNC_ENABLED=1) ─────
         {
-            const futureEv = makeEvent({
-                kind: "INTERVIEW_SCHEDULED",
-                scheduledAt: new Date(Date.now() + 86_400_000),
-            });
-            // Real failure: throwaway user has no Google Account rows → auth throws.
-            let thrown: unknown = null;
+            const savedGcalFlag = process.env.GCAL_SYNC_ENABLED;
             try {
-                await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" }, { throwOnError: true });
-            } catch (e) {
-                thrown = e;
+                // Pin the mute switch ON so the real code paths stay reachable
+                // (with the flag off, the mute short-circuits before auth).
+                process.env.GCAL_SYNC_ENABLED = "1";
+                const futureEv = makeEvent({
+                    kind: "INTERVIEW_SCHEDULED",
+                    scheduledAt: new Date(Date.now() + 86_400_000),
+                });
+                // Real failure: throwaway user has no Google Account rows → auth throws.
+                let thrown: unknown = null;
+                try {
+                    await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" }, { throwOnError: true });
+                } catch (e) {
+                    thrown = e;
+                }
+                check("(d) syncEventToGcal throwOnError:true rethrows on auth failure", thrown !== null);
+                check(
+                    "(d) the rethrown error is the auth failure",
+                    /not linked|refresh token/i.test((thrown as Error | null)?.message ?? ""),
+                    thrown,
+                );
+
+                // Benign no-op: nothing scheduled → null, no throw, even with the flag.
+                const unscheduledEv = makeEvent({ scheduledAt: null });
+                const res = await syncEventToGcal(user.id, unscheduledEv, { company: "Smoke Co" }, { throwOnError: true });
+                check("(d) no-scheduledAt event returns null without throwing (throwOnError:true)", res === null, res);
+
+                // Default behavior unchanged: same auth failure is swallowed → null.
+                const swallowed = await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" });
+                check("(d) default (no flag) still swallows the auth failure → null", swallowed === null, swallowed);
+            } finally {
+                if (savedGcalFlag === undefined) delete process.env.GCAL_SYNC_ENABLED;
+                else process.env.GCAL_SYNC_ENABLED = savedGcalFlag;
             }
-            check("(d) syncEventToGcal throwOnError:true rethrows on auth failure", thrown !== null);
-            check(
-                "(d) the rethrown error is the auth failure",
-                /not linked|refresh token/i.test((thrown as Error | null)?.message ?? ""),
-                thrown,
-            );
+        }
 
-            // Benign no-op: nothing scheduled → null, no throw, even with the flag.
-            const unscheduledEv = makeEvent({ scheduledAt: null });
-            const res = await syncEventToGcal(user.id, unscheduledEv, { company: "Smoke Co" }, { throwOnError: true });
-            check("(d) no-scheduledAt event returns null without throwing (throwOnError:true)", res === null, res);
+        // ── (e) gcal: GCAL_SYNC_ENABLED master switch is a BENIGN no-op ─────
+        {
+            const savedGcalFlag = process.env.GCAL_SYNC_ENABLED;
+            try {
+                // A scheduled event for a user with no Google Account: were the
+                // mute not consulted first, this would throw (auth failure, as
+                // proven in (d)). The mute must win — null, no throw, even with
+                // throwOnError:true, so a muted tier's ingest checkpoint stamps.
+                const futureEv = makeEvent({
+                    kind: "INTERVIEW_SCHEDULED",
+                    scheduledAt: new Date(Date.now() + 86_400_000),
+                });
 
-            // Default behavior unchanged: same auth failure is swallowed → null.
-            const swallowed = await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" });
-            check("(d) default (no flag) still swallows the auth failure → null", swallowed === null, swallowed);
+                delete process.env.GCAL_SYNC_ENABLED;
+                const resUnset = await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" }, { throwOnError: true });
+                check("(e) GCAL_SYNC_ENABLED unset → null, no throw (even throwOnError:true)", resUnset === null, resUnset);
+
+                process.env.GCAL_SYNC_ENABLED = "0";
+                const resZero = await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" }, { throwOnError: true });
+                check('(e) GCAL_SYNC_ENABLED="0" → null, no throw (even throwOnError:true)', resZero === null, resZero);
+
+                // "1" restores the real behavior: the auth failure rethrows again.
+                process.env.GCAL_SYNC_ENABLED = "1";
+                let thrown: unknown = null;
+                try {
+                    await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" }, { throwOnError: true });
+                } catch (e) {
+                    thrown = e;
+                }
+                check('(e) GCAL_SYNC_ENABLED="1" restores real behavior (auth failure rethrows)', thrown !== null);
+            } finally {
+                if (savedGcalFlag === undefined) delete process.env.GCAL_SYNC_ENABLED;
+                else process.env.GCAL_SYNC_ENABLED = savedGcalFlag;
+            }
         }
     } finally {
         await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);

@@ -68,6 +68,8 @@ export interface GcalSyncOptions {
  * GcalSyncOptions).
  *
  * Skips events without `scheduledAt` (status notes / past-only milestones).
+ * Also skips (benign no-op, never throws) when `GCAL_SYNC_ENABLED !== "1"` —
+ * the per-tier master switch that stops dev+prod double-mirroring (OQ10a).
  */
 export async function syncEventToGcal(
     userId: string,
@@ -76,6 +78,32 @@ export async function syncEventToGcal(
     opts?: GcalSyncOptions
 ): Promise<string | null> {
     if (!event.scheduledAt) return null;
+
+    // GCAL_SYNC_ENABLED (OQ10a, 2026-06-12): master switch for app→gcal event
+    // mirroring, modeled on EMAIL_ENABLED in lib/email/send.ts. dev (:4101 /
+    // dev.db) and prod (:3101 / prod.db) both ingest the same Gmail push and
+    // both mirror to the user's ONE Google Calendar — so one interview email
+    // produced two calendar events. `.env.development` sets 0, `.env.production`
+    // sets 1: prod is the single tier that writes to the calendar.
+    //
+    // This mute is a BENIGN NO-OP — it must NOT throw, even with
+    // opts.throwOnError set. Each tier has its own DB and therefore its own
+    // gcalSyncedAt checkpoints: in a muted tier the ingest checkpoint
+    // *intentionally* stamps (this tier is configured to never mirror, so
+    // there is nothing to retry), while the unmuted tier still really syncs
+    // and only stamps on actual success. Throwing here would make the muted
+    // tier retry forever a sync it is configured never to perform.
+    //
+    // Scope: this flag gates ONLY the app→gcal write direction (this
+    // function's events.insert/patch). pullGcalChanges is the gcal→app pull —
+    // read-only on the calendar side — and stays ungated. deleteEventFromGcal
+    // / purgeApplicationEvents stay ungated too: they're user-initiated
+    // cleanup of artifacts that already exist on the calendar (possibly
+    // created before the mute), and muting them would strand orphaned events.
+    if (process.env.GCAL_SYNC_ENABLED !== "1") {
+        console.info(`[gcal-sync] muted (GCAL_SYNC_ENABLED != 1) — skipping mirror for event ${event.id}`);
+        return null;
+    }
 
     let calendar;
     try {
