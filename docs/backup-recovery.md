@@ -5,7 +5,7 @@ Two pieces of state matter:
 - **`prisma/prod.db`** — every Application, ApplicationEvent, Profile entity, Watchlist, JobPosting, Notification, GeneratedResume row. **Also contains plaintext `Account.refresh_token` for the Gmail/Calendar OAuth session** — anyone with this file has equivalence to the user's mailbox.
 - **`data/resumes/<id>.<ext>`** — the actual PDF/DOCX bytes archived per generation. `GeneratedResume.artifactPath` points at this directory.
 
-`scripts/backup-db.sh` snapshots both, encrypts each artifact with [age](https://age-encryption.org/) when a recipient is configured (RAH-13), mirrors to Google Drive via rclone, and prunes local copies (and their `.age` variants) older than 30 days. Designed for cron / launchd; run by hand any time. Falls back to local-only if rclone isn't on PATH (warns loudly); falls back to **plaintext** if no age recipient is configured, also warning loudly (so cron doesn't break before the user finishes initial setup).
+`scripts/backup-db.sh` snapshots both, encrypts each artifact with [age](https://age-encryption.org/) when a recipient is configured (RAH-13), mirrors to Google Drive via rclone, and prunes copies (and their `.age` variants) older than 30 days on **both** the local dir and the Drive side. Every DB snapshot is verified with `PRAGMA integrity_check` before it's kept — a corrupt snapshot is discarded (never uploaded) and the run exits non-zero so cron/launchd surfaces it. rclone failures are tolerated per-step: a failed copy or prune warns and the rest of the run continues (the next run re-mirrors anything missed — `rclone copy` is idempotent). Designed for cron / launchd; run by hand any time. Falls back to local-only if rclone isn't on PATH (warns loudly); falls back to **plaintext** if no age recipient is configured, also warning loudly (so cron doesn't break before the user finishes initial setup).
 
 ## Encryption (RAH-13) — one-time setup
 
@@ -87,7 +87,15 @@ rm -f prisma/prod.db-wal prisma/prod.db-shm   # let SQLite rebuild WAL sidecars
 rm -rf data/resumes/*    # leave .gitkeep
 tar -xzf ~/restore/mc-resumes-LATEST.tar.gz -C data/
 
-# 6. Bring services back up
+# 6. Recreate the untracked env files. The per-tier files are documented by
+#    tracked examples (OQ12b — .env* is gitignored, never committed):
+cp .env.development.example .env.development
+cp .env.production.example .env.production
+#    Real secrets (Google OAuth, NextAuth, Gemini, ALLOWED_SIGNIN_EMAILS, …)
+#    live in the untracked .env — recreate it from 1Password; there is no
+#    example file for it.
+
+# 7. Bring services back up
 pm2 start mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod
 ```
 
