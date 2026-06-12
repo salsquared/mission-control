@@ -41,7 +41,8 @@ import {
 } from "@/lib/postings/negative-filters";
 import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 import { parseCompensation } from "@/lib/postings/compensation";
-import { probeBatch, type WatchlistKind } from "@/lib/postings/liveness";
+import { probeBatch, PROBE_PROFILES, type WatchlistKind } from "@/lib/postings/liveness";
+import { closeApplicationsForClosedPostings } from "@/lib/applications/close-from-posting";
 
 export interface RunResult {
     watchlistId: string;
@@ -58,6 +59,41 @@ function externalIdFor(company: string, title: string, sourceUrl: string): strin
     h.update(`${company}|${title}|${sourceUrl}`);
     return h.digest("hex");
 }
+
+/**
+ * C3 (closed-jobs feature, 2026-06-09) — per-kind budget for the proactive,
+ * rotating re-probe of still-listed postings (Gap A). Deliberately SMALLER than
+ * the stale-probe's PROBE_PROFILES[kind].maxPerTick so the proactive sweep never
+ * starves close-detection of its rate budget on the shared IP. A conservative
+ * default (a small fraction of maxPerTick, capped low) spreads a full pass over
+ * the still-listed population across many ticks.
+ *
+ * TODO: size from the C0 audit (Track B) once it reports the still-listed
+ * population per kind + a target 24–48 h freshness window. Until then this
+ * conservative cap keeps C3 polite by construction.
+ */
+const C3_BUDGET_FRACTION = 0.1; // re-probe at most ~10% of a kind's stale cap per tick
+const C3_BUDGET_HARD_CAP = 20;  // …and never more than this many, regardless of kind
+export function c3BudgetForKind(kind: WatchlistKind): number {
+    const profile = PROBE_PROFILES[kind];
+    if (!profile) return 0;
+    const sized = Math.floor(profile.maxPerTick * C3_BUDGET_FRACTION);
+    return Math.max(1, Math.min(sized, C3_BUDGET_HARD_CAP));
+}
+
+/**
+ * OQ7a — aggregator feeds vs first-party ATS feeds, for the C3 sweep's
+ * "skip fetch-seen rows" rule. On a first-party feed (the employer's own ATS
+ * API / careers page: greenhouse, lever, ashby, workday, …) a posting
+ * appearing in the fetch IS evidence the detail page is open, so C3 skips
+ * fetch-seen rows. On an aggregator's search feed (the LinkedIn / Indeed
+ * guest-search scrapes) listing-presence ≠ detail-page-open — cards linger in
+ * search results after the posting stops accepting applications — so C3 must
+ * probe fetch-seen rows there too. (Same membership as FRAGILE_SOURCES below,
+ * but a distinct concept: that one is about crawl pacing, this one is about
+ * what a fetch sighting proves. Exported for the c3-cursor hermetic smoke.)
+ */
+export const AGGREGATOR_KINDS: ReadonlySet<WatchlistKind> = new Set<WatchlistKind>(["linkedin", "indeed"]);
 
 // Per-watchlist in-process mutex. Prevents the findUnique→create race when a
 // user double-clicks "Run now" or when a scheduler tick collides with a
@@ -327,6 +363,11 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             // by cross-watchlist reuse above. Promote a null stored value
             // to a non-null raw value when the heuristic / cross-watchlist
             // reuse improves later.
+            //
+            // OQ5a: deliberately do NOT clear pendingClosedAt here —
+            // fetch-presence is not alive evidence (on aggregator feeds a
+            // card lingers in search results after the posting closes).
+            // Only an explicit "alive" probe verdict clears the stamp.
             await prisma.jobPosting.update({
                 where: { id: existing.id },
                 data: {
@@ -444,6 +485,16 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // fetch-but-live postings (LinkedIn's 24h window) never false-close.
     // "unknown" results leave the row alone; the next tick re-probes.
     //
+    // OQ5a (P3.2, 2026-06-12): a single "closed" verdict no longer flips the
+    // row — it requires TWO CONSECUTIVE closed verdicts across ticks. The
+    // first stamps JobPosting.pendingClosedAt (no status change, no cascade,
+    // not counted in `closed`); the second, on a still-pending row, confirms
+    // the close. An explicit "alive" verdict clears the pending stamp;
+    // fetch-presence does NOT (on aggregator feeds a listing sighting isn't
+    // alive evidence); "unknown" preserves it (absence of evidence neither
+    // confirms nor clears). Manual feed-close (postings PATCH) bypasses this
+    // entirely — user action confirms itself.
+    //
     // SAFETY 1 — skip on empty fetch: a benign source hiccup (SPA mis-
     // render, CDN flap) would otherwise mark every existing row stale.
     // SAFETY 2 — skip on partial fetch: pagination broke mid-crawl; the
@@ -458,6 +509,14 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // closed" subset.
     let closed = 0;
     let refreshedAlive = 0;
+    // Closed-jobs cascade (OQ7/OQ8/OQ9): linked INTERESTED cards auto-closed by
+    // a confirmed-closed posting this run — folded into the closure-summary
+    // bell row below rather than blasted per-card.
+    let cascadeClosed = 0;
+    // externalIds the stale-probe already hit this tick — so the C3 sweep below
+    // doesn't double-probe a stale-but-alive row (still status="new") in the
+    // same tick.
+    const staleProbedExternalIds = new Set<string>();
     if (!isFirstRun && fetchResult.postings.length > 0 && !fetchResult.partial) {
         const sixHoursAgo = new Date(runAt.getTime() - 6 * 60 * 60 * 1000);
         const staleCandidates = await prisma.jobPosting.findMany({
@@ -466,36 +525,71 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 status: { notIn: ["closed", "hidden"] },
                 lastSeenAt: { lt: sixHoursAgo },
             },
-            select: { id: true, externalId: true, sourceUrl: true },
+            select: { id: true, externalId: true, sourceUrl: true, pendingClosedAt: true },
         });
         const toProbe = staleCandidates.filter(c => !seenExternalIds.has(c.externalId));
+        for (const c of toProbe) staleProbedExternalIds.add(c.externalId);
         if (toProbe.length > 0) {
             const probeResults = await probeBatch(
                 toProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl })),
                 watchlist.kind as WatchlistKind,
             );
+            // OQ5a two-tick partition: a closed verdict on a row already
+            // stamped pendingClosedAt (a prior tick's verdict) CONFIRMS the
+            // close; on an unstamped row it's the FIRST STRIKE — stamp only.
             const confirmedClosedIds: string[] = [];
+            const firstStrikeClosedIds: string[] = [];
             const aliveIds: string[] = [];
             for (const c of toProbe) {
                 const verdict = probeResults.get(c.externalId) ?? "unknown";
-                if (verdict === "closed") confirmedClosedIds.push(c.id);
-                else if (verdict === "alive") aliveIds.push(c.id);
-                // "unknown" → leave the row alone; the next tick re-evaluates.
+                if (verdict === "closed") {
+                    if (c.pendingClosedAt != null) confirmedClosedIds.push(c.id);
+                    else firstStrikeClosedIds.push(c.id);
+                } else if (verdict === "alive") aliveIds.push(c.id);
+                // "unknown" → leave the row alone (pendingClosedAt untouched);
+                // the next tick re-evaluates.
             }
             // Race-guard: a probe round can take minutes on LinkedIn
             // (30 probes × 1.5 s = 45 s) or seconds on Workday. If during
             // the probe window the user clicks "Hide" on a row, their
             // manual action must beat the gate. Re-assert "still non-
             // terminal" in the WHERE so a concurrent user UPDATE wins.
+            if (firstStrikeClosedIds.length > 0) {
+                // First closed verdict — stamp pendingClosedAt only. No status
+                // change, no cascade, no closed-count, no notification: the
+                // next tick's verdict decides.
+                await prisma.jobPosting.updateMany({
+                    where: {
+                        id: { in: firstStrikeClosedIds },
+                        status: { notIn: ["closed", "hidden"] },
+                    },
+                    data: { pendingClosedAt: runAt },
+                });
+            }
             if (confirmedClosedIds.length > 0) {
                 const closeResult = await prisma.jobPosting.updateMany({
                     where: {
                         id: { in: confirmedClosedIds },
                         status: { notIn: ["closed", "hidden"] },
+                        // Re-assert still-pending: a concurrent process (manual
+                        // run in the Next.js tier vs the scheduler) may have
+                        // cleared the stamp on alive evidence during the probe
+                        // window — its evidence wins.
+                        pendingClosedAt: { not: null },
                     },
-                    data: { status: "closed", removedAt: runAt },
+                    data: { status: "closed", removedAt: runAt, pendingClosedAt: null },
                 });
                 closed = closeResult.count;
+                // Pillar C → A cascade (OQ7/OQ8): close linked INTERESTED cards
+                // for the postings just confirmed closed. Per-tier, same DB.
+                const cascade = await closeApplicationsForClosedPostings(confirmedClosedIds, {
+                    at: runAt,
+                    source: "probe",
+                }).catch(e => {
+                    console.warn(`[job-watcher] cascade close failed (watchlist=${watchlistId}):`, e);
+                    return { closedAppIds: [] as string[] };
+                });
+                cascadeClosed += cascade.closedAppIds.length;
             }
             if (aliveIds.length > 0) {
                 const aliveResult = await prisma.jobPosting.updateMany({
@@ -503,29 +597,173 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                         id: { in: aliveIds },
                         status: { notIn: ["closed", "hidden"] },
                     },
-                    data: { lastSeenAt: runAt },
+                    // Explicit alive evidence clears a pending close stamp.
+                    data: { lastSeenAt: runAt, pendingClosedAt: null },
                 });
                 refreshedAlive = aliveResult.count;
             }
-            const skipped = toProbe.length - confirmedClosedIds.length - aliveIds.length;
-            if (skipped > 0 || refreshedAlive > 0 || closed > 0) {
+            const skipped = toProbe.length - confirmedClosedIds.length - firstStrikeClosedIds.length - aliveIds.length;
+            if (skipped > 0 || refreshedAlive > 0 || closed > 0 || firstStrikeClosedIds.length > 0) {
                 console.info(
                     `[job-watcher] probe-gate watchlist=${watchlistId} kind=${watchlist.kind}: ` +
-                    `candidates=${toProbe.length} closed=${closed} alive=${refreshedAlive} unknown=${skipped}`,
+                    `candidates=${toProbe.length} closed=${closed} pending=${firstStrikeClosedIds.length} ` +
+                    `alive=${refreshedAlive} unknown=${skipped}`,
                 );
             }
         }
+
+        // ─── C3 · budgeted, rotating re-probe of still-listed postings ──────
+        // Gap A: a closed-but-still-listed posting never goes stale (the fetch
+        // keeps bumping lastSeenAt at :330), so the stale-probe above never
+        // selects it. C3 adds a second, proactive sweep that re-probes
+        // status="new" postings ordered by lastProbedAt ASC (nulls first) — a
+        // durable rolling cursor with no in-memory state to lose on restart.
+        //
+        // Budget: a per-kind cap SEPARATE FROM and SMALLER THAN the stale-
+        // probe's maxPerTick, so the proactive sweep never starves close-
+        // detection of its rate budget on the shared IP. Reuses the same
+        // PROBE_PROFILES concurrency/delay + probeBatch's 429-abort flag +
+        // arXiv-style cooldown awareness (all internal to probeBatch).
+        //
+        // Verdict handling is IDENTICAL to the stale path (incl. the OQ5a
+        // two-tick confirmation):
+        //   closed  → first verdict stamps pendingClosedAt; a second
+        //             consecutive one flips status="closed" + the Pillar
+        //             C → A cascade (source:probe)
+        //   alive   → bump lastSeenAt + clear pendingClosedAt
+        //   unknown → leave the row alone (pendingClosedAt preserved).
+        // OQ6a: lastProbedAt is stamped on EVERY candidate selected into the
+        // take-window — probed AND skipped — so the column means "last
+        // considered by a probe sweep", not "actually probed". Stamping the
+        // skipped candidates is what keeps the cursor moving: a fetch-seen row
+        // left at NULL would otherwise sit at the front of the ORDER BY
+        // lastProbedAt ASC window forever and jam the rotation for every row
+        // behind it.
+        const c3Budget = c3BudgetForKind(watchlist.kind as WatchlistKind);
+        if (c3Budget > 0) {
+            const c3Candidates = await prisma.jobPosting.findMany({
+                where: { watchlistId, status: "new" },
+                // nulls-first: SQLite sorts NULL before non-NULL on ASC, so a
+                // never-considered row (lastProbedAt = NULL) is picked up first.
+                orderBy: { lastProbedAt: "asc" },
+                take: c3Budget,
+                select: { id: true, externalId: true, sourceUrl: true, pendingClosedAt: true },
+            });
+            // Within-tick skip rules:
+            //   - staleProbedExternalIds (ALL kinds): the stale-probe already
+            //     GET-probed this row seconds ago — never double-probe within
+            //     one tick.
+            //   - seenExternalIds (FIRST-PARTY kinds only, OQ7a): on an
+            //     employer-owned feed a fetch sighting proves the posting is
+            //     open, so probing it milliseconds later is wasted budget. On
+            //     AGGREGATOR feeds (LinkedIn / Indeed) the sighting proves
+            //     nothing about the detail page, so fetch-seen rows are still
+            //     probed there — that's the whole point of the C3 sweep for
+            //     those kinds.
+            const isAggregatorKind = AGGREGATOR_KINDS.has(watchlist.kind as WatchlistKind);
+            const c3ToProbe = c3Candidates.filter(
+                c => !staleProbedExternalIds.has(c.externalId)
+                    && (isAggregatorKind || !seenExternalIds.has(c.externalId)),
+            );
+            if (c3ToProbe.length > 0) {
+                const c3Results = await probeBatch(
+                    c3ToProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl })),
+                    watchlist.kind as WatchlistKind,
+                    { profile: { maxPerTick: c3Budget } },
+                );
+                // OQ5a two-tick partition — same rule as the stale path above.
+                const c3ConfirmedClosedIds: string[] = [];
+                const c3FirstStrikeIds: string[] = [];
+                const c3AliveIds: string[] = [];
+                for (const c of c3ToProbe) {
+                    const verdict = c3Results.get(c.externalId) ?? "unknown";
+                    if (verdict === "closed") {
+                        if (c.pendingClosedAt != null) c3ConfirmedClosedIds.push(c.id);
+                        else c3FirstStrikeIds.push(c.id);
+                    } else if (verdict === "alive") c3AliveIds.push(c.id);
+                    // "unknown" → leave the row (pendingClosedAt preserved);
+                    // lastProbedAt stamped below.
+                }
+                let c3Closed = 0;
+                if (c3FirstStrikeIds.length > 0) {
+                    // First closed verdict — stamp only; the next sweep decides.
+                    await prisma.jobPosting.updateMany({
+                        where: { id: { in: c3FirstStrikeIds }, status: { notIn: ["closed", "hidden"] } },
+                        data: { pendingClosedAt: runAt },
+                    });
+                }
+                if (c3ConfirmedClosedIds.length > 0) {
+                    const r = await prisma.jobPosting.updateMany({
+                        where: {
+                            id: { in: c3ConfirmedClosedIds },
+                            status: { notIn: ["closed", "hidden"] },
+                            // Same concurrent-alive race-guard as the stale path.
+                            pendingClosedAt: { not: null },
+                        },
+                        data: { status: "closed", removedAt: runAt, pendingClosedAt: null },
+                    });
+                    c3Closed = r.count;
+                    closed += c3Closed;
+                    const cascade = await closeApplicationsForClosedPostings(c3ConfirmedClosedIds, {
+                        at: runAt,
+                        source: "probe",
+                    }).catch(e => {
+                        console.warn(`[job-watcher] C3 cascade close failed (watchlist=${watchlistId}):`, e);
+                        return { closedAppIds: [] as string[] };
+                    });
+                    cascadeClosed += cascade.closedAppIds.length;
+                }
+                if (c3AliveIds.length > 0) {
+                    await prisma.jobPosting.updateMany({
+                        where: { id: { in: c3AliveIds }, status: { notIn: ["closed", "hidden"] } },
+                        // Explicit alive evidence clears a pending close stamp.
+                        data: { lastSeenAt: runAt, pendingClosedAt: null },
+                    });
+                }
+                const c3Unknown = c3ToProbe.length - c3ConfirmedClosedIds.length - c3FirstStrikeIds.length - c3AliveIds.length;
+                if (c3Closed > 0 || c3Unknown > 0 || c3AliveIds.length > 0 || c3FirstStrikeIds.length > 0) {
+                    console.info(
+                        `[job-watcher] C3 re-probe watchlist=${watchlistId} kind=${watchlist.kind}: ` +
+                        `probed=${c3ToProbe.length} closed=${c3Closed} pending=${c3FirstStrikeIds.length} ` +
+                        `alive=${c3AliveIds.length} unknown=${c3Unknown}`,
+                    );
+                }
+            }
+            // OQ6a — advance the rolling cursor: stamp lastProbedAt on EVERY
+            // candidate this sweep pulled into its take-window, including the
+            // ones skipped above (fetch-seen on a first-party kind / already
+            // stale-probed) and the "unknown" verdicts. Skipping the stamp on
+            // filtered-out rows is exactly what used to jam the rotation —
+            // they kept lastProbedAt = NULL and were re-selected every tick.
+            // Closed rows are stamped too; harmless since they exit the
+            // status="new" selection.
+            if (c3Candidates.length > 0) {
+                await prisma.jobPosting.updateMany({
+                    where: { id: { in: c3Candidates.map(c => c.id) } },
+                    data: { lastProbedAt: runAt },
+                });
+            }
+        }
+
         if (closed > 0) {
             // Standard tier — important enough to flag in the bell, but no
             // email blast. The user will see it next time they open MC.
             // PB-8: dedup on watchlist + day so a flapping source can't spam.
+            //
+            // OQ9: cascade-closed kanban cards fold into THIS summary rather
+            // than a per-card blast (the per-card noise the circuit breaker
+            // exists to prevent). When the close cascaded to one or more
+            // INTERESTED cards, append the count to the body.
+            const cascadeNote = cascadeClosed > 0
+                ? ` ${cascadeClosed} linked ${cascadeClosed === 1 ? "card" : "cards"} moved to Closed.`
+                : "";
             await dispatchNotification({
                 userId: watchlist.userId,
                 tier: "standard",
                 kind: "system",
                 title: `${watchlist.name} — ${closed} ${closed === 1 ? "posting" : "postings"} closed`,
-                body: "Removed from the source feed and confirmed unreachable.",
-                payload: { watchlistId, closed },
+                body: `Removed from the source feed and confirmed unreachable.${cascadeNote}`,
+                payload: { watchlistId, closed, cascadeClosed },
                 dedupKey: `watchlist-closures:${watchlistId}:${runAt.toISOString().slice(0, 10)}`,
             }).catch(e => console.warn(`[job-watcher] closure-summary dispatch failed:`, e));
         }

@@ -5,7 +5,7 @@ import type { SelectedHistoricalPaper, SelectedReviewPaper } from '@prisma/clien
 // with identical schemas. They live in separate tables so each topic-of-the-week
 // flow has its own state, and we mirror that here with two parallel function sets.
 
-// Cached paper metadata persisted at pick time (docs/arxiv-rate-limit-fix.html
+// Cached paper metadata persisted at pick time (docs/archive/arxiv-rate-limit-fix.html
 // Layer 2). With this present, re-rendering the weekly pick costs ZERO arXiv /
 // Semantic-Scholar calls. All fields nullable so legacy rows (picked before the
 // backfill columns existed) read as null and trigger one lazy id_list fetch that

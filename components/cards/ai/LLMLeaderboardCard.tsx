@@ -10,9 +10,24 @@ export interface LLMModelInfo {
     rank: number;
     name: string;
     orgName?: string;
-    orgLogo?: string;
     eloScore: number;
     votes: number;
+}
+
+// P1.3 (OQ3b): org logos are local assets only — the API no longer ships
+// scraped SVG markup (it was injected via dangerouslySetInnerHTML, an XSS
+// vector). Drop curated files into public/logos/ and map them here;
+// anything unmapped falls back to an initials badge.
+const ORG_LOGOS: Record<string, string> = {};
+
+function orgInitials(orgName: string): string {
+    return orgName
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((word) => word[0])
+        .join('')
+        .toUpperCase();
 }
 
 export interface LLMLeaderboardCategory {
@@ -128,13 +143,23 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                                 #{model.rank}
                             </span>
 
-                            {/* Render SVG Logo dynamically if it exists */}
-                            {model.orgLogo && (
-                                <div
-                                    className="shrink-0 w-5 h-5 flex items-center justify-center text-white/70"
-                                    dangerouslySetInnerHTML={{ __html: model.orgLogo }}
-                                    title={model.orgName}
-                                />
+                            {/* Org badge: local logo file when mapped, initials otherwise */}
+                            {model.orgName && model.orgName !== 'Unknown' && (
+                                ORG_LOGOS[model.orgName] ? (
+                                    <img
+                                        src={ORG_LOGOS[model.orgName]}
+                                        alt={model.orgName}
+                                        title={model.orgName}
+                                        className="shrink-0 w-5 h-5"
+                                    />
+                                ) : (
+                                    <span
+                                        className="shrink-0 w-5 h-5 flex items-center justify-center rounded bg-white/10 text-white/70 text-[10px] font-semibold leading-none"
+                                        title={model.orgName}
+                                    >
+                                        {orgInitials(model.orgName)}
+                                    </span>
+                                )
                             )}
 
                             <div className="flex flex-col min-w-0 ml-1">

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 import { ResearchImportSchema } from '@/lib/schemas/research-import';
 import { requireSession } from '@/lib/auth-guards';
+import { checkUserRateLimit } from '@/lib/api/user-rate-limit';
 import { fetchArxivXml } from '@/lib/arxiv/fetch';
 import { loggedFetch } from '@/lib/external-fetch';
 
@@ -42,11 +43,30 @@ function parseInput(input: string): { type: 'arxiv' | 'doi' | 'url' | 'unknown',
     return { type: 'unknown', value: cleanInput };
 }
 
+function userIdFromGuard(guard: { session: { user?: unknown } }): string | null {
+    const user = guard.session.user as { id?: string } | undefined;
+    return user?.id && user.id.length > 0 ? user.id : null;
+}
+
 export async function POST(request: Request) {
     // Write-shaped: triggers external API calls (Semantic Scholar, arXiv).
     // Gate behind a session everywhere.
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
+    const userId = userIdFromGuard(guard);
+    if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+
+    // P1.5: per-userId rate limit BEFORE any upstream fetch. Each import
+    // hits Semantic Scholar (and possibly the shared arXiv budget); 10/min
+    // is generous for a human pasting paper links but stops a stuck client
+    // loop from hammering both upstreams.
+    const rl = checkUserRateLimit("research:import", userId, Date.now(), { max: 10, windowMs: 60 * 1000 });
+    if (!rl.ok) {
+        return NextResponse.json(
+            { error: `Too many paper imports — try again in ${rl.retryAfterSec}s`, stage: "rate-limit" },
+            { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+        );
+    }
     try {
         const bodyParsed = ResearchImportSchema.safeParse(await request.json());
         if (!bodyParsed.success) {

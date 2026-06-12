@@ -1,7 +1,7 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search, AlertTriangle } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search, AlertTriangle, XCircle } from "lucide-react";
 import { api, queryKeys, type PostingsListFilter } from "@/lib/api-client";
 import { findDuplicateBoardGroups } from "@/lib/watchlists/duplicate-boards";
 import { useServerEvents } from "@/hooks/useServerEvents";
@@ -92,6 +92,10 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
     // whose employer isn't on the user's watchlist) defaults collapsed —
     // it's a long-tail discovery surface, not the main feed.
     const [offListOpen, setOffListOpen] = useState(false);
+    // Closed-jobs OQ3: the "Recently closed (N)" section defaults collapsed —
+    // closures stay reviewable in one click without crowding the new-postings
+    // feed.
+    const [closedOpen, setClosedOpen] = useState(false);
     // Client-side substring search over posting titles. The chip-based
     // company/type/location filters are server-side (query key + refetch);
     // title search is local because users iterate it quickly and the result
@@ -129,6 +133,20 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
         queryKey: queryKeys.postings(listFilter),
         queryFn: () => api.postings.list(listFilter),
     });
+
+    // Closed-jobs OQ3: a second, status=closed query feeds the collapsed
+    // "Recently closed (N)" section. Scoped to the same track so each card only
+    // surfaces its own closures. The list route already supports ?status=closed.
+    const closedFilter: PostingsListFilter = useMemo(() => ({
+        status: "closed",
+        limit: LIMIT,
+        track,
+    }), [track]);
+    const { data: closedData } = useQuery({
+        queryKey: queryKeys.postings(closedFilter),
+        queryFn: () => api.postings.list(closedFilter),
+    });
+    const closedPostings = useMemo(() => closedData?.postings ?? [], [closedData?.postings]);
 
     // Watchlists power the company-chip list — directory-bound, the user has
     // explicitly opted into watching these companies. LinkedIn watchlists are
@@ -203,16 +221,21 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
 
     // Auto-prune stale company selections (e.g. a watchlist was deleted while
     // its name was selected, or the suffix-cleanup migration retitled rows).
-    // Render-time adjustment to match the page-reset pattern below. Only
-    // fires when there's drift, and only once watchlists have loaded — an
-    // empty companyOptions during initial load would wipe valid selections.
-    if (postingFilters.companies.length > 0 && companyOptions.length > 0) {
+    // Runs in an effect — NOT during render — because setPostingFilters is a
+    // Zustand store write that synchronously notifies other subscribers
+    // mid-render (unlike the local-useState page-reset pattern below, which
+    // React sanctions). Only fires when there's drift, and only once
+    // watchlists have loaded — an empty companyOptions during initial load
+    // would wipe valid selections. Self-terminating: the pruned write changes
+    // postingFilters, the effect re-runs, lengths match, no further write.
+    useEffect(() => {
+        if (postingFilters.companies.length === 0 || companyOptions.length === 0) return;
         const validLower = new Set(companyOptions.map(c => c.toLowerCase()));
         const pruned = postingFilters.companies.filter(c => validLower.has(c.toLowerCase()));
         if (pruned.length !== postingFilters.companies.length) {
             setPostingFilters({ ...postingFilters, companies: pruned });
         }
-    }
+    }, [postingFilters, companyOptions, setPostingFilters]);
 
     const activeFilterCount =
         (postingFilters.employmentTypes.length > 0 ? 1 : 0) +
@@ -321,6 +344,23 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
             queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
         } catch (e) {
             toastStore.push({ message: `Hide failed: ${errMessage(e)}`, type: "error" });
+        } finally {
+            setBusyId(null);
+        }
+    }
+
+    // Closed-jobs OQ2: manually flip a listing to status="closed". The PATCH
+    // route accepts JobPostingStatusSchema and (Track A) cascades the close to a
+    // linked INTERESTED kanban card. Invalidating all posting queries refreshes
+    // both the live feed (the row leaves it) and the "Recently closed" section.
+    async function markClosed(id: string) {
+        setBusyId(id);
+        try {
+            await api.postings.update(id, { status: "closed" });
+            queryClient.invalidateQueries({ queryKey: queryKeys.postings() });
+            queryClient.invalidateQueries({ queryKey: queryKeys.applications });
+        } catch (e) {
+            toastStore.push({ message: `Mark closed failed: ${errMessage(e)}`, type: "error" });
         } finally {
             setBusyId(null);
         }
@@ -558,6 +598,7 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
                             busy={busyId === p.id}
                             onTrack={trackAsApplication}
                             onHide={hide}
+                            onClose={markClosed}
                         />
                     ))}
                 </ul>
@@ -611,7 +652,33 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
                                     busy={busyId === p.id}
                                     onTrack={trackAsApplication}
                                     onHide={hide}
+                                    onClose={markClosed}
                                 />
+                            ))}
+                        </ul>
+                    )}
+                </div>
+            )}
+
+            {/* Closed-jobs OQ3: collapsed "Recently closed (N)" section. Closures
+                are reviewable in one click but kept out of the actionable feed.
+                Rows are read-only (no track/hide/close) — they're already
+                terminal; the source link stays clickable for reference. */}
+            {!isLoading && closedPostings.length > 0 && (
+                <div className="mt-3 pt-3 border-t border-white/5">
+                    <button
+                        onClick={() => setClosedOpen(o => !o)}
+                        aria-pressed={closedOpen}
+                        className="flex items-center gap-1.5 text-[11px] text-white/60 hover:text-white/90"
+                    >
+                        {closedOpen ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                        <span className="font-semibold">Recently closed</span>
+                        <span className="text-white/40 tabular-nums">({closedPostings.length})</span>
+                    </button>
+                    {closedOpen && (
+                        <ul className="space-y-1.5 mt-2">
+                            {closedPostings.map(p => (
+                                <ClosedPostingRow key={p.id} p={p} />
                             ))}
                         </ul>
                     )}
@@ -628,11 +695,13 @@ function PostingRow({
     busy,
     onTrack,
     onHide,
+    onClose,
 }: {
     p: Posting;
     busy: boolean;
     onTrack: (id: string, title: string) => void;
     onHide: (id: string) => void;
+    onClose: (id: string) => void;
 }) {
     return (
         <li className="rounded-lg bg-black/30 border border-white/10 px-3 py-2 hover:border-white/20 transition-colors">
@@ -681,6 +750,14 @@ function PostingRow({
                         Track as App
                     </button>
                     <button
+                        onClick={() => onClose(p.id)}
+                        disabled={busy}
+                        title="Mark this listing closed (no longer accepting applications)"
+                        className="p-1 rounded text-white/40 hover:text-zinc-300 hover:bg-white/10 disabled:opacity-40"
+                    >
+                        <XCircle className="w-3.5 h-3.5" />
+                    </button>
+                    <button
                         onClick={() => onHide(p.id)}
                         disabled={busy}
                         title="Hide this posting"
@@ -689,6 +766,43 @@ function PostingRow({
                         <EyeOff className="w-3.5 h-3.5" />
                     </button>
                 </div>
+            </div>
+        </li>
+    );
+}
+
+// Closed-jobs OQ3: a read-only row for the "Recently closed" section. No
+// track/hide/close affordances — the listing is already terminal — but the
+// source link stays clickable for reference, and a muted "Closed" badge marks
+// the state (zinc, matching the kanban Closed column hue per OQ2).
+function ClosedPostingRow({ p }: { p: Posting }) {
+    return (
+        <li className="rounded-lg bg-black/20 border border-white/5 px-3 py-2 opacity-70">
+            <div className="flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <span className="text-[11px] uppercase tracking-wide text-white/40">{p.company}</span>
+                        <a
+                            href={p.sourceUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-white/30 hover:text-white/70"
+                            title="Open source"
+                        >
+                            <ExternalLink className="w-3 h-3" />
+                        </a>
+                    </div>
+                    <div className="text-sm text-white/60 truncate mt-0.5">{p.title}</div>
+                    {p.location && (
+                        <div className="text-[11px] text-white/30 flex items-center gap-1 mt-0.5">
+                            <MapPin className="w-3 h-3" />
+                            {p.location}
+                        </div>
+                    )}
+                </div>
+                <span className="shrink-0 text-[10px] uppercase tracking-wide text-zinc-400 bg-zinc-500/20 border border-zinc-500/20 px-1.5 py-0.5 rounded">
+                    Closed
+                </span>
             </div>
         </li>
     );

@@ -71,10 +71,13 @@ export async function GET(req: NextRequest) {
                     modelName = $(cells[2]).text().trim();
                 }
 
-                // Extract organization name and logo
+                // Extract organization name. NOTE (P1.3/OQ3b): we deliberately
+                // do NOT ship the scraped <svg> markup — raw HTML from a
+                // third-party page injected via dangerouslySetInnerHTML was an
+                // XSS vector. The card renders a local-logo/initials badge
+                // from orgName instead.
                 const svgNode = $(cells[2]).find('svg').first();
                 let orgName = svgNode.find('title').text() || 'Unknown';
-                const orgLogo = $.html(svgNode) || '';
 
                 orgName = resolveOrgName(modelName, orgName);
 
@@ -92,7 +95,6 @@ export async function GET(req: NextRequest) {
                         rank: isNaN(rank) ? 999 : rank,
                         name: modelName,
                         orgName: orgName,
-                        orgLogo: orgLogo,
                         eloScore: eloScore,
                         votes: votes
                     });

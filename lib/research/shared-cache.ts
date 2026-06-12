@@ -1,5 +1,5 @@
 /**
- * Cross-tier shared cache for the research routes (docs/arxiv-rate-limit-fix.html
+ * Cross-tier shared cache for the research routes (docs/archive/arxiv-rate-limit-fix.html
  * Layer 1, OQ2/OQ3/OQ10).
  *
  * dev (:4101) and prod (:3101) each fetch arXiv / HuggingFace independently, so

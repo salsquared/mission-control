@@ -109,13 +109,13 @@ async function testQueryNormalization() {
     if (r2.headers.get("X-Cache") !== "HIT") fail(`norm: same params should HIT, got ${r2.headers.get("X-Cache")}`);
     else pass("identical params → cache HIT");
 
-    // Different param ORDER → different key (URLSearchParams.toString preserves
-    // insertion order). This is a known-limitation of the current cache and
-    // worth documenting in a test so a future "fix" doesn't accidentally regress
-    // it without anyone noticing.
+    // Different param ORDER → SAME key. Fixed 2026-06-12 (P5.5a): the key is
+    // now "pathname + sorted query" (params.sort() after the ?v= strip), as
+    // CLAUDE.md always claimed. Previously insertion order forked the key —
+    // this assertion flipped from documenting that limitation to pinning the fix.
     const r3 = await handler(makeReq("/api/test-norm?b=2&a=1"));
-    if (r3.headers.get("X-Cache") === "MISS") pass("param reorder: separate cache key (documented limitation)");
-    else fail("param reorder: unexpectedly HIT — cache key collapsing semantics changed?");
+    if (r3.headers.get("X-Cache") === "HIT") pass("param reorder: collapses to one sorted-query cache key");
+    else fail(`param reorder: expected HIT on sorted key, got ${r3.headers.get("X-Cache")}`);
 }
 
 async function testStaleFallbackOnThrow() {

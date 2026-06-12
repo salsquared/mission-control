@@ -51,6 +51,44 @@ function resolveGeminiKey(): string | undefined {
         || process.env.GOOGLE_API_KEY;
 }
 
+// Transient-retry treatment (P4.2, 2026-06-12) — same backoff shape and
+// retryable-error classification as lib/ai/gemini.ts:withRetry/isRetryable.
+// That helper is module-private there (this callsite bypasses chatJSON via the
+// Vercel AI SDK, same reason as the LOP-5 manual tracing above), so the small
+// pattern is replicated faithfully here. Keep the two in sync if either
+// changes.
+interface RetryConfig {
+    attempts: number;
+    baseDelayMs: number;
+}
+
+const DEFAULT_RETRY: RetryConfig = { attempts: 3, baseDelayMs: 800 };
+
+function isRetryable(err: unknown): boolean {
+    if (!err || typeof err !== "object") return false;
+    const e = err as { status?: number; code?: number; message?: string };
+    const status = e.status ?? e.code;
+    if (status === 429) return true;
+    if (typeof status === "number" && status >= 500 && status < 600) return true;
+    if (typeof e.message === "string" && /\b(429|503|502|504|UNAVAILABLE|RESOURCE_EXHAUSTED)\b/i.test(e.message)) return true;
+    return false;
+}
+
+async function withRetry<T>(fn: () => Promise<T>, config: RetryConfig = DEFAULT_RETRY): Promise<T> {
+    let lastErr: unknown;
+    for (let i = 0; i < config.attempts; i++) {
+        try {
+            return await fn();
+        } catch (err) {
+            lastErr = err;
+            if (!isRetryable(err) || i === config.attempts - 1) throw err;
+            const delay = config.baseDelayMs * 2 ** i;
+            await new Promise(r => setTimeout(r, delay));
+        }
+    }
+    throw lastErr;
+}
+
 let cachedProvider: ReturnType<typeof createGoogleGenerativeAI> | null = null;
 function getProvider() {
     if (cachedProvider) return cachedProvider;
@@ -150,7 +188,17 @@ export async function parseApplicationEmail(
   emailContent: string,
   subject: string,
   from?: string,
-  sentAt?: Date
+  sentAt?: Date,
+  opts?: {
+    /**
+     * P4.2 (2026-06-12): transient failures (429 / 5xx) retry with the same
+     * backoff shape as lib/ai/gemini.ts:chatJSON. Default true. Pass `false`
+     * to pay exactly ONE Gemini call per invocation — the planned retry-queue
+     * schedules its own attempts and must not multiply them by the internal
+     * retry count.
+     */
+    retry?: boolean;
+  }
 ): Promise<ParsedApplicationEmail> {
   // Trim long bodies — application emails put the signal up top (greeting,
   // status verb, action ask). 3KB captures the meaningful portion; the rest
@@ -193,54 +241,63 @@ export async function parseApplicationEmail(
   // no rate token, makes no API call, and is NOT traced as a model call.
   const key = cacheKey({ model: MODEL_ID, user: prompt, schema: applicationSchema });
   return llmCached({ key, name: "email-parser", model: MODEL_ID }, async () => {
-    // PC-6 (RAH-12): block on the token bucket BEFORE the API call. A backfill
-    // (or pre-PB-6 redelivery storm) can blow Gemini's free-tier 15/min cap in
-    // seconds otherwise.
-    await acquireGeminiSlot();
+    // P4.2: one attempt = slot + trace + SDK call. The rate slot lives INSIDE
+    // the attempt (not outside the retry loop) so every retry pays the rate
+    // cost too — same convention as chatJSON's withRetry(acquireGeminiSlot →
+    // tracedGenerate). Each attempt gets its own Lunary runId, mirroring how
+    // chatJSON's per-attempt tracedGenerate traces each attempt separately.
+    const attempt = async (): Promise<ParsedApplicationEmail> => {
+      // PC-6 (RAH-12): block on the token bucket BEFORE the API call. A backfill
+      // (or pre-PB-6 redelivery storm) can blow Gemini's free-tier 15/min cap in
+      // seconds otherwise.
+      await acquireGeminiSlot();
 
-    // LOP-5: trace start. RunId is a fresh cuid-ish — the Gmail msgId isn't in
-    // scope here (caller has it), and Lunary just needs uniqueness.
-    const runId = `email-parser:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
-    safeTrack("start", {
-      runId,
-      name: "email-parser",
-      input: [{ role: "user", content: prompt }],
-      extra: { model: MODEL_ID, anchor, from, subject },
-    });
-
-    try {
-      const result = await generateObject({
-        // Pinned to Gemini 3.1 Flash-lite (via MODEL_ID) — the highest-volume
-        // caller in the app (one call per inbound Gmail message + backfill).
-        // Mechanical extraction (relevance gate + a handful of structured
-        // fields) doesn't need full Flash. See docs/llm-calls.html.
-        model: getProvider()(MODEL_ID),
-        schema: applicationSchema,
-        prompt,
-        // Fix B/B1 (postmortem §11): pin determinism. This is a mechanical
-        // extraction, not a generative task — temperature:0 removes the run-to-
-        // run jitter that smeared the 552 looped parses across ~399 distinct
-        // interview times. The cross-tier cache key is model+prompt+schema, so
-        // temperature does not affect it — caching behavior is unchanged.
-        temperature: 0,
-      });
-
-      safeTrack("end", {
+      // LOP-5: trace start. RunId is a fresh cuid-ish — the Gmail msgId isn't in
+      // scope here (caller has it), and Lunary just needs uniqueness.
+      const runId = `email-parser:${Date.now().toString(36)}:${Math.random().toString(36).slice(2, 10)}`;
+      safeTrack("start", {
         runId,
-        output: { role: "assistant", content: JSON.stringify(result.object) },
-        tokensUsage: {
-          prompt: result.usage?.inputTokens ?? 0,
-          completion: result.usage?.outputTokens ?? 0,
-        },
+        name: "email-parser",
+        input: [{ role: "user", content: prompt }],
+        extra: { model: MODEL_ID, anchor, from, subject },
       });
 
-      return result.object;
-    } catch (err) {
-      safeTrack("error", {
-        runId,
-        error: { message: err instanceof Error ? err.message : String(err) },
-      });
-      throw err;
-    }
+      try {
+        const result = await generateObject({
+          // Pinned to Gemini 3.1 Flash-lite (via MODEL_ID) — the highest-volume
+          // caller in the app (one call per inbound Gmail message + backfill).
+          // Mechanical extraction (relevance gate + a handful of structured
+          // fields) doesn't need full Flash. See docs/llm-calls.html.
+          model: getProvider()(MODEL_ID),
+          schema: applicationSchema,
+          prompt,
+          // Fix B/B1 (postmortem §11): pin determinism. This is a mechanical
+          // extraction, not a generative task — temperature:0 removes the run-to-
+          // run jitter that smeared the 552 looped parses across ~399 distinct
+          // interview times. The cross-tier cache key is model+prompt+schema, so
+          // temperature does not affect it — caching behavior is unchanged.
+          temperature: 0,
+        });
+
+        safeTrack("end", {
+          runId,
+          output: { role: "assistant", content: JSON.stringify(result.object) },
+          tokensUsage: {
+            prompt: result.usage?.inputTokens ?? 0,
+            completion: result.usage?.outputTokens ?? 0,
+          },
+        });
+
+        return result.object;
+      } catch (err) {
+        safeTrack("error", {
+          runId,
+          error: { message: err instanceof Error ? err.message : String(err) },
+        });
+        throw err;
+      }
+    };
+
+    return opts?.retry === false ? attempt() : withRetry(attempt);
   });
 }

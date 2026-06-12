@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { JobPostingPatchSchema } from "@/lib/schemas/watchlists";
+import { closeApplicationsForClosedPostings } from "@/lib/applications/close-from-posting";
 
 export const runtime = "nodejs";
 
@@ -82,10 +83,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     }
 
     try {
+        // Closed-jobs feature (2026-06-09): a manual feed-close also stamps
+        // removedAt (parity with the probe's auto-close at job-watcher.ts:496)
+        // and cascades to its linked INTERESTED card (OQ8 — manual close
+        // cascades like a probe close).
+        const closingNow = parsed.data.status === "closed";
+        const closedAt = new Date();
         const row = await prisma.jobPosting.update({
             where: { id },
-            data: { status: parsed.data.status },
+            data: {
+                status: parsed.data.status,
+                ...(closingNow ? { removedAt: closedAt } : {}),
+            },
         });
+        if (closingNow) {
+            await closeApplicationsForClosedPostings([row.id], { at: closedAt, source: "ms" })
+                .catch(e => console.warn(`[postings/${id} PATCH] cascade close failed:`, e));
+        }
         broadcastEvent({ model: 'Posting', action: 'upsert', id: row.id, timestamp: Date.now() });
         return NextResponse.json({ posting: serialize(row) }, { status: 200 });
     } catch (e) {

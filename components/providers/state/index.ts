@@ -19,7 +19,6 @@ interface ThemeSlice {
     dashOrder: string[];
     dashTitles: Record<string, string>;
     defaultDashTitles: Record<string, string>;
-    viewScreenshots: Record<string, string>;
     // Cross-device negative filters (regex patterns). Hydrated from
     // /api/settings GET alongside the theme fields. Excluded from
     // ThemeProvider's auto-sync diff (it has its own explicit Save UX in
@@ -45,7 +44,6 @@ interface ThemeSlice {
     setActiveViewId: (viewId: string) => void;
     setDashOrder: (order: string[]) => void;
     setDashTitle: (viewId: string, title: string) => void;
-    setViewScreenshot: (viewId: string, dataUrl: string) => void;
     syncAvailableDashes: (dashes: { id: string; title: string }[]) => void;
 }
 
@@ -150,7 +148,6 @@ export const useAppStore = create<AppState>()(
             dashOrder: ['rocketry', 'crypto', 'ai-news', 'physics', 'applications', 'profile', 'planning', 'internal-systems'],
             dashTitles: {},
             defaultDashTitles: DEFAULT_DASH_TITLES,
-            viewScreenshots: {},
             negativeFilters: [],
             hiddenWatchlistIds: [],
             version: 0,
@@ -161,7 +158,6 @@ export const useAppStore = create<AppState>()(
             setActiveViewId: (activeViewId) => set({ activeViewId }),
             setDashOrder: (dashOrder) => set({ dashOrder }),
             setDashTitle: (viewId, title) => set((s) => ({ dashTitles: { ...s.dashTitles, [viewId]: title } })),
-            setViewScreenshot: (viewId, dataUrl) => set((s) => ({ viewScreenshots: { ...s.viewScreenshots, [viewId]: dataUrl } })),
             syncAvailableDashes: (dashes) => set((state) => {
                 const validIds = dashes.map(d => d.id);
                 let newOrder = state.dashOrder.filter(id => validIds.includes(id));
@@ -199,12 +195,11 @@ export const useAppStore = create<AppState>()(
                 autoResearch: state.autoResearch,
                 aiCompanionEnabled: state.aiCompanionEnabled,
                 activeViewId: state.activeViewId,
-                viewScreenshots: state.viewScreenshots,
                 postingFilters: state.postingFilters,
                 mobileLayoutPreference: state.mobileLayoutPreference,
                 applicationsTrack: state.applicationsTrack,
             }),
-            version: 9,
+            version: 10,
             migrate: (persisted: any, fromVersion: number) => {
                 // v2 → v3: flip includeUnspecified to false. Existing users
                 // would otherwise inherit the old `true` default and the
@@ -226,6 +221,10 @@ export const useAppStore = create<AppState>()(
                 //          on first reload after the mobile shell ships.
                 // v8 → v9: introduce `applicationsTrack` (ApplicationsView's
                 //          single-track switch selection; default 'career').
+                // v9 → v10: drop `viewScreenshots` (dead — zero consumers; the
+                //          field could hold large data-URLs in localStorage).
+                //          Dropped simply by omitting it from the returned
+                //          state below.
                 const pf = persisted.postingFilters;
                 // Normalize whatever's at persisted.postingFilters into the
                 // current PostingFilters shape. Handles either an old single-
@@ -276,7 +275,6 @@ export const useAppStore = create<AppState>()(
                     autoResearch: persisted.autoResearch ?? false,
                     aiCompanionEnabled: persisted.aiCompanionEnabled ?? persisted.backgroundTasks ?? false,
                     activeViewId: persisted.activeViewId ?? 'rocketry',
-                    viewScreenshots: persisted.viewScreenshots ?? {},
                     postingFilters,
                     mobileLayoutPreference,
                     applicationsTrack: persisted.applicationsTrack === 'side' ? 'side' : 'career',

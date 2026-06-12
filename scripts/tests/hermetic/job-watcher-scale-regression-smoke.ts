@@ -13,6 +13,12 @@
  * watchlist, and verifies (a) no P2029 thrown and (b) the right rows got
  * marked closed.
  *
+ * OQ5a (P3.2): a closed verdict now needs TWO consecutive ticks to flip
+ * (tick 1 stamps pendingClosedAt; tick 2 confirms), so the watchlist runs
+ * TWICE. Both bulk UPDATEs — the tick-1 pendingClosedAt stamp and the
+ * tick-2 close flip — handle the same >999-id load, so the P2029
+ * regression coverage holds on both paths.
+ *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/job-watcher-scale-regression-smoke.ts
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
@@ -153,32 +159,54 @@ async function main() {
         }
         pass(`seeded ${ROW_COUNT} stale rows for watchlist ${watchlistId.slice(0, 8)}`);
 
-        // Run the watchlist. Pre-fix this would throw / log P2029 inside
-        // close-detection's updateMany. Post-fix it succeeds and closes the
-        // ROW_COUNT stale rows (everything not in seenExternalIds, which is
-        // just the 1 SURVIVOR slug).
+        // Tick 1. Pre-fix this would throw / log P2029 inside close-detection's
+        // updateMany. Post-fix (and post-OQ5a) it succeeds and stamps
+        // pendingClosedAt on all ROW_COUNT stale rows (everything not in
+        // seenExternalIds, which is just the 1 SURVIVOR slug) — the >999-id
+        // bulk UPDATE now happens on the pending path first.
         const r = await runWatchlist(watchlistId);
         if (r.error) {
-            fail(`scale-run errored — likely the P2029 regressed: ${r.error}`);
+            fail(`scale-run tick 1 errored — likely the P2029 regressed: ${r.error}`);
         } else {
-            pass("scale-run completed without throwing P2029");
+            pass("scale-run tick 1 completed without throwing P2029");
         }
 
-        // Verify the close count matches expectations:
         //   - 1 SURVIVOR seenAgain? No — it's NEW (no prior row), so newPostings=1.
-        //   - All ROW_COUNT ghosts should be closed.
         if (r.newPostings !== 1) {
             fail(`expected newPostings=1 (SURVIVOR), got ${r.newPostings}`);
         } else {
-            pass("scale-run: 1 new posting created from fixture");
+            pass("scale-run tick 1: 1 new posting created from fixture");
         }
-        if (r.closed !== ROW_COUNT) {
-            fail(`expected closed=${ROW_COUNT}, got ${r.closed}`);
+        // OQ5a: first closed verdict must NOT flip anything — pending only.
+        if (r.closed !== 0) {
+            fail(`OQ5a tick 1: expected closed=0 (first strike stamps pending only), got ${r.closed}`);
         } else {
-            pass(`scale-run: ${ROW_COUNT} stale rows correctly marked closed`);
+            pass("OQ5a tick 1: closed=0 — no one-tick flip");
+        }
+        const pendingAfterTick1 = await prisma.jobPosting.count({
+            where: { watchlistId, status: "new", pendingClosedAt: { not: null } },
+        });
+        if (pendingAfterTick1 !== ROW_COUNT) {
+            fail(`OQ5a tick 1: expected ${ROW_COUNT} rows with pendingClosedAt set, got ${pendingAfterTick1} — the >999-id pending UPDATE may have P2029'd`);
+        } else {
+            pass(`OQ5a tick 1: all ${ROW_COUNT} ghost rows stamped pendingClosedAt (still status='new')`);
         }
 
-        // Spot-check a few rows ended up in status="closed".
+        // Tick 2 — second consecutive closed verdict confirms the close. This
+        // is the >999-id close UPDATE the original regression guarded.
+        const r2 = await runWatchlist(watchlistId);
+        if (r2.error) {
+            fail(`scale-run tick 2 errored — likely the P2029 regressed: ${r2.error}`);
+        } else {
+            pass("scale-run tick 2 completed without throwing P2029");
+        }
+        if (r2.closed !== ROW_COUNT) {
+            fail(`OQ5a tick 2: expected closed=${ROW_COUNT}, got ${r2.closed}`);
+        } else {
+            pass(`OQ5a tick 2: ${ROW_COUNT} stale rows correctly marked closed on confirmation`);
+        }
+
+        // Spot-check the rows ended up in status="closed".
         const closedSample = await prisma.jobPosting.count({
             where: { watchlistId, status: "closed" },
         });

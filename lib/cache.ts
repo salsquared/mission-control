@@ -294,6 +294,10 @@ export function withCache(
         const params = new URLSearchParams(url.search);
         const isRefresh = params.has('v');
         if (isRefresh) params.delete('v');
+        // Normalize param order so '?a=1&b=2' and '?b=2&a=1' share one cache
+        // entry. The key contract is "pathname + sorted query" (CLAUDE.md),
+        // but insertion order used to leak into the key and fork it.
+        params.sort();
 
         let targetSearch = params.toString();
         if (targetSearch) targetSearch = '?' + targetSearch;
@@ -365,13 +369,32 @@ export function withCache(
             return inFlight.get(cacheKey)!.then(r => r.clone());
         }
 
+        // Last-good lookup for the stale-fallback. The expired in-map L1 entry
+        // (staleEntry) is the fast path, but it frequently doesn't survive to
+        // the moment of failure: pruneExpiredL1 sweeps expired entries every
+        // 5 min, l2Read refuses expired rows, and the `?v=` refresh path never
+        // populates staleEntry at all. Fall back to readCachedDataIgnoringExpiry
+        // (L1 whatever its expiry, then L2 ignoring expiry) so the documented
+        // "serve the last good payload on failure" contract actually holds.
+        // serveStale re-caches whatever this returns with the 60s retry TTL.
+        const staleForFallback = async (): Promise<L1Entry | null> => {
+            if (staleEntry) return staleEntry;
+            try {
+                const data = await readCachedDataIgnoringExpiry(cacheKey);
+                return data === null || data === undefined ? null : { data, expiry: 0 };
+            } catch {
+                return null;
+            }
+        };
+
         let response: NextResponse | undefined;
         const fetchPromise = (async () => {
         try {
             return await handler(req);
         } catch (error) {
-            if (staleEntry) {
-                return serveStale(cacheKey, staleEntry, 60, host);
+            const stale = await staleForFallback();
+            if (stale) {
+                return serveStale(cacheKey, stale, 60, host);
             }
             throw error;
         }
@@ -395,8 +418,9 @@ export function withCache(
             if (useSQLite()) await l2Write(cacheKey, data, expiry);
             response.headers.set('X-Cache', 'MISS');
             response.headers.set('Cache-Control', buildCacheControl(ttlSeconds));
-        } else if (!response.ok && staleEntry) {
-            return serveStale(cacheKey, staleEntry, 60, host);
+        } else if (!response.ok) {
+            const stale = await staleForFallback();
+            if (stale) return serveStale(cacheKey, stale, 60, host);
         }
 
         return response;

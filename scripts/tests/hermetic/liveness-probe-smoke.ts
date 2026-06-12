@@ -7,6 +7,13 @@
  *   - Each ATS kind routes through its dedicated probe.
  *   - Status codes resolve to alive/closed/unknown as documented.
  *   - LinkedIn closure markers + redirect-to-search are honored.
+ *   - OQ4b positive-evidence redirects: authwall/login/signup/challenge
+ *     interstitials → "unknown"; only the board's own jobs-search/root
+ *     surface (or a body closed-marker) counts as closure evidence.
+ *   - P3.1b SSRF redirect loop: every hop is guarded (redirect to a private
+ *     IP is never fetched → "unknown"), >MAX hops → "unknown", benign
+ *     redirects (incl. relative Locations) are still followed.
+ *   - P3.1c: MC_LIVENESS_BYPASS is ignored on a production tier.
  *   - probeBatch respects maxPerTick (overflow → unknown).
  *   - probeBatch respects concurrency (no more than N in flight at once).
  *   - probeBatch honors perHitDelayMs between same-host hits.
@@ -86,6 +93,11 @@ function respond200(body: string, finalUrl?: string): Response {
 
 function respondStatus(status: number, body = ""): Response {
     return new Response(body, { status });
+}
+
+/** A real 3xx with a Location header — exercises the manual redirect loop. */
+function respondRedirect(location: string, status = 302): Response {
+    return new Response(null, { status, headers: { location } });
 }
 
 async function expectResult(actual: LivenessResult, expected: LivenessResult, msg: string) {
@@ -279,6 +291,8 @@ async function testGreenhouseFallbackToSourceUrl() {
 // ─── Workday-specific behavior ────────────────────────────────────────────
 
 async function testWorkdayLoginRedirect() {
+    // OQ4b — an auth-gate redirect is ambiguity, NOT closure evidence (used
+    // to be "closed" pre-2026-06-12).
     const stub = installFetchMock([{
         matches: () => true,
         respond: () => respond200("login form", "https://boeing.wd1.myworkdayjobs.com/en-US/EXTERNAL_CAREERS/login"),
@@ -287,7 +301,27 @@ async function testWorkdayLoginRedirect() {
         externalId: "a",
         sourceUrl: "https://boeing.wd1.myworkdayjobs.com/en-US/EXTERNAL_CAREERS/job/USA/Engineer_JR1",
     }, "workday");
-    await expectResult(r, "closed", "workday: redirect to /login → closed");
+    await expectResult(r, "unknown", "workday: redirect to /login → unknown (auth gate is not closure evidence, OQ4b)");
+    stub.restore();
+}
+
+async function testWorkdayBoardRootRedirect() {
+    // OQ4b allowlist — a dead Workday posting redirects to the tenant's own
+    // board root (locale/site, no /job/ segment): genuine closure evidence.
+    const stub = installFetchMock([{
+        // CXS JSON probe runs first for the canonical URL — return a 200 with
+        // no recognizable flags so probeWorkday falls back to the HTML probe.
+        matches: (u) => u.includes("/wday/cxs/"),
+        respond: (u) => respond200("{}", u),
+    }, {
+        matches: () => true,
+        respond: () => respond200("career site landing", "https://boeing.wd1.myworkdayjobs.com/en-US/EXTERNAL_CAREERS"),
+    }]);
+    const r = await probePostingLiveness({
+        externalId: "a",
+        sourceUrl: "https://boeing.wd1.myworkdayjobs.com/en-US/EXTERNAL_CAREERS/job/USA/Engineer_JR1",
+    }, "workday");
+    await expectResult(r, "closed", "workday: redirect to tenant board root → closed (own-surface allowlist)");
     stub.restore();
 }
 
@@ -319,6 +353,238 @@ async function testAshbyBareRootRedirect() {
     }, "ashby");
     await expectResult(r, "closed", "ashby: redirect to bare board root → closed");
     stub.restore();
+}
+
+// ─── OQ4b — positive-evidence redirect classification ────────────────────
+
+async function testAuthInterstitialRedirectsUnknown() {
+    // Authwall / login / signup / challenge interstitials must classify
+    // "unknown" — they say nothing about the posting. Real 302s, so the
+    // manual redirect loop is exercised end-to-end.
+    const cases: Array<{ kind: WatchlistKind; sourceUrl: string; interstitial: string; label: string }> = [
+        {
+            kind: "linkedin",
+            sourceUrl: "https://www.linkedin.com/jobs/view/test-at-acme-12345",
+            interstitial: "https://www.linkedin.com/authwall?trk=qf&sessionRedirect=x",
+            label: "linkedin: 302 → authwall",
+        },
+        {
+            kind: "linkedin",
+            sourceUrl: "https://www.linkedin.com/jobs/view/test-at-acme-12345",
+            interstitial: "https://www.linkedin.com/uas/login?session_redirect=%2Fjobs",
+            label: "linkedin: 302 → /uas/login",
+        },
+        {
+            kind: "linkedin",
+            sourceUrl: "https://www.linkedin.com/jobs/view/test-at-acme-12345",
+            interstitial: "https://www.linkedin.com/checkpoint/challenge/abc123",
+            label: "linkedin: 302 → /checkpoint/challenge",
+        },
+        {
+            kind: "linkedin",
+            sourceUrl: "https://www.linkedin.com/jobs/view/test-at-acme-12345",
+            interstitial: "https://www.linkedin.com/signup/cold-join",
+            label: "linkedin: 302 → /signup",
+        },
+        {
+            kind: "indeed",
+            sourceUrl: "https://www.indeed.com/viewjob?jk=abc123",
+            interstitial: "https://secure.indeed.com/account/login?dest=%2Fviewjob",
+            label: "indeed: 302 → account login",
+        },
+    ];
+    for (const c of cases) {
+        const stub = installFetchMock([{
+            matches: (u) => u === c.sourceUrl,
+            respond: () => respondRedirect(c.interstitial),
+        }, {
+            matches: (u) => u.startsWith(c.interstitial.split("?")[0]),
+            respond: (u) => respond200("<html><body>sign in to continue</body></html>", u),
+        }]);
+        const r = await probePostingLiveness({ externalId: "x", sourceUrl: c.sourceUrl }, c.kind);
+        await expectResult(r, "unknown", `${c.label} → unknown (interstitial is not closure evidence)`);
+        stub.restore();
+    }
+}
+
+async function testBoardSearchRootRedirectsClosed() {
+    // The board's OWN jobs-search / root surface IS genuine closure evidence
+    // (a dead posting gets parked there). LinkedIn case uses a RELATIVE
+    // Location to assert the loop resolves it against the current URL.
+    const cases: Array<{ kind: WatchlistKind; sourceUrl: string; location: string; finalUrl: string; label: string }> = [
+        {
+            kind: "linkedin",
+            sourceUrl: "https://www.linkedin.com/jobs/view/test-at-acme-12345",
+            location: "/jobs/search?keywords=fallback&trk=expired_jd_redirect",
+            finalUrl: "https://www.linkedin.com/jobs/search",
+            label: "linkedin: 302 → /jobs/search (relative Location)",
+        },
+        {
+            kind: "indeed",
+            sourceUrl: "https://www.indeed.com/viewjob?jk=abc123",
+            location: "https://www.indeed.com/jobs?q=software+engineer",
+            finalUrl: "https://www.indeed.com/jobs",
+            label: "indeed: 302 → /jobs search",
+        },
+        {
+            kind: "indeed",
+            sourceUrl: "https://www.indeed.com/viewjob?jk=abc123",
+            location: "https://www.indeed.com/",
+            finalUrl: "https://www.indeed.com/",
+            label: "indeed: 302 → homepage root",
+        },
+    ];
+    for (const c of cases) {
+        const stub = installFetchMock([{
+            matches: (u) => u === c.sourceUrl,
+            respond: () => respondRedirect(c.location),
+        }, {
+            matches: (u) => u.startsWith(c.finalUrl),
+            respond: (u) => respond200("<html><body>browse jobs</body></html>", u),
+        }]);
+        const r = await probePostingLiveness({ externalId: "x", sourceUrl: c.sourceUrl }, c.kind);
+        await expectResult(r, "closed", `${c.label} → closed (board's own search/root surface)`);
+        stub.restore();
+    }
+}
+
+async function testOffPathBodyMarkerStillCloses() {
+    // (b) of OQ4b — wherever the redirect landed, a body closed-marker is
+    // positive evidence. Off-path + marker → closed even though the URL is
+    // neither the posting path nor the search-root allowlist.
+    const stub = installFetchMock([{
+        matches: (u) => u.includes("/jobs/view/"),
+        respond: () => respondRedirect("https://www.linkedin.com/jobs/collections/expired-notice"),
+    }, {
+        matches: (u) => u.includes("/jobs/collections/"),
+        respond: (u) => respond200("<html><body>This job is no longer available.</body></html>", u),
+    }]);
+    const r = await probePostingLiveness({
+        externalId: "x",
+        sourceUrl: "https://www.linkedin.com/jobs/view/test-at-acme-12345",
+    }, "linkedin");
+    await expectResult(r, "closed", "linkedin: off-path redirect + body closed-marker → closed");
+    stub.restore();
+}
+
+// ─── P3.1b — SSRF-safe redirect loop ──────────────────────────────────────
+
+async function testRedirectToPrivateIpBlocked() {
+    // A 302 to an internal target must never be fetched: the per-hop guard
+    // trips BEFORE the follow, verdict is "unknown" (never "closed", even if
+    // the internal target would 404).
+    const targets = [
+        "http://127.0.0.1:9999/secret",
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.10/admin",
+    ];
+    for (const target of targets) {
+        let privateFetched = false;
+        const stub = installFetchMock([{
+            matches: (u) => u === target,
+            respond: () => { privateFetched = true; return respondStatus(404); },
+        }, {
+            matches: () => true,
+            respond: () => respondRedirect(target),
+        }]);
+        const r = await probePostingLiveness({
+            externalId: "x",
+            sourceUrl: "https://example.com/posting/x",
+        }, "careers-page");
+        await expectResult(r, "unknown", `SSRF loop: 302 → ${target} → unknown`);
+        if (privateFetched) fail(`SSRF loop: private target ${target} was FETCHED — hop guard failed`);
+        else pass(`SSRF loop: private target ${target} never fetched (guard fired pre-follow)`);
+        if (stub.callCount() !== 1) fail(`SSRF loop: expected exactly 1 fetch, got ${stub.callCount()}`);
+        stub.restore();
+    }
+}
+
+async function testRedirectHopCapUnknown() {
+    // An endless redirect chain resolves "unknown" after MAX_REDIRECT_HOPS
+    // (5) follows: 1 initial fetch + 5 follows = 6 fetches, then stop.
+    let n = 0;
+    const stub = installFetchMock([{
+        matches: () => true,
+        respond: () => respondRedirect(`https://example.com/hop-${++n}`),
+    }]);
+    const r = await probePostingLiveness({
+        externalId: "x",
+        sourceUrl: "https://example.com/posting/x",
+    }, "careers-page");
+    await expectResult(r, "unknown", "redirect chain >5 hops → unknown");
+    if (stub.callCount() === 6) pass(`hop cap: stopped after ${stub.callCount()} fetches (1 initial + 5 follows)`);
+    else fail(`hop cap: expected 6 fetches, got ${stub.callCount()}`);
+    stub.restore();
+}
+
+async function testBenignRedirectFollowed() {
+    // The manual loop must still FOLLOW safe redirects — a posting moved
+    // behind one 302 still resolves from the final response.
+    const stub = installFetchMock([{
+        matches: (u) => u.endsWith("/posting/x"),
+        respond: () => respondRedirect("https://example.com/posting/x-final"),
+    }, {
+        matches: (u) => u.endsWith("/posting/x-final"),
+        respond: () => respondStatus(200, "ok"),
+    }]);
+    const r = await probePostingLiveness({
+        externalId: "x",
+        sourceUrl: "https://example.com/posting/x",
+    }, "careers-page");
+    await expectResult(r, "alive", "benign 302 followed → final 200 → alive");
+    if (stub.callCount() === 2) pass("benign redirect: exactly 2 fetches (hop + final)");
+    else fail(`benign redirect: expected 2 fetches, got ${stub.callCount()}`);
+    stub.restore();
+}
+
+// ─── P3.1c — MC_LIVENESS_BYPASS prod guard ────────────────────────────────
+
+async function testBypassIgnoredOnProdTier() {
+    const stub = installFetchMock([{
+        matches: () => true,
+        respond: () => respondStatus(200, "ok"),
+    }]);
+    try {
+        process.env.MC_LIVENESS_BYPASS = "closed";
+        process.env.MC_SCHEDULER_TIER = "prod";
+        const results = await probeBatch(
+            [{ externalId: "x", sourceUrl: "https://example.com/posting/x" }],
+            "careers-page",
+        );
+        const verdict = results.get("x");
+        if (verdict === "alive") pass("prod guard: MC_LIVENESS_BYPASS=closed ignored on MC_SCHEDULER_TIER=prod (real probe ran → alive)");
+        else fail(`prod guard: expected real-probe 'alive', got '${verdict}' — bypass leaked into prod tier`);
+        if (stub.callCount() >= 1) pass("prod guard: probe actually fetched (bypass did not short-circuit)");
+        else fail("prod guard: no fetch issued — bypass was honored on prod tier");
+    } finally {
+        delete process.env.MC_LIVENESS_BYPASS;
+        delete process.env.MC_SCHEDULER_TIER;
+        stub.restore();
+    }
+}
+
+async function testBypassHonoredOffProd() {
+    // Sanity companion: with neither prod var set, the bypass still works —
+    // the hermetic smokes that rely on it (scale regression etc.) depend on
+    // this staying true.
+    const stub = installFetchMock([{
+        matches: () => true,
+        respond: () => respondStatus(200, "ok"),
+    }]);
+    try {
+        process.env.MC_LIVENESS_BYPASS = "closed";
+        const results = await probeBatch(
+            [{ externalId: "x", sourceUrl: "https://example.com/posting/x" }],
+            "careers-page",
+        );
+        if (results.get("x") === "closed") pass("bypass off-prod: MC_LIVENESS_BYPASS=closed honored (no prod tier vars)");
+        else fail(`bypass off-prod: expected 'closed', got '${results.get("x")}'`);
+        if (stub.callCount() === 0) pass("bypass off-prod: zero fetches (short-circuited)");
+        else fail(`bypass off-prod: expected 0 fetches, got ${stub.callCount()}`);
+    } finally {
+        delete process.env.MC_LIVENESS_BYPASS;
+        stub.restore();
+    }
 }
 
 // ─── probeBatch behavior ──────────────────────────────────────────────────
@@ -535,8 +801,17 @@ async function main() {
     await testLeverUsesApi();
     await testGreenhouseFallbackToSourceUrl();
     await testWorkdayLoginRedirect();
+    await testWorkdayBoardRootRedirect();
     await testWorkdayAlive();
     await testAshbyBareRootRedirect();
+    await testAuthInterstitialRedirectsUnknown();
+    await testBoardSearchRootRedirectsClosed();
+    await testOffPathBodyMarkerStillCloses();
+    await testRedirectToPrivateIpBlocked();
+    await testRedirectHopCapUnknown();
+    await testBenignRedirectFollowed();
+    await testBypassIgnoredOnProdTier();
+    await testBypassHonoredOffProd();
     await testBatchMaxPerTickOverflow();
     await testBatchConcurrencyCap();
     await testBatchPerHitDelay();

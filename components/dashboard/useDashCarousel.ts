@@ -27,9 +27,20 @@ export interface DashCarouselState {
  * Lifted out of Dashboard.tsx so both shells render the same dash at the
  * same index without duplicating mount logic. The shells layer chrome and
  * gesture handling on top.
+ *
+ * Position is tracked by DASH ID, not by index (OQ11a). `dashOrder` is a
+ * cross-device field hydrated asynchronously from /api/settings — an index
+ * resolved at mount against the pre-hydration order goes stale the moment
+ * the custom order arrives (orderedDashes re-sorts under a fixed index, the
+ * visible dash silently flips, and the activeViewId sync effect then
+ * persists the WRONG id). Holding the id as the source of truth and deriving
+ * the index against the current `orderedDashes` means a re-sort moves the
+ * index with the dash instead of the dash under the index.
  */
 export function useDashCarousel(baseDashes: DashConfig[]): DashCarouselState {
-    const [currentIndex, setCurrentIndex] = useState(0);
+    // Source of truth: the current dash ID. null = not yet restored (renders
+    // as position 0 of whatever order is current, same as before).
+    const [currentId, setCurrentId] = useState<string | null>(null);
     const [isMounted, setIsMounted] = useState(false);
 
     const { setActiveViewId, dashOrder, dashTitles } = useThemeStore();
@@ -61,20 +72,13 @@ export function useDashCarousel(baseDashes: DashConfig[]): DashCarouselState {
         const legacyId = typeof window !== 'undefined' ? localStorage.getItem('mc-active-view') : null;
         const storedId = post.activeViewId || legacyId || baseDashes[0].id;
 
-        // Resolve the index against the **post-sync** user order, not against
-        // `orderedDashes` (which is still memoized as baseDashes because
-        // isMounted is false here). Using orderedDashes would resolve indices
-        // against the default order, then flip on the next render and surface
-        // a different dash — the "reload drops me a couple views back" bug.
-        const dashesById = new Map(baseDashes.map(d => [d.id, d]));
-        const userOrderedIds = [
-            ...post.dashOrder.filter(id => dashesById.has(id)),
-            ...baseDashes.filter(d => !post.dashOrder.includes(d.id)).map(d => d.id),
-        ];
-
-        const index = userOrderedIds.findIndex(id => id === storedId);
-        if (index !== -1) {
-            setCurrentIndex(index);
+        // Restore by ID — no index resolution at mount, so the async
+        // /api/settings dashOrder hydration can land whenever it likes; the
+        // derived index below simply reinterprets the same id against the
+        // new order. A stale id (dash removed from BASE_DASHES) is dropped
+        // and the carousel stays at position 0 of the current order.
+        if (baseDashes.some(d => d.id === storedId)) {
+            setCurrentId(storedId);
         }
 
         if (typeof window !== 'undefined' && legacyId && post.activeViewId) {
@@ -85,6 +89,15 @@ export function useDashCarousel(baseDashes: DashConfig[]): DashCarouselState {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
+    // Derived: where the current dash sits in TODAY's order. Recomputed on
+    // every dashOrder/dashTitles change, so a settings hydration that
+    // re-sorts orderedDashes moves the index with the dash.
+    const currentIndex = useMemo(() => {
+        if (!currentId) return 0;
+        const i = orderedDashes.findIndex(d => d.id === currentId);
+        return i === -1 ? 0 : i;
+    }, [orderedDashes, currentId]);
+
     const currentDashId = orderedDashes[currentIndex]?.id;
 
     useEffect(() => {
@@ -93,18 +106,31 @@ export function useDashCarousel(baseDashes: DashConfig[]): DashCarouselState {
         }
     }, [currentDashId, setActiveViewId, isMounted]);
 
-    const nextSlide = useCallback(() => {
-        setCurrentIndex((prev) => (prev + 1) % orderedDashes.length);
-    }, [orderedDashes.length]);
+    // Navigation: neighbor math still happens in index space, but always
+    // against the CURRENT order, and the result is stored back as an id.
+    const stepSlide = useCallback((delta: number) => {
+        setCurrentId(prev => {
+            const len = orderedDashes.length;
+            if (len === 0) return prev;
+            const i = prev ? orderedDashes.findIndex(d => d.id === prev) : -1;
+            const base = i === -1 ? 0 : i;
+            return orderedDashes[(base + delta + len) % len].id;
+        });
+    }, [orderedDashes]);
 
-    const prevSlide = useCallback(() => {
-        setCurrentIndex((prev) => (prev - 1 + orderedDashes.length) % orderedDashes.length);
-    }, [orderedDashes.length]);
+    const nextSlide = useCallback(() => stepSlide(1), [stepSlide]);
+    const prevSlide = useCallback(() => stepSlide(-1), [stepSlide]);
+
+    // Index-based jump (mobile page dots). The index is interpreted against
+    // the current order at call time, then immediately converted to an id.
+    const setCurrentIndex = useCallback((i: number) => {
+        const dash = orderedDashes[i];
+        if (dash) setCurrentId(dash.id);
+    }, [orderedDashes]);
 
     const goToSlide = useCallback((id: string): boolean => {
-        const index = orderedDashes.findIndex(d => d.id === id);
-        if (index !== -1) {
-            setCurrentIndex(index);
+        if (orderedDashes.some(d => d.id === id)) {
+            setCurrentId(id);
             return true;
         }
         return false;

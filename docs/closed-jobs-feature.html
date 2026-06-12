@@ -1,0 +1,859 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Closed-jobs feature — manual closed state, one-click links, sharper close-detection</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Closed-jobs feature</h1>
+  <p class="subtitle">A <strong>Closed</strong> state on both the applications kanban and the job-listings feed — set by hand <em>or driven by the close-detection probe</em>, one-click "open in new tab" on kanban cards, and a sharper probe so fewer dead listings sit around as live.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#context">Context &amp; problem</a></li>
+      <li><a href="#design">Design</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="context">Context &amp; problem</h2></summary>
+    <div class="section-body">
+
+      <div class="callout tip"><strong>Status: in review — all OQs decided (2026-06-09); Step 0 + Tracks A/B/C landed on <code>feat/closed-jobs</code>; pushed, full hermetic gate 111/111, <a href="https://github.com/salsquared/mission-control/pull/1">PR #1</a> open → <code>main</code>. Remaining: prod build + <code>pm2 restart</code> (deferred until after merge).</strong> Three independent pillars, all requested in one ask.</div>
+
+      <h3>Problem</h3>
+      <p>Three related pain points around job opportunities that have closed (no longer taking applications):</p>
+      <ol>
+        <li><strong>No manual "closed" state the user can set or see.</strong>
+          <ul>
+            <li><em>Applications kanban</em> — <code>ApplicationsKanbanCard.tsx:43</code> defines 8 columns (Interested → Applied → Assessment → Interviewing → Offer → Accepted → Declined → Rejected). There is no terminal "Closed" column, so when an opportunity the user was tracking closes, they currently <strong>delete the card</strong> — losing the history. The status set itself (<code>APPLICATION_STATUSES</code>, <code>lib/schemas/applications.ts:7</code>) has no <code>CLOSED</code> value.</li>
+            <li><em>Job-listings feed</em> — <code>JobPosting.status</code> <em>does</em> already support <code>"closed"</code> (<code>JOB_POSTING_STATUSES</code>, <code>lib/schemas/watchlists.ts</code>), but it is only ever set <strong>automatically</strong> by the scheduler's liveness probe (<code>job-watcher.ts:496</code>). There is no manual "mark closed" control, and the feed only renders <code>status:"new"</code> (<code>NewPostingsCard.tsx:117</code>), so a closed listing simply disappears — it can't be reviewed.</li>
+          </ul>
+        </li>
+        <li><strong>The job link is hard to open.</strong> When the user opens a kanban card, the posting URL is shown by <code>PostingSourceLine</code> (<code>ApplicationDetailOverlay.tsx:46</code>) — but only when <code>app.postingId</code> is set (<code>:361</code>). Manually-added applications carry <strong>no URL at all</strong>: <code>AppRecord</code> (<code>ApplicationsKanbanCard.tsx:9</code>) has no <code>url</code> field, so the kanban card face has nothing to click, and the user ends up selecting + copying a URL by hand or right-click → open-in-new-tab.</li>
+        <li><strong>Close-detection misses "closed but the link still exists" jobs.</strong> The scheduler only probes a posting when it is <em>stale</em> — absent from the latest fetch <strong>and</strong> <code>lastSeenAt &gt; 6h</code> (<code>job-watcher.ts:461</code>). A job that is closed but <em>still listed</em> in the source feed never goes stale → never gets probed → never closes. And even when probed, <code>probeViaHttpStatus</code> (<code>liveness.ts:134</code>) returns <code>"alive"</code> on any 2xx that doesn't hit a closure marker — and the per-ATS marker lists are self-described as "initial guesses" (<code>liveness.ts:79</code>). So a "200-but-closed" page (job content intact, banner says "no longer accepting applications") reads as alive. The user reports "missing lots of jobs that are closed but the links still exist," which matches both gaps.</li>
+      </ol>
+
+      <h3>Goals &amp; non-goals</h3>
+      <ul>
+        <li><strong>Goal:</strong> A <code>CLOSED</code> state the user can set <em>and</em> see on <strong>both</strong> the applications kanban and the job-listings feed.</li>
+        <li><strong>Goal:</strong> A confirmed-closed listing <strong>cascades to its linked kanban card</strong> — the close-detection probe (and a manual posting-close) auto-moves a still-<code>INTERESTED</code> application to <code>CLOSED</code>, the same way email ingest drives application state. No more deleting cards by hand.</li>
+        <li><strong>Goal:</strong> One-click "open in new tab" for the job link from the kanban (card face + detail overlay), for every application — including manually-added ones.</li>
+        <li><strong>Goal:</strong> Measurably fewer missed closures — close-detection that catches the closed-but-still-listed and 200-but-closed cases the current probe misses.</li>
+        <li><strong>Non-goal (this doc):</strong> An auto-classifier that emits <code>CLOSED</code> from emails. <code>CLOSED</code> is a manual decision; the email classifier is out of scope (see <code>OQ1</code>).</li>
+        <li><strong>Non-goal:</strong> A <em>blanket</em> re-probe of <em>every</em> still-listed posting on <em>every</em> tick. C3 (committed, <code>OQ5</code>) is the <em>budgeted, rotating</em> version — it re-probes a capped sample per tick ordered by <code>lastProbedAt</code>, so a full pass spreads over many ticks rather than hammering the shared IP at once.</li>
+        <li><strong>Non-goal:</strong> Reviving a <code>closed</code> posting back to <code>new</code> if the source re-lists it. Closed stays closed (matches today's behaviour; the manual control inherits it).</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="design">Design</h2></summary>
+    <div class="section-body">
+
+      <h3>Pillar A — manual CLOSED state on both surfaces</h3>
+
+      <h4>A1 · Applications kanban</h4>
+      <p><strong>Why a new status and not the existing <em>Declined</em>?</strong> The board already has distinct terminal meanings that <code>CLOSED</code> must not collapse into: <em>Declined</em> = <strong>I</strong> said no (withdrew / turned it down — the user's "things I don't want" column), <em>Rejected</em> = <strong>they</strong> said no, and the new <em>Closed</em> = the <strong>opportunity itself ended</strong> (listing pulled / no longer accepting) with no yes-or-no either way — the state the cascade sets. They are not interchangeable, so <code>CLOSED</code> is its own value on the <code>Application</code> model rather than a flag derived from the linked posting (see <em>Alternatives considered</em>).</p>
+      <p>The kanban renders directly off <code>APPLICATION_STATUSES</code> and a column table, so this is an additive change with no new abstractions:</p>
+      <ul>
+        <li>Add <code>'CLOSED'</code> to <code>APPLICATION_STATUSES</code> (<code>lib/schemas/applications.ts:7</code>). The read shape is <code>status: z.string()</code> (<code>:47</code>) so existing rows are unaffected; the POST/PATCH paths use <code>ApplicationStatusSchema</code>, which gains the value for free.</li>
+        <li>Add a terminal <strong>Closed</strong> column to <code>pipelineColumns</code> (<code>ApplicationsKanbanCard.tsx:43</code>), after <em>Rejected</em>, with a neutral/archived hue distinct from Rejected's slate — e.g. <code>bg-zinc-500/20 text-zinc-400 border border-zinc-500/20</code> (placement &amp; treatment = <code>OQ2</code>).</li>
+        <li>The detail-overlay status buttons render one per <code>APPLICATION_STATUSES</code> (<code>ApplicationDetailOverlay.tsx:367</code>), so <code>CLOSED</code> appears there automatically — no edit needed.</li>
+        <li>Drag-to-column and the button both call PATCH <code>/api/applications</code>, already <code>ApplicationStatusSchema.optional()</code> — no route change. The PATCH already writes a <code>STATUS_CHANGED</code> anchor at <code>now()</code> (<code>route.ts:158</code>), so a manual close is correctly the latest status anchor — the stale-email guard then protects it (an older email can't un-close it; see <code>OQ6</code>).</li>
+        <li><code>CLOSED</code> is set <strong>by hand or by the cascade</strong> — the same status value is reached when a linked listing is confirmed closed (see <em>Pillar C → A cascade</em> below). Both paths write a <code>STATUS_CHANGED</code> event so the timeline shows <em>why</em> (provenance via <code>syncSource</code>: <code>ms</code> for manual, <code>probe</code> for auto).</li>
+        <li><strong>Keep <code>CLOSED</code> out of the LLM classifier enum</strong> in <code>lib/email-parser.ts</code> (the comment at <code>applications.ts:3</code> says the set "mirrors" the classifier — that becomes "superset of"; update the comment). See <code>OQ1</code>.</li>
+      </ul>
+
+      <h4>A2 · Job-listings feed</h4>
+      <p>The status value and the API both already exist — this is a UI + surfacing change:</p>
+      <ul>
+        <li><strong>Mark-closed control</strong> on <code>PostingRow</code> (<code>NewPostingsCard.tsx:626</code>), alongside the existing hide/track buttons (<code>:673</code>). It calls <code>api.postings.update(id, { status: "closed" })</code> — the PATCH route already accepts <code>JobPostingStatusSchema</code> (<code>app/api/postings/[id]/route.ts</code>).</li>
+        <li><strong>Surface closed listings.</strong> The feed requests <code>status:"new"</code> only (<code>:117</code>); the list route already supports <code>?status=closed</code> (<code>app/api/postings/route.ts:108</code>). Render closed ones in a way that's out of the way but reviewable — mechanism is <code>OQ3</code> (collapsed "Recently closed (N)" section vs. an Open/Closed toggle vs. inline dimmed badge).</li>
+        <li><strong>Stickiness is already correct.</strong> The seen-again path bumps <code>lastSeenAt</code> but never touches <code>status</code> (<code>job-watcher.ts:330</code>), and stale-candidate selection excludes <code>closed</code>/<code>hidden</code> (<code>:466</code>) — so a manually-closed posting that's still in the feed will not be revived or re-probed. No new guard needed; verify with a hermetic smoke.</li>
+      </ul>
+
+      <h3>Pillar B — one-click job link from the kanban</h3>
+      <p>The root issue is that the kanban has no link to click for most apps. Fix the <em>data</em> first, then the UI:</p>
+      <ul>
+        <li><strong>Data:</strong> give every application a job URL. A manually-added app has no <code>postingId</code>, so deriving from <code>JobPosting.sourceUrl</code> alone leaves exactly the user's problem rows link-less. Add <code>Application.url String?</code> (populated from <code>posting.sourceUrl</code> at track-as-application time, and editable for manual apps), then thread it onto the applications list payload + <code>AppRecord</code> (<code>ApplicationsKanbanCard.tsx:9</code>). Whether a dedicated column is load-bearing vs. derive-only = <code>OQ4</code>.</li>
+        <li><strong>UI — card face:</strong> a small <code>ExternalLink</code> icon button (mirroring <code>NewPostingsCard.tsx:643</code>) rendered when <code>url</code> is present, as a real <code>&lt;a href target="_blank" rel="noopener noreferrer"&gt;</code>, with <code>onClick</code> <code>stopPropagation</code> so it doesn't open the detail overlay.</li>
+        <li><strong>UI — detail overlay:</strong> promote the existing <code>PostingSourceLine</code> (<code>ApplicationDetailOverlay.tsx:46</code>) to render for <em>any</em> app with a URL (not just <code>postingId</code>), styled as an unmistakable one-click "Open posting ↗" button rather than selectable URL text.</li>
+      </ul>
+
+      <h3>Pillar C — sharper close-detection</h3>
+      <p>Today's flow, with the two gaps the user is hitting:</p>
+      <pre class="mermaid">
+flowchart TB
+  fetch["watchlist fetch<br/>(every ~10 min)"] --> seen{"externalId<br/>in this fetch?"}
+  seen -->|"yes"| bump["bump lastSeenAt<br/>(status untouched)"]
+  bump --> gapA["closed-but-still-listed<br/>never goes stale"]
+  gapA --> c3["C3 sweep: budgeted, rotating<br/>re-probe of still-listed postings<br/>(orders by lastProbedAt)"]
+  c3 --> probe
+  seen -->|"no"| stale{"lastSeenAt<br/>older than 6h?"}
+  stale -->|"no"| wait["re-check next tick"]
+  stale -->|"yes"| probe["probeBatch: GET sourceUrl"]
+  probe -->|"404 / 410 / redirect / marker"| close["status = closed"]
+  close --> cascade["CASCADE: linked INTERESTED app<br/>auto-moves to CLOSED + STATUS_CHANGED"]
+  probe -->|"2xx + alive-marker"| revive["bump lastSeenAt"]
+  probe -->|"2xx, no marker — C1/C2 tighten this"| gapB["GAP B: 200-but-closed<br/>banner must be caught by a marker"]
+  probe -->|"timeout / 5xx / ambiguous"| unknown["unknown — re-probe next tick"]
+      </pre>
+
+      <h4>C · What counts as a closure marker</h4>
+      <p>"Marker" is overloaded in the diagram above. Concretely, the probe (<code>lib/postings/liveness.ts</code>) draws a <code>closed</code> verdict from <strong>four distinct signal tiers</strong>, in descending reliability — and <strong>most kinds use only the first</strong>. A marker is <em>not</em> a structured signal the ATS sends on purpose; tiers 2–3 are us scraping the public page the way a browser would and pattern-matching whatever it returns.</p>
+      <table>
+        <thead><tr><th>Tier</th><th>What it is</th><th>Sent deliberately by the ATS?</th><th>How the probe reads it</th><th>Kinds using it today</th></tr></thead>
+        <tbody>
+          <tr><td><strong>1 · HTTP status</strong></td><td><code>404</code>/<code>410</code> on the posting URL (or on the Greenhouse/Lever JSON API)</td><td>Yes — protocol-level</td><td><code>res.status</code> (<code>liveness.ts:182</code>)</td><td><strong>all</strong> kinds</td></tr>
+          <tr><td><strong>2 · Redirect shape</strong></td><td>After following redirects, the final URL no longer matches the posting-URL pattern (bounced to board root / <code>/login</code> / search)</td><td>Implicitly — dead postings get redirected away</td><td><code>res.url</code> + <code>URL</code> path-segment parse (<code>:204</code>,<code>:221</code>,<code>:267</code>,<code>:279</code>)</td><td>linkedin, indeed, ashby, workday</td></tr>
+          <tr><td><strong>3 · Body-text marker</strong></td><td>A literal phrase rendered on the closed page — e.g. <em>"no longer accepting applications"</em>, <em>"this job has expired"</em></td><td><strong>No</strong> — incidental page copy we scrape</td><td><code>res.text()</code> → lowercase → <code>String.includes</code> over hand-maintained lists (<code>:79</code>,<code>:205</code>)</td><td>linkedin, indeed, ashby, workday</td></tr>
+          <tr><td><strong>4 · Structured ATS state</strong> <em>(C2 — not used yet)</em></td><td>An explicit open/closed boolean inside the ATS JSON payload</td><td>Yes — a real data field</td><td>parse JSON, read the flag</td><td><em>none</em> — Greenhouse/Lever currently take only their JSON API's <em>status code</em> (tier 1), ignoring any in-body flag</td></tr>
+        </tbody>
+      </table>
+      <p>Two consequences worth stating plainly:</p>
+      <ul>
+        <li>The <strong>generic tier</strong> (smartrecruiters, workable, recruitee, personio, clearcompany, careers-page) uses <em>only</em> tier 1 — <code>probeGeneric</code> passes no body check (<code>liveness.ts:289</code>). A closed job on any of those that returns <code>200</code> with a "position filled" banner is <strong>invisible</strong> today — they don't even have a marker list. That's Gap B for the entire generic tier.</li>
+        <li>So when this doc says "<strong>expand markers</strong>" (C1) it means tiers 2–3: curate the scraped phrases and extend the <em>require-an-alive-marker-before-declaring-alive</em> gate (today only LinkedIn/Indeed) to the other HTML kinds. "<strong>Prefer structured state</strong>" (C2) means promoting tier 4 where a JSON API exposes an open/closed flag — the only liveness signal the ATS actually sends on purpose.</li>
+      </ul>
+
+      <p>Scoped, lowest-risk-first fixes (Sal's minimal-v1 preference — <strong>measure before widening</strong>, since a too-aggressive probe re-introduces the false-close behaviour the probe gate was built to kill):</p>
+      <ul>
+        <li><strong>C0 · Diagnose (do this first).</strong> A probe-audit script under <code>scripts/tests/probes/</code> that samples postings per kind, re-probes via <code>probePostingLiveness</code>, and — crucially — <strong>captures the raw page text + final URL for every non-<code>closed</code> verdict</strong>, not just a count. Reporting the verdict alone can't reveal a <em>missing</em> phrase; dumping the actual body of <code>alive</code>/<code>unknown</code> pages that are really closed is what surfaces the wording LinkedIn/Indeed/etc. use (<em>"no longer accepting applications"</em>, <em>"this job has expired"</em>, …) so C1's tier-3 lists come from observed pages, not hunches. Seed it with a handful of known-dead URLs (the new manual-CLOSE control gives a growing supply) so the sample is guaranteed to contain closed examples to read. <em>Output:</em> closed-but-still-listed rate per kind + the unmatched closure phrases → tells us whether the misses are Gap A (not-probing-live) or Gap B (bad/absent markers), so C1–C3 are data-driven, not guesses.</li>
+        <li><strong>C1 · Expand &amp; curate closure markers</strong> (<code>liveness.ts:79</code>) informed by C0, and extend the "require an alive-marker before declaring alive" pattern (already used for LinkedIn <code>:210</code> / Indeed <code>:227</code>) to the other HTML-scraping kinds, so a 200-but-closed page falls to <code>unknown</code> rather than <code>alive</code>. Additive, conservative.</li>
+        <li><strong>C2 · Prefer structured ATS state.</strong> Greenhouse/Lever already probe the JSON API first (<code>liveness.ts:234</code>,<code>:248</code>); a removed Greenhouse/Lever job 404s on the board API. Audit (C0) whether closed-but-listed jobs expose an explicit open/closed flag in those JSON payloads (and Ashby/Workday CXS), and trust that over HTML heuristics where present.</li>
+        <li><strong>C3 · Periodic re-probe of still-listed postings</strong> (committed — <code>OQ5</code>). A budgeted, rotating sweep that re-probes <code>status:"new"</code> postings still in the feed (so they never go stale) to catch Gap A directly — designed below. C0 still runs first, but only to <em>size</em> C3's budget and feed the C1/C2 markers; C3 ships regardless of what C0 finds.</li>
+      </ul>
+
+      <h4>C3 · Periodic re-probe of still-listed postings (the Gap A sweep)</h4>
+      <p>C1/C2 sharpen the probe but can't help Gap A — a closed-but-still-listed posting is never <em>stale</em>, so the existing close-detection never selects it (<code>job-watcher.ts:461</code>). C3 adds a second, proactive sweep that re-probes still-listed postings on a rolling budget, so every active posting is eventually re-checked even while it's still in the feed.</p>
+      <ul>
+        <li><strong>Rotation key.</strong> Add <code>JobPosting.lastProbedAt DateTime?</code> (additive, nullable — same migration shape as <code>Application.url</code>). <code>lastSeenAt</code> can't be reused: the fetch bumps it on every sighting (<code>job-watcher.ts:330</code>), so it tracks "seen in feed," not "probed." The sweep selects <code>status:"new"</code> postings ordered by <code>lastProbedAt asc</code> (nulls first) and stamps <code>lastProbedAt</code> on everything it probes — a durable rolling cursor with no in-memory state to lose on restart.</li>
+        <li><strong>Budget &amp; cadence.</strong> A per-kind cap <em>separate from and smaller than</em> the stale-probe's <code>maxPerTick</code>, so the proactive sweep never starves close-detection of its rate budget. Size it from C0 so a full pass over the still-listed population completes within a target freshness window (decide the window — e.g. every active posting re-probed at least once / 24–48 h). Reuses the same <code>PROBE_PROFILES</code> concurrency / delay / 429-abort machinery and the arXiv-style cooldown awareness, so it stays inside politeness limits on the shared IP.</li>
+        <li><strong>Verdict handling = identical to the stale path.</strong> A C3 <code>closed</code> verdict flips <code>status="closed"</code> and runs the same <em>Pillar C → A</em> cascade (<code>source:"probe"</code>) — a still-listed posting found dead closes its linked INTERESTED card just like a stale one. <code>alive</code> bumps <code>lastSeenAt</code>; <code>unknown</code> leaves the row alone <em>but still stamps <code>lastProbedAt</code></em> so a flaky page advances the cursor instead of jamming the rotation.</li>
+        <li><strong>Composes with C1/C2.</strong> C3 decides <em>which</em> postings get probed; C1/C2 decide the verdict <em>accuracy</em>. Both are needed: C3 without good markers re-probes still-listed pages but still mis-reads a 200-but-closed banner; C1/C2 without C3 never look at still-listed pages at all.</li>
+      </ul>
+
+      <h3>Pillar C → A cascade — a closed listing closes its kanban card</h3>
+      <p>The probe currently only flips <code>JobPosting.status</code>; it should also drive the linked <em>application</em>'s status, the same way email ingest drives application state. <code>Application.postingId String? @unique</code> (<code>schema.prisma:206</code>) links one application back to the <code>JobPosting</code> it was tracked from, so a confirmed-closed posting id maps directly to its card.</p>
+      <p><strong>Shared helper — one place, two callers.</strong> A new <code>lib/applications/close-from-posting.ts:closeApplicationsForClosedPostings(postingIds, { at, source })</code>:</p>
+      <ul>
+        <li>Selects applications where <code>postingId IN postingIds</code> <strong>AND</strong> <code>status</code> is cascade-eligible — <strong><code>INTERESTED</code> only</strong> (<code>OQ7</code> decided 2026-06-09; the "I was watching, never applied, it closed" case the user describes). It deliberately does <em>not</em> touch <code>APPLIED</code>/<code>ASSESSMENT</code>/<code>INTERVIEW*</code>/<code>OFFER</code>/terminal cards: a listing routinely closes <em>after</em> you're already in the pipeline, so auto-closing those would wrongly bury live applications.</li>
+        <li>For each match: set <code>status = "CLOSED"</code> + <code>lastUpdateAt = at</code>, and create a <code>STATUS_CHANGED</code> <code>ApplicationEvent</code> (<code>fromStatus</code>, <code>toStatus:"CLOSED"</code>, <code>syncSource: source</code>) — mirroring the manual PATCH event (<code>app/api/applications/route.ts:158</code>) so the timeline records <em>why</em> the card closed. Then <code>broadcastEvent({ model:"Application", … })</code> so the board live-updates.</li>
+        <li>Because it only touches <code>INTERESTED</code> cards (which carry no newer status anchor), it sidesteps the stale-status ordering problem entirely — no guard needed.</li>
+      </ul>
+      <p><strong>Two callers</strong> (provenance via <code>source</code>):</p>
+      <ul>
+        <li><em>Probe (auto)</em> — in <code>scheduler/jobs/job-watcher.ts</code>, right after the <code>confirmedClosedIds</code> close <code>updateMany</code> (<code>:490</code>), call the helper with those ids and <code>source:"probe"</code>. Runs per-tier against that tier's DB (application + posting share the DB), so no cross-tier concern.</li>
+        <li><em>Manual posting-close</em> — in <code>app/api/postings/[id]/route.ts</code> PATCH, when the new status is <code>"closed"</code>, call the helper with <code>source:"ms"</code> so marking a listing closed in the feed also closes its interested card. (Symmetry; <code>OQ8</code> decided 2026-06-09 — both probe and manual cascade.)</li>
+      </ul>
+      <p><strong>Notification:</strong> the probe already fires a per-watchlist "<em>N postings closed</em>" standard bell row (<code>job-watcher.ts:522</code>). Cascade-closed cards fold into that summary rather than a per-application blast (a per-card email here would be exactly the kind of noise the circuit breaker exists to prevent) — <code>OQ9</code> decided 2026-06-09.</p>
+
+      <h3>Touch list</h3>
+      <table>
+        <thead><tr><th>Pillar</th><th>Files</th></tr></thead>
+        <tbody>
+          <tr><td>A1 kanban</td><td><code>lib/schemas/applications.ts</code>, <code>components/cards/applications/ApplicationsKanbanCard.tsx</code>, <code>lib/email-parser.ts</code> (comment only)</td></tr>
+          <tr><td>A2 feed</td><td><code>components/cards/applications/NewPostingsCard.tsx</code>, <code>lib/api-client.ts</code> (filter), possibly <code>app/api/postings/[id]/route.ts</code> (set <code>removedAt</code> on manual close)</td></tr>
+          <tr><td>B links</td><td><code>prisma/schema.prisma</code> (+ migration, both DBs), <code>lib/schemas/applications.ts</code>, <code>lib/repositories/applications.ts</code>, <code>app/api/applications/route.ts</code>, <code>lib/postings/track-as-application.ts</code>, <code>ApplicationsKanbanCard.tsx</code>, <code>ApplicationDetailOverlay.tsx</code></td></tr>
+          <tr><td>C probe</td><td><code>scripts/tests/probes/&lt;audit&gt;.ts</code> (new, C0), <code>lib/postings/liveness.ts</code> (C1/C2 markers), <code>prisma/schema.prisma</code> (<code>JobPosting.lastProbedAt</code> + migration, both DBs), <code>scheduler/jobs/job-watcher.ts</code> (C3 proactive sweep)</td></tr>
+          <tr><td>C→A cascade</td><td><code>lib/applications/close-from-posting.ts</code> (new), <code>scheduler/jobs/job-watcher.ts</code> (after the close <code>updateMany</code>), <code>app/api/postings/[id]/route.ts</code> (manual-close path)</td></tr>
+          <tr><td>tests/docs</td><td><code>scripts/tests/hermetic/&lt;new&gt;.ts</code> + <code>scripts/pre-push.sh</code> <code>SUITES</code>; <code>docs/apis.html</code> regen iff a route surface changes</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Alternatives considered</h3>
+      <ul>
+        <li><strong>Don't give <code>Application</code> its own <code>CLOSED</code> — derive the kanban's closed state from the linked <code>JobPosting.status</code> instead</strong> — <strong>rejected (decided 2026-06-09).</strong> <code>Application</code> gets its own <code>CLOSED</code> value because: (1) the board already separates <em>Declined</em> (<em>I</em> said no — withdrew / turned it down) from <em>Rejected</em> (<em>they</em> said no), and <em>Closed</em> (the opportunity itself ended — listing pulled / no longer accepting, no yes-or-no either way) is a <strong>third distinct terminal meaning</strong> that deserves its own status, not a flag derived from another model; (2) the "many apps have no linked posting" concern is minor in practice — there are few manual / email-only applications without a posting, and the user updates those by hand anyway. The cascade still <em>reuses</em> the existing auto-only <code>JobPosting</code> <code>closed</code> signal — through the liveness probe, <strong>never the email parser</strong> (the classifier stays out of <code>CLOSED</code> per OQ1, so inbound mail can't auto-close a card) — to drive that own status.</li>
+        <li><strong>Derive the kanban link from <code>postingId</code> only (no new column)</strong> — rejected as insufficient: manually-added apps have no posting, and those are precisely the link-less rows the user is fighting. (<code>OQ4</code> decided 2026-06-09: add the column.)</li>
+        <li><strong>Aggressively re-probe <em>all</em> still-listed postings <em>every</em> tick</strong> — rejected: it spikes probe volume against a shared IP that arXiv-style cooldowns already taught us to respect. C3 instead does a budgeted, rotating sample (<code>OQ5</code>) — same Gap-A coverage, spread over many ticks; C1/C2 keep the verdicts accurate so the extra probing doesn't re-introduce false-closes.</li>
+        <li><strong>Cascade by merely flagging the card (badge) instead of moving it to CLOSED</strong> — rejected: the user explicitly wants the probe to <em>change the state</em>, mirroring how email ingest moves cards. The <code>INTERESTED</code>-only guard + reversibility make the auto-move safe; a flag would still leave them deleting cards by hand.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+      <h3>Risks &amp; mitigations</h3>
+      <table>
+        <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr><td>A consumer that exhaustively switches on application status (color map, resume pipeline, notifications) breaks on the new <code>CLOSED</code></td><td>med</td><td>Read shape is <code>z.string()</code>; grep all <code>APPLICATION_STATUSES</code> consumers and status string-literals; columns/colors default-handle unknowns. Cover with a hermetic enum-coverage smoke.</td></tr>
+          <tr><td><code>CLOSED</code> leaks into the LLM classifier → rejections mislabeled as closed</td><td>med</td><td><code>OQ1</code>: keep <code>APPLICATION_STATUSES</code> a superset; classifier enum stays the subset it is today.</td></tr>
+          <tr><td>Manual close on a posting reverted by the next fetch</td><td>low</td><td>Confirmed safe — seen-again never writes <code>status</code> (<code>job-watcher.ts:330</code>); pinned by a hermetic seen-again smoke.</td></tr>
+          <tr><td><code>Application.url</code> migration on a schema-behind tier (Prisma <code>P2021</code>) / SQLite write-lock</td><td>med</td><td>Additive nullable column; <code>migrate deploy</code> against <em>both</em> dev.db and prod.db, <code>pm2 stop</code> the tier's procs to clear the lock, then restart — the §13-hardening session's exact playbook.</td></tr>
+          <tr><td>Sharper markers over-close (the false-close failure mode the probe gate exists to prevent)</td><td>med</td><td>Audit-first (C0); only widen markers from observed pages; keep <code>unknown</code> conservative; manual CLOSE is the precise human override.</td></tr>
+          <tr><td>A false-close now also wrongly closes a kanban card (cascade amplifies a probe miss)</td><td>med</td><td>Cascade only touches <code>INTERESTED</code> cards (never an applied/active one); the move is fully reversible (drag back to Interested); <code>STATUS_CHANGED</code> records it was probe-driven; same audit-first mitigation as the probe itself.</td></tr>
+          <tr><td>C3's added probing → IP rate-limit / throttle on the shared IP</td><td>med</td><td>C3 is a <em>budgeted, rotating sample</em> (separate, smaller per-kind cap than the stale-probe), not a blanket every-tick sweep; reuses <code>maxPerTick</code> caps + 429 abort + arXiv-style cooldown; budget sized from C0 (<code>OQ5</code>).</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Rollback</h3>
+      <p>Enum/UI/probe changes are revert + <code>npm run build</code> + <code>pm2 restart</code>; <code>CLOSED</code> is just a string, so existing rows are untouched on revert. The <code>Application.url</code> migration is additive + nullable — no down-migration data loss; a revert leaves a harmless unused column. Probe changes are scheduler-only behaviour; revert + restart both schedulers.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <h3>Unresolved decisions</h3>
+      <p>Resolve all <code>OQ</code>s with the user before writing implementation code. Options are lettered (<code>OQ5a</code>, <code>OQ5b</code>, …); the <em>Lean:</em> / <strong>✓ Decided.</strong> line names the pick by its letter first, then justifies it. Deciding one <strong>appends, never replaces</strong>: keep the lettered options under the question and swap its <em>Lean:</em>/<em>Status:</em> line for the <strong>✓ Decided.</strong> line, flipping the banner to <code>callout tip</code>. All of <code>OQ1</code>–<code>OQ9</code> are settled (2026-06-09).</p>
+
+      <div class="callout tip"><strong>OQ1 — Does <code>CLOSED</code> stay manual-only, or also join the email classifier enum?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Manual-only.</strong> Add <code>CLOSED</code> to <code>APPLICATION_STATUSES</code> only and leave the <code>lib/email-parser.ts</code> classifier enum alone, so the status set is a <em>superset</em> of the classifier's. <em>Pros:</em> the LLM can never mislabel a rejection email as "closed"; <code>CLOSED</code> stays a deliberate human/probe action. <em>Cons:</em> an email that literally says "this role has been filled" won't move a card on its own — the user or the cascade has to close it.</li>
+          <li><strong>(b)</strong> <strong>Add <code>CLOSED</code> to the classifier.</strong> Teach <code>lib/email-parser.ts</code> to emit <code>CLOSED</code> from closure-signalling emails, so inbound mail auto-closes a card. <em>Pros:</em> hands-free closure straight from the inbox. <em>Cons:</em> the classifier already folds "job closed" into rejection/withdrawal, so this would relabel real rejections as <code>CLOSED</code> and corrupt the funnel stats.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> manual-only — the misclassification risk in (b) is real and the closure signal is already captured as a rejection/withdrawal, so keeping the classifier untouched and reaching <code>CLOSED</code> only by hand or via the probe cascade is the safe call.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ2 — Kanban placement &amp; treatment for the Closed column?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Standalone 9th column.</strong> Add a terminal <code>Closed</code> column to <code>pipelineColumns</code> after <em>Rejected</em>, muted zinc hue. <em>Pros:</em> fully additive, reuses the existing column model, ships without touching board layout. <em>Cons:</em> the board grows to 9 columns — more horizontal scroll on narrow screens.</li>
+          <li><strong>(b)</strong> <strong>Collapsed terminal group.</strong> Fold <code>Closed</code>/<code>Rejected</code>/<code>Declined</code> into one collapsible "terminal" group so the board stays narrow. <em>Pros:</em> keeps the board compact as terminal states multiply. <em>Cons:</em> a new grouping component to build + an extra click to reach terminal cards.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> the standalone muted column (zinc, e.g. <code>bg-zinc-500/20 text-zinc-400 border border-zinc-500/20</code>) — it's the additive, ship-today option; the grouping in (b) is deferred until the board actually feels too wide.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ3 — How are closed listings surfaced in the feed?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Collapsed "Recently closed (N)" section.</strong> Add a collapsed section to the feed that queries <code>?status=closed</code> (<code>app/api/postings/route.ts:108</code>). <em>Pros:</em> keeps the default feed focused on actionable <em>new</em> postings; closures stay reviewable in one click. <em>Cons:</em> closures are a click away rather than glanceable.</li>
+          <li><strong>(b)</strong> <strong>Open/Closed segmented toggle.</strong> A toggle that swaps the feed query between new and closed. <em>Pros:</em> a clean single-list mental model. <em>Cons:</em> hides new postings whenever you're viewing closed; more view state to manage.</li>
+          <li><strong>(c)</strong> <strong>Inline dimmed badge.</strong> Render closed postings inline with a dimmed "Closed" badge. <em>Pros:</em> zero navigation — everything in one list. <em>Cons:</em> pushes dead listings into the primary view, the exact noise the feed should suppress.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> the collapsed section — it surfaces closures without letting them crowd the new-postings feed that (b) and (c) both compromise.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ4 — Kanban link: new <code>Application.url</code> column, or derive from <code>postingId</code> only?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Add <code>Application.url String?</code>.</strong> New nullable column, populated from <code>posting.sourceUrl</code> at track-as-application time and editable for manual apps; threaded onto the list payload + <code>AppRecord</code>. <em>Pros:</em> every app carries a clickable link — including manual apps and apps whose posting was later pruned (the user's exact complaint). <em>Cons:</em> an additive migration on both DBs (the pm2-stop-to-unlock dance).</li>
+          <li><strong>(b)</strong> <strong>Derive from <code>postingId</code> only.</strong> Render the link from the linked <code>JobPosting.sourceUrl</code>, no new column. <em>Pros:</em> no migration. <em>Cons:</em> manually-added apps have no <code>postingId</code>, so they stay link-less — precisely the rows the user is fighting — and the link breaks if the posting is pruned.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> add the column — (b)'s no-migration win doesn't matter when it leaves the exact rows the user is complaining about link-less, and the column also survives posting pruning.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ5 — Add periodic re-probing of still-listed postings (Gap A), or rely on markers + manual close?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Budgeted live re-probe (C3).</strong> Add a proactive scheduler sweep that re-probes still-listed <code>status:"new"</code> postings on a rolling, per-kind budget ordered by a new <code>JobPosting.lastProbedAt</code>. <em>Pros:</em> directly closes Gap A — a closed-but-still-listed job never goes stale, so nothing else ever re-checks it; gives continuous freshness. <em>Cons:</em> added probe volume on the shared IP (mitigated by the budget + cooldown) and a second additive migration (<code>lastProbedAt</code>).</li>
+          <li><strong>(b)</strong> <strong>Measure-first + manual close.</strong> Ship only the marker work (C0/C1/C2) and let the new manual-CLOSE control cover the still-listed tail. <em>Pros:</em> no extra probing, smallest footprint. <em>Cons:</em> Gap A stays open — a closed-but-listed job is invisible until the user notices and closes it by hand.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> build C3, committed (not gated on C0) — markers only sharpen the probe on <em>stale</em> postings, so nothing else keeps the still-listed-but-closed population current, and the user prioritized continuous freshness. C0 still runs first, but only to size C3's budget and feed the markers. Designed in <em>Pillar C → C3</em>.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ6 — Can a later email override a manually-CLOSED kanban card?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Hard terminal-lock.</strong> Once a card is <code>CLOSED</code>, no inbound email can move it — special-case <code>CLOSED</code> in the ingest path. <em>Pros:</em> a manual close is absolutely final. <em>Cons:</em> a legitimately newer email (the role reopened, an interview invite arrives) can't revive the card, and it needs bespoke ingest code nothing else needs.</li>
+          <li><strong>(b)</strong> <strong>Stale-status anchor guard.</strong> Treat the manual close as a normal status anchor: the PATCH writes a <code>STATUS_CHANGED</code> at <code>now()</code>, and ingest's existing stale-guard already lets only a <em>genuinely newer</em> email move it. <em>Pros:</em> reuses machinery that's already there, zero special-casing; the rare newer-email override is usually legitimate. <em>Cons:</em> not an absolute lock — a sufficiently new email can still move the card.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(b)</strong> — guard-governed. The existing anchor logic already does the right thing, so a manual close at <code>now()</code> only yields to a genuinely newer email, getting the stickiness without the special-casing (a) would demand.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ7 — Cascade eligibility: which kanban statuses does a closed listing auto-close?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong><code>INTERESTED</code>-only.</strong> The cascade closes a linked card only while it's still <code>INTERESTED</code>. <em>Pros:</em> matches the "I was watching, never applied, it closed" case; never buries a card you've actively progressed (<code>APPLIED</code> and beyond). <em>Cons:</em> if you applied and the listing then vanishes, the card isn't auto-closed — you tidy it by hand.</li>
+          <li><strong>(b)</strong> <strong><code>INTERESTED</code> + <code>APPLIED</code>.</strong> Also auto-close cards you'd applied to. <em>Pros:</em> catches the "applied, then the role was pulled" case automatically. <em>Cons:</em> a listing routinely closes <em>after</em> you're already in the pipeline (interviews happen off-listing), so this would bury live applications, and it collides with the stale-status guard on cards carrying newer anchors.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> <code>INTERESTED</code>-only — auto-closing an <code>APPLIED</code> card would bury a live application a listing routinely outlives; the <code>INTERESTED</code>-only set is also the one that carries no newer status anchor, so it sidesteps the stale-status ordering problem entirely.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ8 — Cascade trigger: does a <em>manual</em> "mark closed" in the feed also cascade, or only the probe?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Probe + manual both cascade.</strong> Both the auto-probe close and a user marking a listing closed in the feed run the same <code>closeApplicationsForClosedPostings</code> helper (provenance <code>probe</code> vs <code>ms</code>). <em>Pros:</em> symmetric — closing a listing always closes its interested card, however the closure was decided. <em>Cons:</em> a mistaken manual feed-close also closes the linked card (reversible by drag-back, but an extra surprise).</li>
+          <li><strong>(b)</strong> <strong>Probe-only.</strong> Only the liveness probe cascades; a manual feed-close leaves the linked card alone. <em>Pros:</em> manual feed actions stay scoped to the feed, no surprise card movement. <em>Cons:</em> asymmetric — after manually closing a listing the user must close its card separately, re-introducing by-hand bookkeeping.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> both cascade — the whole point is to stop hand-closing cards, so a manual posting-close should behave like a probe close; the move is <code>INTERESTED</code>-only and reversible, so the surprise cost is small.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ9 — Cascade notification: how is a cascade-closed card surfaced?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Fold into the closure summary.</strong> Count cascade-closed cards in the probe's existing per-watchlist "<em>N postings closed</em>" bell row (<code>job-watcher.ts:522</code>). <em>Pros:</em> reuses the existing notification, no new surface, stays inside the circuit-breaker's noise budget. <em>Cons:</em> less granular — the user sees "N closed," not which cards moved.</li>
+          <li><strong>(b)</strong> <strong>Per-application row.</strong> Emit a dedicated notification per cascade-closed card. <em>Pros:</em> explicit per-card visibility of what auto-moved. <em>Cons:</em> exactly the per-card blast the notification circuit breaker exists to prevent — noisy when a watchlist closes many at once.</li>
+        </ul>
+        <p><strong>✓ Decided (2026-06-09):</strong> <strong>(a)</strong> fold into the existing summary — a per-card blast (b) is the noise the circuit breaker was built to stop, and the rollup is enough for an <code>INTERESTED</code>-only, reversible move.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+      <h3>Implementation checklist</h3>
+      <p>All of <code>OQ1</code>–<code>OQ9</code> are settled (2026-06-09), so the plan below is authored against decided forks. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;</code>. Ordering is dependency-driven: schema first (P1), then the two manual surfaces (P2) and the link (P3), then the cascade helper (P4) that the close-detection sweep (P5) reuses, then verify + ship (P6). Mark done by adding <code>checked</code> to the <code>&lt;input&gt;</code>.</p>
+
+      <h4>Parallelization &amp; critical path</h4>
+      <p>The phases are <em>not</em> a single line — they decompose into <strong>four largely-independent tracks</strong> plus a final fan-in. Six tasks have no upstream dependency and can start at once: <code>P1.1</code> (<code>Application.url</code>), <code>P1.2</code> (<code>lastProbedAt</code>), <code>P2.1.1</code> (add <code>CLOSED</code> — code-only, no migration), <code>P2.1.2</code> (kanban column), <code>P2.2</code> (feed close + surfacing), and <code>P5.1</code> (C0 audit).</p>
+      <ul>
+        <li><strong>Link track</strong> — <code>P1.1 → P3</code> (P3.1 populate ∥ P3.2 UI). Self-contained; ships on its own.</li>
+        <li><strong>Cascade track</strong> — <code>P2.1.1 → P4.1 → {P4.2 ∥ P4.3} → P4.4</code> (+ P4.5 smoke). The helper can't write <code>CLOSED</code> until the enum value exists.</li>
+        <li><strong>Manual-surface track</strong> — <code>P2.1.2</code> + <code>P2.2</code>, independent UI, ship anytime.</li>
+        <li><strong>Detection track</strong> — <code>P5.1 → {P5.2 ∥ P5.3 ∥ P5.4}</code>; <code>P5.4</code> (C3) is the most-constrained node — it also needs <code>P1.2</code> (rotation key) and <code>P4.2</code> (it reuses the probe→cascade path), and C0 to size its budget.</li>
+      </ul>
+      <p><strong>Critical path</strong> (sets the wall-clock floor): <code>P2.1.1 → P4.1 → P4.2 → P5.4 → P6</code> — the cascade-then-C3-sweep spine. Everything else fits inside it.</p>
+      <pre class="mermaid">
+flowchart LR
+  subgraph roots["Start immediately (no deps)"]
+    P11["P1.1 Application.url<br/>schema + payload"]
+    P12["P1.2 JobPosting.lastProbedAt<br/>schema"]
+    P2enum["P2.1.1 add CLOSED<br/>to APPLICATION_STATUSES"]
+    P2kan["P2.1.2 kanban<br/>Closed column"]
+    P2feed["P2.2 feed mark-closed<br/>+ surfacing"]
+    P5C0["P5.1 C0 audit<br/>(do first)"]
+  end
+  P11 --> P3["P3 link: populate<br/>+ card/overlay UI"]
+  P2enum --> P41["P4.1 cascade helper"]
+  P41 --> P42["P4.2 probe caller"]
+  P41 --> P43["P4.3 manual caller"]
+  P42 --> P44["P4.4 notif fold"]
+  P5C0 --> P5C1["P5.2 C1 markers"]
+  P5C0 --> P5C2["P5.3 C2 structured"]
+  P5C0 --> P5C3["P5.4 C3 sweep"]
+  P12 --> P5C3
+  P42 --> P5C3
+  P3 --> P6["P6 verify + ship"]
+  P44 --> P6
+  P43 --> P6
+  P2kan --> P6
+  P2feed --> P6
+  P5C1 --> P6
+  P5C2 --> P6
+  P5C3 --> P6
+      </pre>
+      <p><strong>Caveat for concurrent execution (multiple agents / worktrees):</strong> logically-parallel ≠ conflict-free. These files are each touched by several otherwise-independent tasks, so assign per-file ownership or serialize within the file:</p>
+      <table>
+        <thead><tr><th>File</th><th>Tasks that touch it</th></tr></thead>
+        <tbody>
+          <tr><td><code>prisma/schema.prisma</code></td><td>P1.1 + P1.2 — fold into <strong>one</strong> migration; serialize the apply (both DBs)</td></tr>
+          <tr><td><code>lib/schemas/applications.ts</code></td><td>P1.1.2 (<code>url</code>) + P2.1.1 (<code>CLOSED</code>)</td></tr>
+          <tr><td><code>ApplicationsKanbanCard.tsx</code></td><td>P1.1.2 (<code>AppRecord.url</code>) + P2.1.2 (column) + P3.2.1 (card link)</td></tr>
+          <tr><td><code>scheduler/jobs/job-watcher.ts</code></td><td>P4.2 + P4.4 + P5.4 — the busiest hotspot</td></tr>
+          <tr><td><code>lib/postings/liveness.ts</code></td><td>P5.2 + P5.3</td></tr>
+          <tr><td><code>app/api/postings/[id]/route.ts</code></td><td>P2.2.1 (<code>removedAt</code>) + P4.3 (manual cascade)</td></tr>
+        </tbody>
+      </table>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Schema foundations (additive, both DBs)</span>
+        </summary>
+        <div class="task-body">
+          <p>Two nullable columns everything downstream reads. Both are additive (no backfill, existing rows unaffected) and must be migrated on <strong>both</strong> <code>prisma/dev.db</code> and <code>prisma/prod.db</code> (<code>npx prisma migrate deploy</code> per <code>DATABASE_URL</code>), then <code>pm2 restart</code> the affected tiers/schedulers.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P1.1</span>
+              <span class="task-title"><code>Application.url String?</code> (Pillar B data)</span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P1.1.1</span>
+                  <span class="task-title">Add field + migration</span>
+                </summary>
+                <div class="task-body"><p>Add <code>url String?</code> to the <code>Application</code> model in <code>prisma/schema.prisma</code>; generate the migration and <code>migrate deploy</code> against dev.db and prod.db.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P1.1.2</span>
+                  <span class="task-title">Thread through read path</span>
+                </summary>
+                <div class="task-body"><p>Add <code>url</code> to the read shape in <code>lib/schemas/applications.ts</code>, the repository select in <code>lib/repositories/applications.ts</code>, the <code>GET /api/applications</code> payload, and the <code>AppRecord</code> type (<code>ApplicationsKanbanCard.tsx:9</code>).</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P1.2</span>
+              <span class="task-title"><code>JobPosting.lastProbedAt DateTime?</code> (C3 rotation key)</span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P1.2.1</span>
+                  <span class="task-title">Add field + migration</span>
+                </summary>
+                <div class="task-body"><p>Add <code>lastProbedAt DateTime?</code> to <code>JobPosting</code> in <code>prisma/schema.prisma</code>; migrate both DBs. Distinct from <code>lastSeenAt</code> (bumped by every fetch at <code>job-watcher.ts:330</code>) — this tracks "probed," not "seen."</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P1.2.2</span>
+                  <span class="task-title">Scheduler-only — no payload threading</span>
+                </summary>
+                <div class="task-body"><p>It's an internal rotation cursor used by the C3 sweep (P5.4); it does <em>not</em> need to surface on the feed payload. Confirm no API/UI change required.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — Pillar A: manual CLOSED on both surfaces</span>
+        </summary>
+        <div class="task-body">
+          <p>The hand-driven path to a closed card (kanban) and a closed listing (feed). Decisions: <code>OQ1</code> (manual-only, classifier untouched), <code>OQ2</code> (muted column after Rejected), <code>OQ3</code> (collapsed "Recently closed" section).</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P2.1</span>
+              <span class="task-title">Kanban Closed column (<code>OQ2</code>)</span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P2.1.1</span>
+                  <span class="task-title">Add <code>'CLOSED'</code> to <code>APPLICATION_STATUSES</code></span>
+                </summary>
+                <div class="task-body"><p><code>lib/schemas/applications.ts:7</code>; update the comment at <code>:3</code> from "mirrors the classifier" to "superset of the classifier" (<code>OQ1</code> — <code>CLOSED</code> stays out of the <code>lib/email-parser.ts</code> LLM enum). Read shape is <code>z.string()</code>, so no migration.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P2.1.2</span>
+                  <span class="task-title">Add Closed column to <code>pipelineColumns</code></span>
+                </summary>
+                <div class="task-body"><p><code>ApplicationsKanbanCard.tsx:43</code>, after <em>Rejected</em>, hue <code>bg-zinc-500/20 text-zinc-400 border border-zinc-500/20</code>. Detail-overlay status buttons (<code>ApplicationDetailOverlay.tsx:367</code>) render one per status automatically — no edit there.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P2.2</span>
+              <span class="task-title">Feed mark-closed + closed surfacing (<code>OQ3</code>)</span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P2.2.1</span>
+                  <span class="task-title">Mark-closed control on <code>PostingRow</code></span>
+                </summary>
+                <div class="task-body"><p><code>NewPostingsCard.tsx:626</code>, beside hide/track (<code>:673</code>); calls <code>api.postings.update(id, { status: "closed" })</code>. Route already accepts it — possibly also set <code>removedAt</code> in <code>app/api/postings/[id]/route.ts</code> on manual close.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P2.2.2</span>
+                  <span class="task-title">Collapsed "Recently closed (N)" section</span>
+                </summary>
+                <div class="task-body"><p>Add a second feed query for <code>?status=closed</code> (route supports it at <code>app/api/postings/route.ts:108</code>) rendered as a collapsed section below the live feed.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P2.2.3</span>
+                  <span class="task-title">Stickiness smoke (verify, don't build)</span>
+                </summary>
+                <div class="task-body"><p>Hermetic smoke asserting a manually-closed but still-listed posting is neither revived (<code>job-watcher.ts:330</code> bumps <code>lastSeenAt</code> only) nor re-selected as a stale candidate (<code>:466</code> excludes <code>closed</code>). No new guard — the smoke documents existing behavior.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Pillar B: one-click job link</span>
+        </summary>
+        <div class="task-body">
+          <p>Depends on P1.1. Populate the URL, then surface it on the card face and in the detail overlay.</p>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P3.1</span>
+              <span class="task-title">Populate <code>url</code></span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P3.1.1</span>
+                  <span class="task-title">At track-as-application time</span>
+                </summary>
+                <div class="task-body"><p>Set <code>url</code> from <code>posting.sourceUrl</code> in <code>lib/postings/track-as-application.ts</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P3.1.2</span>
+                  <span class="task-title">Editable for manual apps</span>
+                </summary>
+                <div class="task-body"><p>Accept <code>url</code> on the POST/PATCH <code>/api/applications</code> body so manually-added (posting-less) apps — the user's link-less rows — can carry a link.</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P3.2</span>
+              <span class="task-title">Surface the link</span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P3.2.1</span>
+                  <span class="task-title">Card-face <code>ExternalLink</code> button</span>
+                </summary>
+                <div class="task-body"><p>Rendered when <code>url</code> present, as a real <code>&lt;a target="_blank" rel="noopener noreferrer"&gt;</code> with <code>onClick</code> <code>stopPropagation</code> (mirror <code>NewPostingsCard.tsx:643</code>).</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P3.2.2</span>
+                  <span class="task-title">Detail-overlay "Open posting ↗"</span>
+                </summary>
+                <div class="task-body"><p>Promote <code>PostingSourceLine</code> (<code>ApplicationDetailOverlay.tsx:46</code>) to render for <em>any</em> app with a <code>url</code> (not just <code>postingId</code>), styled as a one-click button rather than selectable text.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P4</span>
+          <span class="task-title">Phase 4 — Pillar C → A cascade</span>
+        </summary>
+        <div class="task-body">
+          <p>One shared helper, two callers. Decisions: <code>OQ7</code> (<code>INTERESTED</code>-only), <code>OQ8</code> (probe + manual both cascade), <code>OQ9</code> (fold into the closure summary).</p>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P4.1</span>
+              <span class="task-title">Shared helper <code>closeApplicationsForClosedPostings</code></span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P4.1.1</span>
+                  <span class="task-title">Select + close (<code>OQ7</code>)</span>
+                </summary>
+                <div class="task-body"><p>New <code>lib/applications/close-from-posting.ts</code>. Select <code>postingId IN postingIds AND status = 'INTERESTED'</code> only; set <code>status='CLOSED'</code> + <code>lastUpdateAt=at</code>. Untouched: <code>APPLIED</code>/<code>ASSESSMENT</code>/<code>INTERVIEW*</code>/<code>OFFER</code>/terminal.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P4.1.2</span>
+                  <span class="task-title">Event + broadcast</span>
+                </summary>
+                <div class="task-body"><p>Create a <code>STATUS_CHANGED</code> <code>ApplicationEvent</code> (<code>fromStatus</code>, <code>toStatus:'CLOSED'</code>, <code>syncSource: source</code>) mirroring the manual PATCH (<code>app/api/applications/route.ts:158</code>), then <code>broadcastEvent({ model:'Application', … })</code>. No stale-guard needed (<code>INTERESTED</code> carries no newer anchor).</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P4.2</span>
+              <span class="task-title">Probe caller (<code>source:"probe"</code>)</span>
+            </summary>
+            <div class="task-body"><p>In <code>scheduler/jobs/job-watcher.ts</code>, right after the <code>confirmedClosedIds</code> close <code>updateMany</code> (<code>:490</code>), call the helper with those ids. Per-tier, same DB — no cross-tier concern.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P4.3</span>
+              <span class="task-title">Manual posting-close caller (<code>source:"ms"</code>, <code>OQ8</code>)</span>
+            </summary>
+            <div class="task-body"><p>In <code>app/api/postings/[id]/route.ts</code> PATCH, when the new status is <code>"closed"</code>, call the helper for that posting id so a feed close also closes its interested card.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P4.4</span>
+              <span class="task-title">Fold into closure summary (<code>OQ9</code>)</span>
+            </summary>
+            <div class="task-body"><p>Count cascade-closed cards into the existing per-watchlist "<em>N postings closed</em>" bell row (<code>job-watcher.ts:522</code>) — no per-card blast.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P4.5</span>
+              <span class="task-title">Cascade smoke</span>
+            </summary>
+            <div class="task-body"><p>Hermetic smoke: closing a posting moves its linked <code>INTERESTED</code> app to <code>CLOSED</code> with a <code>STATUS_CHANGED</code> event, and leaves an <code>APPLIED</code>+ linked app untouched.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P5</span>
+          <span class="task-title">Phase 5 — Pillar C: sharper close-detection</span>
+        </summary>
+        <div class="task-body">
+          <p>C0 runs first to size the rest; C1/C2 improve verdict accuracy; C3 (committed, <code>OQ5</code>) closes Gap A and reuses the P4 cascade. Sal's minimal-v1 rule: measure before widening.</p>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P5.1</span>
+              <span class="task-title">C0 — diagnose (do first)</span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P5.1.1</span>
+                  <span class="task-title">Audit script under <code>scripts/tests/probes/</code></span>
+                </summary>
+                <div class="task-body"><p>Sample postings per kind, re-probe via <code>probePostingLiveness</code>, <strong>capture raw body text + final URL for every non-<code>closed</code> verdict</strong> (not just counts). Seed with known-dead URLs (the new manual-CLOSE control supplies them).</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P5.1.2</span>
+                  <span class="task-title">Output: rate + phrases</span>
+                </summary>
+                <div class="task-body"><p>Report closed-but-still-listed rate per kind + the unmatched closure phrases, so C1's tier-3 lists and C3's budget come from observed pages, not hunches.</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P5.2</span>
+              <span class="task-title">C1 — expand &amp; curate markers</span>
+            </summary>
+            <div class="task-body"><p>Add C0-observed phrases to the closure-marker lists (<code>liveness.ts:79</code>) and extend the "require an alive-marker before declaring <code>alive</code>" gate (today LinkedIn <code>:210</code> / Indeed <code>:227</code>) to the other HTML-scraping kinds, so a 200-but-closed page falls to <code>unknown</code>, not <code>alive</code>.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P5.3</span>
+              <span class="task-title">C2 — prefer structured ATS state</span>
+            </summary>
+            <div class="task-body"><p>Where C0 shows a JSON payload exposes an explicit open/closed flag (Greenhouse/Lever, and Ashby/Workday CXS), trust tier 4 over HTML heuristics.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P5.4</span>
+              <span class="task-title">C3 — periodic re-probe sweep (Gap A)</span>
+            </summary>
+            <div class="task-body">
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P5.4.1</span>
+                  <span class="task-title">Rotating selection</span>
+                </summary>
+                <div class="task-body"><p>In <code>scheduler/jobs/job-watcher.ts</code>, select <code>status:"new"</code> postings ordered by <code>lastProbedAt asc</code> (nulls first, P1.2), capped by a per-kind budget <em>separate from and smaller than</em> the stale-probe's <code>maxPerTick</code> (sized from C0 for a 24–48 h freshness window). Reuse <code>PROBE_PROFILES</code> + 429-abort + arXiv-style cooldown.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox" checked>
+                  <span class="task-id">P5.4.2</span>
+                  <span class="task-title">Verdict handling = stale path</span>
+                </summary>
+                <div class="task-body"><p><code>closed</code> → <code>status="closed"</code> + P4.2 cascade (<code>source:"probe"</code>); <code>alive</code> bumps <code>lastSeenAt</code>; <code>unknown</code> leaves the row but <strong>still stamps <code>lastProbedAt</code></strong> so a flaky page advances the cursor instead of jamming the rotation.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P6</span>
+          <span class="task-title">Phase 6 — Verify + ship</span>
+        </summary>
+        <div class="task-body">
+          <p>Gate, build, deploy, document.</p>
+          <details class="task">
+            <summary>
+              <input type="checkbox" checked>
+              <span class="task-id">P6.1</span>
+              <span class="task-title">Hermetic smokes wired into <code>pre-push.sh</code></span>
+            </summary>
+            <div class="task-body"><p>Add the P2.2.3 stickiness smoke and the P4.5 cascade smoke (plus an enum-coverage smoke asserting <code>CLOSED ∈ APPLICATION_STATUSES</code>) under <code>scripts/tests/hermetic/</code>, appended to the <code>SUITES</code> array.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P6.2</span>
+              <span class="task-title">Build, restart, docs</span>
+            </summary>
+            <div class="task-body"><p><code>tsc</code> clean; prod <code>npm run build</code>; <code>pm2 restart mission-control{,-dev,-scheduler-dev,-scheduler-prod} --update-env</code>; regenerate <code>docs/apis.html</code> iff a route surface changed; update <code>docs/next_steps.md</code> and CLAUDE.md if conventions shifted.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <h3>Execution — agent track briefs</h3>
+      <p>The checklist above is the <em>what</em>; this is <em>how to dispatch it across agents</em>. The plan is re-cut so the three parallel tracks are <strong>fully file-disjoint</strong>: a serial <strong>foundation</strong> commit absorbs every file the contention table flags as shared (<code>prisma/schema.prisma</code>, <code>lib/schemas/applications.ts</code>, <code>lib/repositories/applications.ts</code>, <code>app/api/applications/route.ts</code>), after which Tracks A/B/C never touch the same file. The two remaining contention files the foundation does <em>not</em> absorb are each given a single owner: <code>ApplicationsKanbanCard.tsx</code> → Track C, <code>app/api/postings/[id]/route.ts</code> → Track A. Merge is therefore low-conflict by construction — the only residual shared file is the append-only <code>SUITES</code> list in <code>scripts/pre-push.sh</code>.</p>
+
+      <div class="callout"><strong>Shared guardrails (every agent).</strong>
+        <ul>
+          <li><strong>No AI commit attribution</strong> — no <code>Co-Authored-By</code> / "Generated with" lines.</li>
+          <li><strong>Always <code>git commit -- &lt;explicit paths&gt;</code></strong> — a bare commit sweeps in other tracks' staged files off the shared index.</li>
+          <li><strong>Stay in your lane</strong> — edit only files in your "Owns" list; if you think you need another track's file, stop and flag it.</li>
+          <li><strong>Don't run <code>npm run dev</code>/<code>start</code></strong> — PM2 owns the ports; verify against the running dev server (<code>:4101</code>).</li>
+          <li><strong>DB path:</strong> <code>DATABASE_URL="file:./dev.db"</code>, never <code>file:./prisma/dev.db</code> (Prisma resolves relative <code>file:</code> URLs from <code>prisma/</code>).</li>
+        </ul>
+      </div>
+
+      <h4>Step 0 · Foundation commit (one agent, serial, on the umbrella branch)</h4>
+      <p><strong>Goal:</strong> land the schema + enum + backend plumbing every track depends on, removing the worst contention files from the parallel window.</p>
+      <pre><code class="language-bash">git switch -c feat/closed-jobs</code></pre>
+      <p><strong>Owns (exclusive for the whole effort):</strong> <code>prisma/schema.prisma</code> + the new migration · <code>lib/schemas/applications.ts</code> · <code>lib/repositories/applications.ts</code> · <code>app/api/applications/route.ts</code>.</p>
+      <ol>
+        <li><strong>Schema (P1.1 + P1.2 — one migration).</strong> Add <code>url String?</code> to <code>Application</code> and <code>lastProbedAt DateTime?</code> to <code>JobPosting</code>.</li>
+        <li><strong>Migrate both DBs.</strong>
+          <pre><code class="language-bash">DATABASE_URL="file:./dev.db"  npx prisma migrate dev --name add_application_url_and_jobposting_lastprobedat
+DATABASE_URL="file:./prod.db" npx prisma migrate deploy</code></pre>
+          On <code>database is locked</code>: <code>pm2 stop</code> the four mission-control procs, migrate, then <code>pm2 restart</code>.</li>
+        <li><strong>Enum (P2.1.1).</strong> Add <code>'CLOSED'</code> to <code>APPLICATION_STATUSES</code> (<code>:7</code>); change the comment at <code>:3</code> "mirrors" → "superset of" the classifier (OQ1). Read shape <code>z.string()</code> (<code>:47</code>) → no DB impact.</li>
+        <li><strong>Thread <code>url</code> end-to-end (P1.1.2).</strong> Add <code>url</code> to the read + POST/PATCH input schemas (<code>lib/schemas/applications.ts</code>), the repository select (<code>lib/repositories/applications.ts</code>), and the GET payload + POST/PATCH accept (<code>app/api/applications/route.ts</code>). Leave the frontend <code>AppRecord</code> + components to Track C.</li>
+        <li><strong>Enum-coverage smoke.</strong> New <code>scripts/tests/hermetic/application-status-enum-smoke.ts</code> (<code>CLOSED ∈ APPLICATION_STATUSES</code>); append to <code>SUITES</code> in <code>scripts/pre-push.sh</code>.</li>
+      </ol>
+      <p><strong>Verify:</strong> <code>tsc --noEmit</code> clean · <code>prisma migrate status</code> green on both DBs · existing applications/ingest smokes pass · enum smoke passes. Tag the commit SHA — the three tracks branch off it.</p>
+      <pre><code class="language-bash">git commit -- prisma/schema.prisma prisma/migrations \
+  lib/schemas/applications.ts lib/repositories/applications.ts app/api/applications/route.ts \
+  scripts/tests/hermetic/application-status-enum-smoke.ts scripts/pre-push.sh docs/next_steps.md</code></pre>
+
+      <h4>Track A · Cascade + C3 (critical path)</h4>
+      <p><strong>Goal:</strong> a confirmed-closed posting closes its linked <code>INTERESTED</code> card (OQ7), from both the probe and a manual feed-close (OQ8), notified via the existing summary (OQ9); plus the C3 budgeted re-probe. <strong>Isolation:</strong> worktree OK (server-only, no live-UI verify) — branch off the foundation SHA.</p>
+      <p><strong>Owns:</strong> <code>lib/applications/close-from-posting.ts</code> (new) · <code>scheduler/jobs/job-watcher.ts</code> · <code>app/api/postings/[id]/route.ts</code> · <code>scripts/tests/hermetic/cascade-close-smoke.ts</code> (new). <strong>Depends on:</strong> foundation (<code>CLOSED</code> enum; <code>lastProbedAt</code> for C3).</p>
+      <ol>
+        <li><strong>P4.1 helper</strong> — <code>closeApplicationsForClosedPostings(postingIds,{at,source})</code>: select <code>postingId IN … AND status='INTERESTED'</code> only; set <code>CLOSED</code> + <code>lastUpdateAt=at</code>; create a <code>STATUS_CHANGED</code> event (<code>syncSource: source</code>) mirroring <code>app/api/applications/route.ts:158</code>; <code>broadcastEvent</code>.</li>
+        <li><strong>P4.2 probe caller</strong> — after the <code>confirmedClosedIds</code> close <code>updateMany</code> (≈<code>job-watcher.ts:490</code>), call with <code>source:"probe"</code>.</li>
+        <li><strong>P4.3 manual caller</strong> — in <code>postings/[id]/route.ts</code> PATCH, on new status <code>"closed"</code> call with <code>source:"ms"</code> and set <code>removedAt</code>.</li>
+        <li><strong>P4.4 notif fold (OQ9)</strong> — count cascade-closed into the existing "N postings closed" bell row (≈<code>:522</code>); no per-card blast.</li>
+        <li><strong>P5.4 C3 sweep</strong> — select <code>status:"new"</code> ordered by <code>lastProbedAt asc</code> (nulls first), per-kind budget smaller than the stale <code>maxPerTick</code>, reuse <code>PROBE_PROFILES</code> + 429-abort + cooldown; verdict = stale path (<code>closed</code> → close + cascade, <code>alive</code> → bump <code>lastSeenAt</code>, <code>unknown</code> → still stamp <code>lastProbedAt</code>). Budget tuned from Track B's C0 — ship a conservative default + a TODO.</li>
+        <li><strong>P4.5 smoke</strong> — closing a posting moves a linked <code>INTERESTED</code> app to <code>CLOSED</code> + event, leaves <code>APPLIED</code>+ untouched. Append to <code>SUITES</code>.</li>
+      </ol>
+      <pre><code class="language-bash">git commit -- lib/applications/close-from-posting.ts scheduler/jobs/job-watcher.ts \
+  app/api/postings/[id]/route.ts scripts/tests/hermetic/cascade-close-smoke.ts scripts/pre-push.sh</code></pre>
+
+      <h4>Track B · Close-detection markers (C0 → C1 → C2)</h4>
+      <p><strong>Goal:</strong> measure the real closure signals, then tighten the probe so 200-but-closed pages stop reading <code>alive</code>. <strong>Isolation:</strong> worktree OK. <strong>Owns:</strong> <code>lib/postings/liveness.ts</code> · <code>scripts/tests/probes/close-detection-audit.ts</code> (new). <strong>Depends on:</strong> foundation only (loosely — its edits need neither new column).</p>
+      <ol>
+        <li><strong>P5.1 C0 (do first)</strong> — audit script: sample per kind, re-probe via <code>probePostingLiveness</code>, <strong>capture raw body + final URL for every non-<code>closed</code> verdict</strong>; seed with known-dead URLs. Output: closed-but-listed rate per kind + unmatched phrases → hand to Track A to size C3's budget.</li>
+        <li><strong>P5.2 C1</strong> — expand/curate markers (≈<code>:79</code>) from C0; extend the require-an-alive-marker gate (LinkedIn ≈<code>:210</code> / Indeed ≈<code>:227</code>) to the other HTML kinds so 200-but-closed falls to <code>unknown</code>.</li>
+        <li><strong>P5.3 C2</strong> — where a JSON payload exposes an open/closed flag (Greenhouse/Lever, Ashby/Workday CXS), trust tier-4 over HTML heuristics.</li>
+      </ol>
+      <p><strong>Keep it conservative</strong> — a too-aggressive probe re-introduces the false-close the gate was built to kill (measure-before-widening).</p>
+      <pre><code class="language-bash">git commit -- lib/postings/liveness.ts scripts/tests/probes/close-detection-audit.ts</code></pre>
+
+      <h4>Track C · One-click link + manual surfaces (UI)</h4>
+      <p><strong>Goal:</strong> every app gets a clickable job link (Pillar B); manual CLOSED is reachable on the kanban + feed (OQ2/OQ3). <strong>Isolation:</strong> <strong>work on <code>main</code>, not a worktree</strong> — the UI needs the live PM2 dev server (<code>:4101</code>), which only serves the main checkout. <strong>Owns:</strong> <code>ApplicationsKanbanCard.tsx</code> · <code>ApplicationDetailOverlay.tsx</code> · <code>NewPostingsCard.tsx</code> · <code>lib/postings/track-as-application.ts</code> · <code>lib/api-client.ts</code> · <code>scripts/tests/hermetic/closed-posting-sticky-smoke.ts</code> (new). <strong>Depends on:</strong> foundation (<code>url</code> column + payload; <code>CLOSED</code> enum).</p>
+      <ol>
+        <li><strong>P3.1</strong> — populate <code>url</code> from <code>posting.sourceUrl</code> in <code>track-as-application.ts</code>.</li>
+        <li><strong>P2.1.2</strong> — add <code>AppRecord.url</code> (<code>:9</code>) + a terminal Closed column to <code>pipelineColumns</code> (<code>:43</code>) after Rejected, hue <code>bg-zinc-500/20 text-zinc-400 border border-zinc-500/20</code>.</li>
+        <li><strong>P3.2</strong> — card-face <code>ExternalLink</code> <code>&lt;a target="_blank" rel="noopener noreferrer"&gt;</code> with <code>stopPropagation</code> (mirror <code>NewPostingsCard.tsx:643</code>); promote <code>PostingSourceLine</code> (<code>ApplicationDetailOverlay.tsx:46</code>) to any app with a <code>url</code>, as a one-click "Open posting ↗".</li>
+        <li><strong>P2.2</strong> — mark-closed control on <code>PostingRow</code> (<code>:626</code>) → <code>api.postings.update(id,{status:"closed"})</code>; collapsed "Recently closed (N)" from a <code>?status=closed</code> query (route at <code>app/api/postings/route.ts:108</code>; thread the filter in <code>api-client.ts</code>).</li>
+        <li><strong>P2.2.3 smoke</strong> — a manually-closed-but-listed posting is neither revived (<code>:330</code>) nor stale-selected (<code>:466</code>). Append to <code>SUITES</code>.</li>
+      </ol>
+      <pre><code class="language-bash">git commit -- components/cards/applications/ApplicationsKanbanCard.tsx \
+  components/overlays/ApplicationDetailOverlay.tsx \
+  components/cards/applications/NewPostingsCard.tsx \
+  lib/postings/track-as-application.ts lib/api-client.ts \
+  scripts/tests/hermetic/closed-posting-sticky-smoke.ts scripts/pre-push.sh</code></pre>
+
+      <h4>Integration order (fan-in = P6)</h4>
+      <ol>
+        <li>Foundation → <code>feat/closed-jobs</code>, commit; tag the SHA.</li>
+        <li>Tracks A/B/C branch off that SHA. <strong>Merge as each finishes</strong> (rolling), running the affected smokes after each merge — not big-bang.</li>
+        <li>Only shared-file collision = the append-only <code>SUITES</code> list in <code>scripts/pre-push.sh</code>; resolve trivially at merge.</li>
+        <li>C3 budget tuning waits on Track B's C0 report (A ships a conservative default first).</li>
+        <li><strong>P6 final</strong> on <code>feat/closed-jobs</code>: full hermetic gate, <code>tsc</code> clean, prod <code>npm run build</code>, <code>pm2 restart</code> all four procs, regen <code>docs/apis.html</code> iff a route surface changed, then PR to <code>main</code>.</li>
+      </ol>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

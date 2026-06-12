@@ -1,5 +1,5 @@
 /**
- * Canonical arXiv API fetch (docs/arxiv-rate-limit-fix.html — recovery layer).
+ * Canonical arXiv API fetch (docs/archive/arxiv-rate-limit-fix.html — recovery layer).
  *
  * Every arXiv-touching route went through the same 4-line dance: acquire a
  * paced slot, loggedFetch, throw on `!res.ok`, throw on a non-XML body (arXiv

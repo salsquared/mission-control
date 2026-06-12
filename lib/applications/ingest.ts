@@ -485,12 +485,17 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
 
     // Fire in-app notifications for attention-worthy kinds (MB-3.1, story S6.3).
     // Best-effort — failure leaves notifiedAt null so the next ingest of this
-    // msg picks it back up.
+    // msg picks it back up. throwOnError (OQ8b) makes the helper rethrow REAL
+    // dispatch failures instead of swallowing them internally — without it the
+    // catch below was dead code and notifiedAt got stamped over failures,
+    // breaking the at-least-once retry contract. Benign no-ops (dedupKey
+    // collision = already notified; quiet-hours/breaker stripping email while
+    // the in-app row lands) still return normally and DO get checkpointed.
     for (const ev of allEventsForMsg) {
         if (!NOTIFY_EVENT_KINDS.has(ev.kind)) continue;
         if (ev.notifiedAt) continue; // already stamped on a prior run
         try {
-            await maybeNotifyForApplicationEvent(ev, userId, parsed.company);
+            await maybeNotifyForApplicationEvent(ev, userId, parsed.company, { throwOnError: true });
             await prisma.applicationEvent.update({
                 where: { id: ev.id },
                 data: { notifiedAt: new Date() },
@@ -502,14 +507,22 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
 
     // Mirror future-dated events to Gcal. We skip past events because backfill
     // commonly walks 6 months of history — no point creating yesterday's
-    // interview on the user's calendar.
+    // interview on the user's calendar. throwOnError (OQ8b): real auth/API
+    // failures rethrow so gcalSyncedAt is only stamped on actual success —
+    // previously syncEventToGcal swallowed them and returned null, making the
+    // catch below dead code and stamping the checkpoint over a failed sync.
     const now = Date.now();
     for (const ev of allEventsForMsg) {
         if (!ev.scheduledAt) continue;
         if (ev.scheduledAt.getTime() < now) continue;
         if (ev.gcalSyncedAt) continue; // already mirrored
         try {
-            await syncEventToGcal(userId, ev, { company: parsed.company, role: parsed.role ?? null });
+            await syncEventToGcal(
+                userId,
+                ev,
+                { company: parsed.company, role: parsed.role ?? null },
+                { throwOnError: true },
+            );
             await prisma.applicationEvent.update({
                 where: { id: ev.id },
                 data: { gcalSyncedAt: new Date() },

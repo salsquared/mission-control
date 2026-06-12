@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { requireSession } from "@/lib/auth-guards";
+import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findUserByEmail } from "@/lib/repositories/users";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import { broadcastEvent } from "@/lib/events";
@@ -34,6 +35,20 @@ export async function POST(req: NextRequest) {
         // requireSession guarantees session.user.email is non-null (it returns
         // a 401 otherwise) but TS doesn't carry the narrowing — assert.
         const sessionEmail = guard.session.user!.email!;
+
+        // P1.5: per-user rate limit BEFORE any Gmail/LLM work. A backfill is
+        // the heaviest token-spend route in the app (up to `max` emails ×
+        // one Gemini classification each, plus Gmail list/get traffic), so
+        // cap it at 1 sweep per 5 minutes. Keyed on the session email — it's
+        // the identity requireSession guarantees, and the same per-user key
+        // the rest of this handler resolves the account from.
+        const rl = checkUserRateLimit("applications:backfill", sessionEmail, Date.now(), { max: 1, windowMs: 5 * 60 * 1000 });
+        if (!rl.ok) {
+            return NextResponse.json(
+                { error: `Backfill already ran recently — try again in ${rl.retryAfterSec}s`, stage: "rate-limit" },
+                { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
+            );
+        }
 
         const body = await req.json().catch(() => ({}));
         const parsed = BackfillRequestSchema.safeParse(body);

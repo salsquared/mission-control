@@ -10,7 +10,7 @@
  *
  * PRIMARY: a single shared token bucket in `data/arxiv-bucket.db` (both tiers +
  * schedulers open it), each consume gated by a `BEGIN IMMEDIATE` transaction so
- * one paced line serves everyone (docs/arxiv-rate-limit-fix.html Layer 3,
+ * one paced line serves everyone (docs/archive/arxiv-rate-limit-fix.html Layer 3,
  * OQ4/OQ9 — reuses the shared-base `openDb()` seam, keeps its own single-row
  * table + transaction logic rather than the keyed-store shape).
  *
@@ -40,6 +40,7 @@
  */
 import { openDb } from "@/lib/shared-sqlite-cache";
 import { ArxivRateLimitCooldownError } from "@/lib/arxiv/errors";
+import { clampInt, createProcessBucket } from "@/lib/rate-limit/process-bucket";
 
 const RATE_PER_MIN = clampInt(process.env.ARXIV_RATE_PER_MIN, 14, 1, 600);
 const BURST_CAP = clampInt(process.env.ARXIV_RATE_BURST, 20, 1, 10_000);
@@ -51,16 +52,8 @@ const COOLDOWN_MS = clampInt(process.env.ARXIV_COOLDOWN_MS, 900_000, 1_000, 3_60
 // Per-process FALLBACK runs at half the shared rate, so dev+prod combined still
 // ~approximates the shared ceiling when the shared file is unavailable on both.
 const FALLBACK_RATE_PER_MIN = Math.max(1, Math.round(RATE_PER_MIN / 2));
-const FALLBACK_REFILL_INTERVAL_MS = 60_000 / FALLBACK_RATE_PER_MIN;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-function clampInt(raw: string | undefined, fallback: number, min: number, max: number): number {
-    if (!raw) return fallback;
-    const n = parseInt(raw, 10);
-    if (Number.isNaN(n)) return fallback;
-    return Math.max(min, Math.min(max, n));
-}
 
 // ---------------------------------------------------------------------------
 // PRIMARY — shared-file token bucket (one paced line for every process)
@@ -192,60 +185,16 @@ function bumpPerProcCooldown(until: number): void {
 // FALLBACK — per-process globalThis bucket (half rate; used only if shared down)
 // ---------------------------------------------------------------------------
 
-interface BucketState {
-    tokens: number;
-    lastRefillAt: number;
-    queue: Array<() => void>;
-}
-
-const KEY = "__mcArxivRateBucket";
-const g = globalThis as unknown as { [KEY]?: BucketState };
-function bucket(): BucketState {
-    if (!g[KEY]) {
-        g[KEY] = { tokens: 1, lastRefillAt: Date.now(), queue: [] };
-    }
-    return g[KEY]!;
-}
-
-function refill(b: BucketState, now: number) {
-    const elapsed = now - b.lastRefillAt;
-    if (elapsed <= 0) return;
-    const added = (elapsed / 60_000) * FALLBACK_RATE_PER_MIN;
-    b.tokens = Math.min(1, b.tokens + added); // cap at 1 — no burst, strict pacing
-    b.lastRefillAt = now;
-}
-
-function drainQueue(b: BucketState) {
-    while (b.queue.length > 0 && b.tokens >= 1) {
-        b.tokens -= 1;
-        const next = b.queue.shift()!;
-        next();
-    }
-    if (b.queue.length > 0) {
-        setTimeout(() => {
-            refill(bucket(), Date.now());
-            drainQueue(bucket());
-        }, FALLBACK_REFILL_INTERVAL_MS);
-    }
-}
-
-async function acquirePerProcessSlot(): Promise<void> {
-    const b = bucket();
-    refill(b, Date.now());
-    if (b.tokens >= 1 && b.queue.length === 0) {
-        b.tokens -= 1;
-        return;
-    }
-    if (b.queue.length >= BURST_CAP) {
-        throw new Error(
-            `arXiv rate-limit queue at capacity (${BURST_CAP}). Slow the caller or raise ARXIV_RATE_BURST.`,
-        );
-    }
-    await new Promise<void>((resolve) => {
-        b.queue.push(resolve);
-        drainQueue(b);
-    });
-}
+// Shared per-process primitive (lib/rate-limit/process-bucket.ts) — the same
+// factory backs the Gemini fallback. maxTokens 1 ⇒ no burst, strict pacing.
+const fallbackBucket = createProcessBucket({
+    ratePerMin: FALLBACK_RATE_PER_MIN,
+    maxTokens: 1,
+    burstCap: BURST_CAP,
+    label: "arXiv",
+    envHint: "ARXIV_RATE_BURST",
+    globalKey: "__mcArxivRateBucket",
+});
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -287,7 +236,7 @@ export async function acquireArxivSlot(): Promise<void> {
             console.warn(`[arxiv-bucket] acquire failed, using per-process bucket:`, e instanceof Error ? e.message : e);
         }
     }
-    return acquirePerProcessSlot();
+    return fallbackBucket.acquire();
 }
 
 /**

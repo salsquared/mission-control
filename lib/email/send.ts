@@ -39,9 +39,13 @@ export interface EmailMessage {
  * Subject and From display names. Skips encoding for pure-ASCII inputs.
  */
 export function encodeMimeHeader(value: string): string {
+    // Header values must never carry raw CR/LF (RFC 5322 header injection).
+    // The printable-ASCII test below would route them into base64 anyway,
+    // but strip explicitly so the guarantee doesn't hinge on that accident.
+    const sanitized = value.replace(/[\r\n]+/g, " ");
     // eslint-disable-next-line no-control-regex
-    if (!/[^\x20-\x7e]/.test(value)) return value;
-    return `=?UTF-8?B?${Buffer.from(value, "utf8").toString("base64")}?=`;
+    if (!/[^\x20-\x7e]/.test(sanitized)) return sanitized;
+    return `=?UTF-8?B?${Buffer.from(sanitized, "utf8").toString("base64")}?=`;
 }
 
 /**

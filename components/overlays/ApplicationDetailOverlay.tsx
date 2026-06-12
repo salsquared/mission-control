@@ -43,6 +43,30 @@ type ApplicationEvent = z.infer<typeof ApplicationEventSchema>;
 
 type EditingField = 'company' | 'role' | 'location' | 'nextSteps' | null;
 
+// Closed-jobs Pillar B (P3.2): an unmistakable one-click "Open posting" button
+// rendered for ANY application carrying a `url` — including manually-added,
+// posting-less apps (the link-less rows the user was fighting). The url is
+// populated at track-as-application time (from posting.sourceUrl) and editable
+// for manual apps via the POST/PATCH route, so it survives the linked posting
+// being pruned. Provenance (the "Closed" badge + "Tracked from") still comes
+// from PostingSourceLine when a postingId exists.
+const JobLinkButton: React.FC<{ url: string }> = ({ url }) => (
+    <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-flex items-center gap-1.5 rounded-md bg-cyan-500/15 hover:bg-cyan-500/25 border border-cyan-400/30 px-3 py-1.5 text-xs font-semibold text-cyan-100 transition-colors"
+        title="Open job posting in a new tab"
+    >
+        <ExternalLink className="w-3.5 h-3.5 shrink-0" />
+        Open posting ↗
+    </a>
+);
+
+// Provenance line for posting-linked apps: shows the source URL and a Closed
+// badge when the underlying JobPosting has been closed. The primary
+// "Open posting" affordance is JobLinkButton (above) — this stays a quieter
+// "Tracked from" provenance line.
 const PostingSourceLine: React.FC<{ postingId: string }> = ({ postingId }) => {
     const { data } = useQuery({
         queryKey: queryKeys.posting(postingId),
@@ -358,6 +382,7 @@ export const ApplicationDetailOverlay: React.FC<ApplicationDetailOverlayProps> =
                                 </p>
                             )
                         )}
+                        {app?.url && <JobLinkButton url={app.url} />}
                         {app?.postingId && (
                             <PostingSourceLine postingId={app.postingId} />
                         )}

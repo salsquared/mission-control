@@ -149,50 +149,50 @@ flowchart TB
       <h3>Unresolved decisions</h3>
       <p><strong>All forks are now decided</strong> (this session's design conversation) — every OQ below is ✓. The five marked <em>✓ Defaulted</em> were taken to my stated lean to keep momentum; say the word to revisit any. <strong>The design is locked; implementation can start at Phase 1.</strong></p>
 
-      <div class="callout tip"><strong>OQ1 — What does the AI still do on the manually-picked bullets?</strong><br/>
-        <strong>✓ Decided:</strong> manual selection is the core; <strong>rewrite + tagline are opt-in toggles, default off</strong> → deterministic verbatim render. The selection problem is separate from wording, so wording stays optional polish.</div>
+      <div class="callout tip"><strong>OQ1 — What does the AI still do on the manually-picked bullets?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided:</strong> manual selection is the core; <strong>rewrite + tagline are opt-in toggles, default off</strong> → deterministic verbatim render. The selection problem is separate from wording, so wording stays optional polish.</p>
 
-      <div class="callout tip"><strong>OQ2 — What does &ldquo;locked aka always there&rdquo; mean?</strong><br/>
-        <strong>✓ Decided (revised):</strong> lock is <strong>per-entity</strong>, not per-section-type. <em>But</em> once Suggest was dropped (OQ4) there's no automated process to lock against, so &ldquo;lock&rdquo; collapses to a plain include/exclude checkbox. The per-entity (and per-bullet) granularity stands; the separate &ldquo;lock&rdquo; affordance does not.</div>
+      <div class="callout tip"><strong>OQ2 — What does &ldquo;locked aka always there&rdquo; mean?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided (revised):</strong> lock is <strong>per-entity</strong>, not per-section-type. <em>But</em> once Suggest was dropped (OQ4) there's no automated process to lock against, so &ldquo;lock&rdquo; collapses to a plain include/exclude checkbox. The per-entity (and per-bullet) granularity stands; the separate &ldquo;lock&rdquo; affordance does not.</p>
 
-      <div class="callout tip"><strong>OQ3 — Is a manual selection saved and reusable?</strong><br/>
-        <strong>✓ Decided:</strong> saved <strong>per-Canon</strong>, re-renderable. Canons already model the user's job-search lanes; &ldquo;ML resume vs security resume&rdquo; lives there.</div>
+      <div class="callout tip"><strong>OQ3 — Is a manual selection saved and reusable?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided:</strong> saved <strong>per-Canon</strong>, re-renderable. Canons already model the user's job-search lanes; &ldquo;ML resume vs security resume&rdquo; lives there.</p>
 
-      <div class="callout tip"><strong>OQ4 — What happens to the existing auto-scoring pipeline?</strong><br/>
-        <strong>✓ Decided (revised):</strong> <strong>no &ldquo;Suggest&rdquo; button in v1.</strong> The keyword auto-selector (<code>selectBullets</code>) is <em>retired</em> from the selection path — not demoted to a pre-fill. (Expanding OQ11 showed a keyword-overlap Suggest inherits the exact flaw that motivated this redesign.) If a suggestion affordance returns later it'll be an <strong>LLM relevance pass</strong> (semantic, respects deliberate excludes), scored against canon keywords — explicitly deferred.</div>
+      <div class="callout tip"><strong>OQ4 — What happens to the existing auto-scoring pipeline?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided (revised):</strong> <strong>no &ldquo;Suggest&rdquo; button in v1.</strong> The keyword auto-selector (<code>selectBullets</code>) is <em>retired</em> from the selection path — not demoted to a pre-fill. (Expanding OQ11 showed a keyword-overlap Suggest inherits the exact flaw that motivated this redesign.) If a suggestion affordance returns later it'll be an <strong>LLM relevance pass</strong> (semantic, respects deliberate excludes), scored against canon keywords — explicitly deferred.</p>
 
-      <div class="callout tip"><strong>OQ5 — Pure binary, or binary + a forward-compat exclude layer?</strong><br/>
-        <strong>✓ Decided: B</strong> — binary selection <em>plus</em> a persisted <code>excluded</code> id-list (a snapshot of the entities present-but-unchecked at save time). The builder UI stays binary checkboxes; the list is <strong>inert in v1</strong> — its only consumer is a possible future LLM Suggest, which would respect it (only ever proposing entities added to the profile <em>after</em> your last save). The precise untouched-vs-excluded semantics is left to whenever that Suggest is built.</div>
+      <div class="callout tip"><strong>OQ5 — Pure binary, or binary + a forward-compat exclude layer?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided: B</strong> — binary selection <em>plus</em> a persisted <code>excluded</code> id-list (a snapshot of the entities present-but-unchecked at save time). The builder UI stays binary checkboxes; the list is <strong>inert in v1</strong> — its only consumer is a possible future LLM Suggest, which would respect it (only ever proposing entities added to the profile <em>after</em> your last save). The precise untouched-vs-excluded semantics is left to whenever that Suggest is built.</p>
 
-      <div class="callout tip"><strong>OQ6 — Where is the selection stored?</strong><br/>
-        <strong>✓ Defaulted (to lean):</strong> a single nullable JSON column <code>Canon.selection</code> — matches the house JSON-selection pattern, resolved best-effort against the live profile; no join model. (Alternatives: relational table; reuse the deferred <code>pinnedEntityIds</code>/<code>sectionOrder</code> fields.)</div>
+      <div class="callout tip"><strong>OQ6 — Where is the selection stored?</strong></div>
+      <p class="oq-detail"><strong>✓ Defaulted (to lean):</strong> a single nullable JSON column <code>Canon.selection</code> — matches the house JSON-selection pattern, resolved best-effort against the live profile; no join model. (Alternatives: relational table; reuse the deferred <code>pinnedEntityIds</code>/<code>sectionOrder</code> fields.)</p>
 
-      <div class="callout tip"><strong>OQ7 — Bullet granularity in v1?</strong><br/>
-        <strong>✓ Decided:</strong> per-bullet checkboxes within an included entity (the user's &ldquo;select the ones I want&rdquo;). Picking which bullets show is core to a good resume and cheap given the data is already there.</div>
+      <div class="callout tip"><strong>OQ7 — Bullet granularity in v1?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided:</strong> per-bullet checkboxes within an included entity (the user's &ldquo;select the ones I want&rdquo;). Picking which bullets show is core to a good resume and cheap given the data is already there.</p>
 
-      <div class="callout tip"><strong>OQ8 — Ordering control in v1?</strong><br/>
-        <strong>✓ Defaulted (to lean):</strong> inherit profile <code>position</code> order + a fixed <code>DEFAULT_SECTION_ORDER</code>; defer drag-reorder of sections/entities/bullets to a later phase.</div>
+      <div class="callout tip"><strong>OQ8 — Ordering control in v1?</strong></div>
+      <p class="oq-detail"><strong>✓ Defaulted (to lean):</strong> inherit profile <code>position</code> order + a fixed <code>DEFAULT_SECTION_ORDER</code>; defer drag-reorder of sections/entities/bullets to a later phase.</p>
 
-      <div class="callout tip"><strong>OQ9 — Length / one-page handling?</strong><br/>
-        <strong>✓ Decided:</strong> the manual path <em>drops</em> the one-page auto-pruner (the user owns length), and the builder shows a <strong>live page indicator</strong> as boxes are toggled. (How that indicator computes the count is a separate fork — see <strong>OQ14</strong>.)</div>
+      <div class="callout tip"><strong>OQ9 — Length / one-page handling?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided:</strong> the manual path <em>drops</em> the one-page auto-pruner (the user owns length), and the builder shows a <strong>live page indicator</strong> as boxes are toggled. (How that indicator computes the count is a separate fork — see <strong>OQ14</strong>.)</p>
 
-      <div class="callout tip"><strong>OQ10 — UI surface for the builder?</strong><br/>
-        <strong>✓ Decided:</strong> a full-screen <strong>Window-class overlay</strong> launched from the Canon row — the full profile tree is too big for an in-grid card, and an overlay is the established escape-the-grid pattern (like the AI Companion).</div>
+      <div class="callout tip"><strong>OQ10 — UI surface for the builder?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided:</strong> a full-screen <strong>Window-class overlay</strong> launched from the Canon row — the full profile tree is too big for an in-grid card, and an overlay is the established escape-the-grid pattern (like the AI Companion).</p>
 
-      <div class="callout tip"><strong>OQ11 — &ldquo;Suggest from posting&rdquo; input?</strong><br/>
-        <strong>✓ Resolved — moot.</strong> No Suggest in v1 (OQ4), so there's no input to choose. If an LLM relevance Suggest is built later, the input is canon keywords by default with an optional pasted posting to refine.</div>
+      <div class="callout tip"><strong>OQ11 — &ldquo;Suggest from posting&rdquo; input?</strong></div>
+      <p class="oq-detail"><strong>✓ Resolved — moot.</strong> No Suggest in v1 (OQ4), so there's no input to choose. If an LLM relevance Suggest is built later, the input is canon keywords by default with an optional pasted posting to refine.</p>
 
-      <div class="callout tip"><strong>OQ12 — Fate of the one-off generator (<code>GenerateResumeCard</code>)?</strong><br/>
-        <strong>✓ Defaulted (to lean):</strong> keep it as the quick non-canon throwaway path for now; the canon builder is the curated path. Revisit once the builder lands.</div>
+      <div class="callout tip"><strong>OQ12 — Fate of the one-off generator (<code>GenerateResumeCard</code>)?</strong></div>
+      <p class="oq-detail"><strong>✓ Defaulted (to lean):</strong> keep it as the quick non-canon throwaway path for now; the canon builder is the curated path. Revisit once the builder lands.</p>
 
-      <div class="callout tip"><strong>OQ13 — Rewrite scope when the toggle is on?</strong><br/>
-        <strong>✓ Defaulted (to lean):</strong> keep today's behavior — rewrite only posting-matching bullets, pass no-match bullets through verbatim (<code>rewrite.ts</code> pre-filter); avoids cross-domain invention and saves tokens. Tagline still needs a posting/keywords.</div>
+      <div class="callout tip"><strong>OQ13 — Rewrite scope when the toggle is on?</strong></div>
+      <p class="oq-detail"><strong>✓ Defaulted (to lean):</strong> keep today's behavior — rewrite only posting-matching bullets, pass no-match bullets through verbatim (<code>rewrite.ts</code> pre-filter); avoids cross-domain invention and saves tokens. Tagline still needs a posting/keywords.</p>
 
-      <div class="callout tip"><strong>OQ14 — Live page-indicator fidelity?</strong><br/>
-        <strong>✓ Decided: A</strong> — a fast in-browser HTML/height <em>estimate</em> (updates instantly as boxes toggle; exact count confirmed at Generate). Documented fallback: if the estimate proves not accurate enough in practice, switch to <strong>(B)</strong> a true PDF render-on-edit (exact live, ~seconds per change).</div>
+      <div class="callout tip"><strong>OQ14 — Live page-indicator fidelity?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided: A</strong> — a fast in-browser HTML/height <em>estimate</em> (updates instantly as boxes toggle; exact count confirmed at Generate). Documented fallback: if the estimate proves not accurate enough in practice, switch to <strong>(B)</strong> a true PDF render-on-edit (exact live, ~seconds per change).</p>
 
-      <div class="callout tip"><strong>OQ15 — What does a canon's Generate do when it has no manual selection?</strong><br/>
-        <strong>✓ Decided: manual-only</strong> (surfaced by the Tasks audit). No auto fallback for canons — a canon with no <code>selection</code> can't silently auto-Regenerate; &ldquo;Edit &amp; generate&rdquo; always routes through the builder (pre-filled from the last resume for existing canons via P3.3; a brand-new canon opens empty). The keyword auto-pipeline survives <em>only</em> in the one-off <code>GenerateResumeCard</code> (OQ12). Honors OQ4's intent — no un-curated canon keeps emitting the bad auto picks.</div>
+      <div class="callout tip"><strong>OQ15 — What does a canon's Generate do when it has no manual selection?</strong></div>
+      <p class="oq-detail"><strong>✓ Decided: manual-only</strong> (surfaced by the Tasks audit). No auto fallback for canons — a canon with no <code>selection</code> can't silently auto-Regenerate; &ldquo;Edit &amp; generate&rdquo; always routes through the builder (pre-filled from the last resume for existing canons via P3.3; a brand-new canon opens empty). The keyword auto-pipeline survives <em>only</em> in the one-off <code>GenerateResumeCard</code> (OQ12). Honors OQ4's intent — no un-curated canon keeps emitting the bad auto picks.</p>
     </div>
   </details>
 

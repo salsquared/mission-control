@@ -79,8 +79,12 @@ const POLITE_UA = "mission-control-watcher/1.0 (+https://mc.local; personal job-
 const LINKEDIN_CLOSED_MARKERS = [
     "no longer accepting applications",
     "job is no longer available",
+    "this job is no longer available",
     "position is no longer",
+    "position is no longer available",
     "this job has been removed",
+    "this job has expired",
+    "no longer active",
 ];
 const LINKEDIN_ALIVE_MARKERS = [
     "top-card-layout",
@@ -88,14 +92,47 @@ const LINKEDIN_ALIVE_MARKERS = [
     "apply-button",
     "jobs-apply-button",
 ];
+// Ashby renders the posting as a SPA whose initial state is embedded in a
+// `window.__appData` JSON blob carrying a tier-4 `"isListed":<bool>` flag (the
+// only liveness signal Ashby sends on purpose — see C0 audit / probeAshby's
+// JSON-first path below). The string markers here are the tier-3 fallback for
+// the rendered-banner case and for any page that omits the blob.
 const ASHBY_CLOSED_MARKERS = [
     "posting could not be found",
     "this job is no longer",
     "this position is no longer",
+    "this position has been filled",
+    "no longer accepting applications",
+    "this job posting is no longer available",
+    "this position is no longer available",
+];
+// Stable structural strings present on a live Ashby posting page. Used to gate
+// "alive" — a 200 that has neither a closed marker nor any of these (e.g. a
+// consent / error interstitial) falls to "unknown" rather than "alive".
+const ASHBY_ALIVE_MARKERS = [
+    "window.__appdata", // the embedded SPA state blob (lowercased)
+    "\"islisted\":true",
+    "ashby_jb_posting", // posting widget container id seen on live pages
+    "application-form",
 ];
 const WORKDAY_CLOSED_MARKERS = [
     "job is no longer",
+    "this job is no longer available",
     "position has been filled",
+    "this position has been filled",
+    "no longer accepting applications",
+    "posting has been removed",
+    "the job posting you are looking for",
+];
+// Live Workday postings render a data-automation-id="jobPostingPage" container
+// (server-side, before hydration). Gate "alive" on a real posting marker so a
+// Cloudflare interstitial / login wall that slips past the redirect check
+// doesn't read as a live posting. (The CXS JSON probe below is preferred when
+// the URL is parseable; this is the HTML fallback's gate.)
+const WORKDAY_ALIVE_MARKERS = [
+    "jobpostingpage",           // data-automation-id="jobPostingPage"
+    "data-automation-id=\"job", // jobPostingHeader / jobPostingDescription etc.
+    "applybutton",              // data-automation-id="applyButton" / "adventureButton"
 ];
 const INDEED_CLOSED_MARKERS = [
     "this job has expired",
@@ -103,6 +140,8 @@ const INDEED_CLOSED_MARKERS = [
     "this job posting is no longer available",
     "we couldn't find this job",
     "this job is no longer available",
+    "this position has been filled",
+    "position is no longer available",
 ];
 const INDEED_ALIVE_MARKERS = [
     "jobsearch-jobinfoheader",
@@ -126,6 +165,68 @@ async function withTimeout<T>(timeoutMs: number, fn: (signal: AbortSignal) => Pr
 }
 
 /**
+ * P3.1b — max redirects followed per probe. A chain longer than this is
+ * ambiguity (redirect loop / tracking maze), never closure evidence → the
+ * probe resolves "unknown".
+ */
+const MAX_REDIRECT_HOPS = 5;
+
+/**
+ * P3.1b — SSRF-safe redirect follower. `redirect: "follow"` only let us
+ * validate the FINAL URL after the fact: an intermediate hop through an
+ * internal host (SSRF via open redirect on the source) had already been
+ * fetched by the time `assertSafeResponseUrl` ran. This fetches with
+ * `redirect: "manual"`, resolves each Location against the current URL, and
+ * runs the URL guard on EVERY hop target before following it.
+ *
+ * Returns the final (non-3xx-or-no-Location) response plus the URL it was
+ * requested from, or "unknown" when the chain is unfollowable (guard trip,
+ * unparseable Location, over the hop cap, network throw).
+ */
+async function fetchWithGuardedRedirects(
+    url: string,
+    signal: AbortSignal,
+    headers: Record<string, string>,
+): Promise<{ res: Response; requestedUrl: string } | "unknown"> {
+    let current = url;
+    for (let hop = 0; ; hop++) {
+        let res: Response;
+        try {
+            res = await loggedFetch(current, { method: "GET", redirect: "manual", signal, headers });
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            console.warn(`[liveness] fetch threw for ${current}: ${msg}`);
+            return "unknown";
+        }
+        const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+        if (location === null) return { res, requestedUrl: current };
+        // Drop the 3xx body — we only needed the Location header.
+        try { await res.body?.cancel(); } catch { /* ignore */ }
+        if (hop >= MAX_REDIRECT_HOPS) {
+            console.warn(`[liveness] redirect chain from ${url} exceeded ${MAX_REDIRECT_HOPS} hops — unknown`);
+            return "unknown";
+        }
+        let next: URL;
+        try {
+            next = new URL(location, current);
+        } catch {
+            console.warn(`[liveness] unparseable redirect Location from ${current}: ${location}`);
+            return "unknown";
+        }
+        try {
+            assertExternalHttpUrl(next.toString());
+        } catch (e) {
+            if (e instanceof UnsafeURLError) {
+                console.warn(`[liveness] unsafe redirect target from ${current}: ${e.message}`);
+                return "unknown";
+            }
+            throw e;
+        }
+        current = next.toString();
+    }
+}
+
+/**
  * Generic HTTP-status probe used by every kind whose "removed" state shows up
  * as 404/410. The `extraClosedCheck` hook lets HTML-scraping kinds (linkedin,
  * ashby, workday) inspect the body / final URL for closure markers when the
@@ -145,25 +246,18 @@ async function probeViaHttpStatus(
         throw e;
     }
     const result = await withTimeout(timeoutMs, async (signal) => {
-        let res: Response;
-        try {
-            res = await loggedFetch(url, {
-                method: "GET",
-                redirect: "follow",
-                signal,
-                headers: {
-                    "User-Agent": userAgent,
-                    "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.5",
-                    "Accept-Language": "en-US,en;q=0.9",
-                },
-            });
-        } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            console.warn(`[liveness] fetch threw for ${url}: ${msg}`);
-            return "unknown" as LivenessResult;
-        }
-        // Re-validate post-redirect URL — if a source 302'd us to an internal
-        // host (compromised / misconfigured), refuse to draw a conclusion.
+        // P3.1b — manual, per-hop-guarded redirect loop (never redirect:"follow").
+        const followed = await fetchWithGuardedRedirects(url, signal, {
+            "User-Agent": userAgent,
+            "Accept": "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.5",
+            "Accept-Language": "en-US,en;q=0.9",
+        });
+        if (followed === "unknown") return "unknown" as LivenessResult;
+        const { res, requestedUrl } = followed;
+        // Belt-and-braces: re-validate the response's reported URL too. Every
+        // hop was already guarded above, but some fetch impls populate
+        // `res.url` beyond what we requested — refuse to conclude from an
+        // internal target either way.
         try {
             assertSafeResponseUrl(res);
         } catch (e) {
@@ -186,7 +280,7 @@ async function probeViaHttpStatus(
         // 2xx — let the optional extra check inspect body / final URL.
         if (extraClosedCheck) {
             const text = await res.text().catch(() => "");
-            const finalUrl = res.url || url;
+            const finalUrl = res.url || requestedUrl;
             const verdict = extraClosedCheck({ finalUrl, bodyLower: text.toLowerCase() });
             if (verdict) return verdict;
         }
@@ -197,11 +291,83 @@ async function probeViaHttpStatus(
     return result;
 }
 
+// ─── OQ4b — positive-evidence redirect classification ─────────────────────
+//
+// Pre-2026-06-12, an off-path redirect (final URL no longer on the posting
+// path) was unconditionally treated as closure evidence by the LinkedIn /
+// Indeed / Workday-HTML probes. That false-closes through interstitials: an
+// authwall / login / signup / bot-challenge / consent redirect moves us off
+// the posting path without saying anything about the posting. New policy: an
+// off-path redirect alone is NEVER "closed". It only counts as closure
+// evidence when
+//   (a) the final URL is the board's OWN jobs-search / root surface (the
+//       canonical place boards park requests for dead postings — small
+//       explicit allowlist per board below), or
+//   (b) a body closed-marker hits on whatever page we landed on.
+// Anything else (auth gates, challenges, unrecognized surfaces) → "unknown",
+// so the row is left alone and re-probed next tick.
+
+/** Path fragments that identify auth / interstitial surfaces — never closure evidence. */
+const AUTH_INTERSTITIAL_PATH_RE = /(authwall|login|signin|sign-in|signup|sign-up|register|checkpoint|challenge|captcha|consent|verify)/i;
+
+/** LinkedIn's own jobs-search / root surface (dead postings get parked here). */
+function isLinkedinSearchSurface(u: URL): boolean {
+    if (!/(^|\.)linkedin\.com$/i.test(u.hostname)) return false;
+    const path = u.pathname.replace(/\/+$/, "") || "/";
+    return path === "/" || path === "/jobs" || path.startsWith("/jobs/search");
+}
+
+/** Indeed's own jobs-search / homepage surface. */
+function isIndeedSearchSurface(u: URL): boolean {
+    if (!/(^|\.)indeed\.com$/i.test(u.hostname)) return false;
+    const path = u.pathname.replace(/\/+$/, "") || "/";
+    return path === "/" || path === "/jobs";
+}
+
+/**
+ * Workday tenant board root / search surface: "/", "/<site>" or
+ * "/<locale>/<site>" on a *.myworkdayjobs.com host — never anything deeper
+ * (auth flows and error stubs are screened out by AUTH_INTERSTITIAL_PATH_RE
+ * before this runs).
+ */
+function isWorkdaySearchSurface(u: URL): boolean {
+    if (!/\.myworkdayjobs\.com$/i.test(u.hostname)) return false;
+    const segments = u.pathname.split("/").filter(Boolean);
+    return segments.length <= 2;
+}
+
+/**
+ * Classify a 200 whose final URL drifted off the posting path. Order matters:
+ * a body closed-marker is positive evidence wherever we landed (b); auth /
+ * interstitial surfaces are ambiguity; the board's own search/root surface is
+ * genuine closure evidence (a); everything else is "unknown".
+ */
+function offPathRedirectVerdict(
+    finalUrl: string,
+    bodyLower: string,
+    closedMarkers: string[],
+    isBoardSearchSurface: (u: URL) => boolean,
+): LivenessResult {
+    for (const m of closedMarkers) {
+        if (bodyLower.includes(m)) return "closed";
+    }
+    let u: URL;
+    try { u = new URL(finalUrl); } catch { return "unknown"; }
+    if (AUTH_INTERSTITIAL_PATH_RE.test(u.pathname)) return "unknown";
+    if (isBoardSearchSurface(u)) return "closed";
+    return "unknown";
+}
+
 // ─── Per-kind probes ──────────────────────────────────────────────────────
 
 async function probeLinkedin(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, LINKEDIN_UA, ({ finalUrl, bodyLower }) => {
-        if (!finalUrl.includes("/jobs/view/")) return "closed";
+        // OQ4b — redirected off the posting path. Closed only on positive
+        // evidence (LinkedIn's own jobs-search/root surface, or a body
+        // marker); authwall / login / checkpoint interstitials → "unknown".
+        if (!finalUrl.includes("/jobs/view/")) {
+            return offPathRedirectVerdict(finalUrl, bodyLower, LINKEDIN_CLOSED_MARKERS, isLinkedinSearchSurface);
+        }
         for (const m of LINKEDIN_CLOSED_MARKERS) {
             if (bodyLower.includes(m)) return "closed";
         }
@@ -217,8 +383,12 @@ async function probeIndeed(p: ProbeInput, timeoutMs: number, onRateLimit?: RateL
     // Indeed UA-sniffs the same way LinkedIn / Workday do — Cloudflare flags
     // anything that doesn't look like a real browser.
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, LINKEDIN_UA, ({ finalUrl, bodyLower }) => {
-        // Off /viewjob entirely → Indeed redirected us to search or homepage.
-        if (!finalUrl.includes("/viewjob")) return "closed";
+        // OQ4b — off /viewjob entirely. Closed only when Indeed parked us on
+        // its own search / homepage surface or a body marker hits; auth /
+        // challenge interstitials → "unknown".
+        if (!finalUrl.includes("/viewjob")) {
+            return offPathRedirectVerdict(finalUrl, bodyLower, INDEED_CLOSED_MARKERS, isIndeedSearchSurface);
+        }
         for (const m of INDEED_CLOSED_MARKERS) {
             if (bodyLower.includes(m)) return "closed";
         }
@@ -266,22 +436,97 @@ async function probeAshby(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
             const segments = u.pathname.split("/").filter(Boolean);
             if (u.host.includes("ashbyhq.com") && segments.length < 2) return "closed";
         } catch { /* ignore */ }
+        // C2 — tier-4 structured state. Ashby embeds the posting's open/closed
+        // flag in the SPA's `window.__appData` JSON as `"isListed":<bool>`
+        // (confirmed against the live page + the public posting-api job-board
+        // payload, C0 audit 2026-06-09). Trust it over the HTML heuristics when
+        // present: an unlisted posting is closed; an explicitly-listed one is a
+        // strong alive signal (handled below via the alive-marker gate, which
+        // includes `"islisted":true`). The flag is whitespace-insensitive in
+        // the minified blob, so match both compact forms.
+        if (bodyLower.includes("\"islisted\":false") || bodyLower.includes("\"islisted\": false")) return "closed";
         for (const m of ASHBY_CLOSED_MARKERS) {
             if (bodyLower.includes(m)) return "closed";
         }
+        // C1 — require positive evidence of a real posting page before calling
+        // a 200 "alive". Mirrors the LinkedIn/Indeed gate: a consent/error
+        // interstitial that lacks both a closed marker AND any alive marker is
+        // ambiguous → "unknown" (re-probe next tick) rather than a false alive.
+        const hasAliveMarker = ASHBY_ALIVE_MARKERS.some(m => bodyLower.includes(m));
+        if (!hasAliveMarker) return "unknown";
         return null;
     }, onRateLimit);
 }
 
+/**
+ * Workday source URLs look like
+ *   https://<tenant>.<dc>.myworkdayjobs.com/<locale>/<site>/job/<loc>/<title>_<req>
+ * Workday's own SPA fetches the posting through the CXS detail endpoint
+ *   https://<host>/wday/cxs/<tenant>/<site>/job/<loc>/<title>_<req>
+ * which returns structured JSON: a removed posting 404s, a live one returns
+ * 200 with `jobPostingInfo.posted` / `canApply` booleans (C2 tier-4 — the only
+ * liveness signal Workday sends on purpose; confirmed via C0 audit 2026-06-09).
+ * Returns null when the URL doesn't fit the canonical shape (so the caller
+ * falls back to the HTML probe).
+ */
+const WORKDAY_HOST_RE = /^([a-z0-9-]+)\.[a-z0-9-]+\.myworkdayjobs\.com$/i;
+function deriveWorkdayCxsUrl(sourceUrl: string): string | null {
+    let u: URL;
+    try { u = new URL(sourceUrl); } catch { return null; }
+    const hostMatch = u.host.match(WORKDAY_HOST_RE);
+    if (!hostMatch) return null;
+    const tenant = hostMatch[1];
+    const segs = u.pathname.split("/").filter(Boolean);
+    // Expect [locale, site, "job", ...rest]; need at least the "job" segment.
+    const jobIdx = segs.indexOf("job");
+    if (jobIdx < 1 || jobIdx === segs.length - 1) return null; // no site before, or nothing after "job"
+    const site = segs[jobIdx - 1];
+    const jobPath = segs.slice(jobIdx).join("/"); // "job/<loc>/<title>_<req>"
+    return `https://${u.host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/${jobPath}`;
+}
+
 async function probeWorkday(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
+    // C2 — prefer the structured CXS JSON endpoint over the HTML scrape.
+    const cxsUrl = deriveWorkdayCxsUrl(p.sourceUrl);
+    if (cxsUrl) {
+        const r = await probeViaHttpStatus(cxsUrl, timeoutMs, LINKEDIN_UA, ({ bodyLower }) => {
+            // 200 from CXS — read the tier-4 flags. `posted:false` (record
+            // exists but the posting was taken down) is the unambiguous removal
+            // signal → closed. Booleans are emitted minified; accept whitespace
+            // variants. We deliberately do NOT close on `canApply:false` alone:
+            // a live posting can disable apply (paused / region-gated) while
+            // still being a real, viewable opening — closing on it would
+            // re-introduce the false-close the gate exists to kill. Both
+            // `posted:true` and `canApply:true` are positive alive evidence.
+            if (/"posted"\s*:\s*false/.test(bodyLower)) return "closed";
+            if (/"posted"\s*:\s*true/.test(bodyLower) || /"canapply"\s*:\s*true/.test(bodyLower)) return "alive";
+            // 200 but no recognizable flag (shape drift) → don't conclude from
+            // CXS; signal ambiguity and let the HTML fallback below try.
+            return "unknown";
+        }, onRateLimit);
+        // 404/410 on CXS → posting removed (closed). 200 with a flag → trust it.
+        // "unknown" → CXS was inconclusive (shape drift / blocked): fall back
+        // to the HTML probe rather than concluding from a half-read payload.
+        if (r === "closed" || r === "alive") return r;
+    }
+    // HTML fallback (CXS unavailable / inconclusive / non-canonical URL).
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, LINKEDIN_UA /* Workday + Cloudflare hates non-browser UAs */, ({ finalUrl, bodyLower }) => {
-        // Redirected to a Workday auth gate → posting is no longer publicly listed.
-        if (/\/(login|portal\/login)\b/i.test(finalUrl)) return "closed";
-        // Redirected off /job/ path entirely (search page / home / 404 stub) → closed.
-        if (!finalUrl.includes("/job/")) return "closed";
+        // OQ4b — redirected off the /job/ path (this includes Workday auth
+        // gates, which used to be treated as closure evidence). Closed only
+        // when we landed on the tenant's own board-root/search surface or a
+        // body closed-marker hits; login / consent / challenge interstitials
+        // → "unknown".
+        if (!finalUrl.includes("/job/")) {
+            return offPathRedirectVerdict(finalUrl, bodyLower, WORKDAY_CLOSED_MARKERS, isWorkdaySearchSurface);
+        }
         for (const m of WORKDAY_CLOSED_MARKERS) {
             if (bodyLower.includes(m)) return "closed";
         }
+        // C1 — require a live-posting marker before declaring alive, so a
+        // Cloudflare interstitial / partial body that kept the /job/ URL
+        // doesn't read as a live posting. Ambiguous 200 → "unknown".
+        const hasAliveMarker = WORKDAY_ALIVE_MARKERS.some(m => bodyLower.includes(m));
+        if (!hasAliveMarker) return "unknown";
         return null;
     }, onRateLimit);
 }
@@ -343,12 +588,28 @@ function sleep(ms: number): Promise<void> {
  * without paying for thousands of fixture-server probes.
  *
  *   Production MUST NOT set this. Doing so re-introduces the false-close
- *   behavior the probe gate exists to fix.
+ *   behavior the probe gate exists to fix. P3.1c hard-enforces that: on a
+ *   production tier (MC_SCHEDULER_TIER=prod or NODE_ENV=production) the
+ *   bypass is IGNORED — one loud warn, then real probes — so a leaked env
+ *   var can't mass-close prod rows. Hermetic smokes run with neither var
+ *   set, so they keep working.
  */
+let warnedProdBypassIgnored = false;
 function bypassVerdict(): LivenessResult | null {
     const v = process.env.MC_LIVENESS_BYPASS;
-    if (v === "alive" || v === "closed" || v === "unknown") return v;
-    return null;
+    if (v !== "alive" && v !== "closed" && v !== "unknown") return null;
+    if (process.env.MC_SCHEDULER_TIER === "prod" || process.env.NODE_ENV === "production") {
+        if (!warnedProdBypassIgnored) {
+            console.warn(
+                `[liveness] MC_LIVENESS_BYPASS="${v}" is set on a production tier ` +
+                `(MC_SCHEDULER_TIER=${process.env.MC_SCHEDULER_TIER ?? ""}, NODE_ENV=${process.env.NODE_ENV ?? ""}) — ` +
+                `IGNORING it and probing for real. Unset this env var; it would re-introduce mass false-closes.`,
+            );
+            warnedProdBypassIgnored = true;
+        }
+        return null;
+    }
+    return v;
 }
 
 /**

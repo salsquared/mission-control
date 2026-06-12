@@ -1,6 +1,6 @@
 /**
  * Hermetic smoke for the shared cross-tier cache base (lib/shared-sqlite-cache.ts)
- * — the engine behind lib/research/shared-cache.ts (docs/arxiv-rate-limit-fix.html
+ * — the engine behind lib/research/shared-cache.ts (docs/archive/arxiv-rate-limit-fix.html
  * Layer 1). Also the regression net for the base that lib/ai/llm-cache.ts is
  * refactored onto (OQ8).
  *
