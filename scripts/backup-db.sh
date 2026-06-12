@@ -49,7 +49,12 @@ rclone_copy() {
         echo "[BACKUP] WARN: rclone not found — skipping offsite mirror for ${src##*/}" >&2
         return 0
     fi
-    "$RCLONE_BIN" copy "$src" "$RCLONE_DEST/"
+    # Best-effort under `set -e`: a transient Drive failure must not abort the
+    # rest of the chain (the resumes tarball + the local prune still run, and
+    # the next cron run re-mirrors anything missed — rclone copy is idempotent).
+    if ! "$RCLONE_BIN" copy "$src" "$RCLONE_DEST/"; then
+        echo "[BACKUP] WARN: rclone copy failed for ${src##*/} — offsite mirror skipped this run" >&2
+    fi
 }
 
 # ─── Encryption (RAH-13) ─────────────────────────────────────────────────
@@ -110,9 +115,22 @@ maybe_encrypt() {
 # readers + writers correctly; a plain cp can capture a half-flushed file).
 DB_DEST="$LOCAL_DIR/mc-$TS.db"
 sqlite3 "$REPO_ROOT/prisma/prod.db" ".backup '$DB_DEST'"
-DB_DEST="$(maybe_encrypt "$DB_DEST")"
-rclone_copy "$DB_DEST"
-echo "[BACKUP] db   → ${DB_DEST##*/}"
+
+# Verify the snapshot BEFORE it enters the retention/offsite chain — a corrupt
+# snapshot mirrored to Drive would silently poison the recovery path. On
+# failure: warn loudly, drop the bad snapshot, skip its upload, still run the
+# resumes tarball + prunes, and exit non-zero so cron/launchd surfaces it.
+DB_BACKUP_FAILED=0
+INTEGRITY="$(sqlite3 "$DB_DEST" "PRAGMA integrity_check;" 2>&1 || true)"
+if [ "$INTEGRITY" = "ok" ]; then
+    DB_DEST="$(maybe_encrypt "$DB_DEST")"
+    rclone_copy "$DB_DEST"
+    echo "[BACKUP] db   → ${DB_DEST##*/}"
+else
+    DB_BACKUP_FAILED=1
+    echo "[BACKUP] ERROR: integrity_check failed on snapshot ${DB_DEST##*/} — NOT keeping or uploading it. Output: $INTEGRITY" >&2
+    rm -f "$DB_DEST"
+fi
 
 # ─── 2. Generated-resume artifacts ───────────────────────────────────────
 # data/resumes/<id>.<ext> — referenced by GeneratedResume.artifactPath in
@@ -137,4 +155,23 @@ find "$LOCAL_DIR" -name 'mc-*.db.age' -mtime +30 -delete
 find "$LOCAL_DIR" -name 'mc-resumes-*.tar.gz' -mtime +30 -delete
 find "$LOCAL_DIR" -name 'mc-resumes-*.tar.gz.age' -mtime +30 -delete
 
+# ─── 4. Drive-side 30-day retention (best-effort) ────────────────────────
+# Mirror the local prune so the Drive folder doesn't grow unbounded.
+# Conservative on purpose: scoped to the exact backup destination dir,
+# top-level only (--max-depth 1), and only the four artifact name patterns
+# this script writes. Warn-on-fail — a prune hiccup never fails the backup.
+if [ -n "$RCLONE_BIN" ]; then
+    for prune_pattern in 'mc-*.db' 'mc-*.db.age' 'mc-resumes-*.tar.gz' 'mc-resumes-*.tar.gz.age'; do
+        if ! "$RCLONE_BIN" delete "$RCLONE_DEST" --min-age 30d --max-depth 1 --include "$prune_pattern"; then
+            echo "[BACKUP] WARN: Drive-side prune failed for pattern $prune_pattern (skipping)" >&2
+        fi
+    done
+else
+    echo "[BACKUP] WARN: rclone not found — skipping Drive-side prune" >&2
+fi
+
+if [ "$DB_BACKUP_FAILED" -ne 0 ]; then
+    echo "[BACKUP] done at $TS — WITH ERRORS (db snapshot failed integrity_check)" >&2
+    exit 1
+fi
 echo "[BACKUP] done at $TS"
