@@ -10,10 +10,12 @@
 // A tier whose schema is behind (e.g. prod.db is missing the Watchlist table
 // today) gets ONE loud warning per affected job, then the job is disabled for
 // the process's lifetime. Avoids drowning logs in repeated P2021s while still
-// surfacing the migration gap on startup.
+// surfacing the migration gap on startup. That behavior — plus an overlap
+// guard that skips a tick while the previous one is still running — lives in
+// wrapJob() (./wrap-job.ts), applied uniformly to every JOBS entry below (P5.1).
 
 import { runCachePrune } from './jobs/cache-prune';
-import { runDueWatchlists } from './jobs/job-watcher';
+import { runDueWatchlists, reconcileClosedPostingCascade } from './jobs/job-watcher';
 import { runStaleApplicationNudges } from './jobs/stale-applications';
 import { runDeadlineNudges } from './jobs/deadline-nudges';
 import { runPostingDigest } from './jobs/posting-digest';
@@ -25,6 +27,7 @@ import { runFetcherHealthPrune } from './jobs/fetcher-health-prune';
 import { runLogsPrune } from './jobs/logs-prune';
 import { initLogger, subscribeToLogs } from '@/lib/logger';
 import { recordLogLine } from '@/lib/logs-store';
+import { wrapJob } from './wrap-job';
 
 // Give the scheduler the same structured logger the web runtime gets from
 // instrumentation.ts: JSON {ts,level,msg,source,tier} stdout lines + the ring
@@ -53,6 +56,20 @@ const JOBS: IntervalJob[] = [
         name: 'job-watcher',
         intervalMs: 10 * 60 * 1000,
         run: async () => {
+            // P5.1 reconcile sweep — top-of-run, before the crawl pass:
+            // INTERESTED cards whose linked posting is already closed but
+            // whose Pillar C → A cascade was missed (process died mid-
+            // cascade, cascade threw and was warn-swallowed) self-heal
+            // within one tick. Idempotent — the second pass finds nothing.
+            // Best-effort EXCEPT P2021 (schema-behind tier), which must
+            // propagate so wrapJob disables the whole job once, loudly,
+            // instead of this warn firing every tick.
+            try {
+                await reconcileClosedPostingCascade();
+            } catch (e) {
+                if ((e as { code?: string } | null)?.code === 'P2021') throw e;
+                console.warn('[job-watcher] reconcile sweep failed — continuing with crawl:', e);
+            }
             const result = await runDueWatchlists();
             if (result.processed > 0) {
                 const totals = result.results.reduce(
@@ -205,31 +222,14 @@ const JOBS: IntervalJob[] = [
 const TIER = process.env.MC_SCHEDULER_TIER ?? 'default';
 const TAG = `[SCHEDULER:${TIER}]`;
 
-// Jobs disabled for this process's lifetime after a P2021 (missing table).
-// A schema-behind tier (e.g. un-migrated prod.db) wins one loud warning per
-// affected job and then goes silent — instead of spamming the same Prisma
-// error on every tick.
-const disabledJobs = new Set<string>();
-
 console.info(`${TAG} starting with ${JOBS.length} job(s): ${JOBS.map(j => j.name).join(', ')}`);
 
 for (const [i, job] of JOBS.entries()) {
-    const tick = async () => {
-        if (disabledJobs.has(job.name)) return;
-        try {
-            console.info(`${TAG} running ${job.name}`);
-            await job.run();
-        } catch (e) {
-            const err = e as { code?: string; meta?: { table?: string } } | null;
-            if (err?.code === 'P2021') {
-                disabledJobs.add(job.name);
-                const table = err?.meta?.table ?? '?';
-                console.warn(`${TAG} disabling ${job.name} for this process — table "${table}" missing on this tier's DB. Run \`npx prisma migrate deploy\` against it to enable.`);
-                return;
-            }
-            console.error(`${TAG} ${job.name} failed:`, e);
-        }
-    };
+    // P5.1 — wrapJob consolidates the per-tick concerns for every job:
+    // overlap guard (skip + warn while the previous tick is still running),
+    // one-shot P2021 disable (schema-behind tier), and catch-all error
+    // logging. See ./wrap-job.ts.
+    const tick = wrapJob({ name: job.name, run: job.run, tag: TAG });
     // Kick once at startup, staggered by 10s per job so a fresh boot doesn't
     // all-fire at once. setInterval otherwise waits `intervalMs` BEFORE the
     // first invocation — daily jobs (stale-applications, deadline-nudges,
