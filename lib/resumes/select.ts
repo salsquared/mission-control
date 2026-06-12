@@ -135,7 +135,6 @@ export function scoreBullet(
     keywordWeights?: Record<string, number>,
 ): { score: number; matchedTags: string[]; matchedKeywords: string[] } {
     const lowerKeywords = keywords.map(normalize);
-    const lowerTags = tags.map(normalize);
     const lowerText = normalize(text);
     const weightOf = (lowerKw: string): number => {
         if (!keywordWeights) return 1;
@@ -171,9 +170,9 @@ export function scoreBullet(
         if (matchesWord(kw, lowerText)) {
             matchedKeywords.push(keywords[i]);
             keywordContribution += SUBSTRING_WEIGHT * weightOf(kw);
-        } else if (lowerTags.includes(kw) && !matchedKeywords.includes(keywords[i])) {
-            // already counted via matchedTags — don't double-count
         }
+        // Tag-only matches are already counted via matchedTags above —
+        // deliberately no contribution here (don't double-count).
     }
 
     const score = tagContribution + keywordContribution;

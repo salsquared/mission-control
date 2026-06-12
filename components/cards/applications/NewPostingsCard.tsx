@@ -1,5 +1,5 @@
 "use client";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, ChevronDown, ExternalLink, EyeOff, Loader2, MapPin, Newspaper, BriefcaseBusiness, X, Search, AlertTriangle, XCircle } from "lucide-react";
 import { api, queryKeys, type PostingsListFilter } from "@/lib/api-client";
@@ -221,16 +221,21 @@ export function NewPostingsCard({ track = "career" }: NewPostingsCardProps = {})
 
     // Auto-prune stale company selections (e.g. a watchlist was deleted while
     // its name was selected, or the suffix-cleanup migration retitled rows).
-    // Render-time adjustment to match the page-reset pattern below. Only
-    // fires when there's drift, and only once watchlists have loaded — an
-    // empty companyOptions during initial load would wipe valid selections.
-    if (postingFilters.companies.length > 0 && companyOptions.length > 0) {
+    // Runs in an effect — NOT during render — because setPostingFilters is a
+    // Zustand store write that synchronously notifies other subscribers
+    // mid-render (unlike the local-useState page-reset pattern below, which
+    // React sanctions). Only fires when there's drift, and only once
+    // watchlists have loaded — an empty companyOptions during initial load
+    // would wipe valid selections. Self-terminating: the pruned write changes
+    // postingFilters, the effect re-runs, lengths match, no further write.
+    useEffect(() => {
+        if (postingFilters.companies.length === 0 || companyOptions.length === 0) return;
         const validLower = new Set(companyOptions.map(c => c.toLowerCase()));
         const pruned = postingFilters.companies.filter(c => validLower.has(c.toLowerCase()));
         if (pruned.length !== postingFilters.companies.length) {
             setPostingFilters({ ...postingFilters, companies: pruned });
         }
-    }
+    }, [postingFilters, companyOptions, setPostingFilters]);
 
     const activeFilterCount =
         (postingFilters.employmentTypes.length > 0 ? 1 : 0) +
