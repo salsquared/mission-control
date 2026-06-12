@@ -403,33 +403,33 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P1</span>
           <span class="task-title">Security quick wins</span>
         </summary>
         <div class="task-body">
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P1.1</span><span class="task-title">OQ1a — env-var sign-in allowlist</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P1.1</span><span class="task-title">OQ1a — env-var sign-in allowlist</span></summary>
             <div class="task-body"><p><code>lib/auth.ts</code>: <code>signIn</code> gates on <code>ALLOWED_SIGNIN_EMAILS</code> (comma list, owner-only to start); extract a pure <code>isAllowedSignInEmail()</code> helper + hermetic smoke; set the env on both tiers + restart. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P1.2</span><span class="task-title">Bump next + eslint-config-next to 16.2.9</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P1.2</span><span class="task-title">Bump next + eslint-config-next to 16.2.9</span></summary>
             <div class="task-body"><p><code>package.json</code> + lockfile; whole-project <code>tsc</code>, hermetic gate, prod <code>npm run build</code>. Never <code>npm audit fix --force</code> (downgrades next-auth). <em>Parallel-safe (sole owner of package.json until P1.6).</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P1.3</span><span class="task-title">OQ3b — local org-logo map</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P1.3</span><span class="task-title">OQ3b — local org-logo map</span></summary>
             <div class="task-body"><p>Drop <code>orgLogo</code> from <code>app/api/ai/llmleaderboard/route.ts</code>; <code>LLMLeaderboardCard.tsx</code> renders from an <code>orgName → /public/logos/*.svg</code> map with an initials fallback; the <code>dangerouslySetInnerHTML</code> goes away. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P1.4</span><span class="task-title">Security headers</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P1.4</span><span class="task-title">Security headers</span></summary>
             <div class="task-body"><p><code>headers()</code> block in <code>next.config.ts</code>: <code>X-Frame-Options: DENY</code>, <code>X-Content-Type-Options: nosniff</code>, <code>Referrer-Policy: strict-origin-when-cross-origin</code>. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P1.5</span><span class="task-title">Rate-limit the un-throttled token-spend routes</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P1.5</span><span class="task-title">Rate-limit the un-throttled token-spend routes</span></summary>
             <div class="task-body"><p><code>checkUserRateLimit</code> on <code>app/api/research/import</code> + <code>app/api/applications/backfill</code>. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P1.6</span><span class="task-title">CRLF header strip + unused-dep removal</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P1.6</span><span class="task-title">CRLF header strip + unused-dep removal</span></summary>
             <div class="task-body"><p>Strip <code>[\r\n]</code> in <code>buildRfc822Message</code> (<code>lib/email/send.ts</code>); <code>npm uninstall nodemailer @types/nodemailer @gradio/client</code> (grep-verify <code>react-is</code> first). <em>Depends on P1.2 (package.json contention).</em></p></div>
           </details>
         </div>
@@ -479,25 +479,25 @@ flowchart LR
         </summary>
         <div class="task-body">
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">liveness.ts: OQ4b redirects + SSRF loop + bypass guard</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.1</span><span class="task-title">liveness.ts: OQ4b redirects + SSRF loop + bypass guard</span></summary>
             <div class="task-body"><p>Single owner of <code>lib/postings/liveness.ts</code>: positive-evidence redirect classification (off-path → <code>"unknown"</code> unless board search/root allowlist or closed-marker); manual-redirect loop running <code>assertExternalHttpUrl</code> on each hop (cap 5); refuse <code>MC_LIVENESS_BYPASS</code> when <code>MC_SCHEDULER_TIER === "prod"</code>. <em>Parallel-safe (alongside P3.3).</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">OQ5a — two-tick close confirmation</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.2</span><span class="task-title">OQ5a — two-tick close confirmation</span></summary>
             <div class="task-body">
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P3.2.1</span><span class="task-title">Schema: JobPosting.pendingClosedAt</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P3.2.1</span><span class="task-title">Schema: JobPosting.pendingClosedAt</span></summary>
                 <div class="task-body"><p>Additive migration, both DBs; first closed verdict stamps it, alive/unknown clears it.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P3.2.2</span><span class="task-title">job-watcher: flip + cascade only on second consecutive closed verdict</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P3.2.2</span><span class="task-title">job-watcher: flip + cascade only on second consecutive closed verdict</span></summary>
                 <div class="task-body"><p>Applies to both the stale-probe and C3 paths; manual feed-close stays immediate (user action is its own confirmation).</p></div>
               </details>
               <p><em>Depends on P3.3 (same job-watcher.ts owner, sequenced).</em></p>
             </div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">OQ6a + OQ7a — C3 cursor + seen-exclusion scope</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.3</span><span class="task-title">OQ6a + OQ7a — C3 cursor + seen-exclusion scope</span></summary>
             <div class="task-body"><p><code>job-watcher.ts</code>: stamp <code>lastProbedAt = runAt</code> on skipped candidates (comment renamed to "last considered by a probe sweep"); keep probing fetch-seen postings for aggregator kinds, keep the exclusion for first-party ATS kinds. <em>Parallel-safe (alongside P3.1).</em></p></div>
           </details>
           <details class="task">
@@ -515,11 +515,11 @@ flowchart LR
         </summary>
         <div class="task-body">
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">OQ8b — throwOnError checkpoint gating</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P4.1</span><span class="task-title">OQ8b — throwOnError checkpoint gating</span></summary>
             <div class="task-body"><p>Opt-in rethrow in <code>lib/calendar/sync.ts</code> + <code>lib/repositories/applicationEvents.ts</code> (benign no-ops still return normally); <code>ingest.ts</code> passes the flag so its existing catch + stamp logic becomes live; hermetic smoke pinning checkpoint-stays-null-on-failure. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">withRetry on parseApplicationEmail</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P4.2</span><span class="task-title">withRetry on parseApplicationEmail</span></summary>
             <div class="task-body"><p><code>lib/email-parser.ts</code> — same backoff shape as <code>chatJSON</code>; each attempt still awaits <code>acquireGeminiSlot</code>. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
@@ -545,7 +545,7 @@ flowchart LR
             </div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P4.4</span><span class="task-title">OQ10a — GCAL_SYNC_ENABLED master switch</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P4.4</span><span class="task-title">OQ10a — GCAL_SYNC_ENABLED master switch</span></summary>
             <div class="task-body"><p><code>lib/calendar/sync.ts</code> checks it before any gcal write (recorded skip reason, mirroring <code>EMAIL_ENABLED</code>); <code>1</code> in prod env, <code>0</code> in dev env + the P6.4 example files. <em>Depends on P4.1 (same file).</em></p></div>
           </details>
         </div>
@@ -563,19 +563,19 @@ flowchart LR
             <div class="task-body"><p><code>scheduler/index.ts</code>: one wrapper adds the overlap guard + P2021 surfacing for all 11 jobs; job-watcher gains a top-of-run idempotent reconcile (<code>INTERESTED</code> apps whose posting is closed → cascade). <em>Depends on PR #1 merge (job-watcher churn).</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P5.2</span><span class="task-title">OQ14a — shared Gemini bucket + bucket dedup</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P5.2</span><span class="task-title">OQ14a — shared Gemini bucket + bucket dedup</span></summary>
             <div class="task-body"><p>Extract <code>createProcessBucket</code> (dedups <code>lib/ai/rate-limit.ts</code> vs <code>lib/arxiv/rate-limit.ts</code>); move <code>acquireGeminiSlot</code> onto a single-row shared bucket (<code>data/gemini-bucket.db</code> via <code>openDb()</code>), per-process fallback at half rate; smoke. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P5.3</span><span class="task-title">OQ13a — pre-push glob + EXCLUDED array</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P5.3</span><span class="task-title">OQ13a — pre-push glob + EXCLUDED array</span></summary>
             <div class="task-body"><p><code>scripts/pre-push.sh</code> enumerates <code>hermetic/*.ts</code> minus documented exclusions (render-smoke: Chrome; profile-repo-smoke: mutates dev.db). <em>Parallel-safe — land early so every later smoke auto-registers.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P5.4</span><span class="task-title">Backup chain hardening</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P5.4</span><span class="task-title">Backup chain hardening</span></summary>
             <div class="task-body"><p><code>scripts/backup-db.sh</code>: per-step rclone failure tolerance (local snapshot always completes), Drive-side prune, post-snapshot <code>PRAGMA integrity_check</code>. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P5.5</span><span class="task-title">withCache key sort + stale-fallback wiring</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P5.5</span><span class="task-title">withCache key sort + stale-fallback wiring</span></summary>
             <div class="task-body"><p><code>lib/cache.ts</code>: <code>params.sort()</code>; fall back to <code>readCachedDataIgnoringExpiry</code> when the L1 stale entry is gone. <em>Parallel-safe.</em></p></div>
           </details>
         </div>
@@ -583,25 +583,25 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P6</span>
           <span class="task-title">Frontend + docs hygiene</span>
         </summary>
         <div class="task-body">
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P6.1</span><span class="task-title">OQ11a — dash-by-id carousel refactor</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P6.1</span><span class="task-title">OQ11a — dash-by-id carousel refactor</span></summary>
             <div class="task-body"><p><code>useDashCarousel.ts</code> tracks the active dash id, resolving the index lazily against the current order. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P6.2</span><span class="task-title">NewPostingsCard render-phase store write → effect</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P6.2</span><span class="task-title">NewPostingsCard render-phase store write → effect</span></summary>
             <div class="task-body"><p><code>NewPostingsCard.tsx:227</code>. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P6.3</span><span class="task-title">Dead code</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P6.3</span><span class="task-title">Dead code</span></summary>
             <div class="task-body"><p>Delete <code>components/Window.tsx</code>; drop <code>viewScreenshots</code> + v10 persist migration (<code>state/index.ts</code>); remove the empty <code>else if</code> in <code>lib/resumes/select.ts</code>. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P6.4</span><span class="task-title">OQ12b — docs + .env examples</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P6.4</span><span class="task-title">OQ12b — docs + .env examples</span></summary>
             <div class="task-body"><p>Add tracked <code>.env.development.example</code> / <code>.env.production.example</code> (incl. <code>GCAL_SYNC_ENABLED</code>, <code>ALLOWED_SIGNIN_EMAILS</code>); correct CLAUDE.md (env "checked-in" claim, Window layer, store screenshots, cache "sorted query" wording); backup-recovery runbook gains the copy step; delete the stray <code>s</code> line in <code>.env.production</code>. Single owner of CLAUDE.md. <em>Depends on P5.5 + P6.3 (documents their end state).</em></p></div>
           </details>
         </div>
