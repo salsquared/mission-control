@@ -48,13 +48,29 @@ export const NOTIFY_EVENT_KINDS = new Set([
 ]);
 
 /**
- * Fire a Notification for an event of attention-worthy kind. Best-effort —
- * a notification failure must not fail the caller's create.
+ * Fire a Notification for an event of attention-worthy kind. Best-effort by
+ * default — a notification failure must not fail the caller's create.
+ *
+ * `opts.throwOnError` (OQ8b, 2026-06-12): ingest stamps the per-event
+ * `notifiedAt` checkpoint right after this returns, so for that caller a
+ * swallowed dispatch failure would stamp the checkpoint anyway and break the
+ * documented at-least-once retry contract. With the flag set, REAL failures
+ * (dispatchNotification throwing — DB error, unexpected constraint, etc.)
+ * rethrow so the caller's catch keeps the checkpoint null. BENIGN no-ops
+ * still return normally:
+ *   - non-notify event kinds (early return),
+ *   - dispatchNotification returning null (dedupKey already exists — the
+ *     notification was already delivered on a prior run; that IS success),
+ *   - quiet-hours / circuit-breaker stripping the email channel (the in-app
+ *     row still lands — dispatch returns the row, not an error).
+ * The success/failure taxonomy lives HERE, not in callers — default behavior
+ * (no flag) is unchanged for every other callsite.
  */
 export async function maybeNotifyForApplicationEvent(
     event: { id: string; kind: string; title: string; applicationId: string; scheduledAt: Date | null; notes: string | null },
     userId: string,
     companyHint?: string,
+    opts?: { throwOnError?: boolean },
 ): Promise<void> {
     if (!NOTIFY_EVENT_KINDS.has(event.kind)) return;
     const body = event.scheduledAt
@@ -86,7 +102,11 @@ export async function maybeNotifyForApplicationEvent(
             // not been stamped, the @unique catches it.
             dedupKey: `event:${event.id}`,
         });
+        // A null return = dedupKey collision = already notified on a prior
+        // run. That's success (deliberately NOT a throw, even with
+        // throwOnError) — the caller may stamp its checkpoint.
     } catch (e) {
+        if (opts?.throwOnError) throw e;
         console.warn(`[applicationEvents] dispatchNotification failed for event ${event.id}:`, e);
     }
 }

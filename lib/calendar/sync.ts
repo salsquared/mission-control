@@ -39,23 +39,41 @@ export interface GcalSyncContext {
     role?: string | null;
 }
 
+export interface GcalSyncOptions {
+    /**
+     * OQ8b (2026-06-12): when true, REAL failures (auth failure, Google API
+     * error) rethrow instead of being swallowed into a `return null`. Ingest
+     * sets this so its `gcalSyncedAt` checkpoint is only stamped when the
+     * sync actually succeeded — otherwise the documented at-least-once retry
+     * contract is broken (checkpoint stamped over a failed sync). BENIGN
+     * no-ops still return null without throwing: an event with no
+     * `scheduledAt` simply has nothing to mirror, and the internal 409
+     * recovery is a success path. Default false keeps today's best-effort
+     * contract byte-for-byte for every other caller.
+     */
+    throwOnError?: boolean;
+}
+
 /**
  * Mirror an ApplicationEvent to the user's primary Google Calendar.
  *
  * - First sync (no gcalEventId) → events.insert and write the returned id back.
  * - Subsequent sync → events.patch in place.
  *
- * Sync is best-effort: failures are logged through the captured `console`
- * (which feeds the in-app log viewer) and the function returns null instead
- * of throwing. The DB is the source of truth; if Gcal is briefly unreachable
- * the user just won't see this event in their calendar until the next sync.
+ * Sync is best-effort by default: failures are logged through the captured
+ * `console` (which feeds the in-app log viewer) and the function returns null
+ * instead of throwing. The DB is the source of truth; if Gcal is briefly
+ * unreachable the user just won't see this event in their calendar until the
+ * next sync. Pass `opts.throwOnError` to surface real failures instead (see
+ * GcalSyncOptions).
  *
  * Skips events without `scheduledAt` (status notes / past-only milestones).
  */
 export async function syncEventToGcal(
     userId: string,
     event: ApplicationEvent,
-    ctx?: GcalSyncContext
+    ctx?: GcalSyncContext,
+    opts?: GcalSyncOptions
 ): Promise<string | null> {
     if (!event.scheduledAt) return null;
 
@@ -64,6 +82,7 @@ export async function syncEventToGcal(
         const auth = await getGoogleAuthClient(userId);
         calendar = google.calendar({ version: "v3", auth });
     } catch (err) {
+        if (opts?.throwOnError) throw err;
         console.warn(`[gcal-sync] auth failed for user ${userId}: ${(err as Error).message}`);
         return null;
     }
@@ -141,6 +160,7 @@ export async function syncEventToGcal(
         }
         return gcalId;
     } catch (err) {
+        if (opts?.throwOnError) throw err;
         console.warn(`[gcal-sync] sync failed for event ${event.id}: ${(err as Error).message}`);
         return null;
     }
@@ -270,7 +290,7 @@ export async function deleteEventFromGcal(userId: string, gcalEventId: string): 
 }
 
 /**
- * Fix C (store undo handles — docs/postmortem-self-notification-mail-loop.html §11).
+ * Fix C (store undo handles — docs/archive/postmortem-self-notification-mail-loop.html §11).
  *
  * Delete a batch of ApplicationEvents *cleanly*: sweep each event's mirrored
  * Google Calendar entry by its stored `gcalEventId` FIRST, then delete the rows.
