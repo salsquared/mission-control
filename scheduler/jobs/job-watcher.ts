@@ -74,12 +74,26 @@ function externalIdFor(company: string, title: string, sourceUrl: string): strin
  */
 const C3_BUDGET_FRACTION = 0.1; // re-probe at most ~10% of a kind's stale cap per tick
 const C3_BUDGET_HARD_CAP = 20;  // …and never more than this many, regardless of kind
-function c3BudgetForKind(kind: WatchlistKind): number {
+export function c3BudgetForKind(kind: WatchlistKind): number {
     const profile = PROBE_PROFILES[kind];
     if (!profile) return 0;
     const sized = Math.floor(profile.maxPerTick * C3_BUDGET_FRACTION);
     return Math.max(1, Math.min(sized, C3_BUDGET_HARD_CAP));
 }
+
+/**
+ * OQ7a — aggregator feeds vs first-party ATS feeds, for the C3 sweep's
+ * "skip fetch-seen rows" rule. On a first-party feed (the employer's own ATS
+ * API / careers page: greenhouse, lever, ashby, workday, …) a posting
+ * appearing in the fetch IS evidence the detail page is open, so C3 skips
+ * fetch-seen rows. On an aggregator's search feed (the LinkedIn / Indeed
+ * guest-search scrapes) listing-presence ≠ detail-page-open — cards linger in
+ * search results after the posting stops accepting applications — so C3 must
+ * probe fetch-seen rows there too. (Same membership as FRAGILE_SOURCES below,
+ * but a distinct concept: that one is about crawl pacing, this one is about
+ * what a fetch sighting proves. Exported for the c3-cursor hermetic smoke.)
+ */
+export const AGGREGATOR_KINDS: ReadonlySet<WatchlistKind> = new Set<WatchlistKind>(["linkedin", "indeed"]);
 
 // Per-watchlist in-process mutex. Prevents the findUnique→create race when a
 // user double-clicks "Run now" or when a scheduler tick collides with a
@@ -573,27 +587,39 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         // Verdict handling is IDENTICAL to the stale path:
         //   closed  → status="closed" + the Pillar C → A cascade (source:probe)
         //   alive   → bump lastSeenAt
-        //   unknown → leave the row, but still stamp lastProbedAt so a flaky
-        //             page advances the cursor instead of jamming the rotation.
-        // lastProbedAt is stamped on EVERYTHING the sweep probes.
+        //   unknown → leave the row alone.
+        // OQ6a: lastProbedAt is stamped on EVERY candidate selected into the
+        // take-window — probed AND skipped — so the column means "last
+        // considered by a probe sweep", not "actually probed". Stamping the
+        // skipped candidates is what keeps the cursor moving: a fetch-seen row
+        // left at NULL would otherwise sit at the front of the ORDER BY
+        // lastProbedAt ASC window forever and jam the rotation for every row
+        // behind it.
         const c3Budget = c3BudgetForKind(watchlist.kind as WatchlistKind);
         if (c3Budget > 0) {
             const c3Candidates = await prisma.jobPosting.findMany({
                 where: { watchlistId, status: "new" },
                 // nulls-first: SQLite sorts NULL before non-NULL on ASC, so a
-                // never-probed row (lastProbedAt = NULL) is picked up first.
+                // never-considered row (lastProbedAt = NULL) is picked up first.
                 orderBy: { lastProbedAt: "asc" },
                 take: c3Budget,
                 select: { id: true, externalId: true, sourceUrl: true },
             });
-            // Don't re-probe within one tick. Skip:
-            //   - postings seen in THIS fetch (just confirmed present in the
-            //     source feed — no point GET-probing them milliseconds later),
-            //   - postings the stale-probe already hit this tick (a stale-but-
-            //     alive row stays status="new", so it'd otherwise be eligible
-            //     here too).
+            // Within-tick skip rules:
+            //   - staleProbedExternalIds (ALL kinds): the stale-probe already
+            //     GET-probed this row seconds ago — never double-probe within
+            //     one tick.
+            //   - seenExternalIds (FIRST-PARTY kinds only, OQ7a): on an
+            //     employer-owned feed a fetch sighting proves the posting is
+            //     open, so probing it milliseconds later is wasted budget. On
+            //     AGGREGATOR feeds (LinkedIn / Indeed) the sighting proves
+            //     nothing about the detail page, so fetch-seen rows are still
+            //     probed there — that's the whole point of the C3 sweep for
+            //     those kinds.
+            const isAggregatorKind = AGGREGATOR_KINDS.has(watchlist.kind as WatchlistKind);
             const c3ToProbe = c3Candidates.filter(
-                c => !seenExternalIds.has(c.externalId) && !staleProbedExternalIds.has(c.externalId),
+                c => !staleProbedExternalIds.has(c.externalId)
+                    && (isAggregatorKind || !seenExternalIds.has(c.externalId)),
             );
             if (c3ToProbe.length > 0) {
                 const c3Results = await probeBatch(
@@ -603,10 +629,8 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 );
                 const c3ClosedIds: string[] = [];
                 const c3AliveIds: string[] = [];
-                const c3AllProbedIds: string[] = [];
                 for (const c of c3ToProbe) {
                     const verdict = c3Results.get(c.externalId) ?? "unknown";
-                    c3AllProbedIds.push(c.id);
                     if (verdict === "closed") c3ClosedIds.push(c.id);
                     else if (verdict === "alive") c3AliveIds.push(c.id);
                     // "unknown" → leave the row; lastProbedAt stamped below.
@@ -634,16 +658,6 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                         data: { lastSeenAt: runAt },
                     });
                 }
-                // Stamp lastProbedAt on EVERYTHING this sweep probed (closed,
-                // alive, AND unknown) so the cursor always advances — a flaky
-                // page doesn't jam the rotation. Closed rows are stamped too;
-                // harmless since they exit the status="new" selection.
-                if (c3AllProbedIds.length > 0) {
-                    await prisma.jobPosting.updateMany({
-                        where: { id: { in: c3AllProbedIds } },
-                        data: { lastProbedAt: runAt },
-                    });
-                }
                 const c3Unknown = c3ToProbe.length - c3ClosedIds.length - c3AliveIds.length;
                 if (c3Closed > 0 || c3Unknown > 0 || c3AliveIds.length > 0) {
                     console.info(
@@ -651,6 +665,20 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                         `probed=${c3ToProbe.length} closed=${c3Closed} alive=${c3AliveIds.length} unknown=${c3Unknown}`,
                     );
                 }
+            }
+            // OQ6a — advance the rolling cursor: stamp lastProbedAt on EVERY
+            // candidate this sweep pulled into its take-window, including the
+            // ones skipped above (fetch-seen on a first-party kind / already
+            // stale-probed) and the "unknown" verdicts. Skipping the stamp on
+            // filtered-out rows is exactly what used to jam the rotation —
+            // they kept lastProbedAt = NULL and were re-selected every tick.
+            // Closed rows are stamped too; harmless since they exit the
+            // status="new" selection.
+            if (c3Candidates.length > 0) {
+                await prisma.jobPosting.updateMany({
+                    where: { id: { in: c3Candidates.map(c => c.id) } },
+                    data: { lastProbedAt: runAt },
+                });
             }
         }
 
