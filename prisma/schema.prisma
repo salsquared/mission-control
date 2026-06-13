@@ -157,6 +157,7 @@ model User {
   lifeGoals           LifeGoal[]
   savedPapers         SavedPaper[]
   globalSetting       GlobalSetting?
+  failedIngests       FailedIngest[]
 }
 
 model VerificationToken {
@@ -729,6 +730,32 @@ model WebhookDelivery {
   receivedAt DateTime @default(now())
 
   @@index([receivedAt])
+}
+
+// OQ9b (codebase review 2026-06-10 §7, P4.3) — retry queue for Gmail messages
+// whose webhook ingest ended errored (gmail.get failure, classifier failure,
+// unexpected per-msg throw). Written by app/api/gmail/webhook/route.ts on
+// every errored outcome (attempts stays 0 there — the queue owns the
+// schedule); drained by scheduler/jobs/failed-ingest-retry.ts with ×4
+// exponential backoff (5m → 20m → ~1.3h → ~5.3h → ~21h → ~3.6d), attempt cap
+// 6 — so a failed message costs ≤7 Gemini parse calls EVER (1 webhook +
+// 6 queue, each with the parser's inner retry disabled). Recovery is by
+// msgId, so it's immune to Gmail's ~7d history horizon; the watermark
+// (User.lastSyncedHistoryId) is never held. Rows at the cap stay as visible
+// inventory (manual recovery: Scan Inbox) until the 30d prune — same policy
+// as WebhookDelivery, folded into the retry job's tick.
+model FailedIngest {
+  msgId         String   @id
+  userId        String
+  firstFailedAt DateTime @default(now())
+  attempts      Int      @default(0)
+  lastError     String
+  nextRetryAt   DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // The retry job selects WHERE nextRetryAt <= now AND attempts < cap.
+  @@index([nextRetryAt])
 }
 
 // M8 Phase 2 — resume archival + traceability. See docs/implementation.md §M8-2.1.
