@@ -437,35 +437,35 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P2</span>
           <span class="task-title">OQ2a — userId-scope the four global tables</span>
         </summary>
         <div class="task-body">
           <p><em>Depends on PR #1 merge (schema migration serialization).</em> One wrinkle to design in P2.2: <code>requireLocalOrSession</code> admits LAN requests with no session — scoped queries from LAN resolve to the sole owner account (single-user fallback) rather than 401ing the kiosk use-case.</p>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">Migration + backfill</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.1</span><span class="task-title">Migration + backfill</span></summary>
             <div class="task-body">
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title">Schema: userId + index on Task, LifeGoal, GlobalSetting, SavedPaper</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.1.1</span><span class="task-title">Schema: userId + index on Task, LifeGoal, GlobalSetting, SavedPaper</span></summary>
                 <div class="task-body"><p>Additive migration applied to BOTH dev.db and prod.db (stop the four PM2 procs to clear the SQLite lock, migrate, restart).</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.1.2</span><span class="task-title">Backfill existing rows to the owner user id</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.1.2</span><span class="task-title">Backfill existing rows to the owner user id</span></summary>
                 <div class="task-body"><p>Idempotent script (existence-guarded), run against both DBs, then make <code>userId</code> required.</p></div>
               </details>
             </div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title">Repos + routes derive userId from session</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.2</span><span class="task-title">Repos + routes derive userId from session</span></summary>
             <div class="task-body"><p><code>lib/repositories/{tasks,goals,settings,saved-papers}.ts</code> + <code>app/api/{tasks,goals,settings,research/saved}</code>; LAN-bypass fallback per the note above. <em>Depends on P2.1.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">GlobalSetting per-user rework</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.3</span><span class="task-title">GlobalSetting per-user rework</span></summary>
             <div class="task-body"><p>Replace the single-row <code>id='global'</code> design with per-user rows; keep the <code>/api/settings</code> If-Match optimistic-concurrency contract so ThemeProvider needs no client change. <em>Depends on P2.2.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">Smokes + apis.html regen</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P2.4</span><span class="task-title">Smokes + apis.html regen</span></summary>
             <div class="task-body"><p>Hermetic scoping smoke (stranger-user sees empty sets); <code>npm run gen:api-docs</code> — the settings/tasks request surfaces change, so a stale <code>apis.html</code> would fail the push gate. <em>Depends on P2.3.</em></p></div>
           </details>
         </div>
@@ -473,7 +473,7 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P3</span>
           <span class="task-title">Close-detection hardening (on feat/closed-jobs, pre-merge)</span>
         </summary>
@@ -501,7 +501,7 @@ flowchart LR
             <div class="task-body"><p><code>job-watcher.ts</code>: stamp <code>lastProbedAt = runAt</code> on skipped candidates (comment renamed to "last considered by a probe sweep"); keep probing fetch-seen postings for aggregator kinds, keep the exclusion for first-party ATS kinds. <em>Parallel-safe (alongside P3.1).</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.4</span><span class="task-title">Smokes + ship PR #1</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.4</span><span class="task-title">Smokes + ship PR #1</span></summary>
             <div class="task-body"><p>Extend <code>liveness-probe-smoke</code> (authwall/login/signup fixtures), <code>cascade-close-smoke</code> (two-tick + steady-state cursor advance); <code>tsc</code>; push (full gate) → merge PR&nbsp;#1 → prod <code>npm run build</code> + <code>pm2 restart</code> all four procs. <em>Depends on P3.1–P3.3.</em></p></div>
           </details>
         </div>
@@ -509,7 +509,7 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P4</span>
           <span class="task-title">Ingest pipeline integrity</span>
         </summary>
@@ -523,22 +523,22 @@ flowchart LR
             <div class="task-body"><p><code>lib/email-parser.ts</code> — same backoff shape as <code>chatJSON</code>; each attempt still awaits <code>acquireGeminiSlot</code>. <em>Parallel-safe.</em></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P4.3</span><span class="task-title">OQ9b — FailedIngest retry queue (alarm side only)</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P4.3</span><span class="task-title">OQ9b — FailedIngest retry queue (alarm side only)</span></summary>
             <div class="task-body">
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.3.1</span><span class="task-title">Schema: FailedIngest table</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.3.1</span><span class="task-title">Schema: FailedIngest table</span></summary>
                 <div class="task-body"><p><code>FailedIngest(msgId @id, userId, firstFailedAt, attempts, lastError, nextRetryAt)</code>, both DBs.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.3.2</span><span class="task-title">Webhook writes a row on every errored outcome</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.3.2</span><span class="task-title">Webhook writes a row on every errored outcome</span></summary>
                 <div class="task-body"><p><code>app/api/gmail/webhook/route.ts</code> — watermark behavior unchanged.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.3.3</span><span class="task-title">Scheduler retry job — ×4 backoff, cap 6</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.3.3</span><span class="task-title">Scheduler retry job — ×4 backoff, cap 6</span></summary>
                 <div class="task-body"><p>Due rows re-ingest with the parser's inner retry disabled (one parse call per attempt); 5&nbsp;m → 20&nbsp;m → ~1.3&nbsp;h → ~5.3&nbsp;h → ~21&nbsp;h → ~3.6&nbsp;d; per-attempt structured-warn alarm naming the next retry time, give-up alarm naming Scan Inbox; <code>gmail.get</code> 404 → drop row; prune ≥30&nbsp;d. Notification/frontend delivery deliberately deferred (notification-system hold).</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.3.4</span><span class="task-title">Hermetic smoke (backoff math, cap, alarm shape)</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.3.4</span><span class="task-title">Hermetic smoke (backoff math, cap, alarm shape)</span></summary>
                 <div class="task-body"><p>Auto-registered by P5.3's glob.</p></div>
               </details>
               <p><em>Depends on P4.2 + PR #1 merge (schema serialization).</em></p>
@@ -553,13 +553,13 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P5</span>
           <span class="task-title">Scheduler + infra robustness</span>
         </summary>
         <div class="task-body">
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P5.1</span><span class="task-title">wrapJob() + cascade reconcile sweep</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P5.1</span><span class="task-title">wrapJob() + cascade reconcile sweep</span></summary>
             <div class="task-body"><p><code>scheduler/index.ts</code>: one wrapper adds the overlap guard + P2021 surfacing for all 11 jobs; job-watcher gains a top-of-run idempotent reconcile (<code>INTERESTED</code> apps whose posting is closed → cascade). <em>Depends on PR #1 merge (job-watcher churn).</em></p></div>
           </details>
           <details class="task">
@@ -609,7 +609,7 @@ flowchart LR
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P7</span>
           <span class="task-title">Verify &amp; ship</span>
         </summary>
