@@ -1,7 +1,7 @@
 /**
  * Hermetic smoke for the outbound-email circuit breaker
  * (lib/notifications/circuit-breaker.ts + the gate in lib/notifications/dispatch.ts).
- * Fix A of docs/postmortem-self-notification-mail-loop.html §11.
+ * Fix A of docs/archive/postmortem-self-notification-mail-loop.html §11.
  *
  * Uses a THROWAWAY user so the global per-user counter is perfectly isolated
  * from any real notifications in dev.db. Never sends real email — EMAIL_ENABLED

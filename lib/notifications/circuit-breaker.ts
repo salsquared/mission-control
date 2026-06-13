@@ -1,5 +1,5 @@
 /**
- * Outbound-email circuit breaker (Fix A — docs/postmortem-self-notification-mail-loop.html §11).
+ * Outbound-email circuit breaker (Fix A — docs/archive/postmortem-self-notification-mail-loop.html §11).
  *
  * The 2026-06-02 self-notification loop sent 552 emails in ~20 minutes and was
  * stopped only by Gmail's *external* send-rate throttle — nothing in the app

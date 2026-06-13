@@ -106,7 +106,7 @@ export async function dispatchNotification(input: DispatchInput): Promise<Notifi
         }
     }
 
-    // Fix A — outbound-email circuit breaker (docs/postmortem-self-notification-mail-loop.html §11).
+    // Fix A — outbound-email circuit breaker (docs/archive/postmortem-self-notification-mail-loop.html §11).
     // Runs only when this dispatch would actually email (post-quiet-hours). On a
     // trip we strip "email" so the in-app row still lands but no send fires
     // (OQ4), and stamp emailError so the suppression is diagnosable. Note:

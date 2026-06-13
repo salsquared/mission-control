@@ -1,7 +1,7 @@
 /**
  * Hermetic smoke for timezone-safe date normalization
  * (lib/applications/normalize-datetime.ts). Fix B / B2-ii of
- * docs/postmortem-self-notification-mail-loop.html §11.
+ * docs/archive/postmortem-self-notification-mail-loop.html §11.
  *
  * Pure function — no DB, no network. Verifies that a bare-Z / zone-less
  * wall-clock the LLM emits for "2pm" resolves to 2pm in the user's zone (the

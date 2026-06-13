@@ -1,6 +1,6 @@
 /**
  * Timezone-safe normalization of LLM-extracted interview/assessment times
- * (Fix B / B2-ii — docs/postmortem-self-notification-mail-loop.html §11).
+ * (Fix B / B2-ii — docs/archive/postmortem-self-notification-mail-loop.html §11).
  *
  * The email parser asks the LLM for an ISO-8601 `startsAt`. For a zone-less
  * wall-clock phrasing like "Tuesday at 2pm", the model inconsistently

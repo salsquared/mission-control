@@ -1,6 +1,6 @@
 /**
  * Hermetic smoke for purgeApplicationEvents (lib/calendar/sync.ts). Fix C of
- * docs/postmortem-self-notification-mail-loop.html §11.
+ * docs/archive/postmortem-self-notification-mail-loop.html §11.
  *
  * Verifies the gcal-sweep-before-delete contract:
  *   - events WITH a gcalEventId trigger a deleteEventFromGcal sweep (counted),
