@@ -20,6 +20,7 @@ import { runStaleApplicationNudges } from './jobs/stale-applications';
 import { runDeadlineNudges } from './jobs/deadline-nudges';
 import { runPostingDigest } from './jobs/posting-digest';
 import { runWebhookDeliveryPrune } from './jobs/webhook-delivery-prune';
+import { runFailedIngestRetry } from './jobs/failed-ingest-retry';
 import { runClassifyPendingEmploymentTypes } from './jobs/classify-pending-employment-types';
 import { runGmailWatchRenew } from './jobs/gmail-watch-renew';
 import { runLlmCachePrune } from './jobs/llm-cache-prune';
@@ -122,6 +123,26 @@ const JOBS: IntervalJob[] = [
             const r = await runWebhookDeliveryPrune();
             if (r.deleted > 0) {
                 console.info(`[webhook-delivery-prune] deleted ${r.deleted} rows older than ${r.cutoff.toISOString()}`);
+            }
+        },
+    },
+    {
+        name: 'failed-ingest-retry',
+        // OQ9b (P4.3.3) — drain the FailedIngest queue (Gmail messages whose
+        // webhook ingest errored). 5 min matches the queue's 5-min first-retry
+        // delay; later attempts back off ×4 inside the job (row-level
+        // nextRetryAt), so the tick is a cheap no-op between due times. Alarm
+        // delivery (notifications/bell) deliberately deferred — see the job
+        // file header (notification-system hold).
+        intervalMs: 5 * 60 * 1000,
+        run: async () => {
+            const r = await runFailedIngestRetry();
+            if (r.due > 0 || r.pruned > 0) {
+                console.info(
+                    `[failed-ingest-retry] ${r.due} due — ${r.succeeded} recovered, ` +
+                    `${r.dropped404} dropped (404), ${r.rescheduled} rescheduled, ` +
+                    `${r.gaveUp} gave up; ${r.pruned} pruned (>30d)`,
+                );
             }
         },
     },

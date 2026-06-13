@@ -5,6 +5,7 @@ import { google } from "googleapis";
 import { PubSubEnvelopeSchema, PubSubPayloadSchema } from "@/lib/schemas/gmail-webhook";
 import { findUserByEmailWithAccounts } from "@/lib/repositories/users";
 import { ingestGmailMessage } from "@/lib/applications/ingest";
+import { recordFailedIngest, clearFailedIngest } from "@/lib/applications/failed-ingest";
 import { verifyPubSubOIDC } from "@/lib/google-oidc";
 import { isStaleHistoryError } from "@/lib/gmail/history-errors";
 
@@ -125,15 +126,34 @@ export async function POST(req: NextRequest) {
       // Catch per-msg and continue so messages 6-N still process when msg 5
       // throws. The original loop already used a return type (`outcome`) for
       // errored — we just need to also catch unexpected throws.
+      //
+      // OQ9b (P4.3.2): every errored outcome ALSO lands a FailedIngest row so
+      // the scheduler retry queue (scheduler/jobs/failed-ingest-retry.ts)
+      // re-attempts it with backoff. attempts stays 0 here — a Pub/Sub
+      // re-walk re-failing the same msg only refreshes lastError; the queue
+      // owns the schedule. The watermark advance below is UNCHANGED: recovery
+      // is by msgId, not by holding lastSyncedHistoryId. Both helpers are
+      // best-effort internally (never throw), so they can't abort the batch.
       try {
         const outcome = await ingestGmailMessage({ userId: user.id, gmail, msgId: id });
         counts[outcome.action] = (counts[outcome.action] ?? 0) + 1;
         if (outcome.action === "errored") {
           console.warn(`[GMAIL WEBHOOK] ingest failed for msg ${id}: ${outcome.reason}`);
+          await recordFailedIngest({ msgId: id, userId: user.id, error: outcome.reason });
+        } else {
+          // Non-errored (created/updated/skipped) on a re-walk supersedes any
+          // queued retry for this msg — drop it so the queue never re-pays a
+          // parse for a message that already made it through.
+          await clearFailedIngest(id);
         }
       } catch (perMsgErr: any) {
         counts.errored++;
         console.warn(`[GMAIL WEBHOOK] ingest threw for msg ${id}:`, perMsgErr?.message ?? perMsgErr);
+        await recordFailedIngest({
+          msgId: id,
+          userId: user.id,
+          error: `ingest threw: ${perMsgErr?.message ?? String(perMsgErr)}`,
+        });
       }
     }
 

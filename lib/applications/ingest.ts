@@ -30,7 +30,13 @@ export type IngestOutcome =
     | { action: "created"; appId: string }
     | { action: "updated"; appId: string }
     | { action: "skipped"; reason: "irrelevant" | "low_confidence" | "duplicate" | "already_present" | "self_notification" }
-    | { action: "errored"; reason: string };
+    /**
+     * `gmailStatus` (OQ9b, P4.3.3): HTTP status of a failed gmail.get, when
+     * that's what errored — lets the FailedIngest retry queue distinguish a
+     * 404 (email deleted → drop the row) from a transient failure (retry)
+     * without string-matching `reason`. Absent for non-gmail.get errors.
+     */
+    | { action: "errored"; reason: string; gmailStatus?: number };
 
 export interface IngestOptions {
     userId: string;
@@ -38,6 +44,15 @@ export interface IngestOptions {
     msgId: string;
     /** When false, suppress SSE broadcast (used by backfill to batch a single invalidation). */
     broadcast?: boolean;
+    /**
+     * OQ9b (P4.3.3): when false, the email classifier runs with its inner
+     * transient-retry disabled (parseApplicationEmail's `retry: false`, P4.2)
+     * so the caller pays exactly ONE Gemini parse call per invocation. Set by
+     * the FailedIngest retry queue, which schedules its own attempts — the
+     * backoff IS the retry. Default (undefined/true) keeps the webhook /
+     * backfill behavior unchanged.
+     */
+    parserRetry?: boolean;
 }
 
 /**
@@ -85,7 +100,7 @@ export async function updateApplicationTolerant(
  * backfill safe to run multiple times.
  */
 export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOutcome> {
-    const { userId, gmail, msgId, broadcast = true } = opts;
+    const { userId, gmail, msgId, broadcast = true, parserRetry } = opts;
 
     // Fast-path idempotency (2026-05-20). If we've already produced events
     // for this Gmail msgId AND every side-effect has been checkpointed,
@@ -117,7 +132,16 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
         });
         message = res.data;
     } catch (err: any) {
-        return { action: "errored", reason: `gmail.get failed: ${err?.message ?? String(err)}` };
+        // googleapis surfaces the HTTP status at different layers depending on
+        // the failure path (same caveat as lib/gmail/history-errors.ts) — check
+        // all three, tolerate string forms.
+        const rawStatus = err?.status ?? err?.code ?? err?.response?.status;
+        const gmailStatus = Number(rawStatus);
+        return {
+            action: "errored",
+            reason: `gmail.get failed: ${err?.message ?? String(err)}`,
+            ...(Number.isFinite(gmailStatus) && gmailStatus > 0 ? { gmailStatus } : {}),
+        };
     }
 
     const subject = headerValue(message.payload?.headers, "Subject") ?? "";
@@ -149,7 +173,16 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     const sentAt = messageDate(message) ?? new Date();
     let parsed;
     try {
-        parsed = await parseApplicationEmail(classifierInput, subject, from, sentAt);
+        parsed = await parseApplicationEmail(
+            classifierInput,
+            subject,
+            from,
+            sentAt,
+            // OQ9b: only the retry queue passes parserRetry: false (one parse
+            // call per queue attempt); undefined leaves P4.2's default
+            // transient-retry in place for webhook/backfill callers.
+            parserRetry === false ? { retry: false } : undefined,
+        );
     } catch (err: any) {
         return { action: "errored", reason: `classifier failed: ${err?.message ?? String(err)}` };
     }
