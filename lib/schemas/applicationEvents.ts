@@ -28,7 +28,9 @@ export const ApplicationEventSchema = z.object({
     emailMsgId: z.string().nullable(),
     gcalEventId: z.string().nullable(),
     gcalUpdatedAt: z.string().datetime().nullable(),
-    syncSource: z.enum(['ms', 'gcal']).nullable(),
+    // 'probe' = close-detection cascade, 'reconcile' = job-watcher reconcile
+    // sweep — both written via lib/applications/close-from-posting.ts.
+    syncSource: z.enum(['ms', 'gcal', 'probe', 'reconcile']).nullable(),
     createdAt: z.string().datetime(),
     updatedAt: z.string().datetime(),
     // Hydrated from the included Application — UI shows company/role next to
