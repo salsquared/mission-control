@@ -321,8 +321,12 @@ async function main() {
         });
         applicationIds.push(otherApp.id);
 
-        // Set the mock session to the test user — all four paths run as `userId`.
+        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
+        // "the owner" via lib/owner.ts (not NextAuth), so pin OWNER_EMAIL + reset
+        // the memo to make `userId` the owner among the two scratch users.
         mockSessionUser = { id: userId, email: `rfa-smoke-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `rfa-smoke-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
 
         // ─── Case 1: cross-user applicationId → 404 ───────────────────────
         const reqCrossUser = buildPostRequest({ posting: { applicationId: otherApp.id } });

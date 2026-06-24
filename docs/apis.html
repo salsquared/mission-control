@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-06-13 · 66/66 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-06-24 · 67/67 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -31,6 +31,7 @@
       <li><a href="#sec-Finance-Dashboard">Finance Dashboard</a></li>
       <li><a href="#sec-Space-Dashboard">Space Dashboard</a></li>
       <li><a href="#sec-Internal-Systems">Internal Systems</a></li>
+      <li><a href="#sec-Account">Account</a></li>
       <li><a href="#sec-Canons">Canons</a></li>
     </ol>
   </details>
@@ -3602,6 +3603,18 @@
   <p class="api-purpose">Reads the on-disk PM2 log file, parses its JSON-lines entries, applies optional time-range and level filters, and returns up to the most recent 1000 matches.</p>
   <p class="api-notes">Reads ~/.pm2/logs/mission-control-out.log (overridable via PM2_LOG_PATH); non-JSON lines are skipped.</p>
   <p class="api-src"><code>app/api/system/logs/historical/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Account">Account</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/account">
+  <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/account</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <p class="api-purpose">Returns the single owner's identity (id + email) and whether their Google account is connected with the required Gmail/Calendar scopes — the frontend's edge-trusted replacement for useSession.</p>
+  <p class="api-src"><code>app/api/account/route.ts</code></p>
 </div>
     </div>
   </details>

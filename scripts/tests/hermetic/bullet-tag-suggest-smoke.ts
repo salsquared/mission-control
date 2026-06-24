@@ -11,9 +11,13 @@
  *   - Locked bullet → 400 cannot-suggest-tags-locked.
  *   - Cross-user bullet → 404 not-found (no existence leak).
  *
- * Mocks `chatJSON` + NextAuth via require.cache injection so no Gemini
- * tokens get burned and no session round-trip happens. Cleans up the
- * scratch user + profile in finally.
+ * Mocks `chatJSON` via require.cache injection so no Gemini tokens get burned.
+ * Auth: post the Cloudflare-Access rewrite (docs/cloudflare-access-auth.html),
+ * `requireSession` resolves "the owner" via lib/owner.ts:resolveOwner instead
+ * of NextAuth — so the smoke pins OWNER_EMAIL to the scratch user's email to
+ * make the owner deterministic among the two scratch users it creates (the
+ * legacy getServerSession mock below is now vestigial but harmless). Cleans up
+ * the scratch user + profile in finally.
  */
 
 import { PrismaClient } from '@prisma/client';
@@ -86,6 +90,13 @@ const prisma = new PrismaClient();
 const tag = randomBytes(4).toString('hex');
 const userId = `bts-smoke-user-${tag}`;
 const otherUserId = `bts-smoke-other-${tag}`;
+// Pin the owner resolution (lib/owner.ts) to the scratch "userId" account: the
+// guards no longer read a NextAuth session, so this is the deterministic seam
+// that makes `requireSession` act as `userId` among the two scratch users.
+process.env.OWNER_EMAIL = `bts-${tag}@example.invalid`;
+// Reset the owner memo so the pin above is the first resolution (consistent
+// with the sibling adapted smokes; guards against a memo filled before the pin).
+(require('@/lib/owner') as typeof import('@/lib/owner')).__resetOwnerMemo();
 let profileId = '';
 let otherProfileId = '';
 let workRoleId = '';

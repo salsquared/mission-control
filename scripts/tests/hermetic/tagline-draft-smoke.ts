@@ -114,7 +114,13 @@ async function main(): Promise<void> {
         });
         profileId = profile.id;
 
+        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
+        // "the owner" via lib/owner.ts (not NextAuth); since this smoke switches
+        // the acting user between phases, pin OWNER_EMAIL + reset the memo
+        // alongside EVERY mockSessionUser change so the owner re-resolves.
         mockSessionUser = { id: userId, email: `td-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `td-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
 
         // ─── Test 1: post-filter (pure) covers cleanup edge cases ─────────
         {
@@ -234,6 +240,8 @@ async function main(): Promise<void> {
         await prisma.user.create({ data: { id: rlUserId, email: `td-rl-${tag}@example.invalid` } });
         const rlProfile = await prisma.profile.create({ data: { userId: rlUserId } });
         mockSessionUser = { id: rlUserId, email: `td-rl-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `td-rl-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
         try {
             for (let i = 0; i < 10; i++) {
                 const { status } = await callDraft();
@@ -258,6 +266,8 @@ async function main(): Promise<void> {
             await prisma.profile.delete({ where: { id: rlProfile.id } }).catch(() => {});
             await prisma.user.delete({ where: { id: rlUserId } }).catch(() => {});
             mockSessionUser = { id: userId, email: `td-${tag}@example.invalid` };
+            process.env.OWNER_EMAIL = `td-${tag}@example.invalid`;
+            require("@/lib/owner").__resetOwnerMemo();
         }
     } finally {
         if (profileId) await prisma.profile.delete({ where: { id: profileId } }).catch(() => {});

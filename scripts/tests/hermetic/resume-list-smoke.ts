@@ -138,8 +138,12 @@ async function main() {
         });
         resumeIds.push(rOther.id);
 
-        // Now hit the route's GET handler with a forged session for `userId`.
+        // Now hit the route's GET handler as `userId`. Post the Cloudflare-Access
+        // rewrite the guards resolve "the owner" via lib/owner.ts (not NextAuth),
+        // so pin OWNER_EMAIL + reset the memo to make `userId` the owner.
         mockSessionUser = { id: userId, email: `rl-smoke-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `rl-smoke-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
         const routeModule = require("@/app/api/resumes/route");
 
         // ── Test 1: default GET returns rows for the session user only ───────

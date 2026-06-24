@@ -99,4 +99,4 @@ cp .env.production.example .env.production
 pm2 start mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod
 ```
 
-The Cloudflare tunnel (`cloudflared` PID checked via `pm2 list` won't show it — it's a system-level process via Homebrew) handles the public-hostname side. `requireLocalOrSession` in `lib/auth-guards.ts` gates tunnel traffic behind NextAuth while LAN hosts (localhost / mc.local) skip auth.
+The Cloudflare tunnel (`cloudflared` PID checked via `pm2 list` won't show it — it's a system-level process via Homebrew) handles the public-hostname side. **Cloudflare Access at the edge** gates the public hostnames (email-allowlisted Zero Trust app; design in [`cloudflare-access-auth.html`](./cloudflare-access-auth.html)); the origin trusts the edge and the guards in `lib/auth-guards.ts` resolve the single owner via `resolveOwner()`, while LAN hosts (localhost / mc.local) reach the origin directly.

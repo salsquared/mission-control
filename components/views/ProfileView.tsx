@@ -1,7 +1,8 @@
 import React, { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useSession, signIn } from "next-auth/react";
-import { Loader2, User as UserIcon } from "lucide-react";
+import { signIn } from "next-auth/react";
+import { useAccount } from "@/hooks/useAccount";
+import { Loader2, Mail } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { CardGrid, type CardItem } from "../grids/CardGrid";
@@ -28,13 +29,16 @@ function errMessage(e: unknown): string {
 }
 
 export const ProfileView: React.FC = () => {
-    const { data: session, status } = useSession();
+    // Edge-trusted: the owner is always present once past Cloudflare Access, so
+    // there's no "signed out" wall. `googleConnected` drives only a NON-blocking
+    // reconnect banner (token missing / scopes stale).
+    const { user, googleConnected, isLoading: accountLoading } = useAccount();
     const queryClient = useQueryClient();
 
     const { data: profileData, isLoading } = useQuery({
         queryKey: queryKeys.profile,
         queryFn: () => api.profile.get(),
-        enabled: Boolean(session),
+        enabled: Boolean(user),
     });
     const profile = profileData?.profile;
 
@@ -223,34 +227,10 @@ export const ProfileView: React.FC = () => {
     };
 
     // ─── Render gates ──────────────────────────────────────────────────────
-    if (status === 'loading' && !profile) {
-        return (
-            <div className="w-full h-full flex items-center justify-center">
-                <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
-            </div>
-        );
-    }
-
-    if (!session) {
-        return (
-            <Scrollbar className="w-full h-full pb-8">
-                <Section title="Profile" description="Sign in to manage your resume profile">
-                    <div className="mt-8 flex flex-col items-center justify-center h-80 gap-5 p-12 bg-black/20 border border-white/5 rounded-3xl max-w-xl mx-auto text-center backdrop-blur-md">
-                        <div className="p-4 bg-purple-500/10 rounded-full"><UserIcon className="w-12 h-12 text-purple-400" /></div>
-                        <div>
-                            <h3 className="text-2xl font-bold bg-clip-text text-transparent bg-linear-to-r from-slate-100 to-slate-400">Profile</h3>
-                            <p className="text-sm text-slate-400 mt-2 leading-relaxed max-w-sm mx-auto">One structured profile of your work history, projects, and education — reused everywhere.</p>
-                        </div>
-                        <button onClick={() => signIn('google')} className="mt-2 flex items-center gap-2 px-8 py-3 bg-purple-600 hover:bg-purple-500 active:scale-95 text-white rounded-xl transition-all font-semibold shadow-xl shadow-purple-500/20">
-                            Sign in
-                        </button>
-                    </div>
-                </Section>
-            </Scrollbar>
-        );
-    }
-
-    if (isLoading || !profile) {
+    // No sign-in wall: the owner is always authenticated past the edge. A spinner
+    // covers the first owner/profile resolve; the connect banner (below) is the
+    // only Google-related surface, and it never blocks the view.
+    if (accountLoading || isLoading || !profile) {
         return (
             <div className="w-full h-full flex items-center justify-center">
                 <Loader2 className="w-8 h-8 text-purple-500 animate-spin" />
@@ -339,6 +319,24 @@ export const ProfileView: React.FC = () => {
 
     return (
         <Scrollbar className="w-full h-full pb-8">
+            {!googleConnected && (
+                <div className="mt-4 flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 bg-purple-500/10 border border-purple-500/20 rounded-2xl">
+                    <div className="p-2 bg-purple-500/10 rounded-xl shrink-0">
+                        <Mail className="w-6 h-6 text-purple-400" />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                        <h3 className="text-sm font-semibold text-slate-200">Connect Gmail / Calendar</h3>
+                        <p className="text-xs text-slate-400 mt-1 leading-relaxed">Google isn't connected (or the access token needs refreshing). Reconnect to enable inbox scanning and calendar sync — your profile works either way.</p>
+                    </div>
+                    <button
+                        onClick={() => signIn('google')}
+                        className="shrink-0 flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 active:scale-95 text-white rounded-xl transition-all text-sm font-semibold"
+                    >
+                        Connect
+                    </button>
+                </div>
+            )}
+
             <Section title="Resume">
                 <div className="mt-4">
                     <CardGrid items={resumeCards} columns={2} />

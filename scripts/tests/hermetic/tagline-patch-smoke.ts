@@ -80,7 +80,12 @@ async function main(): Promise<void> {
         const profile = await prisma.profile.create({ data: { userId } });
         profileId = profile.id;
 
+        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
+        // "the owner" via lib/owner.ts (not NextAuth), so pin OWNER_EMAIL + reset
+        // the memo to make `userId` the owner.
         mockSessionUser = { id: userId, email: `tp-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `tp-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
 
         // ─── Test 1: PATCH writes + persists tagline ──────────────────────
         {

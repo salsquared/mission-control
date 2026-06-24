@@ -98,7 +98,12 @@ async function callPost(body: unknown): Promise<{ status: number; body: any }> {
 async function main(): Promise<void> {
     try {
         await prisma.user.create({ data: { id: userId, email: `wl-dedup-${tag}@example.invalid` } });
+        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
+        // "the owner" via lib/owner.ts (not NextAuth), so pin OWNER_EMAIL + reset
+        // the memo to make `userId` the owner.
         mockSessionUser = { id: userId, email: `wl-dedup-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `wl-dedup-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
 
         // ─── 1. First add of greenhouse board → 200 ──────────────────────
         let firstId = '';

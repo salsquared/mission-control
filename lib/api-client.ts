@@ -164,6 +164,10 @@ export interface PostingsListFilter {
 // ─── Query keys (TanStack tuples) ──────────────────────────────────────────
 // Keep these stable — useServerEvents callbacks invalidate by these keys.
 export const queryKeys = {
+    // Owner identity + Google-connection state (Cloudflare-Access auth). Stable
+    // — useAccount reads it; nothing invalidates it on a cadence (the owner is
+    // process-stable, connection state flips only on a manual connect/disconnect).
+    account: ['account'] as const,
     tasks: ['tasks'] as const,
     goals: ['goals'] as const,
     applications: ['applications'] as const,
@@ -239,6 +243,21 @@ const CanonDeleteResponseSchema = z.object({ ok: z.literal(true) });
 // ─── API surface ───────────────────────────────────────────────────────────
 
 export const api = {
+    // GET /api/account — owner identity + Google-connection state. Drives
+    // useAccount (the edge-trusted replacement for useSession). Schema kept
+    // local: the account surface is a thin owner projection, not a lib/schemas
+    // domain model.
+    account: {
+        get: () =>
+            jsonFetch(
+                '/api/account',
+                z.object({
+                    user: z.object({ id: z.string(), email: z.string() }),
+                    googleConnected: z.boolean(),
+                }),
+            ),
+    },
+
     tasks: {
         list: () => jsonFetch('/api/tasks', TasksListResponseSchema),
         update: (input: z.infer<typeof TaskPatchSchema>) =>

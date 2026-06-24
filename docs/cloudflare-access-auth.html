@@ -1,0 +1,615 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Cloudflare Access auth — mission-control</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Cloudflare Access auth at the edge</h1>
+  <p class="subtitle">Replace the Google/NextAuth sign-in-as-access-gate with Cloudflare Access (Zero Trust) email auth at the edge on both public hostnames; keep Google OAuth solely to mint and refresh the Gmail + Calendar token.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#context">Context &amp; problem</a></li>
+      <li><a href="#design">Design</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="context">Context &amp; problem</h2></summary>
+    <div class="section-body">
+
+      <h3>Problem</h3>
+      <p>Mission-control is a <strong>single-user</strong> personal app reachable two ways: directly on the LAN (<code>localhost</code>, <code>127.*</code>, <code>0.0.0.0</code>, <code>mc.local</code>, phone-on-WiFi), and over the public internet through a Cloudflare tunnel (<code>cloudflared</code>, system-level via Homebrew). Two tiers sit behind the tunnel: <strong>prod</strong> (PM2 <code>mission-control</code>, :3101, <code>prisma/prod.db</code>) and <strong>dev</strong> (PM2 <code>mission-control-dev</code>, :4101, <code>prisma/dev.db</code>).</p>
+
+      <p>Today the only thing between the open internet and the UI is the Google OAuth sign-in screen, enforced by three guards in <code>lib/auth-guards.ts</code>:</p>
+      <ul>
+        <li><strong><code>requireSession()</code></strong> (<code>lib/auth-guards.ts:6</code>) — used by <strong>43 route files</strong>; returns <code>{ session }</code>, and handlers read <code>session.user.email</code> and <code>session.user.id</code> (51 <code>session.user</code> reads across the API surface).</li>
+        <li><strong><code>requireLocalOrSession(req)</code></strong> (<code>lib/auth-guards.ts:128</code>) — used by <strong>20 route files</strong>; LAN hosts in <code>LOCAL_HOSTS</code> (<code>lib/auth-guards.ts:77</code>) with an all-private <code>X-Forwarded-For</code> chain skip auth, anything else needs a session or gets 401.</li>
+        <li><strong><code>requireSessionOrService(req, config)</code></strong> (<code>lib/auth-guards.ts:60</code>) — used by <strong>1 file</strong> (<code>app/api/calendar/event/route.ts</code>, all three methods); accepts a Bearer service token (Pulsar) <em>or</em> a session, returns <code>{ userId }</code>.</li>
+        <li><strong><code>requireServiceToken(req, config)</code></strong> (<code>lib/auth-guards.ts:26</code>) — strict service-token check; not changed by this work (<strong>0 direct route callers</strong> today; reached only via <code>requireSessionOrService</code>).</li>
+      </ul>
+
+      <p>This design has two concrete failures:</p>
+      <ol>
+        <li><strong>The page shell loads for anyone.</strong> <code>app/page.tsx</code> mounts <code>Dashboard</code> client-side (<code>ssr: false</code>), so the React shell + dash carousel + Launchpad render for <em>any</em> visitor who reaches the hostname. Only data routes 401 — the empty card frames are already on screen. For a single-user app, nobody else should reach it at all.</li>
+        <li><strong>Logged-out-of-Google means "not loading."</strong> When the owner's NextAuth session lapses, <code>requireSession</code> 401s every data route and the UI 401-cascades into a sea of empty frames and "Sign in" walls — even though the owner is the only person who will ever use the app. Four components gate directly on <code>useSession</code>: <code>components/views/ProfileView.tsx:31,234</code> (renders a "Sign in" wall, query <code>enabled: Boolean(session)</code> at :37), <code>components/views/ApplicationsView.tsx:61,323</code> ("Connect Workspace" wall; both list queries gated at :91/:96), <code>components/widgets/CalendarWidget.tsx:48-49,55</code> (<code>userId</code> from session, query gated on it), and <code>components/views/InternalView.tsx:48,520,509</code> (manual <code>signIn('google')</code> / <code>signOut()</code> controls).</li>
+      </ol>
+
+      <p>The sibling project <strong>wc26stats</strong> already fronts itself with Cloudflare Access, configured <em>purely at the Cloudflare edge / Zero Trust dashboard</em> — there is <strong>no app code</strong> for it; the origin simply trusts the edge. We adopt the same pattern here. Google OAuth then goes back to its real job: holding the long-lived Gmail + Calendar refresh token on the <code>Account</code> row (<code>lib/auth.ts:69-84</code>), consumed by <code>lib/googleapis.ts:getGoogleAuthClient</code>.</p>
+
+      <div class="callout tip"><strong>Ground truth confirmed.</strong> Both <code>prisma/dev.db</code> and <code>prisma/prod.db</code> currently hold <strong>exactly one</strong> <code>User</code> row — <code>salsalcedo4321@gmail.com</code> — each with a Google <code>Account</code> that has a non-null <code>refresh_token</code> (verified 2026-06-24). The "single owner" assumption the whole design rests on is real today.</p></div>
+
+      <h3>Goals &amp; non-goals</h3>
+      <ul>
+        <li><strong>Goal:</strong> Nobody but the owner can reach <em>any</em> surface (shell or data) over the public tunnel — enforced at the Cloudflare edge before the request ever reaches the origin.</li>
+        <li><strong>Goal:</strong> The owner, once past Access, is treated as <em>always authenticated</em> — no in-app "Sign in" wall, no 401-cascade when Google logout lapses. The app is usable purely on the strength of having passed Access.</li>
+        <li><strong>Goal:</strong> Google OAuth is retained but reframed — it exists only to obtain / refresh the Gmail + Calendar token, surfaced as a non-blocking "Connect / reconnect" affordance, never as the access gate.</li>
+        <li><strong>Goal:</strong> Centralize the change. Rewrite the <strong>3 guards</strong> (+ one owner-resolution helper) so ~60 route files and their <code>session.user.*</code> reads keep working untouched.</li>
+        <li><strong>Goal:</strong> Pub/Sub webhook (<code>/api/gmail/webhook</code>) and local service callers (Pulsar) keep working — Access must not block machine traffic that can't do an interactive login.</li>
+        <li><strong>Non-goal (v1):</strong> Origin-side verification of the <code>Cf-Access-Jwt-Assertion</code> JWT (team domain + per-app AUD). Deferred — see OQ3; noted as future hardening in Risks.</li>
+        <li><strong>Non-goal:</strong> The earlier "in-app passcode gate" approach sketched in <code>docs/user-stories.md</code> (S15.x). This design <strong>supersedes</strong> it: the gate moves to the edge instead of being a new application-level passcode. Update <code>user-stories.md</code> framing as part of the docs phase.</li>
+        <li><strong>Non-goal:</strong> Multi-user / team support. The design is deliberately single-owner; revisit only if a second user is ever added.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="design">Design</h2></summary>
+    <div class="section-body">
+      <h3>Approach</h3>
+      <p>The change splits cleanly into <strong>edge config</strong> (no code — done in the Cloudflare Zero Trust dashboard) and a small, <strong>central</strong> code change at the origin. The key insight that keeps the diff tiny: rewrite the three guards plus one new owner-resolution helper, and the ~60 route files that call them — along with all 51 <code>session.user.*</code> reads — keep working with no per-file edit.</p>
+
+      <h4>Trust model — trust the edge</h4>
+      <p>The origin does <strong>not</strong> verify the Access JWT (OQ3). The reasoning is a closed-world argument about inbound paths: the <em>only</em> ways a request reaches the origin are (a) the LAN — already trusted today via the <code>requireLocalOrSession</code> bypass — and (b) the Cloudflare tunnel, which only forwards a request <em>after</em> Access has authenticated it at the edge. There is no third path. So any request that arrives is, by construction, either LAN-local or Access-passed — both legitimately the owner. The origin treats every arriving request as the owner. This keeps the code minimal and needs no team-domain / AUD configuration in the app.</p>
+
+      <div class="callout"><strong>One narrow exception:</strong> <code>/api/gmail/webhook</code> is reached by Google's Pub/Sub servers, which cannot do an email-OTP login — so Access must <em>bypass</em> that path at the edge (OQ4). It stays authenticated by its own Google-signed OIDC check (<code>verifyPubSubOIDC</code>, <code>app/api/gmail/webhook/route.ts:33</code> + the signer-email assertion at :34-41). Only Google can call it. This bypass is the one place where "trust the edge" doesn't apply, and it's safe precisely because that route carries its own independent auth.</p></div>
+
+      <h4>Server — owner resolution + three guard rewrites</h4>
+      <p>Add a single <strong>owner-resolution helper</strong> — <code>resolveOwner()</code> — returning <code>{ id, email }</code> for the single owner <code>User</code>. Resolution order, deterministic and minimal:</p>
+      <ol>
+        <li>If <code>OWNER_EMAIL</code> env is set → <code>prisma.user.findUnique({ where: { email } })</code>.</li>
+        <li>Else → the single <code>User</code> row (<code>findFirst</code>, stable order by <code>createdAt</code> for determinism if a stray second row ever appears).</li>
+        <li><strong>Zero users</strong> (fresh machine, no Google connected yet) → return <code>null</code>; callers degrade gracefully (the synthesized session is absent, the connect affordance shows). This is the only "0 users" branch and it must not throw.</li>
+      </ol>
+      <p>Because it's called per-request across ~60 routes, memoize the resolved owner <strong>id + email</strong> in a module-level variable (single-user ⇒ effectively immutable for the process lifetime). Invalidation is rarely needed; a small TTL (e.g. 60s) or a "re-resolve on null" rule covers the fresh-connect case where the first <code>User</code> row appears after boot. Flag this as the one perf-sensitive spot (OQ-free; the memo is the obvious minimal choice).</p>
+
+      <p>The three guards (all in <code>lib/auth-guards.ts</code>) are rewritten to stop calling <code>getServerSession</code> and instead resolve the owner — preserving their <em>exact return shapes</em> so callers don't change:</p>
+      <table>
+        <thead><tr><th>Guard</th><th>Callers</th><th>Today</th><th>After</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>requireSession()</code></td>
+            <td>43 files; read <code>session.user.email</code> + <code>session.user.id</code></td>
+            <td><code>getServerSession</code> → 401 if no session</td>
+            <td>Return a <strong>synthesized owner session</strong> <code>{ session: { user: { id, email } } }</code> from <code>resolveOwner()</code>. If owner is null (0 users) → keep returning the 401 (genuinely nothing to act as).</td>
+          </tr>
+          <tr>
+            <td><code>requireLocalOrSession(req)</code></td>
+            <td>20 files; read <code>{ ok }</code> or <code>{ ok, session }</code></td>
+            <td>LAN bypass else session-or-401</td>
+            <td>Always <code>{ ok: true, session: ownerSession }</code> for any request that reaches the origin (LAN or edge-passed). The LAN/XFF logic is no longer load-bearing for access (the edge is the gate) but is harmless to keep; simplest is to drop straight to owner resolution.</td>
+          </tr>
+          <tr>
+            <td><code>requireSessionOrService(req, config)</code></td>
+            <td>1 file (<code>app/api/calendar/event/route.ts</code>)</td>
+            <td>Bearer service-token branch OR session branch → <code>{ userId }</code></td>
+            <td>Keep the Bearer service-token branch <strong>exactly as-is</strong> (machine callers / Pulsar). Replace the session branch with owner resolution → <code>{ userId: ownerId }</code> (or <code>{ error }</code> 401 if owner null).</td>
+          </tr>
+          <tr>
+            <td><code>requireServiceToken(req, config)</code></td>
+            <td>0 direct route callers</td>
+            <td>strict token check</td>
+            <td><strong>Unchanged.</strong></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>The synthesized session must populate <strong>both</strong> <code>user.id</code> and <code>user.email</code> — handlers read both (e.g. <code>app/api/applications/backfill/route.ts:37</code> reads <code>session.user.email</code>; calendar/profile/resume routes read <code>session.user.id</code>). It need <em>not</em> populate <code>user.name</code> / <code>user.image</code> — those are only used cosmetically in the client (avatar / name in Account Status cards), which now come from the account endpoint instead.</p>
+
+      <h4>Frontend — owner is always authenticated</h4>
+      <p>Four components gate on NextAuth's <code>useSession</code>; a fresh device that passed Access would otherwise hit a dead "Sign in with Google" wall. Introduce a tiny client seam (OQ-free implementation detail, decided below):</p>
+      <ul>
+        <li>New route <strong><code>GET /api/account</code></strong> returning <code>{ user: { id, email }, googleConnected: boolean }</code>, where <code>googleConnected</code> reflects whether the owner's <code>Account</code> row has a usable <code>refresh_token</code> + the required scopes. Guard it with the rewritten <code>requireSession()</code> (so it returns the owner; 401 only on the 0-users fresh-machine state). Add its sibling <code>app/api/account/meta.ts</code> per the generated-API-docs convention and regenerate <code>apis.html</code>.</li>
+        <li>New hook <strong><code>useAccount()</code></strong> (e.g. <code>hooks/useAccount.ts</code>) wrapping a react-query fetch of <code>/api/account</code>. The four components consume it instead of <code>useSession</code>.</li>
+      </ul>
+      <p>Behavior after the swap:</p>
+      <ul>
+        <li><strong><code>ProfileView</code></strong> / <strong><code>ApplicationsView</code></strong> — never show the access wall (owner is always present once past Access). The profile / applications queries become <code>enabled</code> on owner presence. They surface a <em>non-blocking</em> "Connect Gmail / Calendar" affordance <strong>only when <code>googleConnected === false</code></strong> (the token is missing or scopes are stale) — not as a gate, as a banner/button inside the otherwise-functional view.</li>
+        <li><strong><code>CalendarWidget</code></strong> — takes <code>userId</code> from the owner (<code>useAccount().user.id</code>) instead of <code>session?.user?.id</code>.</li>
+        <li><strong><code>InternalView</code></strong> — keeps <code>signIn('google')</code> + <code>signOut()</code> as manual token management, reframed as "Connect / Reconnect Google" and "Disconnect". The avatar/name block reads from <code>useAccount()</code> (and may simply show the owner email + connected/disconnected state).</li>
+      </ul>
+      <p>Keep NextAuth's <code>SessionProvider</code> mounted in <code>app/layout.tsx:58</code> (via <code>components/providers/SessionProvider.tsx</code>) — it's still needed for the connect/reconnect flow that <code>signIn('google')</code> drives. We do <strong>not</strong> drop the provider (see Alternatives).</p>
+
+      <h4>Google OAuth / NextAuth — kept, reframed</h4>
+      <p><code>lib/auth.ts</code> stays as-is in structure: the Google provider with offline access + the Gmail/Calendar scopes (<code>lib/auth.ts:24-41</code>), the <code>signIn</code> callback that persists the refresh token and arms the Gmail watch (<code>lib/auth.ts:46-101</code>), and <code>allowDangerousEmailAccountLinking</code> (<code>lib/auth.ts:23</code>). It now exists <strong>only</strong> to obtain / refresh the token — not to gate access. Keep the <code>ALLOWED_SIGNIN_EMAILS</code> allowlist in the <code>signIn</code> callback (<code>lib/auth.ts:51-63</code>, helpers in <code>lib/auth-allowlist.ts</code>) as defense-in-depth on the connect flow: even though Access already gates who reaches the connect button, the allowlist ensures a stray OAuth completion can't link a non-owner account. <code>NEXTAUTH_URL</code> is already per-tier correct in the env examples.</p>
+
+      <h4>Request / auth flow</h4>
+      <pre class="mermaid">
+flowchart TB
+  subgraph browser["Owner's browser (public)"]
+    req["GET ms-prod.salsquared.xyz/..."]
+  end
+  subgraph edge["Cloudflare edge (Zero Trust)"]
+    access{"Access policy<br/>email == owner?"}
+    bypassApp{"path == /api/gmail/webhook?<br/>(Bypass app, higher precedence)"}
+  end
+  subgraph tunnel["cloudflared tunnel"]
+    fwd["forward to origin :3101 / :4101"]
+  end
+  subgraph origin["Origin (Next.js)"]
+    guard["requireSession / requireLocalOrSession<br/>→ resolveOwner()"]
+    owner["synthesized owner session<br/>{ user: { id, email } }"]
+    handler["route handler<br/>reads session.user.id / .email"]
+  end
+
+  req --> bypassApp
+  bypassApp -->|"no (normal UI / data route)"| access
+  access -->|"allow (owner email)"| fwd
+  access -->|"deny (anyone else)"| block(["403 at edge — origin never reached"])
+  bypassApp -->|"yes (Pub/Sub)"| fwd
+  fwd --> guard
+  guard --> owner --> handler
+
+  lan["LAN client<br/>(localhost / mc.local / WiFi)"] -->|"direct, never via edge"| guard
+
+  pubsub["Google Pub/Sub server"] -->|"OIDC-signed POST"| bypassApp
+  fwd -.->|"webhook path"| webhook["/api/gmail/webhook<br/>verifyPubSubOIDC + signer-email assert"]
+      </pre>
+
+      <h4>Touch list</h4>
+      <ul>
+        <li><strong>New:</strong> <code>resolveOwner()</code> helper (in <code>lib/auth-guards.ts</code> or a small <code>lib/owner.ts</code>) + module-level memo.</li>
+        <li><strong>Edit:</strong> <code>lib/auth-guards.ts</code> — rewrite <code>requireSession</code>, <code>requireLocalOrSession</code>, <code>requireSessionOrService</code> (session branch only).</li>
+        <li><strong>New:</strong> <code>app/api/account/route.ts</code> + <code>app/api/account/meta.ts</code>; regenerate <code>docs/apis.html</code>.</li>
+        <li><strong>New:</strong> <code>hooks/useAccount.ts</code>.</li>
+        <li><strong>Edit (UI):</strong> <code>components/views/ProfileView.tsx</code>, <code>components/views/ApplicationsView.tsx</code>, <code>components/widgets/CalendarWidget.tsx</code>, <code>components/views/InternalView.tsx</code>.</li>
+        <li><strong>Unchanged:</strong> <code>lib/auth.ts</code> (semantics reframed, code stays), <code>app/api/gmail/webhook/route.ts</code>, <code>app/layout.tsx</code>, <code>components/providers/SessionProvider.tsx</code>, all ~60 route handlers.</li>
+        <li><strong>Edge (dashboard, no code):</strong> 2 hostname Access apps + 2 path-scoped Bypass apps (the runbook in P4).</li>
+        <li><strong>Docs/config:</strong> this doc; <code>CLAUDE.md</code> Auth section; <code>.env.{development,production}.example</code> (add <code>OWNER_EMAIL</code>); <code>docs/next_steps.md</code>; inbound refs in <code>docs/backup-recovery.md</code> and other docs that mention <code>requireLocalOrSession</code>.</li>
+        <li><strong>Test:</strong> hermetic smoke for <code>resolveOwner()</code> + the synthesized-session guard returns.</li>
+      </ul>
+
+      <h3>Alternatives considered</h3>
+      <ul>
+        <li><strong>Verify the Access JWT at the origin (defense-in-depth).</strong> Read <code>Cf-Access-Jwt-Assertion</code>, validate signature against the team's public keys, check the per-app AUD. Rejected for v1 (OQ3): the closed-world inbound argument already guarantees authenticity, and verification adds origin code + team-domain/AUD config for no marginal protection in a single-owner topology. Kept as a future-hardening note in Risks.</li>
+        <li><strong>A separate non-Access webhook hostname for Pub/Sub.</strong> Rejected (OQ4): adds a tunnel hostname + Pub/Sub subscription reconfig (the audience must match the endpoint URL) for no benefit over a path-scoped Bypass app, which Cloudflare evaluates at higher precedence than the hostname app.</li>
+        <li><strong>In-app passcode gate (the prior <code>user-stories.md</code> S15 sketch).</strong> Rejected: it's new application code to maintain, still ships the shell to anyone before the passcode prompt unless every route + the shell are gated, and duplicates exactly what the edge already does for free in wc26stats. Edge-gating is strictly less code and gates the shell too.</li>
+        <li><strong>Drop <code>SessionProvider</code> entirely.</strong> Rejected: the connect/reconnect flow (<code>signIn('google')</code>) still needs NextAuth client context. Keeping the provider mounted is cheap and avoids reworking the connect path.</li>
+        <li><strong>Edit each of the ~60 route files to read the owner directly.</strong> Rejected: enormous diff, high regression surface, and pointless — the guards are already the single choke point. Centralizing in the 3 guards + 1 helper is the whole reason the change is small.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+      <h3>Risks &amp; mitigations</h3>
+      <table>
+        <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Open window during rollout.</strong> If the code drops the in-app gate <em>before</em> the edge Access apps exist, the public hostnames are wide open (no edge gate + no app gate).</td>
+            <td>med</td>
+            <td><strong>Ordering is mandatory: enable the edge Access apps FIRST (P4), verify a non-owner is blocked, THEN merge the guard rewrite (P1).</strong> Encoded as a hard dependency in the Tasks DAG (P1 "depends on P4 being live in prod"). Until the edge apps are confirmed, the existing <code>requireSession</code> gate stays in place.</td>
+          </tr>
+          <tr>
+            <td><strong>Owner locked out on LAN.</strong> If the LAN path lost its bypass, the owner on localhost (and the PM2 dev server, which only serves the main checkout over LAN) couldn't reach the app.</td>
+            <td>low</td>
+            <td>The trust-edge model treats <em>every</em> arriving request as the owner — LAN included — so LAN access strictly improves (no session needed at all). Hermetic smoke asserts the guards return the owner with no session present.</td>
+          </tr>
+          <tr>
+            <td><strong>Pub/Sub webhook blocked by Access.</strong> If <code>/api/gmail/webhook</code> were behind the email policy, Google's servers (no interactive login) would get bounced → ingest silently stops.</td>
+            <td>med</td>
+            <td>Path-scoped <strong>Bypass</strong> apps for <code>/api/gmail/webhook</code> on both hostnames (P4.3), evaluated at higher precedence than the hostname app. The route keeps its own <code>verifyPubSubOIDC</code> + signer-email assertion, so the bypass doesn't weaken it. Verify post-rollout by confirming a live push still lands an ingest (or POST a known envelope).</td>
+          </tr>
+          <tr>
+            <td><strong>Local service callers (Pulsar) broken.</strong> If service traffic were forced through Access.</td>
+            <td>low</td>
+            <td>Confirmed Pulsar + local callers hit <code>http://localhost:4101</code> / <code>:3101</code> directly (never the public tunnel) via the Bearer service-token path; <code>requireSessionOrService</code>'s service branch is kept byte-for-byte. No edge involvement.</td>
+          </tr>
+          <tr>
+            <td><strong>0-users fresh machine.</strong> A brand-new clone with no Google connected has no <code>User</code> row, so <code>resolveOwner()</code> is null.</td>
+            <td>low</td>
+            <td><code>resolveOwner()</code> returns null without throwing; guards return their existing 401, and the connect affordance is the path forward (sign in with Google once → User row created → owner resolves). The memo re-resolves on null so the first connect "takes" without a restart.</td>
+          </tr>
+          <tr>
+            <td><strong>Per-request owner resolution cost.</strong> ~60 routes each resolving the owner could add a DB round-trip per request.</td>
+            <td>low</td>
+            <td>Module-level memo of owner <code>{ id, email }</code> (single-user ⇒ stable for process lifetime); a DB read happens only on cold start or after a null re-resolve. Flagged as the one perf-sensitive spot.</td>
+          </tr>
+          <tr>
+            <td><strong>No origin-side JWT verification (v1 trust-edge).</strong> If a future change exposed a non-tunnel, non-LAN inbound path, "trust the edge" would no longer hold.</td>
+            <td>low</td>
+            <td>Accepted for v1 (OQ3). <strong>Future hardening:</strong> add origin verification of <code>Cf-Access-Jwt-Assertion</code> (team domain + per-app AUD) if the inbound topology ever changes. Documented here so the assumption is explicit and auditable.</td>
+          </tr>
+          <tr>
+            <td><strong>Hostname mismatch in the runbook.</strong> An early brief named prod <code>ms.salsquared.xyz</code>, but the codebase + live <code>.env.production</code> use <code>ms-prod.salsquared.xyz</code>.</td>
+            <td>resolved</td>
+            <td><strong>Resolved (OPEN-A → a):</strong> the live <code>.env.production</code> (<code>NEXTAUTH_URL</code> + <code>PUBSUB_AUDIENCE</code>) confirms prod = <code>ms-prod.salsquared.xyz</code>. Runbook hostnames are now literal; no env or Pub/Sub change needed.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Rollback</h3>
+      <p>Two independent levers, either direction:</p>
+      <ul>
+        <li><strong>Edge:</strong> remove (or disable) the four Access apps in the Zero Trust dashboard — the hostnames revert to whatever the origin enforces.</li>
+        <li><strong>Origin:</strong> <code>git revert</code> the guard rewrite + frontend swap, rebuild, <code>pm2 restart mission-control mission-control-dev</code>. This restores the old <code>requireSession</code> / <code>requireLocalOrSession</code> behavior exactly (the change is code-only — no schema migration, no data change, so revert is clean).</li>
+      </ul>
+      <p>Because the rollout order is "edge first, then code," the safe rollback is the reverse: revert the code first (the in-app gate returns), then optionally remove the edge apps. There is never a window where both gates are absent if the order is respected.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <h3>Resolved decisions</h3>
+      <p>OQ1–OQ4 were settled with the owner before this doc was written; they are recorded here as the decision record (options kept, pick appended). One genuinely-new fork surfaced during file review — the exact prod hostname — flagged <strong>OPEN-A</strong>; it is now <strong>resolved → (a)</strong> from the live <code>.env.production</code> (prod = <code>ms-prod.salsquared.xyz</code>). No open questions remain.</p>
+
+      <div class="callout tip"><strong>OQ1 — What Access session lifetime should the prod hostname use?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>24 hours.</strong> Set the prod Access app's session duration to 24h, so a passed login is re-prompted once per day. <em>Pros:</em> a session leaked from an untrusted/random computer expires within a day; bounds blast radius tightly. <em>Cons:</em> the owner re-authenticates daily even on their own devices (one click each time).</li>
+          <li><strong>(b)</strong> <strong>1 week.</strong> Set prod to a 7-day session. <em>Pros:</em> fewer re-auth prompts. <em>Cons:</em> a session captured on an untrusted machine stays valid for up to a week — too long for a host the owner may sign in from on a random computer.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — prod (<code>ms-prod.salsquared.xyz</code>) session lifetime = <strong>24 hours</strong>, because the owner may sign in from an untrusted/random computer and a leaked session should expire within a day; the daily re-auth cost is one click.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ2 — What Access session lifetime should the dev hostname use?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>1 week.</strong> Set the dev Access app to a 7-day session. <em>Pros:</em> shorter exposure window than a month. <em>Cons:</em> unnecessarily frequent re-auth on the owner's own devices, which is the only place dev is ever opened.</li>
+          <li><strong>(b)</strong> <strong>1 month.</strong> Set dev to Cloudflare's longest preset for email-identity sessions (~1 month; there is no true "forever"). <em>Pros:</em> minimal re-auth friction on trusted own-devices; re-auth is one click when it does lapse. <em>Cons:</em> a leaked dev session lives up to a month — acceptable because dev is only accessed from the owner's own devices and exposes the same single mailbox.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — dev (<code>ms-dev.salsquared.xyz</code>) session lifetime = <strong>1 month</strong> (the longest email-identity preset), because dev is only ever opened from the owner's own devices, so re-auth friction is the dominant cost and the longer window is safe.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ3 — Should the origin verify the Cloudflare Access JWT, or trust the edge?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Trust the edge (no origin verification).</strong> The origin reads no Access header and verifies no JWT; it treats every arriving request as the owner, relying on the closed-world fact that the only inbound paths are LAN (already trusted) and the tunnel (only forwards Access-passed requests). <em>Pros:</em> minimal code; no team-domain / per-app AUD config in the app; nothing to keep in sync with the edge. <em>Cons:</em> if a future change ever exposed a non-tunnel, non-LAN inbound path, the assumption breaks (mitigated by it being documented + the future-hardening note).</li>
+          <li><strong>(b)</strong> <strong>Also verify <code>Cf-Access-Jwt-Assertion</code> at the origin.</strong> Validate the JWT signature against the team's public keys and check the per-app AUD on every protected request, in addition to the edge gate. <em>Pros:</em> defense-in-depth; the origin is self-protecting even if the inbound topology changes. <em>Cons:</em> more origin code, plus team-domain + per-app AUD configuration to provision and maintain — redundant in the current single-owner topology.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — <strong>trust the edge</strong> for v1, because the only inbound paths are LAN (trusted) and the Access-gated tunnel, so any arriving request is already authenticated; (b) is retained as a future-hardening option in Risks should the inbound topology ever change.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ4 — How should the Gmail Pub/Sub webhook be exempted from Access?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Path-scoped Access Bypass on <code>/api/gmail/webhook</code>.</strong> Create a path-scoped Access app for <code>&lt;HOST&gt;/api/gmail/webhook</code> on each hostname with a Bypass / Everyone policy, so Pub/Sub's OIDC-signed POST reaches the origin; the route keeps its existing <code>verifyPubSubOIDC</code> + signer-email assertion. Path-scoped apps take precedence over the hostname app. <em>Pros:</em> no new hostname, no Pub/Sub reconfig; the webhook keeps its independent Google-signed auth; smallest change. <em>Cons:</em> one extra Access app per tier to manage (4 apps total).</li>
+          <li><strong>(b)</strong> <strong>A separate non-Access webhook hostname.</strong> Route Pub/Sub to a distinct hostname with no Access app in front. <em>Pros:</em> clean separation of machine vs human traffic. <em>Cons:</em> adds a tunnel hostname AND a Pub/Sub subscription reconfig (the OIDC audience must match the new endpoint URL exactly) for no benefit over a Bypass app.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — <strong>path-scoped Access Bypass</strong> on <code>/api/gmail/webhook</code> for both hostnames, keeping the route's existing Google-signed OIDC auth; Pub/Sub can't do interactive login so the path must bypass, and the route is already self-authenticated, so no new hostname or audience reconfig is warranted.</p>
+      </div>
+
+      <h3>Question found during review (now resolved)</h3>
+      <div class="callout tip"><strong>OPEN-A ✓ Decided → (a) — exact prod hostname = <code>ms-prod.salsquared.xyz</code>.</strong></div>
+      <div class="oq-detail">
+        <p>An early brief named prod <code>ms.salsquared.xyz</code>, but the <strong>codebase + live <code>.env.production</code></strong> consistently use <code>ms-prod.salsquared.xyz</code>: <code>.env.production.example:7</code> (<code>NEXTAUTH_URL</code>), <code>.env.production.example:42</code> (<code>PUBSUB_AUDIENCE</code>), the live Pub/Sub subscription wiring in <code>docs/archive/gmail-realtime-push.html:245,266</code>, and <code>CLAUDE.md:96</code> (<code>ms-{prod,dev}.salsquared.xyz</code>). Dev is unambiguous: <code>ms-dev.salsquared.xyz</code> everywhere. This mattered because the edge runbook (P4) must create the Access app for the <em>exact</em> hostname that's actually routed — a gate on the wrong hostname leaves the live one open.</p>
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Prod host = <code>ms-prod.salsquared.xyz</code></strong> (the codebase value). <em>Effect:</em> the Access app + Bypass app are created for <code>ms-prod.salsquared.xyz</code>; no env or Pub/Sub change needed. <em>Pros:</em> matches everything already deployed. <em>Cons:</em> none if this is the live host.</li>
+          <li><strong>(b)</strong> <strong>Prod host = <code>ms.salsquared.xyz</code></strong> (the brief's value), implying a hostname change. <em>Effect:</em> Access apps target <code>ms.salsquared.xyz</code>, AND <code>NEXTAUTH_URL</code> + <code>PUBSUB_AUDIENCE</code> + the Pub/Sub push subscription audience must all be updated to match, or the webhook OIDC check + OAuth callback break. <em>Pros:</em> shorter hostname if that's the intent. <em>Cons:</em> a larger change touching env + Pub/Sub, not just the edge.</li>
+        </ul>
+        <p><em>Status:</em> <strong>✓ Decided → (a)</strong> from the live <code>.env.production</code> (2026-06-24). The P4 runbook now uses literal hostnames <code>ms-prod.salsquared.xyz</code> / <code>ms-dev.salsquared.xyz</code>; no env or Pub/Sub change is required.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+      <h3>Implementation checklist</h3>
+      <p>OQ1–OQ4 and OPEN-A are all resolved, so the checklist is authored with literal hostnames (<code>ms-prod.salsquared.xyz</code> / <code>ms-dev.salsquared.xyz</code>) and is fully dispatchable. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;</code>.</p>
+
+      <div class="callout"><strong>Rollout ordering is load-bearing.</strong> <strong>P4 (edge config) must be live and verified in prod BEFORE P1's guard rewrite is merged/deployed</strong> — otherwise there's a window with no gate at all. P4 is dashboard-only and decoupled from the code, so it can be done first (or in parallel with P1/P2/P3 development), but the <em>deploy/merge of P1</em> waits on P4 being confirmed live.</div>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Foundation: owner resolution + guard rewrite</span>
+        </summary>
+        <div class="task-body">
+          <p>The serial bottleneck. Everything in P2 depends on these return shapes existing. All edits land in <strong>one file region</strong> (<code>lib/auth-guards.ts</code> + optional <code>lib/owner.ts</code>), so P1 tasks <strong>serialize</strong> among themselves.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.1</span>
+              <span class="task-title">Add <code>resolveOwner()</code> + module-level memo</span>
+            </summary>
+            <div class="task-body">
+              <p>New helper returning <code>{ id, email } | null</code>. In <code>lib/auth-guards.ts</code> (or <code>lib/owner.ts</code> re-exported). <em>Sole owner of the new symbol.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.1</span><span class="task-title">Resolution order + 0-users branch</span></summary>
+                <div class="task-body"><p><code>OWNER_EMAIL</code> → <code>findUnique({where:{email}})</code>; else single <code>User</code> via <code>findFirst</code> (stable order); else <code>null</code> (no throw).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.2</span><span class="task-title">Memo + null re-resolve</span></summary>
+                <div class="task-body"><p>Module-level cached <code>{id,email}</code>; skip DB on hit; re-resolve when cache is null (covers first-connect on a fresh machine without a restart).</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.2</span>
+              <span class="task-title">Rewrite the three guards (preserve return shapes)</span>
+            </summary>
+            <div class="task-body">
+              <p>Same file as P1.1 ⇒ <em>serialize after P1.1</em>.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title"><code>requireSession()</code> → synthesized owner session</span></summary>
+                <div class="task-body"><p>Return <code>{ session: { user: { id, email } } }</code>; 401 only when owner is null. Must populate both <code>id</code> and <code>email</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title"><code>requireLocalOrSession()</code> → always owner</span></summary>
+                <div class="task-body"><p>Return <code>{ ok: true, session: ownerSession }</code> for any request reaching the origin; 401 only when owner is null.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.3</span><span class="task-title"><code>requireSessionOrService()</code> → keep service branch, owner session branch</span></summary>
+                <div class="task-body"><p>Bearer service-token branch byte-for-byte unchanged; session branch → <code>{ userId: ownerId }</code> (or 401 if owner null). <code>requireServiceToken</code> untouched.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — Account endpoint, hook, and frontend swap</span>
+        </summary>
+        <div class="task-body">
+          <p><em>Depends on P1</em> (the rewritten <code>requireSession</code> guards <code>/api/account</code>; the hook supplies the owner the UI needs). The sub-tasks touch <strong>disjoint files</strong> and fan out to parallel agents, except P2.1→P2.2 (hook depends on endpoint contract).</p>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title"><code>GET /api/account</code> + <code>meta.ts</code> + regen apis.html</span></summary>
+            <div class="task-body">
+              <p>New <code>app/api/account/route.ts</code> returning <code>{ user:{id,email}, googleConnected }</code> (guarded by rewritten <code>requireSession</code>); sibling <code>app/api/account/meta.ts</code>; run <code>npm run gen:api-docs</code> and commit <code>apis.html</code>. <em>Depends on P1; sole owner of these new files.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title"><code>googleConnected</code> derivation</span></summary>
+                <div class="task-body"><p>True when the owner's <code>Account</code> has a non-null <code>refresh_token</code> and the required scopes; false otherwise.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.2</span><span class="task-title"><code>useAccount()</code> hook</span></summary>
+            <div class="task-body"><p>New <code>hooks/useAccount.ts</code> (react-query fetch of <code>/api/account</code>). <em>Depends on P2.1 contract; sole owner.</em></p></div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.3</span><span class="task-title">ProfileView — drop access wall, non-blocking connect</span></summary>
+            <div class="task-body"><p><code>components/views/ProfileView.tsx</code>: swap <code>useSession</code> → <code>useAccount</code>; remove the "Sign in" wall (:234); query <code>enabled</code> on owner; show "Connect Gmail" banner only when <code>!googleConnected</code>. <em>Depends on P2.2; Parallel-safe with P2.4/P2.5/P2.6.</em></p></div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.4</span><span class="task-title">ApplicationsView — drop access wall, non-blocking connect</span></summary>
+            <div class="task-body"><p><code>components/views/ApplicationsView.tsx</code>: swap <code>useSession</code> → <code>useAccount</code>; remove the "Connect Workspace" wall (:323); both list queries <code>enabled</code> on owner; Account Status card reads owner email + connected state. <em>Depends on P2.2; Parallel-safe with P2.3/P2.5/P2.6.</em></p></div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.5</span><span class="task-title">CalendarWidget — userId from owner</span></summary>
+            <div class="task-body"><p><code>components/widgets/CalendarWidget.tsx</code>: <code>userId = useAccount().user.id</code> instead of <code>session?.user?.id</code> (:49). <em>Depends on P2.2; Parallel-safe with P2.3/P2.4/P2.6.</em></p></div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.6</span><span class="task-title">InternalView — reframe connect/disconnect</span></summary>
+            <div class="task-body"><p><code>components/views/InternalView.tsx</code>: keep <code>signIn('google')</code>/<code>signOut()</code> as "Connect/Reconnect Google" + "Disconnect"; account block reads <code>useAccount()</code>. <em>Depends on P2.2; Parallel-safe with P2.3/P2.4/P2.5.</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Tests, docs, config</span>
+        </summary>
+        <div class="task-body">
+          <p>Mostly <em>Parallel-safe</em>, disjoint files. P3.1 depends on P1; the doc/config tasks depend on nothing but the design and can start immediately.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">Hermetic smoke for owner resolution + guards</span></summary>
+            <div class="task-body"><p>New <code>scripts/tests/hermetic/owner-auth-smoke.ts</code> (auto-registered by the pre-push glob): asserts <code>resolveOwner()</code> order, the 0-users null branch, and that each guard returns the owner with no session present + the service-token branch still works. <em>Depends on P1.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">CLAUDE.md Auth section rewrite</span></summary>
+            <div class="task-body"><p>Replace the Google-OAuth-as-gate + <code>requireLocalOrSession</code> description (CLAUDE.md Auth section + the backup/recovery footnote at :199) with the Cloudflare-Access-at-edge + trust-edge model. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">.env examples — add <code>OWNER_EMAIL</code></span></summary>
+            <div class="task-body"><p>Document <code>OWNER_EMAIL</code> (optional; secrets stay in untracked <code>.env</code>) in <code>.env.development.example</code> + <code>.env.production.example</code>. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.4</span><span class="task-title">Update inbound doc references</span></summary>
+            <div class="task-body"><p><code>docs/backup-recovery.md</code> (the <code>requireLocalOrSession</code> footnote), and reframe <code>docs/user-stories.md</code> S15.x (passcode-gate sketch superseded by edge Access). Grep <code>requireLocalOrSession</code> and update stale prose. <em>Parallel-safe.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.5</span><span class="task-title">docs/next_steps.md update</span></summary>
+            <div class="task-body"><p>Per session protocol — reflect the auth change in In-progress / Recently completed. <em>Parallel-safe (own file).</em></p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P4</span>
+          <span class="task-title">Phase 4 — Edge runbook (Cloudflare Zero Trust dashboard)</span>
+        </summary>
+        <div class="task-body">
+          <p><strong>No code.</strong> Done by the owner in the dashboard. <strong>Must be live + verified in prod before P1 is deployed.</strong> Decoupled from the code, so it can run first / in parallel with P1–P3 development. Hostnames are <code>ms-prod.salsquared.xyz</code> (prod) / <code>ms-dev.salsquared.xyz</code> (dev), confirmed via OPEN-A → (a).</p>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.0</span><span class="task-title">Prod hostname confirmed (OPEN-A → a)</span></summary>
+            <div class="task-body"><p><strong>✓ Done.</strong> Prod = <code>ms-prod.salsquared.xyz</code> per live <code>.env.production</code>; no <code>NEXTAUTH_URL</code> / <code>PUBSUB_AUDIENCE</code> / Pub/Sub change needed.</p></div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Access App #1 — prod hostname</span></summary>
+            <div class="task-body"><p>Self-hosted app for <code>ms-prod.salsquared.xyz</code>. Allow policy: emails == <code>salsalcedo4321@gmail.com</code>; identity = Google / One-time-PIN; <strong>session duration 24h</strong> (OQ1). <em>Parallel-safe with P4.2/P4.3.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Access App #2 — dev hostname</span></summary>
+            <div class="task-body"><p>Self-hosted app for <code>ms-dev.salsquared.xyz</code>. Same email Allow policy; <strong>session duration 1 month</strong> (OQ2). <em>Parallel-safe with P4.1/P4.3.</em></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.3</span><span class="task-title">Access Apps #3 + #4 — webhook Bypass (both hosts)</span></summary>
+            <div class="task-body">
+              <p>Path-scoped apps for <code>ms-prod.salsquared.xyz/api/gmail/webhook</code> and <code>ms-dev.salsquared.xyz/api/gmail/webhook</code>, policy <strong>Bypass / Everyone</strong> (OQ4). Path-scoped takes precedence over the hostname app, so Pub/Sub OIDC reaches the origin. <em>Parallel-safe with P4.1/P4.2.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.3.1</span><span class="task-title">Verify a live push still ingests</span></summary>
+                <div class="task-body"><p>Confirm a real Gmail push (or a known OIDC-signed test POST) reaches <code>/api/gmail/webhook</code> and lands an ingest — proving the Bypass works and the route's OIDC check still gates it.</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.4</span><span class="task-title">Verify gate + LAN before P1 deploy</span></summary>
+            <div class="task-body"><p>From a non-owner identity, confirm both hostnames return 403 at the edge. From LAN (<code>localhost</code> / <code>mc.local</code>), confirm direct access still works (never traverses the edge). Only then merge/deploy P1.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P5</span>
+          <span class="task-title">Phase 5 — Ship</span>
+        </summary>
+        <div class="task-body">
+          <p><em>Depends on P1–P3 landed and P4 verified live.</em></p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.1</span><span class="task-title">tsc + hermetic suite + prod build</span></summary>
+            <div class="task-body"><p><code>tsc</code> clean, <code>npm run test:hermetic</code> green (incl. P3.1), <code>npm run build</code>, then <code>pm2 restart mission-control mission-control-dev</code>.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.2</span><span class="task-title">Post-deploy smoke</span></summary>
+            <div class="task-body"><p>Owner reaches both hostnames after Access; logged-out-of-Google no longer cascades; "Connect Gmail" appears only when token absent; webhook ingest healthy.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <h3>Parallelization &amp; critical path</h3>
+      <p>Dependency DAG (edges read "must finish before"; siblings with no edge fan out to parallel agents):</p>
+      <pre class="mermaid">
+flowchart LR
+  P4["P4 edge runbook<br/>(dashboard, no code)"] --> P44["P4.4 verify gate + LAN"]
+  P11["P1.1 resolveOwner + memo"] --> P12["P1.2 guard rewrite"]
+  P12 --> P21["P2.1 /api/account + meta"]
+  P21 --> P22["P2.2 useAccount hook"]
+  P22 --> P23["P2.3 ProfileView"]
+  P22 --> P24["P2.4 ApplicationsView"]
+  P22 --> P25["P2.5 CalendarWidget"]
+  P22 --> P26["P2.6 InternalView"]
+  P12 --> P31["P3.1 hermetic smoke"]
+  docs["P3.2-P3.5 docs/config<br/>(no code deps)"]
+  P12 --> P51["P5.1 tsc + build + restart"]
+  P23 --> P51
+  P24 --> P51
+  P25 --> P51
+  P26 --> P51
+  P31 --> P51
+  P44 -->|"gate live before deploy"| P51
+  docs --> P51
+  P51 --> P52["P5.2 post-deploy smoke"]
+      </pre>
+
+      <p><strong>File contention</strong> — two tasks touching the same file can't run in parallel:</p>
+      <table>
+        <thead><tr><th>File / module</th><th>Tasks touching it</th><th>Parallel?</th></tr></thead>
+        <tbody>
+          <tr><td><code>lib/auth-guards.ts</code> (+ <code>lib/owner.ts</code>)</td><td>P1.1, P1.2</td><td>serialize — single foundation file</td></tr>
+          <tr><td><code>app/api/account/route.ts</code> + <code>meta.ts</code> + <code>apis.html</code></td><td>P2.1</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>hooks/useAccount.ts</code></td><td>P2.2</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>components/views/ProfileView.tsx</code></td><td>P2.3</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>components/views/ApplicationsView.tsx</code></td><td>P2.4</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>components/widgets/CalendarWidget.tsx</code></td><td>P2.5</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>components/views/InternalView.tsx</code></td><td>P2.6</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>scripts/tests/hermetic/owner-auth-smoke.ts</code></td><td>P3.1</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td>docs / .env examples</td><td>P3.2, P3.3, P3.4, P3.5</td><td>disjoint files — parallel-safe</td></tr>
+          <tr><td>Cloudflare dashboard (no repo file)</td><td>P4.1–P4.4</td><td>no repo contention; P4.1/4.2/4.3 parallel, P4.4 after</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong>Waves &amp; critical path.</strong></p>
+      <ul>
+        <li><em>Start immediately (no deps):</em> <strong>P1.1</strong>, <strong>P4.0→P4.1/P4.2/P4.3</strong> (edge, owner-driven), and all of <strong>P3.2–P3.5</strong> (docs/config) — three independent tracks running in parallel from t0.</li>
+        <li><em>Wave 2 (after P1.1):</em> P1.2; then P3.1 (smoke) unblocks alongside P2.1.</li>
+        <li><em>Wave 3 (after P2.1):</em> P2.2; then <strong>P2.3 ∥ P2.4 ∥ P2.5 ∥ P2.6</strong> fan out to four parallel agents (disjoint UI files).</li>
+        <li><em>Gate:</em> P4.4 must be verified live before P5.1 deploys.</li>
+        <li><strong>Critical path:</strong> <code>P1.1 → P1.2 → P2.1 → P2.2 → P2.{3..6} → P5.1 → P5.2</code> — the code chain is the wall-clock floor. The <strong>edge track (P4)</strong> runs fully in parallel and is the deploy <em>gate</em>, not a serial predecessor of the code work; the docs track (P3.2–P3.5) is never on the critical path. The most-constrained node is <strong>P1.2</strong> (the single foundation file every later code task depends on) — schedule it first.</li>
+      </ul>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

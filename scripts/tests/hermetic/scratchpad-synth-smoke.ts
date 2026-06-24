@@ -230,7 +230,12 @@ async function main(): Promise<void> {
         });
         workRoleCId = wrC.id;
 
+        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
+        // "the owner" via lib/owner.ts (not NextAuth), so pin OWNER_EMAIL + reset
+        // the memo to make `userId` the owner.
         mockSessionUser = { id: userId, email: `ss-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `ss-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
         cannedPostingKeywords = ["TypeScript", "PostgreSQL", "Go"];
 
         // ─── Test 1: synthesis fires for A + B (batched), C skipped ────────

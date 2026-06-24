@@ -2,7 +2,8 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Section } from "../Section";
 import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, RotateCw, Pencil, Briefcase } from "lucide-react";
-import { useSession, signIn } from "next-auth/react";
+import { signIn } from "next-auth/react";
+import { useAccount } from "@/hooks/useAccount";
 import { CalendarWidget } from "../widgets/CalendarWidget";
 import { CardGrid, CardItem } from "../grids/CardGrid";
 import { Card } from "../ui/Card";
@@ -58,7 +59,11 @@ function trackShadow(track: PostingsTrackKey): React.CSSProperties {
 }
 
 export const ApplicationsView: React.FC = () => {
-    const { data: session, status } = useSession();
+    // Edge-trusted: the owner is always present past Cloudflare Access, so the
+    // list queries gate on owner presence (not a session) and there's no access
+    // wall. `googleConnected` drives only the non-blocking reconnect affordance
+    // in the Account Status card.
+    const { user, googleConnected, isLoading: accountLoading } = useAccount();
     const [isCalendarAdding, setIsCalendarAdding] = useState(false);
     const [isCalendarEditing, setIsCalendarEditing] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
@@ -72,11 +77,10 @@ export const ApplicationsView: React.FC = () => {
     const activeTrack = useAppStore(s => s.applicationsTrack);
     const setApplicationsTrack = useAppStore(s => s.setApplicationsTrack);
 
-    // Track first-time authentication so background session revalidations
-    // (window focus, periodic refetch, cross-device signin) don't unmount
-    // the whole subtree when status briefly flips back through "loading".
-    const hasEverAuthedRef = useRef(false);
-    if (status === "authenticated") hasEverAuthedRef.current = true;
+    // Track first owner resolution so a background account refetch can't flip us
+    // back into the full-page spinner once we've rendered the pipeline.
+    const hasEverResolvedRef = useRef(false);
+    if (user) hasEverResolvedRef.current = true;
 
     const queryClient = useQueryClient();
     // Both tracks' apps stay queried even though only one renders at a time:
@@ -87,12 +91,12 @@ export const ApplicationsView: React.FC = () => {
     const { data: appsData, isLoading: loading } = useQuery({
         queryKey: queryKeys.applications,
         queryFn: () => api.applications.list({ track: 'career' }),
-        enabled: Boolean(session),
+        enabled: Boolean(user),
     });
     const { data: sideAppsData, isLoading: sideLoading } = useQuery({
         queryKey: [...queryKeys.applications, 'side'] as const,
         queryFn: () => api.applications.list({ track: 'side' }),
-        enabled: Boolean(session),
+        enabled: Boolean(user),
     });
     const apps: AppRecord[] = (appsData?.applications ?? []) as unknown as AppRecord[];
     const sideApps: AppRecord[] = (sideAppsData?.applications ?? []) as unknown as AppRecord[];
@@ -138,7 +142,7 @@ export const ApplicationsView: React.FC = () => {
     }, [queryClient]);
 
     const syncFromGcal = useCallback(async (silent = false) => {
-        if (!session) return;
+        if (!user) return;
         setIsSyncing(true);
         try {
             const result = await api.applications.events.sync();
@@ -158,16 +162,16 @@ export const ApplicationsView: React.FC = () => {
         } finally {
             setIsSyncing(false);
         }
-    }, [session, queryClient]);
+    }, [user, queryClient]);
 
     // Background poll while the view is mounted. 5-min cadence so we don't
     // hammer Google; the syncToken makes each tick cheap. Silent toasts —
     // user only sees noise when they hit "Sync now" themselves.
     useEffect(() => {
-        if (!session) return;
+        if (!user) return;
         const id = setInterval(() => syncFromGcal(true), 5 * 60 * 1000);
         return () => clearInterval(id);
-    }, [session, syncFromGcal]);
+    }, [user, syncFromGcal]);
 
     const scanInbox = useCallback(async () => {
         setIsScanning(true);
@@ -196,7 +200,7 @@ export const ApplicationsView: React.FC = () => {
         }
     }, [invalidateApps]);
 
-    if (status === "loading" && !hasEverAuthedRef.current) {
+    if (accountLoading && !hasEverResolvedRef.current) {
         return (
             <div className="w-full h-full flex items-center justify-center">
                 <Loader2 className="w-8 h-8 text-blue-500 animate-spin" />
@@ -288,17 +292,24 @@ export const ApplicationsView: React.FC = () => {
                 >
                     <div className="flex flex-col gap-3">
                         <div className="flex items-center gap-2.5 bg-black/20 px-3 py-2 border border-white/5 rounded-xl">
-                            {session?.user?.image ? (
-                                <img src={session.user.image} className="w-8 h-8 rounded-full border border-slate-700/50" alt="avatar" />
-                            ) : (
-                                <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
-                                    <Mail className="w-4 h-4 text-slate-400" />
-                                </div>
-                            )}
-                            <div className="flex flex-col min-w-0">
-                                <span className="text-sm font-semibold text-slate-200 truncate leading-tight">{session?.user?.name || "Connected User"}</span>
-                                <span className="text-xs text-slate-500 truncate leading-tight">{session?.user?.email}</span>
+                            <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center border border-slate-700/50">
+                                <Mail className="w-4 h-4 text-slate-400" />
                             </div>
+                            <div className="flex flex-col min-w-0 flex-1">
+                                <span className="text-sm font-semibold text-slate-200 truncate leading-tight">{user?.email ?? "Owner"}</span>
+                                <span className={`text-xs truncate leading-tight ${googleConnected ? "text-emerald-400" : "text-amber-400"}`}>
+                                    {googleConnected ? "Google connected" : "Google not connected"}
+                                </span>
+                            </div>
+                            {!googleConnected && (
+                                <button
+                                    onClick={() => signIn("google")}
+                                    className="shrink-0 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold text-blue-300 transition-all"
+                                    title="Reconnect Google to enable inbox scanning and calendar sync"
+                                >
+                                    Connect
+                                </button>
+                            )}
                         </div>
                         <div className="flex flex-row gap-2">
                             <button onClick={scanInbox} disabled={isScanning} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
@@ -320,49 +331,32 @@ export const ApplicationsView: React.FC = () => {
     return (
         <Scrollbar className="w-full h-full pb-8">
             <Section title="Applications Pipeline" description="Auto-syncs via Gmail & Pub/Sub API">
-                {!session ? (
-                    <div className="mt-8 flex flex-col items-center justify-center h-80 gap-5 p-12 bg-black/20 border border-white/5 rounded-3xl max-w-xl mx-auto text-center backdrop-blur-md">
-                        <div className="p-4 bg-blue-500/10 rounded-full">
-                            <Mail className="w-12 h-12 text-blue-400" />
-                        </div>
-                        <div>
-                            <h3 className="text-2xl font-bold bg-clip-text text-transparent bg-linear-to-r from-slate-100 to-slate-400">Connect to Pipeline</h3>
-                            <p className="text-sm text-slate-400 mt-2 leading-relaxed max-w-sm mx-auto">Authorize Google to enable live Pub/Sub polling. Incoming emails are instantly parsed via Gemini 3 Flash to update your kanban statuses seamlessly.</p>
-                        </div>
-                        <button
-                            onClick={() => signIn("google")}
-                            className="mt-2 flex items-center gap-2 px-8 py-3 bg-blue-600 hover:bg-blue-500 active:scale-95 text-white rounded-xl transition-all font-semibold shadow-xl shadow-blue-500/20 cursor-pointer"
-                        >
-                            Connect Workspace
-                        </button>
-                    </div>
-                ) : (
-                    <>
-                        {/* Track switch — flips the kanban + discovery cards between
-                            tracks. Interviews + Account Status below are shared. */}
-                        <div className="mt-4 flex items-center gap-2" role="tablist" aria-label="Application track">
-                            {TRACKS.map(t => {
-                                const isActive = t.id === activeTrack;
-                                const Icon = t.icon;
-                                return (
-                                    <button
-                                        key={t.id}
-                                        role="tab"
-                                        aria-selected={isActive}
-                                        onClick={() => setApplicationsTrack(t.id)}
-                                        className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${isActive ? t.activeClass : "bg-black/30 border-white/10 text-white/50 hover:text-white/80 hover:border-white/20"}`}
-                                    >
-                                        <Icon className="w-4 h-4" />
-                                        {t.label}
-                                    </button>
-                                );
-                            })}
-                        </div>
-                        <div className="mt-4">
-                            <CardGrid items={pipelineCards} columns={2} />
-                        </div>
-                    </>
-                )}
+                {/* No access wall: the owner is always authenticated past the edge.
+                    The track switch + pipeline render directly; Google connection
+                    state is surfaced (non-blocking) in the Account Status card. */}
+                {/* Track switch — flips the kanban + discovery cards between
+                    tracks. Interviews + Account Status below are shared. */}
+                <div className="mt-4 flex items-center gap-2" role="tablist" aria-label="Application track">
+                    {TRACKS.map(t => {
+                        const isActive = t.id === activeTrack;
+                        const Icon = t.icon;
+                        return (
+                            <button
+                                key={t.id}
+                                role="tab"
+                                aria-selected={isActive}
+                                onClick={() => setApplicationsTrack(t.id)}
+                                className={`flex items-center gap-2 px-4 py-2 rounded-xl border text-sm font-semibold transition-all cursor-pointer ${isActive ? t.activeClass : "bg-black/30 border-white/10 text-white/50 hover:text-white/80 hover:border-white/20"}`}
+                            >
+                                <Icon className="w-4 h-4" />
+                                {t.label}
+                            </button>
+                        );
+                    })}
+                </div>
+                <div className="mt-4">
+                    <CardGrid items={pipelineCards} columns={2} />
+                </div>
             </Section>
             <AddApplicationModal
                 open={isAdding}

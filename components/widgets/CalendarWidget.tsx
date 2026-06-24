@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useMemo } from "react";
 import { Trash2, Clock, Loader2, Link2 } from "lucide-react";
-import { useSession } from "next-auth/react";
+import { useAccount } from "@/hooks/useAccount";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api-client";
 import { useServerEvents } from "@/hooks/useServerEvents";
@@ -45,8 +45,8 @@ interface CalendarWidgetProps {
 }
 
 export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsAdding, isEditing = false }) => {
-    const { data: session } = useSession();
-    const userId = (session?.user as { id?: string } | undefined)?.id ?? null;
+    const { user } = useAccount();
+    const userId = user?.id ?? null;
     const queryClient = useQueryClient();
 
     const { data: eventsResponse, isLoading } = useQuery({

@@ -132,7 +132,12 @@ async function main(): Promise<void> {
         });
         otherWorkRoleId = otherWr.id;
 
+        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
+        // "the owner" via lib/owner.ts (not NextAuth), so pin OWNER_EMAIL + reset
+        // the memo to make `userId` the owner among the two scratch users.
         mockSessionUser = { id: userId, email: `sp-${tag}@example.invalid` };
+        process.env.OWNER_EMAIL = `sp-${tag}@example.invalid`;
+        require("@/lib/owner").__resetOwnerMemo();
 
         // ─── Test 1: WorkRole PATCH writes + reads scratchpad ─────────────
         {
