@@ -51,6 +51,85 @@ function resolveOrgName(modelName: string, parsedOrg: string): string {
     return '';
 }
 
+interface ParsedModelCell {
+    modelName: string;
+    orgName: string;
+    license: string;
+    /** Outer HTML of the org-logo <svg>, or null when the cell has none. */
+    svgHtml: string | null;
+}
+
+// Shared by the row parser and the logo harvester so both resolve the org
+// name identically — the harvester keys logo files by exactly the orgName
+// string the API payload carries.
+function parseModelCell($: cheerio.CheerioAPI, modelCell: cheerio.Cheerio<any>): ParsedModelCell {
+    // Model name: <a title> (linked rows) or <span title> (linkless rows).
+    const modelNameNode = modelCell.find('a[title], span[title]').first();
+    let modelName = modelNameNode.attr('title')?.trim() || modelNameNode.text().trim();
+
+    // "Org · License" subtitle span. The license is the part after the
+    // separator; the org half doubles as a fallback when the logo svg
+    // carries no <title> (image categories).
+    let subtitleOrg = '';
+    let license = '';
+    modelCell.find('span').each((_, el) => {
+        if (license) return;
+        const node = $(el);
+        if (node.attr('title') || node.find('span').length > 0) return; // leaf, non-name spans only
+        const text = node.text().trim();
+        const sep = text.indexOf('·');
+        if (sep === -1) return;
+        subtitleOrg = text.slice(0, sep).trim();
+        license = text.slice(sep + 1).trim();
+    });
+
+    // Fallback: first leaf span that isn't the subtitle. The raw cell
+    // text is no longer usable — it mashes org + name + subtitle.
+    if (!modelName) {
+        modelCell.find('span').each((_, el) => {
+            if (modelName) return;
+            const node = $(el);
+            if (node.find('span').length > 0) return;
+            const text = node.text().trim();
+            if (text && !text.includes('·')) modelName = text;
+        });
+    }
+
+    // Org name. NOTE (P1.3/OQ3b): the scraped <svg> markup is never shipped
+    // in the API payload — raw HTML from a third-party page injected via
+    // dangerouslySetInnerHTML was an XSS vector. The svg is exposed here
+    // only for the harvester, which sanitizes it into a static file served
+    // via <img> (see lib/ai/org-logos.ts).
+    const svgNode = modelCell.find('svg').first();
+    let orgName = svgNode.find('title').text() || subtitleOrg || 'Unknown';
+    orgName = resolveOrgName(modelName, orgName);
+
+    return {
+        modelName,
+        orgName,
+        license,
+        svgHtml: svgNode.length ? $.html(svgNode) : null,
+    };
+}
+
+/**
+ * Org name (exactly as parseLmarenaLeaderboard emits it) → raw svg outer
+ * HTML, first occurrence wins. Input to the logo harvester — the svgs are
+ * UNSANITIZED third-party markup at this point.
+ */
+export function extractOrgLogoSvgs(html: string): Map<string, string> {
+    const $ = cheerio.load(html);
+    const out = new Map<string, string>();
+    $('table').first().find('tbody tr').each((_, row) => {
+        const cells = $(row).find('td');
+        if (cells.length < 5) return;
+        const { orgName, svgHtml } = parseModelCell($, $(cells[2]));
+        if (!orgName || orgName === 'Unknown' || !svgHtml || out.has(orgName)) return;
+        out.set(orgName, svgHtml);
+    });
+    return out;
+}
+
 export function parseLmarenaLeaderboard(html: string, sourceUrl?: string): LeaderboardModel[] {
     const $ = cheerio.load(html);
 
@@ -68,49 +147,7 @@ export function parseLmarenaLeaderboard(html: string, sourceUrl?: string): Leade
         const rankText = $(cells[0]).text().trim();
         const rank = parseInt(rankText, 10);
 
-        const modelCell = $(cells[2]);
-
-        // Model name: <a title> (linked rows) or <span title> (linkless rows).
-        const modelNameNode = modelCell.find('a[title], span[title]').first();
-        let modelName = modelNameNode.attr('title')?.trim() || modelNameNode.text().trim();
-
-        // "Org · License" subtitle span. The license is the part after the
-        // separator; the org half doubles as a fallback when the logo svg
-        // carries no <title> (image categories).
-        let subtitleOrg = '';
-        let license = '';
-        modelCell.find('span').each((_, el) => {
-            if (license) return;
-            const node = $(el);
-            if (node.attr('title') || node.find('span').length > 0) return; // leaf, non-name spans only
-            const text = node.text().trim();
-            const sep = text.indexOf('·');
-            if (sep === -1) return;
-            subtitleOrg = text.slice(0, sep).trim();
-            license = text.slice(sep + 1).trim();
-        });
-
-        // Fallback: first leaf span that isn't the subtitle. The raw cell
-        // text is no longer usable — it mashes org + name + subtitle.
-        if (!modelName) {
-            modelCell.find('span').each((_, el) => {
-                if (modelName) return;
-                const node = $(el);
-                if (node.find('span').length > 0) return;
-                const text = node.text().trim();
-                if (text && !text.includes('·')) modelName = text;
-            });
-        }
-
-        // Extract organization name. NOTE (P1.3/OQ3b): we deliberately
-        // do NOT ship the scraped <svg> markup — raw HTML from a
-        // third-party page injected via dangerouslySetInnerHTML was an
-        // XSS vector. The card renders a local-logo/initials badge
-        // from orgName instead.
-        const svgNode = modelCell.find('svg').first();
-        let orgName = svgNode.find('title').text() || subtitleOrg || 'Unknown';
-
-        orgName = resolveOrgName(modelName, orgName);
+        const { modelName, orgName, license } = parseModelCell($, $(cells[2]));
 
         const scoreText = $(cells[3]).text().trim().replace(/,/g, '');
         const votesText = $(cells[4]).text().trim().replace(/,/g, '');

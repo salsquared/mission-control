@@ -53,6 +53,17 @@ const nextConfig: NextConfig = {
           { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
         ],
       },
+      {
+        // Org logos include runtime-harvested third-party svgs (sanitized by
+        // lib/ai/org-logos.ts, rendered via <img> where nothing executes).
+        // This CSP is the backstop for DIRECT navigation to a logo URL: an
+        // svg viewed as a top-level document could otherwise run scripts a
+        // sanitizer bug let through. `sandbox` + default-src 'none' inerts it.
+        source: '/logos/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: "default-src 'none'; style-src 'unsafe-inline'; sandbox" },
+        ],
+      },
     ];
   },
   experimental: {
@@ -89,6 +100,7 @@ const nextConfig: NextConfig = {
           '**/prisma/*.db-journal',
           '**/public/sw.js',
           '**/public/sw.js.map',
+          '**/public/logos/auto/**', // runtime-harvested org logos (lib/ai/org-logos.ts)
         ],
       };
     }

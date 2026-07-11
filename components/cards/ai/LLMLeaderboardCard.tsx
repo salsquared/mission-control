@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { Trophy, ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
 import { ReloadButton } from "../../ui/ReloadButton";
 import { Card } from "../../ui/Card";
@@ -8,14 +8,77 @@ import { Card } from "../../ui/Card";
 // Payload shape of /api/ai/llmleaderboard — the parser's output crossing the
 // JSON boundary. Type-only import, so cheerio never enters the client bundle.
 import type { LeaderboardModel } from "@/lib/ai/lmarena-leaderboard";
+import { orgSlug } from "@/lib/ai/org-slug";
 
 export type LLMModelInfo = LeaderboardModel;
 
 // P1.3 (OQ3b): org logos are local assets only — the API no longer ships
 // scraped SVG markup (it was injected via dangerouslySetInnerHTML, an XSS
-// vector). Drop curated files into public/logos/ and map them here;
-// anything unmapped falls back to an initials badge.
-const ORG_LOGOS: Record<string, string> = {};
+// vector). These are curated static files in public/logos/ (one-time
+// extracted + sanitized 2026-07-11: no scripts/handlers/external refs,
+// rendered via <img> so nothing executes). Keys must match the exact
+// orgName strings the API emits; anything unmapped falls back to an
+// initials badge.
+export const ORG_LOGOS: Record<string, string> = {
+    '01.AI': '/logos/01-ai.svg',
+    'Ai2': '/logos/ai2.svg',
+    'Alibaba': '/logos/alibaba.svg',
+    'Alibaba-ATH': '/logos/alibaba-ath.svg',
+    'Amazon': '/logos/amazon.svg',
+    'Ant Group': '/logos/ant-group.svg',
+    'Anthropic': '/logos/anthropic.svg',
+    'Arcee AI': '/logos/arcee-ai.svg',
+    'Baidu': '/logos/baidu.svg',
+    'Bytedance': '/logos/bytedance.svg',
+    'Cohere': '/logos/cohere.svg',
+    'DeepSeek': '/logos/deepseek.svg',
+    'Diffbot': '/logos/diffbot.svg',
+    'Flux': '/logos/flux.svg',
+    'Genmo AI': '/logos/genmo-ai.svg',
+    'Google': '/logos/google.svg',
+    'HiDream': '/logos/hidream.svg',
+    'IBM': '/logos/ibm.svg',
+    'Ideogram': '/logos/ideogram.svg',
+    'Inception AI': '/logos/inception-ai.svg',
+    'Kandinsky': '/logos/kandinsky.svg',
+    'KlingAI': '/logos/klingai.svg',
+    'Krea': '/logos/krea.svg',
+    'Kwai': '/logos/kwai.svg',
+    'Leonardo AI': '/logos/leonardo-ai.svg',
+    'Lightricks': '/logos/lightricks.svg',
+    'LLaVA': '/logos/llava.svg',
+    'Luma AI': '/logos/luma-ai.svg',
+    'Meituan': '/logos/meituan.svg',
+    'Meta': '/logos/meta.svg',
+    'Microsoft': '/logos/microsoft.svg',
+    'Microsoft AI': '/logos/microsoft-ai.svg',
+    'MiniMax': '/logos/minimax.svg',
+    'Mistral': '/logos/mistral.svg',
+    'Moonshot': '/logos/moonshot.svg',
+    'Nvidia': '/logos/nvidia.svg',
+    'OpenAI': '/logos/openai.svg',
+    'OpenBMB': '/logos/openbmb.svg',
+    'OpenGVLab': '/logos/opengvlab.svg',
+    'Perplexity AI': '/logos/perplexity-ai.svg',
+    'Pika': '/logos/pika.svg',
+    'Pixverse': '/logos/pixverse.svg',
+    'Poolside': '/logos/poolside.svg',
+    'Pruna': '/logos/pruna.svg',
+    'Recraft': '/logos/recraft.svg',
+    'Reve': '/logos/reve.svg',
+    'Runway': '/logos/runway.svg',
+    'SpaceXAI': '/logos/spacexai.svg',
+    'Stability': '/logos/stability.svg',
+    'Stepfun': '/logos/stepfun.svg',
+    'Tencent': '/logos/tencent.svg',
+    'Vidu': '/logos/vidu.svg',
+    'Xiaomi': '/logos/xiaomi.svg',
+    'Z.ai': '/logos/z-ai.svg',
+    // Aliases: the parser's name-based org fallback (no svg <title>, no
+    // subtitle) emits these spellings instead of the site's labels.
+    'Mistral AI': '/logos/mistral.svg',
+    'xAI': '/logos/spacexai.svg',
+};
 
 function orgInitials(orgName: string): string {
     return orgName
@@ -26,6 +89,40 @@ function orgInitials(orgName: string): string {
         .join('')
         .toUpperCase();
 }
+
+// Srcs that already 404'd this page load — rows remount on every sort
+// toggle, so without this each unmapped org would re-fire its 404 (and a
+// console warning) on every remount.
+const failedLogoSrcs = new Set<string>();
+
+// Curated map first, then the auto-harvested file the leaderboard route
+// writes for new orgs (lib/ai/org-logos.ts), then the initials badge when
+// the file doesn't exist (404 → onError).
+const OrgBadge: React.FC<{ orgName: string }> = ({ orgName }) => {
+    const src = ORG_LOGOS[orgName] ?? `/logos/auto/${orgSlug(orgName)}.svg`;
+    const [failed, setFailed] = useState(() => failedLogoSrcs.has(src));
+    useEffect(() => { setFailed(failedLogoSrcs.has(src)); }, [src]);
+
+    if (failed) {
+        return (
+            <span
+                className="shrink-0 w-5 h-5 flex items-center justify-center rounded bg-white/10 text-white/70 text-[10px] font-semibold leading-none"
+                title={orgName}
+            >
+                {orgInitials(orgName)}
+            </span>
+        );
+    }
+    return (
+        <img
+            src={src}
+            alt={orgName}
+            title={orgName}
+            className="shrink-0 w-5 h-5"
+            onError={() => { failedLogoSrcs.add(src); setFailed(true); }}
+        />
+    );
+};
 
 export interface LLMLeaderboardCategory {
     id: string;
@@ -140,23 +237,9 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                                 #{model.rank}
                             </span>
 
-                            {/* Org badge: local logo file when mapped, initials otherwise */}
+                            {/* Org badge: curated logo → auto-harvested logo → initials */}
                             {model.orgName && model.orgName !== 'Unknown' && (
-                                ORG_LOGOS[model.orgName] ? (
-                                    <img
-                                        src={ORG_LOGOS[model.orgName]}
-                                        alt={model.orgName}
-                                        title={model.orgName}
-                                        className="shrink-0 w-5 h-5"
-                                    />
-                                ) : (
-                                    <span
-                                        className="shrink-0 w-5 h-5 flex items-center justify-center rounded bg-white/10 text-white/70 text-[10px] font-semibold leading-none"
-                                        title={model.orgName}
-                                    >
-                                        {orgInitials(model.orgName)}
-                                    </span>
-                                )
+                                <OrgBadge orgName={model.orgName} />
                             )}
 
                             <div className="flex flex-col min-w-0 ml-1">

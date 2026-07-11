@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
 import { requireLocalOrSession } from '@/lib/auth-guards';
 import { parseLmarenaLeaderboard } from '@/lib/ai/lmarena-leaderboard';
+import { harvestOrgLogos } from '@/lib/ai/org-logos';
 
 export const revalidate = 3600; // Cache for 1 hour
 
@@ -20,6 +21,12 @@ export async function GET(req: NextRequest) {
         });
 
         const models = parseLmarenaLeaderboard(response.data, url);
+
+        // Fire-and-forget: sanitize + persist logo files for any org that
+        // doesn't have one yet (hourly-debounced per category, best-effort)
+        // so new companies get a real logo instead of the initials badge.
+        void harvestOrgLogos(response.data, { category });
+
         return NextResponse.json(models);
 
     } catch (error) {

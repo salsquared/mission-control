@@ -124,3 +124,8 @@ public/swe-worker-*.js
 /eval/output/
 /eval/results.json
 /eval/.promptfoo/
+
+# auto-harvested org logos for the LLM leaderboard card — written at runtime
+# by lib/ai/org-logos.ts when a new org appears on lmarena.ai; curated logos
+# in public/logos/*.svg stay tracked.
+/public/logos/auto/
