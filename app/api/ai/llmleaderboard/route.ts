@@ -1,33 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
-import * as cheerio from 'cheerio';
 import { requireLocalOrSession } from '@/lib/auth-guards';
+import { parseLmarenaLeaderboard } from '@/lib/ai/lmarena-leaderboard';
 
 export const revalidate = 3600; // Cache for 1 hour
-
-const orgMapping: Record<string, string> = {
-    'gemini': 'Google',
-    'grok': 'xAI',
-    'gpt': 'OpenAI',
-    'claude': 'Anthropic',
-    'llama': 'Meta',
-    'qwen': 'Alibaba',
-    'mistral': 'Mistral AI',
-    'dola': 'Bytedance',
-    'deepseek': 'DeepSeek',
-    'command': 'Cohere'
-};
-
-function resolveOrgName(modelName: string, parsedOrg: string): string {
-    if (parsedOrg && parsedOrg !== 'Unknown') return parsedOrg;
-    const lowerName = modelName.toLowerCase();
-    for (const [key, org] of Object.entries(orgMapping)) {
-        if (lowerName.includes(key)) {
-            return org;
-        }
-    }
-    return '';
-}
 
 export async function GET(req: NextRequest) {
     const guard = await requireLocalOrSession(req);
@@ -42,92 +18,9 @@ export async function GET(req: NextRequest) {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
             }
         });
-        const html = response.data;
-        const $ = cheerio.load(html);
 
-        // Find the first table body which contains the main overall leaderboard
-        const rows = $('table').first().find('tbody tr');
-        let allModels: any[] = [];
-
-        rows.each((i, row) => {
-            // Avoid parsing too many, just get the top 80 to return the top 50
-            if (i > 80) return;
-
-            const cells = $(row).find('td');
-            if (cells.length >= 5) {
-                const rankText = $(cells[0]).text().trim();
-                const rank = parseInt(rankText, 10);
-
-                // Format is usually: Rank, Trend, ModelName (with org span), Score (Elo), Votes
-                // Sometimes the model cell has the organization text in it, so we extract carefully
-                const modelNameNode = $(cells[2]).find('a[title]').first();
-                let modelName = modelNameNode.attr('title')?.trim();
-
-                // If the title span isn't explicitly there, grab the raw text
-                if (!modelName) {
-                    modelName = modelNameNode.text().trim();
-                }
-                if (!modelName) {
-                    modelName = $(cells[2]).text().trim();
-                }
-
-                // Extract organization name. NOTE (P1.3/OQ3b): we deliberately
-                // do NOT ship the scraped <svg> markup — raw HTML from a
-                // third-party page injected via dangerouslySetInnerHTML was an
-                // XSS vector. The card renders a local-logo/initials badge
-                // from orgName instead.
-                const svgNode = $(cells[2]).find('svg').first();
-                let orgName = svgNode.find('title').text() || 'Unknown';
-
-                orgName = resolveOrgName(modelName, orgName);
-
-                const scoreText = $(cells[3]).text().trim().replace(/,/g, '');
-                const votesText = $(cells[4]).text().trim().replace(/,/g, '');
-
-                const eloScore = parseInt(scoreText, 10);
-                const votes = parseInt(votesText, 10);
-
-                if (modelName && !isNaN(eloScore)) {
-                    // Extract just organization if we want, but it's hard to split perfectly without title span
-                    // We'll just stick to the name. We can fake or leave organization blank if need be.
-                    allModels.push({
-                        id: modelName,
-                        rank: isNaN(rank) ? 999 : rank,
-                        name: modelName,
-                        orgName: orgName,
-                        eloScore: eloScore,
-                        votes: votes
-                    });
-                }
-            }
-        });
-
-        // Dedupe by id. lmarena.ai's leaderboard page sometimes lists the
-        // same model in multiple stacked sub-leaderboards (overall +
-        // filtered views) inside the same <tbody> we scrape, which would
-        // otherwise produce duplicate React keys downstream. Keep the
-        // highest-Elo occurrence per id so the result is deterministic
-        // regardless of source ordering. Logs once per crawl when the
-        // page yields duplicates so future structural changes upstream
-        // are visible in the in-app log viewer.
-        const beforeDedupe = allModels.length;
-        const byId = new Map<string, any>();
-        for (const m of allModels) {
-            const prev = byId.get(m.id);
-            if (!prev || m.eloScore > prev.eloScore) byId.set(m.id, m);
-        }
-        allModels = Array.from(byId.values());
-        if (allModels.length < beforeDedupe) {
-            console.warn(`[LLM LEADERBOARD] deduped ${beforeDedupe - allModels.length} duplicate rows from ${url}`);
-        }
-
-        // Sort descending by ELO Score just to be safe
-        allModels.sort((a, b) => b.eloScore - a.eloScore);
-
-        // Take Top 50
-        allModels = allModels.slice(0, 50);
-
-        return NextResponse.json(allModels);
+        const models = parseLmarenaLeaderboard(response.data, url);
+        return NextResponse.json(models);
 
     } catch (error) {
         console.error("Failed to fetch LLM leaderboard from Arena:", error);

@@ -5,14 +5,11 @@ import { Trophy, ArrowUpDown, ArrowUp, ArrowDown, Info } from "lucide-react";
 import { ReloadButton } from "../../ui/ReloadButton";
 import { Card } from "../../ui/Card";
 
-export interface LLMModelInfo {
-    id: string;
-    rank: number;
-    name: string;
-    orgName?: string;
-    eloScore: number;
-    votes: number;
-}
+// Payload shape of /api/ai/llmleaderboard — the parser's output crossing the
+// JSON boundary. Type-only import, so cheerio never enters the client bundle.
+import type { LeaderboardModel } from "@/lib/ai/lmarena-leaderboard";
+
+export type LLMModelInfo = LeaderboardModel;
 
 // P1.3 (OQ3b): org logos are local assets only — the API no longer ships
 // scraped SVG markup (it was injected via dangerouslySetInnerHTML, an XSS
@@ -166,9 +163,9 @@ export const LLMLeaderboardCard: React.FC<LLMLeaderboardCardProps> = ({
                                 <span className="text-sm font-medium text-white truncate group-hover:text-indigo-400 transition-colors" title={model.name}>
                                     {model.name}
                                 </span>
-                                {model.orgName && model.orgName !== 'Unknown' && (
+                                {((model.orgName && model.orgName !== 'Unknown') || model.license) && (
                                     <span className="text-[10px] text-white/40 truncate uppercase tracking-wider font-semibold">
-                                        {model.orgName}
+                                        {[model.orgName !== 'Unknown' ? model.orgName : '', model.license].filter(Boolean).join(' · ')}
                                     </span>
                                 )}
                             </div>
