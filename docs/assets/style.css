@@ -321,6 +321,21 @@ ul, ol {
 :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) { list-style-type: upper-alpha; }
 li::marker { color: var(--blue); font-weight: 600; }
 
+/* ── Note — a de-emphasized aside; the quiet counterpart to .callout. Use when
+   a clarification shouldn't claim the visual weight of a boxed callout: as a
+   block (<p class="note">) for a trailing footnote, or inline (<span
+   class="note">) for a parenthetical such as a landed-on date. */
+.note { color: var(--text-muted); font-size: 0.92rem; }
+p.note { margin: 0.4rem 0 0; }
+
+/* ── Task list — a lightweight checked list for retrospectives and status
+   summaries whose items carry their own ☑ / ☐ glyph. The indexable markers
+   above would double up ("a. ☑ …"), so drop the marker and its indent.
+   NOT for live checklists — those use <details class="task"> with a real
+   <input type="checkbox">, which the design-doc archetype stubs. */
+ul.task-list { list-style: none; padding-left: 0; }
+ul.task-list > li { margin: 0.5rem 0; }
+
 /* ── Glossary — anchored term entries for dictionary / reference docs ─
    <dl class="glossary"> with one linkable <dt id="slug"> per term and a <dd>
    definition; close the <dd> with <span class="see"> for the canonical-home
