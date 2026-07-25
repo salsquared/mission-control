@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Glossary Template</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <!--
+    GLOSSARY STARTER. Copy this file to docs/glossary.html (or
+    docs/<subject>_glossary.html), rename, and fill it in. This is the
+    *archetype* template for a category dictionary — the project's canonical
+    vocabulary, and the thing other docs defer to when they disagree.
+
+    STRUCTURE (the rule — keep it):
+      "Reading this" callout → category ToC → one collapsible <details
+      class="section"> per category, each with a single named <h3> group
+      heading and a <dl class="glossary"> of anchored term entries.
+
+    ENTRY RULES:
+      · Every <dt> carries id="slug" so entries deep-link as glossary.html#slug.
+      · <dt> keeps EXACT casing — code identifiers are never uppercased, and
+        are wrapped in <code> so they keep PascalCase/snake_case.
+      · <dd> is a one-line definition, optionally one nuance sentence, closing
+        with <span class="see"> pointing at the canonical home.
+      · Alphabetical WITHIN a category; categories themselves are ordered by
+        whatever reads best (usually most-load-bearing first).
+
+    The <head>, footer, and <script> come along for free — leave them as-is.
+    For component markup (callouts, tables, code, Mermaid) see _template.html.
+  -->
+
+  <h4 class="kicker">‹project›</h4>
+  <h1>&lt;Subject&gt; Glossary</h1>
+  <p class="subtitle">The canonical, project-specific dictionary for &lt;subject&gt; — the first place to look when a term feels load-bearing, and the first place to update when new vocabulary lands. When another document conflicts with an entry here, fix the other document.</p>
+
+  <div class="callout"><strong>Reading this glossary.</strong>
+    <ul>
+      <li>Entries are grouped by <strong>category</strong>, alphabetical within each group.</li>
+      <li>Each entry is a <code>&lt;dt&gt;</code> term + <code>&lt;dd&gt;</code> one-line definition, optionally a nuance sentence, then a <code>&lt;span class="see"&gt;</code> pointer to the canonical home.</li>
+      <li>Backticked names like <code>RoundDispatcher</code> are code identifiers; bold prose names like <strong>Leader Node</strong> are higher-level actors. Casing matches where each term is defined.</li>
+      <li>Every term is anchored (<code>&lt;dt id="slug"&gt;</code>), so any entry is deep-linkable as <code>glossary.html#slug</code>.</li>
+    </ul>
+  </div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Categories</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#category-one">First category</a> — &lt;what this group covers&gt;</li>
+      <li><a href="#category-two">Second category</a> — &lt;what this group covers&gt;</li>
+    </ol>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="category-one">First category</h2></summary>
+    <div class="section-body">
+      <h3>&lt;group name&gt;</h3>
+      <p>One or two sentences framing the category and pointing at the canonical home for full definitions (this glossary is the quick reference).</p>
+      <dl class="glossary">
+        <dt id="first-term">First Term</dt>
+        <dd>One-line definition. An optional second sentence for nuance. <span class="see"><strong>See:</strong> spec §N; <code>crates/foo</code>.</span></dd>
+
+        <dt id="second-term"><code>SecondTerm</code></dt>
+        <dd>A code-identifier term — wrap it in <code>&lt;code&gt;</code> so it keeps PascalCase. <span class="see"><strong>See:</strong> <code>crates/foo/src/bar.rs</code>.</span></dd>
+      </dl>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="category-two">Second category</h2></summary>
+    <div class="section-body">
+      <h3>&lt;group name&gt;</h3>
+      <dl class="glossary">
+        <dt id="third-term">Third Term</dt>
+        <dd>Definition. Cross-link a sibling term inline like <a href="#first-term">First Term</a>. <span class="see"><strong>See:</strong> spec §N.</span></dd>
+      </dl>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  // Syntax-highlight every <pre><code> (auto-detects, or honors a
+  // class="language-xxx" hint). Mermaid blocks are <pre class="mermaid"> with
+  // no inner <code>, so hljs skips them. Highlighting needs no layout, so it's
+  // fine to run on load even for code inside collapsed sections.
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,   // sections start collapsed; render lazily on open (below)
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  // Mermaid can't measure a diagram inside a collapsed (display:none) <details>,
+  // so render each only once its section is visible. mermaid.run() tags nodes
+  // with data-processed, and the :not() guard prevents re-processing.
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');     // bounded viewport (CSS) before measuring
+    svgPanZoom(svg, {
+      controlIcons: true,               // built-in zoom in / out / reset buttons
+      fit: true, center: true,          // show the whole diagram first
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });       // await so the SVG exists before pan/zoom
+    nodes.forEach(attachPanZoom);
+  }
+  // Render any diagrams already visible at load (sections that start open).
+  renderVisibleMermaid(document);
+  // …and render on first expand of each collapsible section.
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  // Keep the copyright year current without editing every doc.
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

@@ -321,6 +321,29 @@ ul, ol {
 :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) { list-style-type: upper-alpha; }
 li::marker { color: var(--blue); font-weight: 600; }
 
+/* ── Glossary — anchored term entries for dictionary / reference docs ─
+   <dl class="glossary"> with one linkable <dt id="slug"> per term and a <dd>
+   definition; close the <dd> with <span class="see"> for the canonical-home
+   pointer. Unlike headings, <dt> is NOT uppercased, so code identifiers
+   (RoundDispatcher, /iris/geotiff/1.0.0) keep their exact casing. Terms sit a
+   rung below the section <h3>: teal, like h4. */
+
+dl.glossary { margin: 1.25rem 0 0; }
+dl.glossary dt {
+  font-family: "Sora", ui-sans-serif, system-ui, sans-serif;
+  font-weight: 700;
+  color: var(--teal);
+  letter-spacing: 0.01em;
+  margin-top: 1.2rem;
+  scroll-margin-top: 1.5rem;   /* offset anchor jumps from the viewport top */
+}
+dl.glossary dt:first-of-type { margin-top: 0; }
+/* code/math inside a term keeps its own treatment (mono pill), not the dt color */
+dl.glossary dt code { color: var(--blue-light); font-weight: 700; }
+dl.glossary dd { margin: 0.3rem 0 0; color: var(--text); }
+dl.glossary dd + dt { margin-top: 1.4rem; }
+dl.glossary .see { color: var(--text-muted); }
+
 hr {
   border: none;
   border-top: 1px solid var(--border);

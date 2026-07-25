@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Research Doc Template</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <!--
+    RESEARCH-DOC STARTER. Copy this file to docs/<topic>.html, rename, and fill
+    each section. This is the *archetype* template for surveying a problem space
+    — what is known, what is unknown, what has not been looked at. It is NOT a
+    design doc: it plans no build, sequences no work, and commits to nothing.
+
+    Pick by DELIVERABLE:
+      · a decision you will build from        → _template.design-doc.html
+      · a map of the terrain + open questions → this file
+      · reference / runbook / glossary        → _template.html
+
+    A research doc GRADUATES into a design doc once its Open Questions resolve.
+    Don't try to make one file do both jobs — the section orders fight.
+
+    The section ORDER below is the rule — keep it. Delete the placeholder prose,
+    not the structure. Sections marked OPTIONAL may be dropped when they don't
+    apply; the six REQUIRED ones always stay.
+  -->
+
+  <h4 class="kicker">‹project›</h4>
+  <h1>Topic Name</h1>
+  <p class="subtitle"><strong>Research &amp; exploration doc</strong> — not an implementation plan. One sentence: what question this investigates and why it matters now. <em>(Research-doc starter — replace this subtitle, keep the section order. Conventions are in the callout in §1.)</em></p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#findings">Findings at a glance</a></li>
+      <li><a href="#motivation">Motivation &amp; scope</a></li>
+      <li><a href="#constraints">Constraints</a> <em>(optional)</em></li>
+      <li><a href="#prior-art">Prior art</a></li>
+      <li><a href="#candidates">The candidate space</a> <em>(optional)</em></li>
+      <li><a href="#worked">Worked track</a> <em>(optional)</em></li>
+      <li><a href="#integration">Integration surface</a> <em>(optional)</em></li>
+      <li><a href="#adversarial">Adversarial surface</a> <em>(optional)</em></li>
+      <li><a href="#open-questions">Open questions &amp; what would settle them</a></li>
+      <li><a href="#confidence">Confidence ledger &amp; gaps</a></li>
+      <li><a href="#sources">Sources</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="findings">Findings at a glance</h2></summary>
+    <div class="section-body">
+
+      <div class="callout"><strong>Research-doc convention (delete before publishing).</strong> Six sections are <strong>required</strong>: <em>Findings at a glance</em> (first) → <em>Motivation &amp; scope</em> → <em>Prior art</em> → <em>Open questions</em> → <em>Confidence ledger &amp; gaps</em> → <em>Sources</em> (last). The tail order is fixed. The four middle sections are optional — include them when they apply. Two rules distinguish this archetype from a design doc: <strong>(1)</strong> every <code>OQ</code> carries a <em>Settled by:</em> line naming the concrete evidence that would resolve it — this is the research analogue of a task list, and it is what stops open questions becoming permanent debate; <strong>(2)</strong> the <strong>Confidence ledger</strong> separates cited findings from the author's own inference, so a later reader never inherits a guess as established fact. There is <strong>no Tasks section and no Rollback section</strong> — nothing is being sequenced and nothing is deployed. If you find yourself wanting either, the doc has graduated and wants the design-doc template.</div>
+
+      <h3>Summary</h3>
+      <p>Five to eight bullets, each a <em>finding</em> rather than a topic — state the conclusion, not the subject area. Research docs get skimmed; anything a reader must know before forming an opinion belongs here, not on page four. Cross-reference the section that argues each one.</p>
+      <ul>
+        <li><strong>&lt;The most surprising or most load-bearing finding&gt;.</strong> &lt;One or two sentences of substance — the claim and why it matters&gt; (§n).</li>
+        <li><strong>&lt;A finding that inverts an intuitive framing&gt;.</strong> &lt;What people assume, and what is actually true&gt; (§n).</li>
+        <li><strong>&lt;A hard limit the reader must internalize&gt;.</strong> &lt;What it forecloses&gt; (§n).</li>
+      </ul>
+
+      <div class="callout"><strong>Epistemic status.</strong> State plainly how well-grounded the doc is: roughly how many sources back it, which sections are survey vs. original reasoning, and <strong>a pointer to §10.1 for the claims that are inference rather than published finding</strong>. A reader who stops after §1 should still know how much to trust it.</div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="motivation">Motivation &amp; scope</h2></summary>
+    <div class="section-body">
+
+      <h3>The question, and why it's live</h3>
+      <p>What gap prompted this — grounded in the current system or the current state of the art, not vibes. What does not working on it cost? A research doc earns its keep by making a fuzzy question precise, so spend the words here getting the question right.</p>
+
+      <h3>Scope boundaries</h3>
+      <p>Unlike a design doc's goals/non-goals, this is not a delivery commitment — it is a map legend. Say what the doc covers, what it deliberately excludes, and — critically — <strong>whether it is one track of a larger program</strong>. If so, banner it:</p>
+      <div class="callout warn"><strong>&lt;X&gt; is one surveyed track, not a recommendation.</strong> &lt;Name the larger program&gt;. This doc establishes shared framing (§n), surveys the literature (§n), and works <strong>&lt;Track A&gt;</strong> (§n) as the first candidate — because that is where the review started, not because it won an evaluation. Every other option in §n is unevaluated.</div>
+      <ul>
+        <li><strong>Out of scope:</strong> &lt;the thing a reader will expect and not find&gt; — &lt;why&gt;.</li>
+        <li><strong>Not examined at all:</strong> &lt;a whole branch nobody has looked at&gt; — see §10.2.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="constraints">Constraints <em>(optional — drop if the problem has no hard limits)</em></h2></summary>
+    <div class="section-body">
+      <h3>What bounds any approach</h3>
+      <p>Physical, structural or economic limits that hold <em>regardless of which approach wins</em>. Stating these before the survey is deliberate: they determine which parts of the literature are even applicable, and they often kill options faster than any comparison. One <code>&lt;h3&gt;</code> per constraint.</p>
+      <p>Use a diagram when a constraint is about structure or flow:</p>
+      <pre class="mermaid">
+flowchart LR
+  a["upstream thing"] -->|"what they share"| b["bridging thing"]
+  b -->|"what they share"| c["downstream thing"]
+      </pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="prior-art">Prior art</h2></summary>
+    <div class="section-body">
+      <p>The main body of a research doc, and the section most often skipped by accident — if the doc jumps from motivation to a proposal, it is a design doc wearing a disguise.</p>
+
+      <h3>&lt;Cluster one&gt;</h3>
+      <p>Group the literature by <em>approach family</em>, not chronology. For each: what it does, where it is deployed, and its known limits. <strong>Link every claim to §11</strong> — an unlinked assertion in a research doc is indistinguishable from an opinion. Note explicitly where the field's goals diverge from yours: published work optimizes for its own metrics, which are rarely the ones that matter to your use.</p>
+
+      <h3>&lt;Cluster two&gt;</h3>
+      <p>Tables work well for comparing several methods on shared axes.</p>
+      <table>
+        <thead><tr><th>Approach</th><th>Axis 1</th><th>Axis 2</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>&lt;method&gt;</td><td>&lt;rating&gt;</td><td>&lt;rating&gt;</td><td>&lt;the one-line takeaway&gt;</td></tr>
+        </tbody>
+      </table>
+
+      <h3>What remains unsolved by anyone</h3>
+      <p><strong>Keep this subsection.</strong> Distinct from §9, which lists <em>your</em> decisions — these are open problems in the field. It is the highest-value part of a survey: it tells the reader which of their questions have no answer to find, and it is where a genuine contribution would sit. Flag any requirement of yours that sits <em>outside</em> the literature entirely — that is a research gap, not a lookup you haven't done yet.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="candidates">The candidate space <em>(optional — for "which of these" questions)</em></h2></summary>
+    <div class="section-body">
+      <h3>The axes that matter</h3>
+      <p>Derive the evaluation axes <em>from your use case</em> before listing options, and say where they diverge from the field's usual axes. Choosing axes is the real analytical work; the table below is bookkeeping.</p>
+
+      <h3>Candidates</h3>
+      <div class="callout warn"><strong>Mark unevaluated rows as unevaluated.</strong> A comparison table reads as a conclusion even when it is an agenda. If only one option has been worked through, say so in the caption and in §1.</div>
+      <table>
+        <thead><tr><th>Option</th><th>Axis 1</th><th>Axis 2</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>&lt;option&gt;</td><td>&lt;rating&gt;</td><td>&lt;rating&gt;</td><td>&lt;status: worked / unevaluated&gt;</td></tr>
+        </tbody>
+      </table>
+
+      <h3>The finding</h3>
+      <p>What the comparison actually shows — usually one sentence that reframes the question. Feed it directly into an <code>OQ</code>.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="worked">Worked track <em>(optional — one option explored in depth)</em></h2></summary>
+    <div class="section-body">
+      <h3>Why this one</h3>
+      <p>Be honest about selection: "where the review started" is a legitimate reason, and pretending it was chosen on merit is how a survey silently becomes a commitment. Restate that this is one instantiation establishing the method.</p>
+
+      <h3>&lt;The mechanism&gt;</h3>
+      <p>Work it end-to-end so the method is concrete and the difficulties are visible. Diagram the pipeline.</p>
+      <pre class="mermaid">
+flowchart TB
+  input["input"] --> step["transform"]
+  step --> out(["result"])
+      </pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="integration">Integration surface <em>(optional — when it feeds an existing system)</em></h2></summary>
+    <div class="section-body">
+      <h3>Where this could attach</h3>
+      <p>Exploratory, ordered by risk to the existing system — <strong>not</strong> a staging commitment (that is the design doc's job). A table of options with a risk column, and any structural constraint that applies to all of them.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="adversarial">Adversarial surface <em>(optional — when trust or incentives matter)</em></h2></summary>
+    <div class="section-body">
+      <h3>Attack surface</h3>
+      <p>What a motivated adversary does if this ships, and what counters it. Table: attack · mechanism · countermeasure.</p>
+
+      <h3>Non-adversarial failure</h3>
+      <p><strong>Keep these separate from attacks.</strong> Benign causes — measurement error, legitimate change, drift, misconfiguration — are usually more likely than adversaries and are systematically under-weighted when mixed into the same table.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open questions &amp; what would settle them</h2></summary>
+    <div class="section-body">
+      <h3>Decision forks</h3>
+      <p>Same <code>OQ</code> discipline as the design doc — <strong>one OQ = one decision</strong>, lettered mutually-exclusive options, each self-contained (name the approach, the concrete change, the effect, then <em>Pros:</em> / <em>Cons:</em>), and a trailing <em>Lean:</em> naming the pick <strong>by letter first</strong> with at least one sentence weighing the trade-offs. Split bundled sub-decisions into separate OQs. Deciding an OQ <strong>appends, never replaces</strong>: keep the options list, swap <em>Lean:</em> for <strong>✓ Decided.</strong>, flip the banner to <code>callout tip</code>.</p>
+      <div class="callout tip"><strong>The research-doc addition: every OQ ends with <em>Settled by:</em></strong> — the concrete evidence, measurement or lookup that would resolve it, stated specifically enough to act on. "Benchmark it" is not a <em>Settled by</em>; "reconstruct one capture twice with different seeds and compare hash stability of the derived artifact" is. This replaces the design doc's Tasks section, and it is the single highest-value habit in the archetype: it converts arguments into experiments, and it surfaces which questions are <strong>cheap lookups masquerading as decisions</strong> — those should always be resolved first.</div>
+
+      <div class="callout"><strong>OQ1 — &lt;the gating fork&gt;?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>&lt;name the approach&gt;.</strong> &lt;The concrete change and its effect&gt;. <em>Pros:</em> &lt;what it buys&gt;. <em>Cons:</em> &lt;the cost or risk&gt;.</li>
+          <li><strong>(b)</strong> <strong>&lt;the alternative&gt;.</strong> &lt;Concrete change + effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
+        </ul>
+        <p><em>Lean:</em> <strong>(b)</strong> — &lt;what picking it means&gt;, because &lt;one sentence weighing the trade-offs above&gt;.</p>
+        <p><em>Settled by:</em> &lt;the specific experiment, measurement or document lookup that resolves this, and roughly what it costs&gt;. <em>Status:</em> open.</p>
+      </div>
+
+      <div class="callout"><strong>OQ2 — &lt;a fork that is really a lookup&gt;?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>&lt;approach A&gt;.</strong> &lt;Concrete change + effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
+          <li><strong>(b)</strong> <strong>&lt;approach B&gt;.</strong> &lt;Concrete change + effect&gt;. <em>Pros:</em> &lt;…&gt;. <em>Cons:</em> &lt;…&gt;.</li>
+        </ul>
+        <p><em>Lean:</em> <strong>(a)</strong> — &lt;reason&gt;.</p>
+        <p><em>Settled by:</em> &lt;the lookup&gt; — <strong>blocked on a factual check, not a decision; do this before anything else in the doc</strong>. <em>Status:</em> open.</p>
+      </div>
+
+      <h3>Resolution order</h3>
+      <p>The forks are rarely independent. A DAG showing which gate which, with the serial bottleneck named. Edges read "must resolve before". Flag any node that is a cheap lookup so it gets scheduled first.</p>
+      <pre class="mermaid">
+flowchart LR
+  lookup["OQ2 - cheap lookup<br/>do first"] --> oq1["OQ1<br/>GATING"]
+  oq1 --> done(["design doc authorable"])
+      </pre>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="confidence">Confidence ledger &amp; gaps</h2></summary>
+    <div class="section-body">
+      <h3>Verified vs. inferred</h3>
+      <div class="callout warn"><strong>This section is what makes a research doc trustworthy six months later.</strong> Most of the doc is grounded in §11. List the exceptions — claims that are your reasoning rather than a published finding — <strong>especially the load-bearing ones</strong>. Burying an uncited claim inside a confident paragraph is how a guess becomes institutional fact. Where an inferred claim underpins an <code>OQ</code>, say so and point at the experiment that tests it.</div>
+      <table>
+        <thead><tr><th>Claim</th><th>Where it matters</th><th>Basis</th><th>Confidence</th></tr></thead>
+        <tbody>
+          <tr><td>&lt;the load-bearing uncited claim&gt;</td><td>§n, <code>OQ&lt;n&gt;</code></td><td><strong>No source states this directly.</strong> Circumstantial: &lt;what supports it indirectly&gt;</td><td>High but uncited — &lt;which experiment tests it&gt;</td></tr>
+          <tr><td>&lt;a claim from a weak source&gt;</td><td>§n</td><td>Secondary reporting, not primary documents</td><td><strong>Low — verify before relying on it</strong></td></tr>
+        </tbody>
+      </table>
+
+      <h3>Not examined</h3>
+      <p>Explicit blind spots, at a level <em>above</em> the questions the doc does address. Writing this list honestly is often the most valuable ten minutes of the whole exercise — it routinely surfaces an unexamined branch that outranks everything the doc spent its effort on. Close by naming which gap most likely changes the shape of the work rather than its details.</p>
+      <ul>
+        <li><strong>&lt;A whole approach nobody considered&gt;.</strong> &lt;Why it might matter, and what it would change&gt;.</li>
+        <li><strong>Cost envelope.</strong> &lt;Whether feasibility was costed or merely asserted&gt;.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="sources">Sources</h2></summary>
+    <div class="section-body">
+      <h3>&lt;Group by topic, not alphabetically&gt;</h3>
+      <p>Mandatory and always last. Group so a reader chasing one thread finds its cluster. Annotate anything non-obvious with what it is <em>for</em> — a bare citation makes the reader open it to find out why it's here.</p>
+      <ul>
+        <li><a href="https://example.com">Author, Title</a>, venue &amp; year — &lt;the one thing this is cited for&gt;</li>
+      </ul>
+
+      <h3>&lt;Second group&gt;</h3>
+      <ul>
+        <li><a href="https://example.com">Title</a> · <a href="https://example.com">Title</a> — &lt;grouped when several support one point&gt;</li>
+      </ul>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  // Syntax-highlight every <pre><code> (auto-detects, or honors a
+  // class="language-xxx" hint). Mermaid blocks are <pre class="mermaid"> with
+  // no inner <code>, so hljs skips them. Highlighting needs no layout, so it's
+  // fine to run on load even for code inside collapsed sections.
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,   // sections start collapsed; render lazily on open (below)
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  // Mermaid can't measure a diagram inside a collapsed (display:none) <details>,
+  // so render each only once its section is visible. mermaid.run() tags nodes
+  // with data-processed, and the :not() guard prevents re-processing.
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');     // bounded viewport (CSS) before measuring
+    svgPanZoom(svg, {
+      controlIcons: true,               // built-in zoom in / out / reset buttons
+      fit: true, center: true,          // show the whole diagram first
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });       // await so the SVG exists before pan/zoom
+    nodes.forEach(attachPanZoom);
+  }
+  // Render any diagrams already visible at load (sections that start open).
+  renderVisibleMermaid(document);
+  // …and render on first expand of each collapsible section.
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  // Keep the copyright year current without editing every doc.
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
