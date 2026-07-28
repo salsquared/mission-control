@@ -464,7 +464,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
             <td><strong>The loopback bind takes prod offline.</strong> <code>cloudflared</code> runs token-based with no local config, so the tunnel's ingress service URL is only visible in the Cloudflare dashboard. If a public hostname targets a non-loopback address, binding to <code>127.0.0.1</code> breaks the tunnel.</td>
             <td>low</td>
             <td>prod unreachable until reverted</td>
-            <td>Encoded as a <strong>blocking dependency</strong>: task P0.2 is a manual dashboard check (Zero Trust → Networks → Tunnels → Public Hostnames) that gates P4.1. Rollback is a one-line <code>package.json</code> revert plus <code>pm2 restart</code>.</td>
+            <td><strong>No longer live — P0.2 answered 2026-07-28.</strong> The tunnel targets loopback on both hostnames (<code>mc → localhost:3101</code>, <code>mc-dev → localhost:4101</code>), so the bind cannot orphan the tunnel. Rollback remains a one-line <code>package.json</code> revert plus <code>pm2 restart</code>.</td>
           </tr>
           <tr>
             <td>R4c</td>
@@ -719,7 +719,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
           <span class="task-title">Phase 0 — Prerequisites (config + manual checks, no application code)</span>
         </summary>
         <div class="task-body">
-          <p>Serial and cheap. P0.1 gates every code phase; P0.2 gates P4.1 only. Both must be done by a human with dashboard access — they are not delegable to a build agent.</p>
+          <p>Serial and cheap. P0.1 gates every code phase and must be done by a human (it edits the untracked <code>.env</code> and restarts PM2). <strong>P0.2 is already answered</strong> (2026-07-28, see below) and needs no action; P0.3 is the remaining human task.</p>
 
           <details class="task">
             <summary>
@@ -1071,7 +1071,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Layer 1 — remove the LAN route to the origin</span></summary>
             <div class="task-body">
-              <p>Scope: <code>package.json</code>, <code>~/.config/caddy/Caddyfile</code>, <code>launch-mc.sh</code>. <em>Depends on</em> <strong>P0.2</strong> (blocking manual check). <em>Parallel-safe</em> with all of P1-P3.</p>
+              <p>Scope: <code>package.json</code>, <code>~/.config/caddy/Caddyfile</code>, <code>launch-mc.sh</code>. <em>Depended on</em> <strong>P0.2</strong>, which is <strong>answered — this task is unblocked</strong>. <em>Parallel-safe</em> with all of P1-P3.</p>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P4.1.1</span><span class="task-title">Bind prod to loopback</span></summary>
                 <div class="task-body"><p><code>next start -p 3101 -H 127.0.0.1</code> in <code>package.json:8</code>. Confirm PM2's <code>args: "run start -- -p 3101"</code> still composes (the <code>--</code> passthrough duplicates <code>-p</code>; harmless, but verify).</p></div>
@@ -1198,7 +1198,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 flowchart LR
   P01["P0.1 OWNER_EMAIL<br/>serial prereq"] --> P11["P1.1 schema + migration"]
   P01 --> P12["P1.2 lib/viewer.ts<br/>MOST CONSTRAINED"]
-  P02["P0.2 cloudflared origin-URL<br/>dashboard check — manual"] --> P41["P4.1 loopback bind<br/>+ retire mc.local vhost"]
+  P02["P0.2 cloudflared origin-URL<br/>ANSWERED 2026-07-28 — both loopback"] -.->|"no longer blocking"| P41["P4.1 loopback bind<br/>+ retire mc.local vhost"]
   P12 --> P13["P1.3 guards + requireOwner"]
   P11 --> P13
   P13 --> P14["P1.4 foundation smokes"]
@@ -1246,7 +1246,7 @@ flowchart LR
 
       <p><strong>Rounds.</strong> A round is a dependency-barrier batch dispatched at once.</p>
       <ul>
-        <li><strong>Round 0 (human, no agents):</strong> P0.1 · P0.2 · P0.3 — all three parallel. P0.1 gates everything; P0.2 gates only P4.1.</li>
+        <li><strong>Round 0 (human, no agents):</strong> P0.1 · P0.3 in parallel — <strong>P0.2 is already answered</strong> (2026-07-28) and needs no work. P0.1 gates everything.</li>
         <li><strong>Round 1:</strong> P1.1 ∥ P1.2 ∥ P4.1 — three agents, fully disjoint files (schema / new module / config + shell).</li>
         <li><strong>Round 2:</strong> P1.3 ∥ P4.2 — P4.2 can start as soon as P1.2 lands; P1.3 needs both P1.1 and P1.2.</li>
         <li><strong>Round 3:</strong> P1.4 ∥ P2.4 ∥ P3.1 — P2.4 is the long pole here (68 call sites); the other two are small.</li>
@@ -1258,7 +1258,7 @@ flowchart LR
       <ul>
         <li><strong><code>P1.2</code> (<code>lib/viewer.ts</code>) is the most-constrained node.</strong> Everything downstream blocks on it, and it is the file where one copied memo is a complete authorization bypass (R2). Schedule it first, give it the most review, and do not batch it with unrelated work.</li>
         <li><strong><code>P2.4</code> (SSE) is the longest single task and a barrier.</strong> Its 68 <code>tsc</code>-enumerated call sites are mechanical but wide; starting it the moment P1.3 lands is what keeps Round 4's five-way fan-out from slipping.</li>
-        <li><strong><code>P0.2</code> is the sneaky one</strong> — a two-minute manual dashboard check that, if deferred, blocks P4.1 and therefore P5.2. Do it in Round 0 with the others, not "when we get to Phase 4."</li>
+        <li><strong><code>P0.2</code> was the sneaky one</strong> — a manual dashboard check that, if deferred, would have blocked P4.1 and therefore P5.2. It was <strong>answered as a side effect of the 2026-07-28 hostname migration</strong> (which had to read the same tunnel configuration to republish the routes), so <code>P0.1</code> is now the only Round-0 task on the critical path.</li>
       </ul>
     </div>
   </details>
