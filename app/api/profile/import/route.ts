@@ -3,6 +3,7 @@ import path from "node:path";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
+import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
 import { broadcastEvent } from "@/lib/events";
 import { extractText } from "@/lib/profile/extract";
 import { extractProfileFromText } from "@/lib/profile/import-llm";
@@ -72,6 +73,15 @@ export async function POST(req: NextRequest) {
             return NextResponse.json({ error: `${f.name} is ${(f.size / 1024 / 1024).toFixed(1)} MB — limit is ${MAX_BYTES_PER_FILE / 1024 / 1024} MB.`, stage: "input" }, { status: 400 });
         }
     }
+
+    // P2.5.2 — per-user daily Gemini credit (lib/ai/quota.ts). Owner exempt.
+    // Placed after the rate limiter and the four input rejections above so a
+    // 400 never burns a credit, and before the extract → analyze → synthesize
+    // chain, which is the single most Gemini-expensive route in the app (N
+    // calls per file). One credit still covers the whole batch — the design's
+    // deliberate request-not-call imprecision (§2.9), bounded here by MAX_FILES.
+    const credit = await consumeAiCredit(userId, guard.session.user.role);
+    if (!credit.ok) return aiQuotaExceededResponse(credit);
 
     // M7.6.2 — every file in this multipart call shares one importBatchId so
     // a UI can later show "the three resumes I uploaded together on date X".
@@ -215,7 +225,7 @@ export async function POST(req: NextRequest) {
             await createEducation(userId, c);
         }
 
-        broadcastEvent({ model: 'Profile', action: 'upsert', id: existing.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Profile', action: 'upsert', id: existing.id, userId, timestamp: Date.now() });
 
         return NextResponse.json({
             success: true,

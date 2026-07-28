@@ -27,6 +27,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
+import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
 import { draftTagline } from "@/lib/profile/tagline-draft";
 import { AIError } from "@/lib/ai/gemini";
 
@@ -64,6 +65,12 @@ export async function POST(_req: NextRequest) {
             { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
         );
     }
+
+    // P2.5.2 — per-user daily Gemini credit (lib/ai/quota.ts). Owner exempt.
+    // AFTER the rate limiter (never burn a credit on a request the limiter is
+    // about to reject) and before draftTagline's Gemini call.
+    const credit = await consumeAiCredit(userId, guard.session.user.role);
+    if (!credit.ok) return aiQuotaExceededResponse(credit);
 
     try {
         const result = await draftTagline({ userId });

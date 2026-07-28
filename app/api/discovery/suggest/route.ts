@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
+import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
 import { cachedValue } from "@/lib/cache";
 import { COMPANY_DIRECTORY, DIRECTORY_TAGS, type DirectoryTag } from "@/lib/company-directory";
 import { suggestCompanies, type SuggestResult } from "@/lib/discovery/suggest";
@@ -63,6 +64,19 @@ export async function POST(req: NextRequest) {
         );
     }
     const { topic, additionalExclude } = parsed.data;
+
+    // P2.5.2 — per-user daily Gemini credit (lib/ai/quota.ts). Owner exempt.
+    // AFTER body validation so a 400 never burns a credit, before the
+    // suggestCompanies Gemini call below.
+    //
+    // Charged per invocation even when the 6h cachedValue below serves a hit —
+    // the design's deliberate imprecision (it counts route invocations, not
+    // Gemini calls, §2.9). Moving the check inside the cache's compute closure
+    // would be more accurate and would mean the refusal has to travel out as a
+    // thrown error; not worth it to save a crew member a credit on a repeat of
+    // their own identical query.
+    const credit = await consumeAiCredit(userId, guard.session.user.role);
+    if (!credit.ok) return aiQuotaExceededResponse(credit);
 
     // Build the exclude list — three sources, deduped case-insensitively:
     //   1. COMPANY_DIRECTORY entries whose tag matches the topic (if topic is

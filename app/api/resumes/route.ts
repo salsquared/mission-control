@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
+import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { parsePosting, type ParsedPosting } from "@/lib/resumes/posting";
 import { getCanonRow, getCanonSelection, nextCanonVersion, finalizeCanonGeneration } from "@/lib/repositories/canons";
@@ -541,11 +542,11 @@ async function generateCanonManualResume(args: {
         }
 
         if (resumeId) {
-            broadcastEvent({ model: "GeneratedResume", action: "upsert", id: resumeId, timestamp: Date.now() });
+            broadcastEvent({ model: "GeneratedResume", action: "upsert", id: resumeId, userId, timestamp: Date.now() });
             try {
                 const entityIds = [...new Set(flat.map((s) => s.sourceId))];
                 await finalizeCanonGeneration(canon.id, resumeId, entityIds);
-                broadcastEvent({ model: "Canon", action: "upsert", id: canon.id, timestamp: Date.now() });
+                broadcastEvent({ model: "Canon", action: "upsert", id: canon.id, userId, timestamp: Date.now() });
             } catch (e) {
                 console.warn("[resume canon-manual] canon finalize failed:", e);
             }
@@ -614,6 +615,25 @@ export async function POST(req: NextRequest) {
             { error: `Too many ${noun} — try again in ${rl.retryAfterSec}s`, stage: "rate-limit" },
             { status: 429, headers: { "Retry-After": String(rl.retryAfterSec) } },
         );
+    }
+
+    // P2.5.2 — per-user daily Gemini credit (lib/ai/quota.ts). Owner exempt.
+    //
+    // GATED ON `touchesGemini`, the same boolean the rate limiter above already
+    // splits on, for the same reason and by the same rule the design used to
+    // strike canons/[id]/preview off this task's route list: a verbatim canon
+    // re-render (canonId set, both AI toggles off) spends ZERO Gemini budget —
+    // it is a deterministic PDF render the user drives by hand in the builder.
+    // Charging a daily AI credit for it would bill a crew member for a free
+    // operation, which is exactly the defect that removed `preview` from the
+    // list. The auto-pipeline (url/text/application) and any canon render with
+    // rewrite or tagline opted in DO pay.
+    //
+    // Placed after the limiter (never burn a credit on a request the limiter is
+    // about to reject) and before the parse/select/rewrite/render pipeline.
+    if (touchesGemini) {
+        const credit = await consumeAiCredit(userId, guard.session.user.role);
+        if (!credit.ok) return aiQuotaExceededResponse(credit);
     }
 
     let stage: "load" | "parse" | "select" | "rewrite" | "render" = "load";
@@ -1040,6 +1060,7 @@ export async function POST(req: NextRequest) {
                 model: 'GeneratedResume',
                 action: 'upsert',
                 id: resumeId,
+                userId,
                 timestamp: Date.now(),
             });
         }

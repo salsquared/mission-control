@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
+import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
 import { parsePosting } from "@/lib/resumes/posting";
 import { selectBullets, selectProfileExtras, flattenSelections, type ResumeSelection } from "@/lib/resumes/select";
 import { rewriteBullets } from "@/lib/resumes/rewrite";
@@ -56,6 +57,14 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues, stage: "input" }, { status: 400 });
     }
+
+    // P2.5.2 — per-user daily Gemini credit (lib/ai/quota.ts). Owner exempt.
+    // After the rate limiter + body validation, before the rewrite/tagline
+    // Gemini calls. Specialization ALWAYS touches Gemini (re-wording the canon
+    // for a posting is the whole operation), so there is no free-render branch
+    // to carve out here — unlike POST /api/resumes.
+    const credit = await consumeAiCredit(userId, guard.session.user.role);
+    if (!credit.ok) return aiQuotaExceededResponse(credit);
 
     let stage: "load" | "parse" | "rewrite" | "render" = "load";
     try {
@@ -212,7 +221,7 @@ export async function POST(req: NextRequest) {
         }
 
         if (resumeId) {
-            broadcastEvent({ model: "GeneratedResume", action: "upsert", id: resumeId, timestamp: Date.now() });
+            broadcastEvent({ model: "GeneratedResume", action: "upsert", id: resumeId, userId, timestamp: Date.now() });
         }
 
         return new NextResponse(new Uint8Array(bytes), {

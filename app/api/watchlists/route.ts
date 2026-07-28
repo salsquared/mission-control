@@ -5,9 +5,63 @@ import { broadcastEvent } from "@/lib/events";
 import { WatchlistPostSchema, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig, resolveCreatePayload } from "@/lib/watchlists/hydrate";
 import { watchlistConfigKey } from "@/lib/company-directory";
+import { clampInt } from "@/lib/rate-limit/process-bucket";
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 
 export const runtime = "nodejs";
+
+// P2.6.1 / OQ10a — per-crew watchlist cap. Bounds risk R7.
+//
+// A watchlist is not an inert row: it is a standing claim on shared, unmetered
+// resources. `defaultLoadDue` selects EVERY active watchlist whose lastRunAt is
+// older than its scheduleMinutes with NO ceiling
+// (scheduler/jobs/job-watcher.ts:916-921), every crawl leaves this box's single
+// residential IP (so the failure mode — a LinkedIn/Workday block — degrades
+// EVERYONE's postings, not just the over-user's), and every newly-ingested
+// posting can spend Gemini on the OWNER's key: `classifyEmploymentTypes` runs
+// inside the scheduler and therefore sits deliberately OUTSIDE the per-user AI
+// credit cap (docs/multi-user-crew.html §2.9's callout, R6). This count is the
+// real, if indirect, ceiling on that scheduled spend — which is why it is not
+// merely a UX limit and should not be quietly raised.
+//
+// The owner is exempt: they own the box, the IP and the API key. `0` is a legal
+// value (crew may create none); module-level read, so changes need
+// `pm2 restart … --update-env`, same as every other tunable here.
+const CREW_WATCHLIST_LIMIT = clampInt(process.env.CREW_WATCHLIST_LIMIT, 5, 0, 1000);
+
+/**
+ * Thrown inside the create transaction to roll it back when a concurrent POST
+ * won the race to the last slot. Caught by the POST handler's outer catch and
+ * translated to the same 400 as the pre-check — never reaches the 500 branch.
+ */
+class WatchlistLimitExceeded extends Error {
+    constructor(readonly current: number) {
+        super(`watchlist limit ${CREW_WATCHLIST_LIMIT} exceeded (have ${current})`);
+        this.name = "WatchlistLimitExceeded";
+    }
+}
+
+/**
+ * The over-limit rejection. 400 (not 403): the request is well-formed and the
+ * caller is permitted here — this specific one cannot be satisfied. The body
+ * NAMES the limit and the current count so the UI can state the rule plainly
+ * instead of surfacing a generic failure; `error` stays a plain string because
+ * `lib/api-client.ts:jsonFetch` throws `new Error(err.error)`.
+ */
+function limitReachedResponse(current: number): NextResponse {
+    return NextResponse.json(
+        {
+            error:
+                `Watchlist limit reached — you can have at most ${CREW_WATCHLIST_LIMIT} ` +
+                `watchlist${CREW_WATCHLIST_LIMIT === 1 ? "" : "s"} (you have ${current}). ` +
+                `Delete one to add another.`,
+            reason: "watchlist-limit",
+            limit: CREW_WATCHLIST_LIMIT,
+            current,
+        },
+        { status: 400 },
+    );
+}
 
 function userIdFromGuard(guard: { session: { user?: unknown } }): string | null {
     const user = guard.session.user as { id?: string } | undefined;
@@ -93,6 +147,9 @@ export async function POST(req: NextRequest) {
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
+    // Straight off the guard's synthesized session (lib/auth-guards.ts:45-56) —
+    // no second identity lookup.
+    const isOwner = guard.session.user.role === "owner";
 
     const parsed = WatchlistPostSchema.safeParse(await req.json().catch(() => ({})));
     if (!parsed.success) {
@@ -104,6 +161,15 @@ export async function POST(req: NextRequest) {
     const resolved = resolveCreatePayload(parsed.data.config, parsed.data.directoryKey ?? null);
 
     try {
+        // P2.6.1 — cap crew BEFORE any other work. Checked ahead of the dedup
+        // scan below because it is the cheaper query and the stronger rejection:
+        // at the limit no request body can succeed, whereas "already watched" is
+        // a fact about this particular one.
+        if (!isOwner) {
+            const owned = await prisma.watchlist.count({ where: { userId } });
+            if (owned >= CREW_WATCHLIST_LIMIT) return limitReachedResponse(owned);
+        }
+
         // Backstop dedup: block adding the same job board twice. The "Watch
         // company" picker already disables already-added directory entries
         // client-side (via watchlistConfigKey → an "Added" chip), but the
@@ -136,19 +202,39 @@ export async function POST(req: NextRequest) {
             }
         }
 
-        const row = await prisma.watchlist.create({
-            data: {
-                userId,
-                name: parsed.data.name,
-                kind: resolved.config.kind,
-                config: JSON.stringify(resolved.config),
-                directoryKey: resolved.directoryKey,
-                scheduleMinutes: parsed.data.scheduleMinutes,
-                notificationMode: parsed.data.notificationMode,
-                track: parsed.data.track,
-            },
+        // The pre-check above is a read-then-write, so two simultaneous POSTs
+        // could both observe `owned = 4` and both create — landing a crew member
+        // on 6. Re-assert the boundary INSIDE the write transaction so it holds
+        // under concurrency: SQLite admits one writer at a time, and because the
+        // INSERT is this transaction's first statement its read snapshot is
+        // taken when the write lock is acquired — i.e. AFTER any transaction it
+        // queued behind committed. So the second POST's `count()` sees the
+        // first's row, exceeds the limit, and rolls its own insert back. (Order
+        // matters: counting before inserting would reinstate the same TOCTOU
+        // one level down, and could deadlock-by-snapshot on a WAL upgrade.)
+        // Owner path skips the count entirely — one query, exactly as before.
+        const row = await prisma.$transaction(async (tx) => {
+            const created = await tx.watchlist.create({
+                data: {
+                    userId,
+                    name: parsed.data.name,
+                    kind: resolved.config.kind,
+                    config: JSON.stringify(resolved.config),
+                    directoryKey: resolved.directoryKey,
+                    scheduleMinutes: parsed.data.scheduleMinutes,
+                    notificationMode: parsed.data.notificationMode,
+                    track: parsed.data.track,
+                },
+            });
+            if (!isOwner) {
+                const total = await tx.watchlist.count({ where: { userId } });
+                // `total` includes the row we are about to roll back; report
+                // what they actually keep.
+                if (total > CREW_WATCHLIST_LIMIT) throw new WatchlistLimitExceeded(total - 1);
+            }
+            return created;
         });
-        broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, userId, timestamp: Date.now() });
 
         // Kick off the first crawl in the background so the user gets postings
         // within seconds instead of waiting up to scheduleMinutes for the next
@@ -168,6 +254,10 @@ export async function POST(req: NextRequest) {
         }
         return NextResponse.json({ watchlist: serialized }, { status: 200 });
     } catch (e) {
+        // The concurrent-create loser: a real rejection, not a server fault.
+        // Must be translated before the 500 branch or the race would surface as
+        // "Internal Server Error" for a request the user can act on.
+        if (e instanceof WatchlistLimitExceeded) return limitReachedResponse(e.current);
         console.error("[watchlists POST] error:", e);
         return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
     }

@@ -59,6 +59,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
+import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
 import { findOrCreateProfile } from "@/lib/repositories/profile";
 import { findUploadsMatchingParent } from "@/lib/repositories/resume-uploads";
 import { parseBullets } from "@/lib/profile/bullets";
@@ -336,6 +337,15 @@ export async function POST(req: NextRequest) {
             }
             currentBullet = found;
         }
+
+        // P2.5.2 — per-user daily Gemini credit (lib/ai/quota.ts). Owner exempt.
+        // Deliberately placed HERE, after every cheap rejection above (404
+        // not-found, 400 locked, 400 tag-limit-reached) and before BOTH LLM
+        // pipelines below (the tags dispatch and the fill/rewrite builder) —
+        // the check mutates, so any rejection after it would bill a crew member
+        // for a call that never reached Gemini. All three modes cost one credit.
+        const credit = await consumeAiCredit(userId, guard.session.user.role);
+        if (!credit.ok) return aiQuotaExceededResponse(credit);
 
         // M7.7.5 — tags mode is a fully separate pipeline from fill/rewrite.
         // It doesn't need the assist prompt builder, sibling collection, or

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { toastStore } from './toast-store';
+import { ApiError } from './api-errors';
 import {
     TasksListResponseSchema,
     TaskMutationResponseSchema,
@@ -119,7 +120,21 @@ async function jsonFetch<T extends z.ZodTypeAny>(
 
     if (!res.ok) {
         const err = await res.json().catch(() => ({ error: res.statusText }));
-        throw new Error(err.error || 'Fetch failed');
+        // ADDITIVE ONLY (task P3.6). `message` is byte-identical to the old
+        // `new Error(err.error || 'Fetch failed')` — the Error constructor
+        // String()s its argument, so a non-string `error` stringifies the same
+        // way it always did and every `err.message` caller is unaffected. The
+        // status + parsed body ride along so a caller that needs a
+        // machine-readable handle (the AI_QUOTA_EXCEEDED 429) can branch on it
+        // via lib/api-errors.ts instead of matching prose. This is NOT the
+        // general fix the `account.get` note below asks for — that hook needs
+        // the status BEFORE the body parse and reads a field this does not
+        // interpret; leave its bypass alone.
+        throw new ApiError(
+            String(err?.error || 'Fetch failed'),
+            res.status,
+            err && typeof err === 'object' ? (err as Record<string, unknown>) : {},
+        );
     }
 
     const data = await res.json();
@@ -243,16 +258,32 @@ const CanonDeleteResponseSchema = z.object({ ok: z.literal(true) });
 // ─── API surface ───────────────────────────────────────────────────────────
 
 export const api = {
-    // GET /api/account — owner identity + Google-connection state. Drives
-    // useAccount (the edge-trusted replacement for useSession). Schema kept
-    // local: the account surface is a thin owner projection, not a lib/schemas
-    // domain model.
+    // GET /api/account — viewer identity + role + Google-connection state.
+    // Schema kept local: the account surface is a thin viewer projection, not a
+    // lib/schemas domain model.
+    //
+    // CURRENTLY UNUSED, and deliberately so — hooks/useAccount.ts does its own
+    // fetch instead of calling this. Do not "tidy up" by repointing the hook
+    // here without first fixing jsonFetch: it collapses an error response to
+    // `throw new Error(err.error)`, discarding the HTTP status, `reason` and
+    // `detail`. The multi-user work (docs/multi-user-crew.html §2.3) makes those
+    // load-bearing — 401 "no verified identity" and 403 "verified but not
+    // provisioned" are separately-decided outcomes that must stay
+    // distinguishable, and the 403 `detail` names the email that needs
+    // provisioning. Through jsonFetch the hook would see only the string
+    // "Forbidden" and that email would be unrecoverable.
     account: {
         get: () =>
             jsonFetch(
                 '/api/account',
                 z.object({
-                    user: z.object({ id: z.string(), email: z.string() }),
+                    // Mirrors the route's 200 shape. `role` was added by P3.1;
+                    // keep it in sync with app/api/account/route.ts.
+                    user: z.object({
+                        id: z.string(),
+                        email: z.string(),
+                        role: z.enum(['owner', 'crew']),
+                    }),
                     googleConnected: z.boolean(),
                 }),
             ),

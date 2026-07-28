@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
+import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
 
 export const runtime = "nodejs";
@@ -23,6 +24,17 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     if (!owned) {
         return NextResponse.json({ error: "Watchlist not found" }, { status: 404 });
     }
+
+    // P2.5.2 — per-user daily Gemini credit (lib/ai/quota.ts). Owner exempt.
+    // runWatchlist classifies employment types through Gemini. Placed AFTER the
+    // ownership check so a 404 never burns a credit.
+    //
+    // MANUAL runs only. The SAME runWatchlist on the scheduler's automatic
+    // cadence is deliberately outside this cap in v1 (§2.9's callout, R6) —
+    // that path never reaches a route, so it never reaches this line. See the
+    // header of lib/ai/quota.ts before "fixing" that asymmetry.
+    const credit = await consumeAiCredit(userId, guard.session.user.role);
+    if (!credit.ok) return aiQuotaExceededResponse(credit);
 
     try {
         const result = await runWatchlist(id);
