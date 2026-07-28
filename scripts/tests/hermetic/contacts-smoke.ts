@@ -174,7 +174,17 @@ async function main() {
         }
         await prisma.$disconnect();
     }
+}
 
+/**
+ * The exit path lives OUT here, not at the bottom of `main()`. The body bails
+ * early on a null fixture (`record(..., false); return;`), and a `return` inside
+ * the `try` runs the finally and then leaves `main()` — skipping anything after
+ * it, so a RECORDED failure would still exit 0. `resume-list-smoke.ts` had that
+ * exact shape as a live false green, and the pre-push gate reads only the exit
+ * code. Hoisting the check into `.then()` makes it unskippable.
+ */
+function finish(): never {
     const passed = steps.filter(s => s.ok).length;
     const failed = steps.length - passed;
     console.info(`\n${passed}/${steps.length} steps passed`);
@@ -183,6 +193,7 @@ async function main() {
         process.exit(1);
     }
     console.info('All checks passed.');
+    process.exit(0);
 }
 
-main().catch((e) => { console.error(e); process.exit(1); });
+main().then(finish, (e) => { console.error(e); process.exit(1); });

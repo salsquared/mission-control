@@ -27,6 +27,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
+import { __seedViewer, __resetViewer } from "@/lib/viewer";
 
 let passes = 0;
 let fails = 0;
@@ -230,12 +231,15 @@ async function main(): Promise<void> {
         });
         workRoleCId = wrC.id;
 
-        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
-        // "the owner" via lib/owner.ts (not NextAuth), so pin OWNER_EMAIL + reset
-        // the memo to make `userId` the owner.
+        // Run as `userId`. Since the owner/crew rework (P1.3.2) the guards
+        // resolve identity through lib/viewer.ts:resolveViewer(), which reads
+        // the Access-verified header via next/headers — and `headers()` THROWS
+        // for a route handler called in-process from a tsx script, so every
+        // request here would 401. The old owner-email env pin is retired and
+        // there is no identity fallback by design; the sanctioned way in is the
+        // __seedViewer seam (P1.2.4), cleared in the finally.
         mockSessionUser = { id: userId, email: `ss-${tag}@example.invalid` };
-        process.env.OWNER_EMAIL = `ss-${tag}@example.invalid`;
-        require("@/lib/owner").__resetOwnerMemo();
+        __seedViewer({ id: userId, email: `ss-${tag}@example.invalid`, role: "owner" });
         cannedPostingKeywords = ["TypeScript", "PostgreSQL", "Go"];
 
         // ─── Test 1: synthesis fires for A + B (batched), C skipped ────────
@@ -374,6 +378,9 @@ async function main(): Promise<void> {
             }
         }
     } finally {
+        // Clear the identity seam first — a seam left armed here would hand the
+        // next suite in the pre-push gate this smoke's throwaway viewer.
+        __resetViewer();
         for (const id of resumeIds) {
             await prisma.generatedResume.delete({ where: { id } }).catch(() => {});
         }
@@ -385,12 +392,22 @@ async function main(): Promise<void> {
         await prisma.$disconnect();
     }
 
+}
+
+/**
+ * The exit path lives OUT here, not at the bottom of `main()`, so no early
+ * `return` inside the body can skip it. `resume-list-smoke.ts` had exactly that
+ * bug: it printed `[FAIL]` and still exited 0, and the pre-push gate — which
+ * reads only the exit code — passed a red suite.
+ */
+function finish(): never {
     console.log(`\n${passes}/${passes + fails} steps passed`);
     if (fails > 0) process.exit(1);
     console.log("All checks passed.");
+    process.exit(0);
 }
 
-main().catch(e => {
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });

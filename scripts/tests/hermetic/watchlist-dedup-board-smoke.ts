@@ -27,6 +27,7 @@
 
 import { PrismaClient } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { __seedViewer, __resetViewer } from '@/lib/viewer';
 
 let passes = 0;
 let fails = 0;
@@ -98,12 +99,15 @@ async function callPost(body: unknown): Promise<{ status: number; body: any }> {
 async function main(): Promise<void> {
     try {
         await prisma.user.create({ data: { id: userId, email: `wl-dedup-${tag}@example.invalid` } });
-        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
-        // "the owner" via lib/owner.ts (not NextAuth), so pin OWNER_EMAIL + reset
-        // the memo to make `userId` the owner.
+        // Run as `userId`. Since the owner/crew rework (P1.3.2) the guards
+        // resolve identity through lib/viewer.ts:resolveViewer(), which reads
+        // the Access-verified header via next/headers — and `headers()` THROWS
+        // for a route handler called in-process from a tsx script, so every
+        // request here would 401. The old owner-email env pin is retired and
+        // there is no identity fallback by design; the sanctioned way in is the
+        // __seedViewer seam (P1.2.4), cleared in the finally.
         mockSessionUser = { id: userId, email: `wl-dedup-${tag}@example.invalid` };
-        process.env.OWNER_EMAIL = `wl-dedup-${tag}@example.invalid`;
-        require("@/lib/owner").__resetOwnerMemo();
+        __seedViewer({ id: userId, email: `wl-dedup-${tag}@example.invalid`, role: 'owner' });
 
         // ─── 1. First add of greenhouse board → 200 ──────────────────────
         let firstId = '';
@@ -184,17 +188,30 @@ async function main(): Promise<void> {
         if (rows.length !== 5) fail(`expected 5 watchlist rows after run, found ${rows.length}`, rows);
         else pass('exactly 5 watchlists persisted (2 dup attempts rejected, never written)');
     } finally {
+        // Clear the identity seam first — a seam left armed here would hand the
+        // next suite in the pre-push gate this smoke's throwaway viewer.
+        __resetViewer();
         // Cascade-deletes any postings (none expected — runWatchlist stubbed).
         await prisma.watchlist.deleteMany({ where: { userId } }).catch(() => {});
         await prisma.user.delete({ where: { id: userId } }).catch(() => {});
         await prisma.$disconnect();
-        console.log(`\n${passes}/${passes + fails} steps passed`);
-        if (fails === 0) console.log('All checks passed.');
     }
-    if (fails > 0) process.exit(1);
 }
 
-main().catch(e => {
+/**
+ * The exit path lives OUT here, not at the bottom of `main()`, so no early
+ * `return` inside the body can skip it. `resume-list-smoke.ts` had exactly that
+ * bug: it printed `[FAIL]` and still exited 0, and the pre-push gate — which
+ * reads only the exit code — passed a red suite.
+ */
+function finish(): never {
+    console.log(`\n${passes}/${passes + fails} steps passed`);
+    if (fails > 0) process.exit(1);
+    console.log('All checks passed.');
+    process.exit(0);
+}
+
+main().then(finish, e => {
     console.error('Unhandled error:', e);
     process.exit(2);
 });

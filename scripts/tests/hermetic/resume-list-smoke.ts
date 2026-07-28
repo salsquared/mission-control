@@ -17,6 +17,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
+import { __seedViewer, __resetViewer } from "@/lib/viewer";
 
 let passes = 0;
 let fails = 0;
@@ -138,12 +139,17 @@ async function main() {
         });
         resumeIds.push(rOther.id);
 
-        // Now hit the route's GET handler as `userId`. Post the Cloudflare-Access
-        // rewrite the guards resolve "the owner" via lib/owner.ts (not NextAuth),
-        // so pin OWNER_EMAIL + reset the memo to make `userId` the owner.
+        // Now hit the route's GET handler as `userId`. Since the owner/crew
+        // rework (docs/multi-user-crew.html P1.3.2) the guards resolve identity
+        // through lib/viewer.ts:resolveViewer(), which reads the Access-verified
+        // header via next/headers — and `headers()` THROWS when a route handler
+        // is called in-process from a tsx script, so every request here would
+        // 401. There is no owner-email env pin any more (it was retired) and no
+        // identity fallback by design; the sanctioned way in is the explicit
+        // __seedViewer seam (P1.2.4), cleared in the finally so it cannot leak
+        // into the next suite.
         mockSessionUser = { id: userId, email: `rl-smoke-${tag}@example.invalid` };
-        process.env.OWNER_EMAIL = `rl-smoke-${tag}@example.invalid`;
-        require("@/lib/owner").__resetOwnerMemo();
+        __seedViewer({ id: userId, email: `rl-smoke-${tag}@example.invalid`, role: "owner" });
         const routeModule = require("@/app/api/resumes/route");
 
         // ── Test 1: default GET returns rows for the session user only ───────
@@ -266,6 +272,9 @@ async function main() {
             else pass("applicationId filter: returns the correct row");
         }
     } finally {
+        // Clear the identity seam first — a seam left armed here would hand the
+        // next suite in the pre-push gate this smoke's throwaway viewer.
+        __resetViewer();
         // Tear down in FK-aware order: GeneratedResume → Application → JobPosting
         // → Watchlist → User. Each step is .catch'd so a single failure doesn't
         // block the rest, but ordering minimizes the cleanup churn.
@@ -285,12 +294,29 @@ async function main() {
         await prisma.user.delete({ where: { id: otherUserId } }).catch(() => {});
         await prisma.$disconnect();
     }
-
-    console.log(`\n${passes}/${passes + fails} steps passed`);
-    if (fails > 0) process.exit(1);
 }
 
-main().catch(e => {
+/**
+ * THE EXIT PATH LIVES OUT HERE — DO NOT MOVE IT BACK INTO `main()`.
+ *
+ * This was a live false-green: the summary + `process.exit(1)` sat AFTER the
+ * `try/finally` inside `main()`, while Test 1 bails with `fail(...); return;` on
+ * a non-200. A `return` inside the try runs the finally and then leaves `main()`
+ * — skipping the exit-code check entirely. The smoke printed
+ * `[FAIL] default GET status 401` and still exited 0, and the pre-push gate
+ * (which reads only the exit code) passed a red suite.
+ *
+ * Hoisting the check into `.then()` makes it unskippable: every completion of
+ * `main()`, early or not, lands here.
+ */
+function finish(): never {
+    console.log(`\n${passes}/${passes + fails} steps passed`);
+    if (fails > 0) process.exit(1);
+    console.log("All checks passed.");
+    process.exit(0);
+}
+
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });

@@ -14,14 +14,15 @@
  * Mocks `chatJSON` via require.cache injection so no Gemini tokens get burned.
  * Auth: post the Cloudflare-Access rewrite (docs/cloudflare-access-auth.html),
  * `requireSession` resolves "the owner" via lib/owner.ts:resolveOwner instead
- * of NextAuth — so the smoke pins OWNER_EMAIL to the scratch user's email to
- * make the owner deterministic among the two scratch users it creates (the
- * legacy getServerSession mock below is now vestigial but harmless). Cleans up
- * the scratch user + profile in finally.
+ * of NextAuth. Since the owner/crew rework the guards resolve through
+ * lib/viewer.ts:resolveViewer() instead, so the smoke acts as the scratch user
+ * through the __seedViewer seam (the legacy getServerSession mock below is now
+ * vestigial but harmless). Cleans up the scratch user + profile in finally.
  */
 
 import { PrismaClient } from '@prisma/client';
 import { randomBytes } from 'crypto';
+import { __seedViewer, __resetViewer } from '@/lib/viewer';
 
 let passes = 0;
 let fails = 0;
@@ -90,13 +91,15 @@ const prisma = new PrismaClient();
 const tag = randomBytes(4).toString('hex');
 const userId = `bts-smoke-user-${tag}`;
 const otherUserId = `bts-smoke-other-${tag}`;
-// Pin the owner resolution (lib/owner.ts) to the scratch "userId" account: the
-// guards no longer read a NextAuth session, so this is the deterministic seam
-// that makes `requireSession` act as `userId` among the two scratch users.
-process.env.OWNER_EMAIL = `bts-${tag}@example.invalid`;
-// Reset the owner memo so the pin above is the first resolution (consistent
-// with the sibling adapted smokes; guards against a memo filled before the pin).
-(require('@/lib/owner') as typeof import('@/lib/owner')).__resetOwnerMemo();
+// Act as the scratch "userId" account. Since the owner/crew rework (P1.3.2)
+// the guards resolve identity through lib/viewer.ts:resolveViewer(), which reads
+// the Access-verified header via next/headers — and `headers()` THROWS for a
+// route handler called in-process from a tsx script, so every request here would
+// 401. The old owner-email env pin is retired and there is no identity
+// fallback by design; the
+// sanctioned way in is the explicit __seedViewer seam (P1.2.4), cleared in
+// main()'s finally so it cannot leak into the next suite.
+__seedViewer({ id: userId, email: `bts-${tag}@example.invalid`, role: 'owner' });
 let profileId = '';
 let otherProfileId = '';
 let workRoleId = '';
@@ -330,6 +333,9 @@ async function main(): Promise<void> {
             else pass('missing-bulletId: no LLM call fired');
         }
     } finally {
+        // Clear the identity seam first — a seam left armed here would hand the
+        // next suite in the pre-push gate this smoke's throwaway viewer.
+        __resetViewer();
         if (workRoleId) await prisma.workRole.delete({ where: { id: workRoleId } }).catch(() => {});
         if (otherWorkRoleId) await prisma.workRole.delete({ where: { id: otherWorkRoleId } }).catch(() => {});
         if (profileId) await prisma.profile.delete({ where: { id: profileId } }).catch(() => {});
@@ -339,12 +345,22 @@ async function main(): Promise<void> {
         await prisma.$disconnect();
     }
 
+}
+
+/**
+ * The exit path lives OUT here, not at the bottom of `main()`, so no early
+ * `return` inside the body can skip it. `resume-list-smoke.ts` had exactly that
+ * bug: it printed `[FAIL]` and still exited 0, and the pre-push gate — which
+ * reads only the exit code — passed a red suite.
+ */
+function finish(): never {
     console.log(`\n${passes}/${passes + fails} steps passed`);
     if (fails > 0) process.exit(1);
     console.log('All checks passed.');
+    process.exit(0);
 }
 
-main().catch(e => {
+main().then(finish, e => {
     console.error('Unhandled error:', e);
     process.exit(2);
 });

@@ -160,10 +160,22 @@ async function main() {
             await prisma.application.deleteMany({ where: { id: { in: createdAppIds } } }).catch(() => undefined);
         }
         await prisma.$disconnect();
-        console.log(`\n${passes}/${passes + fails} steps passed`);
-        if (fails === 0) console.log("All checks passed.");
     }
-    if (fails > 0) process.exit(1);
 }
 
-main().catch(e => { console.error("Unhandled:", e); process.exit(2); });
+/**
+ * The exit path lives OUT here, not at the bottom of `main()`. The body bails
+ * early on a missing fixture (`if (!realNudge) return;`), and a `return` inside
+ * the `try` runs the finally and then leaves `main()` — skipping anything after
+ * it. `resume-list-smoke.ts` had that exact shape as a live false green: it
+ * printed `[FAIL]` and still exited 0, which the pre-push gate reads as a pass.
+ * Hoisting the check into `.then()` makes it unskippable.
+ */
+function finish(): never {
+    console.log(`\n${passes}/${passes + fails} steps passed`);
+    if (fails > 0) process.exit(1);
+    console.log("All checks passed.");
+    process.exit(0);
+}
+
+main().then(finish, e => { console.error("Unhandled:", e); process.exit(2); });

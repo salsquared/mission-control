@@ -19,6 +19,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
+import { __seedViewer, __resetViewer } from "@/lib/viewer";
 
 let passes = 0;
 let fails = 0;
@@ -114,13 +115,17 @@ async function main(): Promise<void> {
         });
         profileId = profile.id;
 
-        // Run as `userId`. Post the Cloudflare-Access rewrite the guards resolve
-        // "the owner" via lib/owner.ts (not NextAuth); since this smoke switches
-        // the acting user between phases, pin OWNER_EMAIL + reset the memo
-        // alongside EVERY mockSessionUser change so the owner re-resolves.
+        // Run as `userId`. Since the owner/crew rework (P1.3.2) the guards
+        // resolve identity through lib/viewer.ts:resolveViewer(), which reads
+        // the Access-verified header via next/headers — and `headers()` THROWS
+        // for a route handler called in-process from a tsx script, so every
+        // request here would 401. The old owner-email env pin is retired and
+        // there is no identity fallback by design; the sanctioned way in is the
+        // __seedViewer seam (P1.2.4). This smoke SWITCHES the acting user
+        // between phases, so re-seed alongside EVERY mockSessionUser change —
+        // the seam is a plain override, so the last seed wins.
         mockSessionUser = { id: userId, email: `td-${tag}@example.invalid` };
-        process.env.OWNER_EMAIL = `td-${tag}@example.invalid`;
-        require("@/lib/owner").__resetOwnerMemo();
+        __seedViewer({ id: userId, email: `td-${tag}@example.invalid`, role: "owner" });
 
         // ─── Test 1: post-filter (pure) covers cleanup edge cases ─────────
         {
@@ -240,8 +245,7 @@ async function main(): Promise<void> {
         await prisma.user.create({ data: { id: rlUserId, email: `td-rl-${tag}@example.invalid` } });
         const rlProfile = await prisma.profile.create({ data: { userId: rlUserId } });
         mockSessionUser = { id: rlUserId, email: `td-rl-${tag}@example.invalid` };
-        process.env.OWNER_EMAIL = `td-rl-${tag}@example.invalid`;
-        require("@/lib/owner").__resetOwnerMemo();
+        __seedViewer({ id: rlUserId, email: `td-rl-${tag}@example.invalid`, role: "owner" });
         try {
             for (let i = 0; i < 10; i++) {
                 const { status } = await callDraft();
@@ -266,21 +270,33 @@ async function main(): Promise<void> {
             await prisma.profile.delete({ where: { id: rlProfile.id } }).catch(() => {});
             await prisma.user.delete({ where: { id: rlUserId } }).catch(() => {});
             mockSessionUser = { id: userId, email: `td-${tag}@example.invalid` };
-            process.env.OWNER_EMAIL = `td-${tag}@example.invalid`;
-            require("@/lib/owner").__resetOwnerMemo();
+            __seedViewer({ id: userId, email: `td-${tag}@example.invalid`, role: "owner" });
         }
     } finally {
+        // Clear the identity seam first — a seam left armed here would hand the
+        // next suite in the pre-push gate this smoke's throwaway viewer.
+        __resetViewer();
         if (profileId) await prisma.profile.delete({ where: { id: profileId } }).catch(() => {});
         await prisma.user.delete({ where: { id: userId } }).catch(() => {});
         await prisma.$disconnect();
     }
 
+}
+
+/**
+ * The exit path lives OUT here, not at the bottom of `main()`, so no early
+ * `return` inside the body can skip it. `resume-list-smoke.ts` had exactly that
+ * bug: it printed `[FAIL]` and still exited 0, and the pre-push gate — which
+ * reads only the exit code — passed a red suite.
+ */
+function finish(): never {
     console.log(`\n${passes}/${passes + fails} steps passed`);
     if (fails > 0) process.exit(1);
     console.log("All checks passed.");
+    process.exit(0);
 }
 
-main().catch(e => {
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });
