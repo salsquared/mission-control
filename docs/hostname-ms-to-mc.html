@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Public hostname migration — ms-* → mc</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">Mission Control</h4>
+  <h1>Public hostname migration — <code>ms-*</code> → <code>mc</code></h1>
+  <p class="subtitle">Rename both public hostnames to match the project's own name — <code>ms-prod.salsquared.xyz</code> → <strong><code>mc.salsquared.xyz</code></strong> and <code>ms-dev.salsquared.xyz</code> → <strong><code>mc-dev.salsquared.xyz</code></strong> — by standing the new pair up fully gated alongside the old, cutting over, and retiring <code>ms-*</code> in the same session.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#context">Context &amp; problem</a></li>
+      <li><a href="#design">Design</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="context">Context &amp; problem</h2></summary>
+    <div class="section-body">
+
+      <h3>Problem</h3>
+      <p>The project is <strong>Mission Control</strong> and abbreviates to <strong><code>mc</code></strong> everywhere it names itself internally: the LAN vhost is <code>mc.local</code> (<code>~/.config/caddy/Caddyfile</code>), the Pub/Sub signer service account is <code>pubsub-mc-publisher@…</code>, the outbound fetcher User-Agent strings say <code>mc.local</code>. The <em>public</em> surface is the one inconsistent thing: both tunnel hostnames were named <code>ms-*</code>.</p>
+      <p>This is cosmetic in the sense that nothing is broken, and load-bearing in the sense that the wrong name is copied forward every time someone reads the config. It has already leaked into two design docs' task lists and one prepared-but-unexecuted incident-recovery command (<code>docs/next_steps.md:21</code>). The cost of not doing it is that the mismatch keeps propagating; the cost of doing it is one carefully-ordered session across four external control planes.</p>
+      <p>The rename is exactly two hostnames:</p>
+      <table>
+        <thead><tr><th>Tier</th><th>Today</th><th>After</th><th>Note</th></tr></thead>
+        <tbody>
+          <tr><td>prod (:3101)</td><td><code>ms-prod.salsquared.xyz</code></td><td><strong><code>mc.salsquared.xyz</code></strong></td><td>bare <code>mc</code> — <strong>not</strong> <code>mc-prod</code>. Prod is the default, so it gets the unqualified name.</td></tr>
+          <tr><td>dev (:4101)</td><td><code>ms-dev.salsquared.xyz</code></td><td><strong><code>mc-dev.salsquared.xyz</code></strong></td><td>keeps the explicit tier suffix.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>What exists today — external control planes</h3>
+      <p>Four external systems know these hostnames. None of them is in the repo, and one of them <strong>cannot be read from this machine</strong>.</p>
+      <ol>
+        <li><strong>Cloudflare DNS</strong> — two CNAMEs (<code>ms-prod</code>, <code>ms-dev</code>) in zone <code>salsquared.xyz</code>, both pointing at <code>bc3ae99c-dd25-4fd0-9cbb-13ce6e740582.cfargotunnel.com</code>.</li>
+        <li><strong>Cloudflare Tunnel</strong> — named <code>mac-mini-salsquared</code>, ID <code>bc3ae99c-dd25-4fd0-9cbb-13ce6e740582</code>, running as root under launchd (<code>/Library/LaunchDaemons/com.cloudflare.cloudflared.plist</code>, PID 1140) via <code>cloudflared tunnel run --token …</code>. <strong>Remotely-managed: there is no local config file</strong> — <code>~/.cloudflared/</code> holds only <code>cert.pem</code>. Public-hostname routing lives in the dashboard/API only, at <code>GET/PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations</code>.</li>
+        <li><strong>Cloudflare Access</strong> — team <code>salsquared.cloudflareaccess.com</code>, Google IdP, <strong>four</strong> apps: <code>ms-prod.salsquared.xyz</code> (Allow email <code>salsalcedo4321@gmail.com</code>, session <strong>24h</strong>), <code>ms-dev.salsquared.xyz</code> (same policy, session <strong>1 month</strong>), and two path-scoped <code>…/api/gmail/webhook</code> apps with a <strong>Bypass / Everyone</strong> policy. All four need <code>mc</code> equivalents. Design: <a href="./cloudflare-access-auth.html"><code>docs/cloudflare-access-auth.html</code></a>.</li>
+        <li><strong>GCP Pub/Sub</strong> — project <code>crypto-lexicon-490719-q9</code>, two push subscriptions, both currently pointed at <code>ms-*</code> (verified via <code>gcloud pubsub subscriptions list</code>): <code>gmail-push-prod</code> and <code>gmail-push-dev</code>, each with its <strong>push endpoint AND its OIDC audience</strong> set to <code>https://ms-{prod,dev}.salsquared.xyz/api/gmail/webhook</code>, signed by <code>pubsub-mc-publisher@crypto-lexicon-490719-q9.iam.gserviceaccount.com</code>. <code>gmail-push-dev</code> carries <code>expirationPolicy.ttl = 31d</code>.</li>
+        <li><strong>Google OAuth console</strong> — client <code>500673715504-km7m84hcid87jp64cav5m32mcemp33c6.apps.googleusercontent.com</code>, authorized redirect URIs <code>https://ms-{prod,dev}.salsquared.xyz/api/auth/callback/google</code>. Dashboard-only; no API path.</li>
+      </ol>
+
+      <div class="callout warn"><strong>Hard prerequisite — the tunnel's origin service target is UNVERIFIED.</strong> Because <code>cloudflared</code> is token-managed with no local config, the origin each public hostname forwards to (expected <code>localhost:3101</code> for prod / <code>localhost:4101</code> for dev, but <em>not confirmed</em>) can only be read back through the API. Every new tunnel route must reuse the value the existing route actually has — a guess that's wrong yields a 502 on the new hostname. <code>docs/multi-user-crew.html:282</code> flags this same unknown as blocking <em>its</em> P4.1; reading it once closes both.</div>
+
+      <h3>What exists today — inside the repo</h3>
+      <p>Five tracked files carry a hostname functionally, and one script carries the wrong project abbreviation in its filename:</p>
+      <table>
+        <thead><tr><th>File</th><th>Lines</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td><code>next.config.ts</code></td><td>25</td><td><code>allowedDevOrigins: ['ms-dev.salsquared.xyz']</code> — Next's dev-server cross-origin allowlist for <code>/_next/*</code>. <strong>Genuinely functional</strong>; must land with the cutover or dev warns/breaks on the new host.</td></tr>
+          <tr><td><code>.env.production.example</code></td><td>7, 42</td><td><code>NEXTAUTH_URL</code>, <code>PUBSUB_AUDIENCE</code> — documentation of the untracked real file.</td></tr>
+          <tr><td><code>.env.development.example</code></td><td>8, 30</td><td>same two keys.</td></tr>
+          <tr><td><code>scripts/tests/probes/gmail-push-receive-probe.ts</code></td><td>45, 46</td><td>hardcoded prod/dev webhook URLs — a live probe, so a stale URL makes it probe a dead host.</td></tr>
+          <tr><td><code>scripts/tests/hermetic/owner-auth-smoke.ts</code></td><td>187, 203, 216, 226</td><td><code>new Request("https://ms-prod.salsquared.xyz/…")</code> — cosmetic (hermetic, no network) but should match reality.</td></tr>
+          <tr><td><code>launch-ms.sh</code></td><td>filename</td><td>Same class of error as the hostnames — <code>ms</code> where the project is <code>mc</code>. Renamed here (OQ1). <strong>Its internal <code>mc.local</code> Caddy lines (27, 30, 31, 34) are already correct and LAN-only — do not touch them.</strong></td></tr>
+        </tbody>
+      </table>
+      <p>The untracked per-tier env files are the live counterparts: <code>.env.production:3</code> (<code>NEXTAUTH_URL</code>) + <code>:39</code> (<code>PUBSUB_AUDIENCE</code>), <code>.env.development:4</code> + <code>:27</code>, and the shared <code>.env:9-10</code> comment block listing the two OAuth callback URLs (comment only, but it should not lie).</p>
+
+      <h3>Verified non-issues — do not re-check these</h3>
+      <ul>
+        <li><strong><code>NEXTAUTH_URL</code> has zero direct code references.</strong> NextAuth consumes it internally. Pure env change, no call sites to chase.</li>
+        <li><strong><code>docs/apis.html</code> contains zero hostname references</strong> — no <code>npm run gen:api-docs</code> regeneration is needed, and the <code>api-docs-smoke</code> pre-push check won't trip.</li>
+        <li><strong><code>public/manifest.json</code> uses a relative <code>"start_url": "/"</code></strong> — origin-agnostic, nothing to change.</li>
+        <li><strong><code>~/.config/caddy/Caddyfile</code> is <code>mc.local:443 → 127.0.0.1:3101</code></strong> — already correct, LAN-only, untouched. (<code>/opt/homebrew/etc/Caddyfile</code> is a <em>symlink</em> to it — one file, not two.)</li>
+        <li><strong>The existing Gmail refresh token is unaffected by the OAuth redirect-URI change.</strong> Redirect URIs gate <em>new</em> consent flows only; a token already minted keeps refreshing. Gmail/Calendar ingest continues working straight through the cutover.</li>
+        <li><strong>The Gmail <code>watch</code> registration targets the Pub/Sub <em>topic</em>, not a hostname</strong> (<code>lib/gmail/watch.ts</code>, <code>GMAIL_PUBSUB_TOPIC</code>). No re-arm is required; only the two push <em>subscriptions</em> move.</li>
+        <li><strong>The ~11 <code>mc.local</code> occurrences in fetcher User-Agent strings</strong> are outbound politeness labels — already <code>mc</code>, already correct, leave alone.</li>
+      </ul>
+
+      <h3>Goals &amp; non-goals</h3>
+      <ul>
+        <li><strong>Goal:</strong> both public hostnames serve on <code>mc.salsquared.xyz</code> / <code>mc-dev.salsquared.xyz</code>, gated by Access exactly as before, with Gmail push ingest verified live on both tiers.</li>
+        <li><strong>Goal:</strong> <code>ms-*</code> fully retired in the same session — no lingering hostnames, no orphan Access apps, no stale OAuth redirect URIs.</li>
+        <li><strong>Goal:</strong> every live/canonical doc and functional repo reference reads <code>mc</code>, and the one <em>executable</em> stale command in <code>docs/next_steps.md</code> is corrected rather than left to mislead.</li>
+        <li><strong>Non-goal — a repo-wide <code>ms-*</code> sweep.</strong> Dated review snapshots and <code>docs/archive/*</code> keep their historical text (OQ4). Rewriting a dated record makes it say something that was not true on its date.</li>
+        <li><strong>Non-goal — touching the LAN surface.</strong> <code>mc.local</code>, the Caddyfile, and the loopback bind are out of scope. <code>docs/multi-user-crew.html</code> separately plans to retire the <code>mc.local</code> vhost and repoint <code>launch-ms.sh:33-37</code>'s <code>APP_URL</code>; that is <em>that</em> doc's work. This doc only keeps the two consistent by renaming the script and its hostnames.</li>
+        <li><strong>Non-goal — origin-side Access JWT verification.</strong> Unchanged from <a href="./cloudflare-access-auth.html"><code>cloudflare-access-auth.html</code></a> OQ3; the trust-edge posture is inherited as-is.</li>
+        <li><strong>Non-goal — a redirect from <code>ms-*</code> to <code>mc</code>.</strong> Single-owner surface; the owner updates their own bookmarks. A permanent redirect would mean keeping the old hostnames, their Access apps, and their tunnel routes alive indefinitely — the opposite of the point.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="design">Design</h2></summary>
+    <div class="section-body">
+
+      <h3>Approach — overlap, cut over, retire</h3>
+      <p>There is no code to design here; the design <em>is</em> the ordering. The shape is a <strong>bounded overlap</strong> (OQ3): bring <code>mc</code> and <code>mc-dev</code> up fully gated <em>alongside</em> the live <code>ms-*</code> pair, verify them against the real edge, flip the origin's env and the two Pub/Sub subscriptions, confirm a Gmail round-trip on both tiers, then tear <code>ms-*</code> down — all in one session.</p>
+      <p>During the overlap window both hostname pairs route to the <em>same</em> origins. Nothing about the origin is per-hostname except <code>PUBSUB_AUDIENCE</code> (asserted against the OIDC <code>aud</code> claim) and <code>NEXTAUTH_URL</code> (the OAuth callback base) — so serving four hostnames off two ports is not a special mode, it is just two extra tunnel routes.</p>
+
+      <pre class="mermaid">
+flowchart TB
+  subgraph old["Retired in P4"]
+    msp["ms-prod.salsquared.xyz"]
+    msd["ms-dev.salsquared.xyz"]
+  end
+  subgraph new["Created in P1"]
+    mcp["mc.salsquared.xyz"]
+    mcd["mc-dev.salsquared.xyz"]
+  end
+  subgraph edge["Cloudflare edge"]
+    dns["DNS CNAME<br/>→ cfargotunnel.com"]
+    access{"Access app<br/>Allow email == owner"}
+    bypass{"path-scoped Bypass<br/>/api/gmail/webhook"}
+  end
+  subgraph tun["cloudflared tunnel<br/>mac-mini-salsquared"]
+    route["public-hostname route<br/>→ origin service (read in P0.2)"]
+  end
+  subgraph origin["Origin (Mac mini)"]
+    prod["mission-control<br/>:3101 · prod.db"]
+    dev["mission-control-dev<br/>:4101 · dev.db"]
+  end
+
+  msp --> dns
+  msd --> dns
+  mcp --> dns
+  mcd --> dns
+  dns --> bypass
+  bypass -->|"no (UI / data route)"| access
+  bypass -->|"yes (Pub/Sub OIDC)"| route
+  access -->|"allow"| route
+  access -->|"deny"| blocked(["403 at edge"])
+  route --> prod
+  route --> dev
+
+  ps["Google Pub/Sub<br/>gmail-push-prod · gmail-push-dev"] -->|"repointed in P3.4"| mcp
+  ps -.->|"until P3.4"| msp
+      </pre>
+
+      <h3>The security invariant — Access before routing, routing before teardown</h3>
+      <div class="callout danger"><strong>A hostname that routes through the tunnel before its Access app exists is wide open to the public internet.</strong> The origin does not verify the Access JWT (trust-edge, <code>cloudflare-access-auth.html</code> OQ3a) — it treats <em>every</em> arriving request as the owner. So the edge gate is the only gate, and a routed-but-ungated hostname hands an anonymous visitor a fully-authenticated session on the owner's job-search data, resume store, and Gmail-derived application records.</div>
+      <p>That yields a strict ordering, and its exact mirror on teardown:</p>
+      <ul>
+        <li><strong>Build-up (P1): Access apps → DNS → tunnel routes.</strong> The Access app is created for a hostname that doesn't resolve yet, which is harmless. DNS resolving to the tunnel is harmless while the tunnel has no route for that hostname (it returns a Cloudflare error, never the origin). Only the tunnel route makes traffic flow — and by then the gate is already in front of it.</li>
+        <li><strong>Teardown (P4): tunnel routes → DNS → Access apps.</strong> Removing the route stops traffic reaching the origin first; DNS goes next; the Access app is deleted <strong>last</strong>. Deleting an Access app while its hostname still routes leaves that hostname ungated for the length of the gap — the exact failure the build-up order exists to prevent.</li>
+      </ul>
+      <p>This mirrors the original rollout's "edge live before code" prerequisite (<code>cloudflare-access-auth.html</code>, P4 → P1 dependency). Same invariant, applied to a hostname instead of a code deploy.</p>
+
+      <h3>The webhook audience window</h3>
+      <p><code>app/api/gmail/webhook/route.ts:19-25</code> reads <code>PUBSUB_AUDIENCE</code> and hands it to <code>verifyPubSubOIDC(req, audience)</code>, which requires the token's <code>aud</code> claim to equal it exactly. Pub/Sub mints that claim from the subscription's <code>--push-auth-token-audience</code>. Those two values live in different control planes, so they cannot be changed atomically — there is necessarily a window where they disagree and every push is rejected.</p>
+      <p><strong>The failure mode is symmetric</strong> — either order produces the same outcome (an <code>aud</code> mismatch → the route returns 401 before any ingest work), and either way it is <strong>self-healing</strong>: Pub/Sub retries undelivered messages on backoff (≤600s) across a 7-day retention window, and the webhook is idempotent on redelivery (<code>INSERT OR IGNORE</code> on <code>WebhookDelivery(messageId)</code>, then resume from <code>min(user.lastSyncedHistoryId, envelope.historyId)</code>). Nothing is lost; deliveries just queue.</p>
+      <p><strong>The window duration is not symmetric, and that decides the order.</strong> Flip the <strong>origin first</strong> (env edit → build → <code>pm2 restart --update-env</code>), then the subscription:</p>
+      <ul>
+        <li>The env edit is <em>inert</em> until the restart — the running process holds the old value — so the slow half (a prod <code>npm run build</code>) happens entirely while the old audience is still in force and pushes still succeed.</li>
+        <li>The window opens the moment the restart completes and closes when <code>modify-push-config</code> returns: two fast <code>gcloud</code> calls, seconds.</li>
+        <li>The reverse order would open the window <em>before</em> the build and hold it open across build + restart — minutes of rejected pushes for no benefit.</li>
+      </ul>
+      <p>The two tiers are independent (separate env files, separate subscriptions, separate ports), so each tier's window is its own and can be closed before the other is opened.</p>
+
+      <h3>Executing the edge change — scripted, not clicked</h3>
+      <p>The edge work is 8 discrete mutations (4 Access apps, 2 DNS records, 2 tunnel routes) plus 8 more on teardown. Per OQ2 these run through a <strong>scoped Cloudflare API token</strong> the owner creates, not through the dashboard. Required scopes:</p>
+      <table>
+        <thead><tr><th>Scope</th><th>Resource</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td><code>Zone → DNS → Edit</code></td><td>zone <code>salsquared.xyz</code></td><td>create/delete the <code>mc</code> + <code>mc-dev</code> CNAMEs</td></tr>
+          <tr><td><code>Account → Cloudflare Tunnel → Edit</code></td><td>account</td><td>read + write the tunnel's public-hostname configuration</td></tr>
+          <tr><td><code>Account → Access: Apps and Policies → Edit</code></td><td>account</td><td>create/delete the 4 Access apps + their policies</td></tr>
+        </tbody>
+      </table>
+      <p class="note">That token can create publicly-reachable routes and delete access policies — it is the most privileged credential in this migration. It is created for this session and <strong>deleted at the end</strong> (P4.5).</p>
+      <p>One API shape matters: the tunnel configuration endpoint (<code>PUT /accounts/{account_id}/cfd_tunnel/{tunnel_id}/configurations</code>) takes the <strong>whole ingress document</strong>, not a patch. Every write is therefore a read-modify-write of the JSON captured in P0.2, and the catch-all rule must stay last. This is also why P0.3 snapshots that JSON verbatim: it is both the rollback artifact and the source of the origin service values.</p>
+
+      <h3>Doc strategy — amend the decision record, don't find/replace</h3>
+      <p>Most doc updates are mechanical hostname swaps. One is not. <code>docs/cloudflare-access-auth.html</code> contains <strong><code>OPEN-A</code></strong> (lines ~238-240 in the risk table and ~298-305 in Open Questions), which on 2026-06-24 explicitly weighed <code>ms.salsquared.xyz</code> against <code>ms-prod.salsquared.xyz</code> and <strong>decided (a) <code>ms-prod</code></strong> on the grounds that it "matches everything already deployed" and needs "no env or Pub/Sub change."</p>
+      <p>This migration <strong>reverses that decision</strong>, and takes on precisely the costs OPEN-A's option (b) listed as its <em>Cons</em> — env, Pub/Sub, and audience updates. Per the repo convention that decisions <strong>append, never replace</strong>, OPEN-A is not rewritten and its options list is not touched. Instead a superseding note is appended: the (b)-shaped outcome is now being taken deliberately, on the different grounds that naming consistency is worth a one-session migration; and the consequences (b) enumerated are exactly this doc's task list. The same file's P4 runbook hostnames and its request-flow Mermaid node (~line 142) <em>are</em> straight swaps — those describe live configuration, not a past decision.</p>
+      <p>The other non-mechanical one is <code>docs/next_steps.md:21</code>, which is <strong>load-bearing rather than descriptive</strong>: the 2026-07-10 incident entry contains a prepared, never-executed resume command —</p>
+      <pre><code class="language-bash">gcloud pubsub subscriptions modify-push-config gmail-push-dev \
+  --project=crypto-lexicon-490719-q9 \
+  --push-endpoint=https://ms-dev.salsquared.xyz/api/gmail/webhook \
+  --push-auth-service-account=pubsub-mc-publisher@crypto-lexicon-490719-q9.iam.gserviceaccount.com \
+  --push-auth-token-audience=https://ms-dev.salsquared.xyz/api/gmail/webhook</code></pre>
+      <p>Run post-cutover, that repoints dev at a hostname that no longer exists. It must be corrected or explicitly annotated as superseded. <strong>Its premise is stale independently of this migration:</strong> all four PM2 processes (<code>mission-control</code>, <code>mission-control-dev</code>, <code>mission-control-scheduler-dev</code>, <code>mission-control-scheduler-prod</code>) are online as of 2026-07-27, so the dev tier is no longer parked and the "pause dev push while parked" fix it describes no longer applies. Both facts get recorded.</p>
+
+      <h3>Touch list</h3>
+      <ul>
+        <li><strong>External (no code):</strong> 4 new Access apps + 4 deleted · 2 new DNS CNAMEs + 2 deleted · 2 new tunnel public-hostname routes + 2 removed · 2 Pub/Sub <code>modify-push-config</code> calls · 4 OAuth redirect URIs (2 added, 2 removed).</li>
+        <li><strong>Untracked env:</strong> <code>.env.production:3,39</code> · <code>.env.development:4,27</code> · <code>.env:9-10</code> (comment).</li>
+        <li><strong>Tracked, functional:</strong> <code>next.config.ts:25</code> · <code>.env.production.example:7,42</code> · <code>.env.development.example:8,30</code> · <code>scripts/tests/probes/gmail-push-receive-probe.ts:45,46</code> · <code>scripts/tests/hermetic/owner-auth-smoke.ts:187,203,216,226</code>.</li>
+        <li><strong>Rename:</strong> <code>launch-ms.sh</code> → <code>launch-mc.sh</code> (<code>git mv</code>), with inbound refs in <code>CLAUDE.md:30</code>, <code>docs/architecture.html:46,109,521,526,572</code>, <code>README.md:38,41</code>, <code>docs/multi-user-crew.html:279,281,388,576,683,1070,1081,1236</code>, <code>docs/next_steps.md:16,342</code>.</li>
+        <li><strong>Docs (live/canonical only):</strong> <code>CLAUDE.md:86,102</code> · <code>docs/cloudflare-access-auth.html</code> (17 hostname lines + the OPEN-A amendment) · <code>docs/multi-user-crew.html</code> (14 hostname lines) · <code>docs/next_steps.md</code> (the <code>:21</code> command + a session entry) · <code>docs/hosting.md:7</code>.</li>
+        <li><strong>Deliberately NOT swept (OQ4):</strong> <code>docs/codebase-review-2026-06-10.html:61</code> · <code>docs/implementation.md:1787</code> · <code>docs/archive/gmail-realtime-push.html:105,245,247,249,252,254,266,269,346</code> · <code>docs/archive/mvp1_implementation.md</code> · <code>docs/archive/architecture-critique.md</code> · <code>docs/archive/mvp2_implementation.md</code> · <code>docs/archive/todo.archive.md</code> · and <code>docs/next_steps.md</code>'s dated entries other than <code>:21</code>. <em>This is a decision, not an oversight</em> — see OQ4.</li>
+        <li><strong>Not touched:</strong> <code>docs/apis.html</code> (zero hostname refs) · <code>public/manifest.json</code> · <code>~/.config/caddy/Caddyfile</code> · <code>launch-mc.sh</code>'s internal <code>mc.local</code> lines · every fetcher User-Agent.</li>
+      </ul>
+
+      <h3>Alternatives considered</h3>
+      <ul>
+        <li><strong>Hard cutover — rename in place, no overlap.</strong> Delete the <code>ms-*</code> routes and create the <code>mc</code> ones in the same breath. Rejected (OQ3): there is a window where <em>neither</em> hostname works, and if the origin service value read in P0.2 turns out wrong there is nothing left to fall back to. The overlap costs two extra tunnel routes for one session and buys a verified-before-you-commit path.</li>
+        <li><strong>Open-ended grace period — keep <code>ms-*</code> for weeks.</strong> Rejected (OQ3): it means maintaining 8 Access apps and 4 live public hostnames indefinitely, doubling the surface that must stay correctly gated, with no benefit for a single-owner deployment where the only client is the owner's own browser and one Pub/Sub subscription.</li>
+        <li><strong>Redirect <code>ms-*</code> → <code>mc</code> permanently.</strong> Rejected: a redirect is not a retirement — it keeps both hostnames, both Access apps, and both tunnel routes alive forever, which is the state this change exists to eliminate. One owner, one bookmark update.</li>
+        <li><strong><code>mc-prod</code> for symmetry with <code>mc-dev</code>.</strong> Rejected: prod is the surface actually used daily and the one typed on a phone; the unqualified name should be the default tier. The asymmetry is deliberate and self-documenting — <code>mc</code> is the thing, <code>mc-dev</code> is the variant.</li>
+        <li><strong>Manual dashboard execution of the edge changes.</strong> Rejected (OQ2): 16 mutations across three Cloudflare product surfaces, several of which are security-relevant (a mistyped hostname on an Access app leaves the real one ungated). Scripted calls are reviewable, re-runnable, and diffable against the P0.3 snapshot.</li>
+        <li><strong>Repo-wide <code>ms-*</code> sweep including archives.</strong> Rejected (OQ4): archive docs and dated review snapshots are historical records. Rewriting <code>docs/archive/gmail-realtime-push.html</code> to say <code>mc</code> would make it claim the 2026-05-29 Pub/Sub wiring used a hostname that did not exist for another 14 months.</li>
+        <li><strong>Leave <code>launch-ms.sh</code> alone.</strong> Rejected (OQ1): it is the same <code>ms</code>-for-<code>mc</code> error, its inbound references are all in docs already being edited, and a <code>git mv</code> is cheap now and annoying later once <code>docs/multi-user-crew.html</code>'s P4.1 starts editing the script's contents.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+
+      <h3>Risks &amp; mitigations</h3>
+      <table>
+        <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Ungated hostname.</strong> A <code>mc</code> hostname routes through the tunnel before its Access app exists → the public internet gets a fully-authenticated owner session (the origin trusts the edge and verifies nothing).</td>
+            <td>low / <strong>critical impact</strong></td>
+            <td><strong>Mandatory order: Access apps (P1.1) → DNS (P1.2) → tunnel routes (P1.3).</strong> Encoded as a hard dependency in the DAG. P1.4.1 verifies each new root 302s to <code>salsquared.cloudflareaccess.com</code> <em>before</em> anything else proceeds; if it returns app HTML instead, the route is pulled immediately.</td>
+          </tr>
+          <tr>
+            <td><strong>Ungated hostname on teardown.</strong> Deleting an <code>ms-*</code> Access app while that hostname still routes leaves it open for the gap.</td>
+            <td>low / <strong>critical impact</strong></td>
+            <td>Teardown runs the exact mirror: <strong>tunnel routes (P4.1) → DNS (P4.2) → Access apps (P4.3)</strong>. P4.1 is verified (old host no longer reaches the origin) before P4.3 runs.</td>
+          </tr>
+          <tr>
+            <td><strong>Wrong origin service on the new route.</strong> The tunnel's real origin target can't be read from the box; guessing <code>localhost:3101</code>/<code>:4101</code> wrong yields a 502 on the new hostname (or, worse, a route to the wrong tier's DB).</td>
+            <td>med</td>
+            <td><strong>P0.2 is a blocking prerequisite</strong> — read the live configuration via <code>GET …/configurations</code> and copy each hostname's existing <code>service</code> value verbatim into its new sibling. Never type a port from memory. P1.4 verifies the new host reaches the <em>expected tier</em>, not merely "something."</td>
+          </tr>
+          <tr>
+            <td><strong>Clobbering the tunnel ingress.</strong> The configuration endpoint is a whole-document <code>PUT</code>, so a careless write can drop the <code>ms-*</code> routes early, drop an unrelated hostname, or lose the trailing catch-all rule.</td>
+            <td>med</td>
+            <td>Every write is a read-modify-write of the P0.2 JSON with the catch-all kept last; P0.3 stores that JSON verbatim as a one-command restore. Diff before and after each <code>PUT</code>.</td>
+          </tr>
+          <tr>
+            <td><strong>Webhook <code>aud</code> mismatch window.</strong> Between the origin restart and the <code>modify-push-config</code> call, every Pub/Sub push is rejected 401 by <code>route.ts:19-25</code>.</td>
+            <td>certain / low impact</td>
+            <td><strong>Unavoidable but bounded and self-healing.</strong> Origin-first ordering keeps the window to the seconds between restart and two <code>gcloud</code> calls (see §2.3); Pub/Sub retries on ≤600s backoff within a 7-day retention window; the webhook is idempotent (<code>WebhookDelivery</code> <code>INSERT OR IGNORE</code> + resume from <code>min(lastSyncedHistoryId, envelope.historyId)</code>). P3.5 confirms a live round-trip on both tiers.</td>
+          </tr>
+          <tr>
+            <td><strong>Per-device UI state resets.</strong> <code>localStorage['app-state']</code> is origin-scoped, so <code>activeViewId</code>, <code>autoResearch</code>, and <code>aiCompanionEnabled</code> do <em>not</em> follow to the new hostname.</td>
+            <td>certain / cosmetic</td>
+            <td>Accepted. Cross-device fields (<code>isDarkMode</code>, <code>viewHues</code>, <code>dashOrder</code>, <code>dashTitles</code>) <strong>do</strong> survive — they sync through <code>/api/settings</code> from the DB, not localStorage. So the dash order, titles, hues, and theme are intact; only which dash was last open and two per-device toggles reset. Documented so it isn't mistaken for data loss.</td>
+          </tr>
+          <tr>
+            <td><strong>Installed PWA is orphaned.</strong> A different origin means a different service-worker scope; the phone's installed app keeps pointing at a hostname that will stop existing.</td>
+            <td>certain</td>
+            <td>Accepted and explicitly scheduled: remove the installed PWA and re-add it from <code>https://mc.salsquared.xyz</code> (P4.6). Do this <em>after</em> the new host is verified but before the old routes are torn down, so there is never a moment with no working install.</td>
+          </tr>
+          <tr>
+            <td><strong>One Access re-auth per new hostname.</strong> Access session cookies are per-host, so every device re-authenticates once on <code>mc</code> and once on <code>mc-dev</code>.</td>
+            <td>certain / trivial</td>
+            <td>Expected, one click each. Session lifetimes are carried over unchanged (prod 24h, dev 1 month) so steady-state friction is identical to today.</td>
+          </tr>
+          <tr>
+            <td><strong>Stale executable command.</strong> <code>docs/next_steps.md:21</code>'s prepared <code>modify-push-config</code> would repoint <code>gmail-push-dev</code> at a dead hostname if run after cutover.</td>
+            <td>med</td>
+            <td>P5.8 corrects it in place and annotates the entry as superseded (its "dev tier is parked" premise is also stale — all four PM2 processes are online as of 2026-07-27). Treated as a functional fix, not a doc tidy.</td>
+          </tr>
+          <tr>
+            <td><strong>OAuth redirect URIs removed too early.</strong> Dropping the <code>ms-*</code> callbacks before the new ones are added and verified breaks the Google connect/reconnect flow.</td>
+            <td>low</td>
+            <td>Strictly additive first (P2, before cutover), removal last (P4.4). Note the blast radius is small either way: the <strong>existing refresh token is unaffected</strong> — redirect URIs gate new consent only, so Gmail/Calendar ingest never depends on this step.</td>
+          </tr>
+          <tr>
+            <td><strong>Long-lived privileged API token.</strong> The scoped Cloudflare token can create public routes and delete access policies.</td>
+            <td>low</td>
+            <td>Created for this session only, never committed (lives in the shell environment / an untracked file outside the repo), and <strong>deleted in P4.5</strong> as an explicit task rather than an afterthought.</td>
+          </tr>
+          <tr>
+            <td><strong>Repo and edge drift out of sync.</strong> <code>next.config.ts:25</code> and the tier env files are repo/env state that must match the live hostname; landing them early breaks dev's cross-origin allowlist, landing them late leaves it stale.</td>
+            <td>med</td>
+            <td>They are deliberately <em>not</em> in the parallel-safe P5 repo batch — <code>next.config.ts</code> is P3.2 and the env files are P3.1, both inside the cutover phase. The rest of P5 is genuinely independent of P1–P4.</td>
+          </tr>
+          <tr>
+            <td><strong>Pre-push gate trips on the smoke's hostname strings.</strong> <code>owner-auth-smoke.ts</code> constructs request URLs from the old hostname.</td>
+            <td>low</td>
+            <td>Cosmetic — the smoke is hermetic and asserts nothing about the host — but P5.6 updates all four lines so the suite reads true. The pre-push hook runs the full hermetic suite on push (P5.10), which catches any accidental functional coupling.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Rollback</h3>
+      <p>The overlap exists precisely so that every phase is reversible while <code>ms-*</code> is still live. Per phase:</p>
+      <table>
+        <thead><tr><th>Phase</th><th>Revert</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td><strong>P0</strong> prerequisites</td><td>Nothing was changed — the token can simply be deleted.</td><td>none</td></tr>
+          <tr><td><strong>P1</strong> additive edge</td><td>Delete the 2 tunnel routes, then the 2 DNS records, then the 4 Access apps (teardown order — do not delete an Access app while its route lives). <code>ms-*</code> was never touched and keeps serving throughout.</td><td>none — no user-visible impact at any point</td></tr>
+          <tr><td><strong>P2</strong> OAuth URIs</td><td>Remove the two added redirect URIs. Purely additive; the <code>ms-*</code> URIs are still present.</td><td>none</td></tr>
+          <tr><td><strong>P3</strong> cutover</td><td>Restore the two tier env files to <code>ms-*</code>, revert <code>next.config.ts:25</code>, rebuild, <code>pm2 restart … --update-env</code>, then re-run the two <code>modify-push-config</code> calls with the <code>ms-*</code> endpoint + audience. Same origin-first ordering; same seconds-long <code>aud</code> window; same self-healing retry.</td><td>one rebuild + restart cycle; queued pushes drain</td></tr>
+          <tr><td><strong>P4</strong> teardown</td><td>Re-create what was removed: tunnel routes and DNS records from the P0.3 snapshot, Access apps from the recorded policies (Allow email <code>salsalcedo4321@gmail.com</code>; prod 24h, dev 1 month; two path-scoped Bypass apps). <strong>Re-create in build-up order: Access apps → DNS → routes.</strong></td><td>manual re-creation + DNS propagation delay</td></tr>
+          <tr><td><strong>P5</strong> repo</td><td><code>git revert</code> the commit. Pure text + a file rename; no schema, no data, no build artifacts.</td><td>trivial</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Point of no return.</strong> Nothing here destroys data, so there is no hard one-way door — but there is a practical one: <strong>P4.1, removing the <code>ms-*</code> tunnel routes</strong>. Before it, rollback is a config flip with both hostnames serving. After it, <code>ms-*</code> stops reaching the origin and anything still pointed at it — a bookmark, the un-reinstalled PWA, a copy-pasted <code>gcloud</code> command — fails until the route is re-added; P4.2's DNS deletion adds propagation delay on top. So <strong>P3.5 (verified Gmail round-trip on both tiers over the new hostnames) is the gate on entering P4</strong>. Do not begin teardown on an unverified cutover.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+
+      <h3>Resolved decisions</h3>
+      <p>All four OQs were settled with the owner before this doc was written; they are recorded here as the decision record (options kept, pick appended). <strong>No open questions remain</strong>, which is why the Tasks section below is authored in full.</p>
+
+      <div class="callout tip"><strong>OQ1 — Should <code>launch-ms.sh</code> be renamed as part of this migration?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Rename to <code>launch-mc.sh</code> now.</strong> <code>git mv launch-ms.sh launch-mc.sh</code> and update its 5 live inbound references (<code>CLAUDE.md:30</code>, <code>docs/architecture.html:46,109,521,526,572</code>, <code>README.md:38,41</code>, <code>docs/multi-user-crew.html</code>, <code>docs/next_steps.md:16,342</code>), leaving the script's own <code>mc.local</code> Caddy lines untouched. <em>Effect:</em> the entire <code>ms</code>-for-<code>mc</code> naming error is gone in one commit instead of two. <em>Pros:</em> same class of error, same session, and the docs holding the inbound refs are already open for hostname edits — near-zero marginal cost. <em>Cons:</em> a rename in a migration commit slightly widens the diff, and any muscle-memory invocation of <code>./launch-ms.sh</code> breaks.</li>
+          <li><strong>(b)</strong> <strong>Leave the script alone; hostnames only.</strong> Change only the two public hostnames and their references. <em>Effect:</em> the repo keeps a <code>launch-ms.sh</code> whose name contradicts every other <code>mc</code> reference. <em>Pros:</em> tightest possible diff, strictly one concern per change. <em>Cons:</em> leaves the identical mistake in place, and gets more annoying later — <code>docs/multi-user-crew.html</code>'s P4.1 plans to edit that script's <em>contents</em>, so a later rename would collide with in-flight work.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — rename to <code>launch-mc.sh</code> via <code>git mv</code>, because it is the same <code>ms</code>-for-<code>mc</code> error this whole migration exists to fix and every file holding an inbound reference is already being edited for hostnames; doing it separately would cost a second pass over the same files for no benefit. The script's internal <code>mc.local</code> lines (27, 30, 31, 34) are already correct and LAN-only and are explicitly out of scope.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ2 — Who performs the Cloudflare edge changes, and how?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Owner clicks through the Zero Trust + DNS dashboards.</strong> All 16 mutations (4 Access apps up, 2 DNS, 2 tunnel routes, then the same 8 down) are performed by hand in the UI. <em>Effect:</em> no credential is created, and nothing about the migration is automatable or re-runnable. <em>Pros:</em> no privileged token exists to leak or forget about; the UI validates some inputs. <em>Cons:</em> click-error risk across 4 Access apps, 2 tunnel routes, and 2 DNS records — and a mistyped hostname on an Access app is a <em>silent security failure</em> (the real hostname stays ungated while the dashboard looks correct); nothing is diffable against the P0.3 snapshot; teardown repeats the whole exercise.</li>
+          <li><strong>(b)</strong> <strong>Owner creates a scoped API token; the change is scripted.</strong> A token limited to <code>Zone → DNS → Edit</code> (zone <code>salsquared.xyz</code>), <code>Account → Cloudflare Tunnel → Edit</code>, and <code>Account → Access: Apps and Policies → Edit</code> drives the mutations as reviewable API calls, with the tunnel configuration read first and written back as a read-modify-write. <em>Effect:</em> every edge change is an inspectable request, verifiable against the snapshot, and the teardown is the same script in reverse. <em>Pros:</em> eliminates click error on the security-relevant steps; the tunnel config becomes readable at all (P0.2 is impossible from the dashboard alone in scripted form); repeatable rollback. <em>Cons:</em> creates a genuinely privileged credential that must be scoped tightly and deleted afterwards.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — the owner creates a scoped Cloudflare API token and the edge work is scripted, because the ordering invariant (Access before routing) is only as good as the hostnames actually typed, and 16 hand-entered mutations across three product surfaces is exactly the shape of change where a single typo is both easy and invisible. The token's privilege is real, so it is scoped to three permissions and its deletion is an explicit task (P4.5), not a note.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ3 — How long do the old and new hostnames coexist?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Hard cutover — no overlap.</strong> Rename the tunnel routes and DNS records in place, swapping <code>ms-*</code> for <code>mc</code> in one operation, with the Access apps re-pointed at the same time. <em>Effect:</em> a single mutation window during which neither hostname resolves to a gated origin. <em>Pros:</em> shortest total elapsed time; never more than 4 Access apps exist. <em>Cons:</em> there is a window where <strong>nothing works</strong>, and if the P0.2 origin-service value turns out wrong there is no live fallback to diagnose against — the only path forward is forward.</li>
+          <li><strong>(b)</strong> <strong>Bounded overlap, retired the same session.</strong> Stand <code>mc</code>/<code>mc-dev</code> up fully gated alongside the live <code>ms-*</code>, verify them (302 to the Access login; webhook path 405), cut over env + Pub/Sub, confirm a Gmail round-trip on both tiers, then retire <code>ms-*</code>. <em>Effect:</em> a few hours where 4 hostnames route to 2 origins, then back to 2. <em>Pros:</em> every step is verified against a working control; rollback at any point before teardown is a config flip with the old surface still serving. <em>Cons:</em> 8 Access apps and 4 routes exist transiently, and the session must be seen through to the teardown rather than left half-done.</li>
+          <li><strong>(c)</strong> <strong>Open-ended grace period.</strong> Bring <code>mc</code> up and keep <code>ms-*</code> alive for weeks before deciding to retire it. <em>Effect:</em> the doubled surface becomes the steady state. <em>Pros:</em> no deadline pressure; stale bookmarks keep working indefinitely. <em>Cons:</em> permanently maintains 8 Access apps and 4 public hostnames — twice the surface that must stay correctly gated — for a single-owner deployment whose only clients are the owner's browser and one Pub/Sub subscription; migrations left half-finished tend to stay half-finished.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — bounded overlap, retired in the same session, because the one genuinely unknown input (the tunnel's origin service target) is best validated against a still-working control, and the doubled-surface cost that makes (c) unattractive is precisely what makes (b) safe when it lasts hours instead of weeks. The teardown gate is P3.5: a verified Gmail round-trip on both tiers over the new hostnames.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ4 — How wide is the documentation sweep?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Live/canonical docs only.</strong> Update <code>CLAUDE.md</code>, <code>docs/cloudflare-access-auth.html</code>, <code>docs/multi-user-crew.html</code>, <code>docs/hosting.md</code>, and the load-bearing command in <code>docs/next_steps.md:21</code>; leave <code>docs/archive/*</code>, <code>docs/codebase-review-2026-06-10.html:61</code>, <code>docs/implementation.md:1787</code>, and <code>next_steps.md</code>'s other dated entries with their historical <code>ms-*</code> text. <em>Effect:</em> anything a reader would act on today says <code>mc</code>; anything describing what happened on a date keeps saying what was true then. <em>Pros:</em> matches the repo's existing precedent (the 2026-06-24 session explicitly left <code>implementation.md</code> + <code>codebase-review</code> as "dated historical docs, not swept"); smaller, more reviewable diff. <em>Cons:</em> a <code>grep ms-prod</code> still returns hits, so a future reader must know the exclusion was deliberate.</li>
+          <li><strong>(b)</strong> <strong>Repo-wide sweep.</strong> Replace every <code>ms-*</code> occurrence everywhere, archives included. <em>Effect:</em> <code>grep</code> comes back clean. <em>Pros:</em> no ambiguity about whether a hit is stale or historical. <em>Cons:</em> rewrites history — <code>docs/archive/gmail-realtime-push.html</code> would claim the 2026-05-29 Pub/Sub wiring used a hostname that did not exist until 2026-07-27, and a dated review snapshot would misreport what the code looked like on its date. Archives exist to be accurate about the past, not consistent with the present.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — live and canonical docs only, because an archive that has been edited to agree with the present is no longer a record of anything; the cost is one <code>grep</code> that returns known-historical hits, and this doc's touch list names every excluded file explicitly so the exclusion reads as a decision rather than an oversight.</p>
+      </div>
+
+      <h3>Superseding <code>cloudflare-access-auth.html</code>'s OPEN-A</h3>
+      <div class="callout tip"><strong>OPEN-A (2026-06-24, <code>cloudflare-access-auth.html</code>) is superseded by this doc — its option (b) shape is now taken deliberately.</strong></div>
+      <div class="oq-detail">
+        <p>That doc's <code>OPEN-A</code> weighed <code>(a) ms-prod.salsquared.xyz</code> against <code>(b) ms.salsquared.xyz</code> and decided <strong>(a)</strong>, on the grounds that it "matches everything already deployed" and requires "no env or Pub/Sub change." That was correct for the question it was answering — it was resolving an <em>ambiguity</em> about which hostname was already live, not choosing a name on the merits.</p>
+        <p>This migration takes the option-(b) <em>shape</em> — a hostname change that drags <code>NEXTAUTH_URL</code>, <code>PUBSUB_AUDIENCE</code>, and both Pub/Sub push subscriptions with it — but for a different reason and to a different value (<code>mc.salsquared.xyz</code>, not <code>ms.salsquared.xyz</code>): naming consistency with the project itself. The consequences OPEN-A listed as (b)'s <em>Cons</em> are not a surprise cost here; <strong>they are this doc's task list</strong> (P3.1, P3.4).</p>
+        <p>Per the repo convention that decisions <strong>append, never replace</strong>, P5.7 does not rewrite OPEN-A or its options — it appends a superseding note pointing here. What <em>does</em> get straight-swapped in that file is live configuration: the P4 runbook hostnames, the risk-table row at ~238-240, and the request-flow Mermaid node at ~142.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+
+      <h3>Implementation checklist</h3>
+      <p>OQ1–OQ4 are all resolved, so the checklist is authored in full with literal hostnames. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;</code>. <strong>6 phases · 29 tasks · 69 sub-tasks (104 checkboxes).</strong></p>
+
+      <div class="callout danger"><strong>Two orderings are load-bearing and must not be reordered for convenience.</strong> (1) <strong>Build-up: Access apps → DNS → tunnel routes.</strong> A routed hostname without an Access app in front is publicly-readable owner data. (2) <strong>Teardown: tunnel routes → DNS → Access apps.</strong> Deleting an Access app while its hostname still routes creates the same hole. Within P3, <strong>origin env/restart before Pub/Sub</strong> — see §2.3 for why the window duration is not symmetric.</div>
+
+      <div class="callout"><strong>P5 (repo) is parallel-safe against P1–P4, with two exceptions.</strong> Nothing in the repository gates the edge change, so the entire repo batch — script rename, probe/smoke URLs, <code>.env.*.example</code>, and every doc — can be worked concurrently with the edge phases by a separate set of agents. <strong>The exceptions are <code>next.config.ts:25</code> and the two untracked tier env files</strong>, which are live configuration rather than documentation and must land <em>with</em> the cutover; they are therefore assigned to <strong>P3.2</strong> and <strong>P3.1</strong>, not to P5. Note the coupling: P3.2 edits a tracked file, so the working tree carries that edit until P5.10 commits it.</div>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P0</span>
+          <span class="task-title">Phase 0 — Prerequisites (serial bottleneck; blocks everything)</span>
+        </summary>
+        <div class="task-body">
+          <p>Two things must exist before any mutation: a credential, and the current tunnel configuration. The second is the real blocker — the origin service target each hostname forwards to <strong>cannot be read from this machine</strong>, and guessing it is how the new hostname 502s or lands on the wrong tier.</p>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P0.1</span><span class="task-title">Owner creates + supplies a scoped Cloudflare API token</span></summary>
+            <div class="task-body">
+              <p>Manual, owner-executed (OQ2b). <em>Blocks P0.2, P1, P4.1–P4.3.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.1.1</span><span class="task-title">Scope the token to exactly three permissions</span></summary>
+                <div class="task-body"><p><code>Zone → DNS → Edit</code> restricted to zone <code>salsquared.xyz</code>; <code>Account → Cloudflare Tunnel → Edit</code>; <code>Account → Access: Apps and Policies → Edit</code>. No broader scope — this token can publish routes and delete access policies.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.1.2</span><span class="task-title">Supply the token out-of-band + record the account id</span></summary>
+                <div class="task-body"><p>Token lives in the shell environment or an untracked file <strong>outside the repo</strong> — never committed, never pasted into a doc. Record the Cloudflare <code>account_id</code> needed for the tunnel + Access endpoints.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.1.3</span><span class="task-title">Verify the token with a read-only call</span></summary>
+                <div class="task-body"><p><code>GET /user/tokens/verify</code>, then one read against each of the three surfaces (list DNS records, get the tunnel configuration, list Access apps) to confirm all three scopes actually landed before any write is attempted.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P0.2</span><span class="task-title">Read the tunnel's CURRENT public-hostname configuration</span></summary>
+            <div class="task-body">
+              <p><strong>Hard prerequisite for P1.3.</strong> <em>Depends on P0.1.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.2.1</span><span class="task-title">GET the configuration document</span></summary>
+                <div class="task-body"><p><code>GET /accounts/{account_id}/cfd_tunnel/bc3ae99c-dd25-4fd0-9cbb-13ce6e740582/configurations</code>. This is the only way to read the ingress rules — <code>cloudflared</code> runs token-managed with no local config (<code>~/.cloudflared/</code> holds only <code>cert.pem</code>).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.2.2</span><span class="task-title">Record the real origin service target per hostname</span></summary>
+                <div class="task-body"><p>For each of <code>ms-prod.salsquared.xyz</code> and <code>ms-dev.salsquared.xyz</code>, record the exact <code>service</code> value (expected <code>http://localhost:3101</code> / <code>http://localhost:4101</code> — <strong>expected, not verified</strong>), plus any <code>originRequest</code> settings and the position of the trailing catch-all rule. P1.3 copies these verbatim.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.2.3</span><span class="task-title">Close the cross-doc blocking unknown</span></summary>
+                <div class="task-body"><p>The same read answers the prerequisite flagged at <code>docs/multi-user-crew.html:282</code>, which blocks <em>that</em> doc's P4.1 (a loopback bind takes prod offline if the tunnel points at anything other than <code>localhost</code>/<code>127.0.0.1</code>). Record the finding for that doc; P5.7 notes it.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P0.3</span><span class="task-title">Capture the rollback snapshot</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P0.2.</em> This is the artifact every rollback path in §3.2 restores from.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.3.1</span><span class="task-title">Save the tunnel configuration JSON verbatim</span></summary>
+                <div class="task-body"><p>Store the unmodified <code>GET</code> response outside the repo (untracked). Every subsequent <code>PUT</code> is a read-modify-write against this baseline, and a full restore is re-<code>PUT</code>ting it.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.3.2</span><span class="task-title">Record current Access app + DNS state</span></summary>
+                <div class="task-body"><p>App ids, hostnames, session durations (prod 24h / dev 1 month), policy shapes (Allow email <code>salsalcedo4321@gmail.com</code>; Bypass/Everyone for the two <code>…/api/gmail/webhook</code> apps), and the two DNS record ids + their CNAME targets. Needed to re-create them if P4 must be undone.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Additive edge: stand up <code>mc</code> + <code>mc-dev</code>, gated</span>
+        </summary>
+        <div class="task-body">
+          <p><strong>Strictly ordered: P1.1 → P1.2 → P1.3 → P1.4.</strong> <code>ms-*</code> is untouched and stays fully live through this entire phase. <em>Depends on P0.</em></p>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.1</span><span class="task-title">Create the 4 new Access apps FIRST</span></summary>
+            <div class="task-body">
+              <p>Before any DNS or routing exists for these hostnames. The four sub-tasks are mutually parallel-safe (distinct apps), but <strong>all four must complete before P1.2 starts</strong>.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.1</span><span class="task-title">App — <code>mc.salsquared.xyz</code> (prod)</span></summary>
+                <div class="task-body"><p>Self-hosted app; Allow policy <code>emails == salsalcedo4321@gmail.com</code>; Google IdP; <strong>session duration 24h</strong> (carried over unchanged from <code>cloudflare-access-auth.html</code> OQ1a).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.2</span><span class="task-title">App — <code>mc-dev.salsquared.xyz</code> (dev)</span></summary>
+                <div class="task-body"><p>Same Allow policy; <strong>session duration 1 month</strong> (carried over from OQ2a of that doc).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.3</span><span class="task-title">App — <code>mc.salsquared.xyz/api/gmail/webhook</code> (Bypass)</span></summary>
+                <div class="task-body"><p>Path-scoped app, policy <strong>Bypass / Everyone</strong>. Path-scoped apps take precedence over the hostname app, so Pub/Sub's OIDC POST reaches the origin; the route keeps its own <code>verifyPubSubOIDC</code> + signer-email assertion, so the bypass weakens nothing.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.4</span><span class="task-title">App — <code>mc-dev.salsquared.xyz/api/gmail/webhook</code> (Bypass)</span></summary>
+                <div class="task-body"><p>Identical to P1.1.3 on the dev hostname.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.2</span><span class="task-title">Create the 2 DNS records</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P1.1 (all four apps live).</em> Safe even without them resolving to a route — the tunnel returns a Cloudflare error, never the origin — but the order is kept absolute so no one has to re-derive which half of it was the safe one.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title">CNAME <code>mc</code> → tunnel</span></summary>
+                <div class="task-body"><p><code>mc.salsquared.xyz</code> CNAME → <code>bc3ae99c-dd25-4fd0-9cbb-13ce6e740582.cfargotunnel.com</code>, proxied — matching the existing <code>ms-prod</code> record's settings from P0.3.2.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title">CNAME <code>mc-dev</code> → tunnel</span></summary>
+                <div class="task-body"><p>Same target and settings, mirroring the existing <code>ms-dev</code> record. <em>Parallel-safe with P1.2.1.</em></p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.3</span><span class="task-title">Add the 2 tunnel public-hostname routes</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P1.2.</em> This is the step that makes traffic actually flow — and by now the gate is already in front of it.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.1</span><span class="task-title">Route <code>mc.salsquared.xyz</code> → prod origin</span></summary>
+                <div class="task-body"><p>Read-modify-write the configuration document: add an ingress rule using the <strong>exact <code>service</code> value recorded in P0.2.2</strong> for <code>ms-prod</code>. Do not type a port from memory.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.2</span><span class="task-title">Route <code>mc-dev.salsquared.xyz</code> → dev origin</span></summary>
+                <div class="task-body"><p>Same, using <code>ms-dev</code>'s recorded service value. Serialize with P1.3.1 — both edit the same configuration document; do them in one <code>PUT</code> or strictly one after the other.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.3</span><span class="task-title">Preserve the <code>ms-*</code> rules and the trailing catch-all</span></summary>
+                <div class="task-body"><p>Diff the written document against the P0.3.1 snapshot: the two <code>ms-*</code> rules must still be present and unchanged, no unrelated hostname dropped, and the catch-all rule still last.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P1.4</span><span class="task-title">Verify the new hostnames before touching anything else</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P1.3.</em> <strong>Gate on P2/P3.</strong> If P1.4.1 returns app HTML instead of a redirect, pull the route immediately — that is the ungated-hostname failure.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.4.1</span><span class="task-title">Roots are gated</span></summary>
+                <div class="task-body"><p><code>curl -sI https://mc.salsquared.xyz/</code> and <code>https://mc-dev.salsquared.xyz/</code> → <strong>302 to <code>salsquared.cloudflareaccess.com</code></strong>. Same assertion the 2026-06-24 rollout used on <code>ms-*</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.4.2</span><span class="task-title">Webhook paths are bypassed and reach the origin</span></summary>
+                <div class="task-body"><p><code>curl -sI https://mc.salsquared.xyz/api/gmail/webhook</code> → <strong>405</strong> (a GET against a POST-only route). 405 proves the request traversed the Bypass app <em>and</em> hit the Next origin; a 302 would mean the Bypass app is missing or mis-scoped. Repeat for <code>mc-dev</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.4.3</span><span class="task-title">Correct tier, and <code>ms-*</code> still live</span></summary>
+                <div class="task-body"><p>After passing Access in a browser, confirm <code>mc</code> serves the <strong>prod</strong> tier and <code>mc-dev</code> the <strong>dev</strong> tier (not crossed) — e.g. via <code>/api/system</code>. Re-confirm both <code>ms-*</code> hostnames still behave exactly as before.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — Google OAuth redirect URIs (additive)</span>
+        </summary>
+        <div class="task-body">
+          <p>Manual, owner-executed in the Google Cloud console — no API path. Client <code>500673715504-km7m84hcid87jp64cav5m32mcemp33c6.apps.googleusercontent.com</code>. <strong>Strictly additive here; the old URIs are removed in P4.4.</strong> <em>Depends on P1.4</em> (don't authorize a callback for a hostname that isn't verified). <em>Parallel-safe with the whole of P5.</em></p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P2.1</span><span class="task-title">Add the two new authorized redirect URIs</span></summary>
+            <div class="task-body">
+              <p>Low blast radius either way: the existing refresh token is unaffected by redirect-URI changes, so Gmail/Calendar ingest never depends on this step. It only gates a future connect/reconnect.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title">Add <code>https://mc.salsquared.xyz/api/auth/callback/google</code></span></summary>
+                <div class="task-body"><p>NextAuth's Google callback path for the prod tier.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.2</span><span class="task-title">Add <code>https://mc-dev.salsquared.xyz/api/auth/callback/google</code></span></summary>
+                <div class="task-body"><p>Same for dev.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.3</span><span class="task-title">Leave both <code>ms-*</code> URIs in place</span></summary>
+                <div class="task-body"><p>Explicitly do <strong>not</strong> remove them yet — during the overlap both hostname pairs must be able to complete a connect flow. Removal is P4.4.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Cutover: origin env, then Pub/Sub</span>
+        </summary>
+        <div class="task-body">
+          <p>The only phase with a user-visible window. <strong>Order within the phase is load-bearing: env + build + restart, then immediately the two <code>modify-push-config</code> calls</strong> (§2.3). <em>Depends on P1.4.</em></p>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">Tier env files (untracked)</span></summary>
+            <div class="task-body">
+              <p>Inert until the P3.3 restart. <em>Parallel-safe with P3.2</em> (disjoint files); both must land before P3.3.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.1.1</span><span class="task-title"><code>.env.production</code> — lines 3 + 39</span></summary>
+                <div class="task-body"><p><code>NEXTAUTH_URL</code> (:3) and <code>PUBSUB_AUDIENCE</code> (:39) → <code>https://mc.salsquared.xyz</code> and <code>https://mc.salsquared.xyz/api/gmail/webhook</code>. The audience must match the subscription's <code>--push-auth-token-audience</code> <strong>byte-for-byte</strong>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.1.2</span><span class="task-title"><code>.env.development</code> — lines 4 + 27</span></summary>
+                <div class="task-body"><p>Same two keys → <code>https://mc-dev.salsquared.xyz</code> / <code>…/api/gmail/webhook</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.1.3</span><span class="task-title"><code>.env:9-10</code> — OAuth callback comment block</span></summary>
+                <div class="task-body"><p>Comment only — no runtime effect — but it documents the two callback URLs and should not lie once P4.4 removes the old ones.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title"><code>next.config.ts:25</code> — <code>allowedDevOrigins</code></span></summary>
+            <div class="task-body">
+              <p>The one tracked-repo file that must land <em>with</em> the cutover rather than in the P5 batch. <em>Parallel-safe with P3.1.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.2.1</span><span class="task-title">Swap the dev origin to <code>mc-dev.salsquared.xyz</code></span></summary>
+                <div class="task-body"><p><code>allowedDevOrigins: ['mc-dev.salsquared.xyz']</code>. This is Next's cross-origin allowlist for <code>/_next/*</code> on the dev server reached through the tunnel; LAN hosts don't need entries (the existing comment already says so and stays accurate).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.2.2</span><span class="task-title">Leave the edit uncommitted until P5.10</span></summary>
+                <div class="task-body"><p>Tracked file, so the working tree carries it into the P5 commit. Flag it to whoever runs P5.10 so it isn't mistaken for stray churn and excluded by the commit pathspec.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">Rebuild + restart all four PM2 processes</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P3.1 + P3.2.</em> <strong>This is the moment the audience window opens.</strong> Have the P3.4 commands ready to paste before starting.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.3.1</span><span class="task-title"><code>npm run build</code></span></summary>
+                <div class="task-body"><p>Prod build (webpack, <code>.next</code>). Dev is Turbopack and needs no build. Runs while the <em>old</em> audience is still in force — pushes keep succeeding throughout.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.3.2</span><span class="task-title"><code>pm2 restart … --update-env</code></span></summary>
+                <div class="task-body"><p><code>pm2 restart mission-control mission-control-dev mission-control-scheduler-prod mission-control-scheduler-dev --update-env</code> — all four, matching the established pattern; <code>--update-env</code> is required or the new values aren't picked up.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.4</span><span class="task-title">Repoint the two Pub/Sub push subscriptions</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P3.3 — run immediately after.</em> Project <code>crypto-lexicon-490719-q9</code>; <code>gcloud</code> on this Mac is already authed as owner.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.4.1</span><span class="task-title"><code>gmail-push-prod</code> → <code>mc.salsquared.xyz</code></span></summary>
+                <div class="task-body">
+                  <pre><code class="language-bash">gcloud pubsub subscriptions modify-push-config gmail-push-prod \
+  --project=crypto-lexicon-490719-q9 \
+  --push-endpoint=https://mc.salsquared.xyz/api/gmail/webhook \
+  --push-auth-service-account=pubsub-mc-publisher@crypto-lexicon-490719-q9.iam.gserviceaccount.com \
+  --push-auth-token-audience=https://mc.salsquared.xyz/api/gmail/webhook</code></pre>
+                  <p>Endpoint and audience must both change, and must be identical to each other and to <code>PUBSUB_AUDIENCE</code>.</p>
+                </div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.4.2</span><span class="task-title"><code>gmail-push-dev</code> → <code>mc-dev.salsquared.xyz</code></span></summary>
+                <div class="task-body"><p>Same command shape with <code>gmail-push-dev</code> and the <code>mc-dev</code> URLs. <em>Parallel-safe with P3.4.1</em> (distinct subscriptions), though in practice run back-to-back.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.4.3</span><span class="task-title">Describe both and confirm</span></summary>
+                <div class="task-body"><p><code>gcloud pubsub subscriptions describe &lt;sub&gt;</code> on each: <code>pushConfig.pushEndpoint</code> and <code>oidcToken.audience</code> both read <code>mc*</code>, and <code>oidcToken.serviceAccountEmail</code> is unchanged. Also re-confirm <code>gmail-push-dev</code>'s <code>expirationPolicy.ttl</code> is still <code>31d</code> — this migration doesn't alter it, but it's the field that silently deletes the subscription if the dev tier is ever parked again.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.5</span><span class="task-title">Verify the Gmail round-trip on both tiers — GATE ON P4</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P3.4.</em> <strong>Do not begin teardown until this passes.</strong></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.5.1</span><span class="task-title">Live push lands on both tiers</span></summary>
+                <div class="task-body"><p>Send a test email to the mailbox and confirm a <code>[GMAIL WEBHOOK] history=…</code> line appears in <strong>both</strong> tiers' logs (the shared topic fans out to both subscriptions), with no 401s after the window closed. The existing <code>scripts/tests/probes/gmail-push-roundtrip-probe.ts</code> covers this shape.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P3.5.2</span><span class="task-title">Confirm the window drained, not just that it works now</span></summary>
+                <div class="task-body"><p>Check that pushes queued during the audience window were retried and ingested (the webhook is idempotent, so redeliveries are 200 + <code>deduped</code>). A clean current push with a backlog of permanently-failing ones would look identical at a glance.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P4</span>
+          <span class="task-title">Phase 4 — Teardown of <code>ms-*</code> (mirror order)</span>
+        </summary>
+        <div class="task-body">
+          <p><strong>Strictly ordered: routes → DNS → Access apps → OAuth URIs.</strong> <em>Depends on P3.5 passing.</em> Deleting an Access app before its route is gone leaves that hostname ungated for the gap.</p>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Remove the 2 <code>ms-*</code> tunnel routes FIRST</span></summary>
+            <div class="task-body">
+              <p><strong>The practical point of no return</strong> (§3.2). Read-modify-write the configuration document, dropping only those two ingress rules.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.1.1</span><span class="task-title">Drop both <code>ms-*</code> ingress rules in one write</span></summary>
+                <div class="task-body"><p>Keep the two new <code>mc</code> rules and the trailing catch-all intact; diff against the post-P1.3 state.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.1.2</span><span class="task-title">Verify <code>ms-*</code> no longer reaches the origin</span></summary>
+                <div class="task-body"><p>Both old hostnames now return a Cloudflare error rather than app content, and <code>mc</code>/<code>mc-dev</code> are unaffected. <strong>Required before P4.3.</strong></p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Delete the 2 <code>ms-*</code> DNS CNAMEs</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P4.1.2.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.2.1</span><span class="task-title">Delete <code>ms-prod</code> and <code>ms-dev</code> records</span></summary>
+                <div class="task-body"><p>By the record ids captured in P0.3.2. <em>The two deletions are parallel-safe with each other.</em></p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.2.2</span><span class="task-title">Confirm the zone has no stray <code>ms-*</code> records</span></summary>
+                <div class="task-body"><p>List the zone's records and confirm nothing else in <code>salsquared.xyz</code> still points at the tunnel under an <code>ms</code> name.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.3</span><span class="task-title">Delete the 4 <code>ms-*</code> Access apps LAST</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P4.1.2 (routes verifiably gone).</em> Ordering matters here more than anywhere else in the phase.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.3.1</span><span class="task-title">Delete both hostname apps + both Bypass apps</span></summary>
+                <div class="task-body"><p>App1 <code>ms-prod.salsquared.xyz</code>, App2 <code>ms-dev.salsquared.xyz</code>, and the two path-scoped <code>…/api/gmail/webhook</code> Bypass apps.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.3.2</span><span class="task-title">Confirm exactly 4 Access apps remain, all <code>mc</code></span></summary>
+                <div class="task-body"><p>List apps: the account should be back to 4 — two hostname apps and two path-scoped Bypass apps, all on <code>mc</code>/<code>mc-dev</code>. Re-verify P1.4.1 + P1.4.2 still pass.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.4</span><span class="task-title">Remove the 2 old OAuth redirect URIs</span></summary>
+            <div class="task-body">
+              <p>Manual, owner-executed. <em>Depends on P3.5</em> (only needs the new hostnames working); <em>parallel-safe with P4.1–P4.3.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.4.1</span><span class="task-title">Delete both <code>ms-*</code> callback URIs</span></summary>
+                <div class="task-body"><p>Leaving only the two <code>mc</code> callbacks on the client.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.4.2</span><span class="task-title">Exercise a connect/reconnect flow once</span></summary>
+                <div class="task-body"><p>From the Internal Systems dash on <code>mc.salsquared.xyz</code>, confirm "Connect / Reconnect Google" completes against the new callback. The existing refresh token is unaffected either way, so this proves the <em>new</em> path rather than rescuing the old one.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.5</span><span class="task-title">Delete the scoped Cloudflare API token</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P4.1–P4.3.</em> An explicit task, not a footnote — the token can publish routes and delete access policies, and there is no further use for it.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.5.1</span><span class="task-title">Revoke the token and clear it from the environment</span></summary>
+                <div class="task-body"><p>Delete it in the Cloudflare dashboard and remove it from the shell environment / untracked file it was stored in.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.6</span><span class="task-title">Re-install the PWA at the new origin</span></summary>
+            <div class="task-body">
+              <p><em>Depends on P1.4; do it before P4.1</em> so there is never a moment with no working install. Listed here because it belongs to the retirement story.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.6.1</span><span class="task-title">Remove the old install, add from <code>https://mc.salsquared.xyz</code></span></summary>
+                <div class="task-body"><p>Different origin ⇒ different service-worker scope, so the old install cannot follow. Expect per-device UI state (<code>activeViewId</code>, <code>autoResearch</code>, <code>aiCompanionEnabled</code>) to reset; theme, hues, dash order, and titles survive via <code>/api/settings</code>.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P5</span>
+          <span class="task-title">Phase 5 — Repo: rename, references, docs, ship</span>
+        </summary>
+        <div class="task-body">
+          <p><strong>P5.1–P5.9 are parallel-safe against P1–P4 and largely against each other</strong> (each owns disjoint files) — nothing in the repository gates the edge change. P5.10 (commit + push) is the single serialization point and depends on everything, including P3.1/P3.2. Files with more than one kind of edit are given a <strong>single owner</strong> to avoid contention.</p>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.1</span><span class="task-title">Rename <code>launch-ms.sh</code> → <code>launch-mc.sh</code></span></summary>
+            <div class="task-body">
+              <p>Scope: the script file only. <em>Parallel-safe with all of P5.2–P5.9.</em></p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.1.1</span><span class="task-title"><code>git mv launch-ms.sh launch-mc.sh</code></span></summary>
+                <div class="task-body"><p>Preserve the executable bit and rename-detection in the diff.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.1.2</span><span class="task-title">Leave the internal <code>mc.local</code> lines untouched</span></summary>
+                <div class="task-body"><p>Lines 27, 30, 31, 34 set up the <code>mc.local</code> Caddy vhost — already correct <code>mc</code>, LAN-only, <strong>out of scope</strong>. Also do not repoint <code>APP_URL</code> at :33-37; that is <code>docs/multi-user-crew.html</code>'s P4.1 work, deliberately left for it.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.2</span><span class="task-title">Script references in <code>docs/architecture.html</code> + <code>README.md</code></span></summary>
+            <div class="task-body">
+              <p>Sole owner of both files. <em>Parallel-safe.</em></p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.2.1</span><span class="task-title"><code>docs/architecture.html:46,109,521,526,572</code></span></summary>
+                <div class="task-body"><p><code>launch-ms.sh</code> → <code>launch-mc.sh</code>. <strong>Verify line 526 before editing</strong> — a grep for the literal <code>launch-ms</code> returns 46, 109, 521, 572; line 526 mentions the legacy <code>mission-control-scheduler</code> fallback and may reference the script only via surrounding prose. Edit whatever the file actually contains, not the line list.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.2.2</span><span class="task-title"><code>README.md:38,41</code></span></summary>
+                <div class="task-body"><p>The <code>./launch-ms.sh</code> invocation and the prose describing it. <strong>Not in the original inventory</strong> — README stays Markdown per convention but is a live doc, and the rename breaks its setup instructions if missed.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.3</span><span class="task-title"><code>CLAUDE.md</code> — sole owner of all three hits</span></summary>
+            <div class="task-body">
+              <p>Deliberately one task, because this file carries <em>both</em> kinds of edit and two parallel agents would collide.</p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.3.1</span><span class="task-title">Line 30 — <code>./launch-ms.sh</code> reference</span></summary>
+                <div class="task-body"><p>In the Commands section's non-obvious-scripts line.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.3.2</span><span class="task-title">Line 86 — Auth section, both hostnames</span></summary>
+                <div class="task-body"><p>The "both public hostnames (<code>ms-prod…</code>, <code>ms-dev…</code>)" sentence describing the Access apps.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.3.3</span><span class="task-title">Line 102 — Gmail watch / Pub/Sub note</span></summary>
+                <div class="task-body"><p>The <code>ms-{prod,dev}.salsquared.xyz</code> brace form (note: a literal <code>ms-prod</code> grep misses this — search for <code>ms-{</code> too). Keep the "never <code>mc.local</code> — LAN is unreachable by Pub/Sub" clause, which stays true.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.4</span><span class="task-title"><code>.env.*.example</code> — the tracked documentation of the env surface</span></summary>
+            <div class="task-body">
+              <p><em>Parallel-safe.</em> These mirror the untracked files changed in P3.1 and must end up saying the same thing.</p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.4.1</span><span class="task-title"><code>.env.production.example:7,42</code></span></summary>
+                <div class="task-body"><p><code>NEXTAUTH_URL</code> → <code>https://mc.salsquared.xyz</code>; <code>PUBSUB_AUDIENCE</code> → <code>https://mc.salsquared.xyz/api/gmail/webhook</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.4.2</span><span class="task-title"><code>.env.development.example:8,30</code></span></summary>
+                <div class="task-body"><p>Same two keys → the <code>mc-dev</code> equivalents.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.5</span><span class="task-title">Probe + smoke URLs</span></summary>
+            <div class="task-body">
+              <p><em>Parallel-safe.</em> Both are test files; neither is imported by app code.</p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.5.1</span><span class="task-title"><code>scripts/tests/probes/gmail-push-receive-probe.ts:45,46</code></span></summary>
+                <div class="task-body"><p>Hardcoded prod/dev webhook URLs. <strong>Functional</strong> — this probe hits the live endpoint, so a stale URL makes it probe a hostname that no longer exists.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.5.2</span><span class="task-title"><code>scripts/tests/hermetic/owner-auth-smoke.ts:187,203,216,226</code></span></summary>
+                <div class="task-body"><p>Four <code>new Request("https://ms-prod.salsquared.xyz/…")</code> constructions. Cosmetic — hermetic, no network, no assertion on the host — but the suite should read true.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.6</span><span class="task-title"><code>docs/cloudflare-access-auth.html</code> — amendment, not find/replace</span></summary>
+            <div class="task-body">
+              <p>Sole owner. The one doc task that is <strong>not</strong> mechanical (§2.5). 17 lines carry a hostname: 142, 238, 240, 259, 267, 276, 298, 300, 302, 303, 305, 314, 456, 460, 465, 469, 474.</p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.6.1</span><span class="task-title">Append a superseding note to <code>OPEN-A</code></span></summary>
+                <div class="task-body"><p>At ~298-305: <strong>do not rewrite the options or the <code>✓ Decided → (a)</code> line</strong> — decisions append, never replace. Append that the (b)-shaped outcome is now being taken deliberately (to <code>mc.salsquared.xyz</code>, for naming consistency rather than the brief's <code>ms.salsquared.xyz</code>), and that the env + Pub/Sub + audience consequences (b) listed are exactly this doc's P3.1/P3.4. Link to <code>hostname-ms-to-mc.html</code>. Mirror a one-line pointer on the risk-table row at ~238-240.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.6.2</span><span class="task-title">Straight-swap the live-configuration hostnames</span></summary>
+                <div class="task-body"><p>The P4 runbook (456, 460, 465, 469, 474) and the OQ1/OQ2 decision lines that name the host a session duration applies to (259, 267, 276, 314) describe <em>live config</em>, not a past decision — swap them. Leave 300/302/303/305 (OPEN-A's own body and options) historical.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.6.3</span><span class="task-title">Mermaid node at ~142</span></summary>
+                <div class="task-body"><p><code>req["GET ms-prod.salsquared.xyz/..."]</code> → <code>mc.salsquared.xyz</code>. Keep <code>&lt;br/&gt;</code> usage and quoted parens intact; confirm the diagram still renders.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.7</span><span class="task-title"><code>docs/multi-user-crew.html</code> — hostnames + script name</span></summary>
+            <div class="task-body">
+              <p>Sole owner (this file carries both kinds of edit). Its 79-task DAG is <strong>unstarted</strong>, so it must stay executable after the rename.</p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.7.1</span><span class="task-title">14 hostname lines</span></summary>
+                <div class="task-body"><p>72, 140, 281, 282, 361, 364, 546, 576, 670, 673, 751, 1081, 1142, 1146 — including the P0.2 / P4.1 / P5.x task bodies that name the hosts.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.7.2</span><span class="task-title">8 <code>launch-ms.sh</code> references</span></summary>
+                <div class="task-body"><p>279, 281, 388, 576, 683, 1070, 1081, 1236 — <strong>5 more than the original inventory listed</strong>. Includes its file-contention table (1236) and the <code>launch-ms.sh:33-37</code> <code>APP_URL</code> guidance (281, 1081), whose <em>content</em> stays that doc's work; only the filename changes here.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.7.3</span><span class="task-title">Record P0.2.3's tunnel finding against its blocked P4.1</span></summary>
+                <div class="task-body"><p>Line 282's <code>callout warn</code> says the tunnel's origin URL "cannot be read from the box" and blocks that doc's P4.1. P0.2 reads it — write the answer in, so the prerequisite is closed rather than re-derived.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.8</span><span class="task-title"><code>docs/next_steps.md</code> — the load-bearing command + session entry</span></summary>
+            <div class="task-body">
+              <p>Sole owner. Per the session protocol, this file is updated in the same logical step as the commit.</p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.8.1</span><span class="task-title">Fix the executable command at <code>:21</code></span></summary>
+                <div class="task-body"><p>The 2026-07-10 incident entry's prepared <code>modify-push-config gmail-push-dev --push-endpoint=https://ms-dev…</code> resume command would repoint dev at a dead hostname. Correct it to <code>mc-dev</code> <em>and</em> annotate the entry: its premise is independently stale — <strong>all four PM2 processes are online as of 2026-07-27</strong>, so the dev tier is no longer parked and the "pause dev push" fix it describes no longer applies.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.8.2</span><span class="task-title">Line 16 + line 342 — current-state claims</span></summary>
+                <div class="task-body"><p>The 2026-07-27 entry states <code>NEXTAUTH_URL</code> "is already <code>ms-{prod,dev}.salsquared.xyz</code>" as a <em>present-tense fact</em> and references <code>launch-ms.sh</code>; :342 also names the script. Annotate rather than rewrite (it is a dated entry), so the claim is not read forward as current. <strong>Lines 22, 42, 179, 203, 212 are dated historical entries and stay as-is per OQ4.</strong></p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.8.3</span><span class="task-title">Add the session entry</span></summary>
+                <div class="task-body"><p>New dated entry (absolute ISO date) covering the migration, what landed on the edge vs. in the repo, and the P0.2 tunnel finding.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P5.9</span><span class="task-title"><code>docs/hosting.md:7</code> — superseded banner</span></summary>
+            <div class="task-body">
+              <p>Sole owner. <em>Parallel-safe.</em></p>
+              <details class="task">
+                <summary><input type="checkbox" checked><span class="task-id">P5.9.1</span><span class="task-title">Update the <code>ms-{prod,dev}</code> reference in the banner text</span></summary>
+                <div class="task-body"><p>The banner explains that the <code>mc.local</code> URLs below are wrong for Pub/Sub push and that the endpoints must be the public hostnames — that guidance stays correct, only the hostnames change. (Brace form: a literal <code>ms-prod</code> grep misses this line.)</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.10</span><span class="task-title">Commit + push</span></summary>
+            <div class="task-body">
+              <p><strong>The one serialization point.</strong> <em>Depends on P5.1–P5.9 AND on P3.1/P3.2</em> (the cutover's tracked file lands in this commit).</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.10.1</span><span class="task-title">Commit via the <code>committer</code> agent, scoped pathspec</span></summary>
+                <div class="task-body"><p>All commits go through <code>committer</code>. Use <code>git commit -- &lt;paths&gt;</code> with an explicit pathspec so a concurrent session's staged files aren't swept in. <strong>No AI attribution of any kind</strong> — no <code>Co-Authored-By</code>, no "Generated with" marker.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.10.2</span><span class="task-title">Confirm <code>next.config.ts</code> is in the pathspec</span></summary>
+                <div class="task-body"><p>It was edited back in P3.2 and will look like unrelated churn to whoever assembles the commit. Explicitly include it.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.10.3</span><span class="task-title">Push — pre-push hook runs the full hermetic suite</span></summary>
+                <div class="task-body"><p><code>scripts/pre-push.sh</code> runs every file under <code>scripts/tests/hermetic/</code> (incl. <code>owner-auth-smoke.ts</code> touched in P5.5.2 and <code>api-docs-smoke.ts</code>, which stays green since <code>apis.html</code> has zero hostname refs). Flush <code>next_steps.md</code> to match <code>origin/main</code> reality <em>before</em> pushing, per the session protocol.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <h3>Parallelization &amp; critical path</h3>
+      <p>Dependency DAG — edges read "must finish before"; siblings with no edge between them fan out to parallel agents:</p>
+      <pre class="mermaid">
+flowchart LR
+  P01["P0.1 scoped CF token<br/>(owner, manual)"] --> P02["P0.2 read tunnel config<br/>BLOCKS EVERYTHING"]
+  P02 --> P03["P0.3 rollback snapshot"]
+  P03 --> P11["P1.1 create 4 Access apps<br/>MUST be first"]
+  P11 --> P12["P1.2 create 2 DNS CNAMEs"]
+  P12 --> P13["P1.3 add 2 tunnel routes"]
+  P13 --> P14["P1.4 verify 302 + 405 + tier"]
+  P14 --> P21["P2.1 add 2 OAuth redirect URIs"]
+  P14 --> P31["P3.1 tier env files"]
+  P14 --> P32["P3.2 next.config.ts"]
+  P31 --> P33["P3.3 build + pm2 restart x4"]
+  P32 --> P33
+  P33 -->|"audience window opens"| P34["P3.4 repoint 2 Pub/Sub subs"]
+  P34 --> P35["P3.5 verify Gmail round-trip<br/>GATE ON TEARDOWN"]
+  P14 --> P46["P4.6 re-install PWA"]
+  P35 --> P41["P4.1 remove ms-* tunnel routes<br/>point of no return"]
+  P46 --> P41
+  P41 --> P42["P4.2 delete ms-* DNS"]
+  P41 --> P43["P4.3 delete 4 ms-* Access apps<br/>LAST"]
+  P35 --> P44["P4.4 remove old OAuth URIs"]
+  P21 --> P44
+  P42 --> P45["P4.5 delete CF token"]
+  P43 --> P45
+  repo["P5.1-P5.9 repo batch<br/>rename · refs · docs<br/>(no edge dependency)"] --> P510["P5.10 commit + push"]
+  P31 --> P510
+  P32 --> P510
+      </pre>
+
+      <p><strong>File contention</strong> — two tasks touching the same file can't run in parallel, so each contended file gets a single owner:</p>
+      <table>
+        <thead><tr><th>File / resource</th><th>Tasks touching it</th><th>Parallel?</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Tunnel configuration document</strong> (whole-doc <code>PUT</code>)</td><td>P0.2, P1.3.1, P1.3.2, P1.3.3, P4.1.1</td><td><strong>serialize — hardest contention in the plan.</strong> Every write is a read-modify-write of one JSON document; two concurrent writers silently lose one another's rules.</td></tr>
+          <tr><td>Cloudflare Access app list</td><td>P1.1.1–P1.1.4, P4.3.1</td><td>parallel <em>within</em> a phase (distinct apps); P4.3 strictly after P4.1.2</td></tr>
+          <tr><td>DNS zone <code>salsquared.xyz</code></td><td>P1.2.1, P1.2.2, P4.2.1</td><td>parallel — distinct records</td></tr>
+          <tr><td>Pub/Sub subscriptions</td><td>P3.4.1, P3.4.2</td><td>parallel — distinct subscriptions (run back-to-back in practice)</td></tr>
+          <tr><td><code>.env.production</code> / <code>.env.development</code> / <code>.env</code></td><td>P3.1</td><td>sole owner — parallel-safe with P3.2</td></tr>
+          <tr><td><code>next.config.ts</code></td><td>P3.2, read again at P5.10.2</td><td>sole owner (P3.2); P5.10 only includes it in the pathspec</td></tr>
+          <tr><td><code>CLAUDE.md</code></td><td>P5.3 <em>only</em></td><td><strong>sole owner by design</strong> — carries both a script-name hit (:30) and two hostname hits (:86, :102); splitting them across agents would collide</td></tr>
+          <tr><td><code>docs/multi-user-crew.html</code></td><td>P5.7 <em>only</em></td><td><strong>sole owner by design</strong> — same reason: 14 hostname lines + 8 script-name lines in one file</td></tr>
+          <tr><td><code>docs/next_steps.md</code></td><td>P5.8 <em>only</em></td><td>sole owner — hostname fixes, the script name, and the session entry all land together</td></tr>
+          <tr><td><code>docs/cloudflare-access-auth.html</code></td><td>P5.6</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>docs/architecture.html</code>, <code>README.md</code></td><td>P5.2</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>.env.*.example</code></td><td>P5.4</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>scripts/tests/{probes,hermetic}/…</code></td><td>P5.5</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>launch-ms.sh</code> → <code>launch-mc.sh</code></td><td>P5.1</td><td>sole owner — the rename; inbound refs live in other files owned by P5.2/P5.3/P5.7/P5.8</td></tr>
+          <tr><td>git index</td><td>P5.10</td><td><strong>serialize</strong> — one commit, explicit pathspec</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong>Rounds.</strong> A round is a dependency-barrier batch dispatched at once. Two tracks run concurrently throughout: the <em>edge track</em> (P0→P4, mostly serial by construction) and the <em>repo track</em> (P5.1–P5.9, almost fully parallel).</p>
+      <ul class="task-list">
+        <li><strong>Round 1 (start immediately):</strong> <code>P0.1</code> (owner, manual) ∥ <strong>the entire repo batch</strong> <code>P5.1</code>, <code>P5.2</code>, <code>P5.3</code>, <code>P5.4</code>, <code>P5.5</code>, <code>P5.6</code>, <code>P5.7</code>, <code>P5.9</code> — 8 file-disjoint agents. <em>Peak parallelism of the plan.</em></li>
+        <li><strong>Round 2:</strong> <code>P0.2</code> → <code>P0.3</code> (serial; the tunnel document is single-writer).</li>
+        <li><strong>Round 3:</strong> <code>P1.1</code> (its four apps fan out) — barrier — <code>P1.2</code> (two records fan out) — barrier — <code>P1.3</code> — <code>P1.4</code>. <strong>The barriers here are the security invariant, not scheduling conservatism; they do not compress.</strong></li>
+        <li><strong>Round 4:</strong> <code>P2.1</code> ∥ <code>P3.1</code> ∥ <code>P3.2</code> ∥ <code>P4.6</code>.</li>
+        <li><strong>Round 5:</strong> <code>P3.3</code> → <code>P3.4</code> → <code>P3.5</code>. Serial, and the <code>P3.3 → P3.4</code> handoff should be immediate — that gap <em>is</em> the audience window.</li>
+        <li><strong>Round 6:</strong> <code>P4.1</code> — barrier — <code>P4.2</code> ∥ <code>P4.3</code> ∥ <code>P4.4</code> → <code>P4.5</code>.</li>
+        <li><strong>Round 7:</strong> <code>P5.8</code> (session entry needs the outcome) → <code>P5.10</code> commit + push.</li>
+      </ul>
+      <p><strong>Critical path:</strong> <code>P0.1 → P0.2 → P0.3 → P1.1 → P1.2 → P1.3 → P1.4 → P3.1 → P3.3 → P3.4 → P3.5 → P4.1 → P4.3 → P4.5</code> — 14 nodes, essentially the whole edge track. The repo track (P5.1–P5.9) is <strong>entirely off the critical path</strong> and adds nothing to wall-clock; only <code>P5.10</code> waits, and it waits on P3, not on P5.</p>
+      <p><strong>Most-constrained node: <code>P0.2</code>.</strong> It is owner-gated (needs the token from P0.1), single-writer, unreadable from this machine, and everything downstream on the edge track depends on the value it returns. Schedule it first and do not let the repo batch's progress create the illusion that the migration is moving — <strong>nothing on the edge can start until P0.2 has been read.</strong></p>
+      <p class="note"><strong>Wall-clock floor</strong> is set by two things the DAG can't compress: DNS propagation between P1.2 and P1.3, and the prod <code>npm run build</code> inside P3.3. Everything else on the path is an API call or a <code>curl</code> assertion.</p>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>

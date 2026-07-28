@@ -184,7 +184,7 @@ async function main() {
 
     // requireLocalOrSession — always { ok, session } past the edge.
     {
-        const req = new Request("https://ms-prod.salsquared.xyz/api/profile");
+        const req = new Request("https://mc.salsquared.xyz/api/profile");
         const guard = await requireLocalOrSession(req);
         if ("error" in guard) {
             fail("requireLocalOrSession should return ok+session past the edge", guard);
@@ -200,7 +200,7 @@ async function main() {
     process.env.SERVICE_TOKEN_PULSAR_USER_ID = "pulsar-user-123";
     const SERVICE_CONFIG = { tokenEnv: "SERVICE_TOKEN_PULSAR", userIdEnv: "SERVICE_TOKEN_PULSAR_USER_ID" };
     {
-        const req = new Request("https://ms-prod.salsquared.xyz/api/calendar/event?onBehalfOf=pulsar-user-123", {
+        const req = new Request("https://mc.salsquared.xyz/api/calendar/event?onBehalfOf=pulsar-user-123", {
             headers: { authorization: "Bearer test-token-owner-auth-smoke" },
         });
         const guard = await requireSessionOrService(req, SERVICE_CONFIG);
@@ -213,7 +213,7 @@ async function main() {
         }
 
         // A bad token still 401s — proves the branch wasn't gutted.
-        const badReq = new Request("https://ms-prod.salsquared.xyz/api/calendar/event?onBehalfOf=pulsar-user-123", {
+        const badReq = new Request("https://mc.salsquared.xyz/api/calendar/event?onBehalfOf=pulsar-user-123", {
             headers: { authorization: "Bearer wrong-token-xxxxxxxxxxxxxxxxxxxxxx" },
         });
         const badGuard = await requireSessionOrService(badReq, SERVICE_CONFIG);
@@ -223,7 +223,7 @@ async function main() {
 
     // ── 8. requireSessionOrService session branch → { userId } ──────────────
     {
-        const req = new Request("https://ms-prod.salsquared.xyz/api/calendar/event"); // no Bearer
+        const req = new Request("https://mc.salsquared.xyz/api/calendar/event"); // no Bearer
         const guard = await requireSessionOrService(req, SERVICE_CONFIG);
         if ("error" in guard) {
             fail("session branch should resolve to the owner", guard);

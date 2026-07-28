@@ -139,7 +139,7 @@
       <pre class="mermaid">
 flowchart TB
   subgraph browser["Owner's browser (public)"]
-    req["GET ms-prod.salsquared.xyz/..."]
+    req["GET mc.salsquared.xyz/..."]
   end
   subgraph edge["Cloudflare edge (Zero Trust)"]
     access{"Access policy<br/>email == owner?"}
@@ -237,7 +237,7 @@ flowchart TB
           <tr>
             <td><strong>Hostname mismatch in the runbook.</strong> An early brief named prod <code>ms.salsquared.xyz</code>, but the codebase + live <code>.env.production</code> use <code>ms-prod.salsquared.xyz</code>.</td>
             <td>resolved</td>
-            <td><strong>Resolved (OPEN-A → a):</strong> the live <code>.env.production</code> (<code>NEXTAUTH_URL</code> + <code>PUBSUB_AUDIENCE</code>) confirms prod = <code>ms-prod.salsquared.xyz</code>. Runbook hostnames are now literal; no env or Pub/Sub change needed.</td>
+            <td><strong>Resolved (OPEN-A → a):</strong> the live <code>.env.production</code> (<code>NEXTAUTH_URL</code> + <code>PUBSUB_AUDIENCE</code>) confirms prod = <code>ms-prod.salsquared.xyz</code>. Runbook hostnames are now literal; no env or Pub/Sub change needed. <strong>⚠ Superseded 2026-07-27</strong> — both hostnames were renamed to <code>mc.salsquared.xyz</code> / <code>mc-dev.salsquared.xyz</code>, which <em>did</em> require the env + Pub/Sub changes this row said were unnecessary. See the OPEN-A superseding note in §4 and <a href="./hostname-ms-to-mc.html"><code>docs/hostname-ms-to-mc.html</code></a>.</td>
           </tr>
         </tbody>
       </table>
@@ -256,7 +256,7 @@ flowchart TB
     <summary><h2 id="open-questions">Open Questions</h2></summary>
     <div class="section-body">
       <h3>Resolved decisions</h3>
-      <p>OQ1–OQ4 were settled with the owner before this doc was written; they are recorded here as the decision record (options kept, pick appended). One genuinely-new fork surfaced during file review — the exact prod hostname — flagged <strong>OPEN-A</strong>; it is now <strong>resolved → (a)</strong> from the live <code>.env.production</code> (prod = <code>ms-prod.salsquared.xyz</code>). No open questions remain.</p>
+      <p>OQ1–OQ4 were settled with the owner before this doc was written; they are recorded here as the decision record (options kept, pick appended). One genuinely-new fork surfaced during file review — the exact prod hostname — flagged <strong>OPEN-A</strong>; it is now <strong>resolved → (a)</strong> from the live <code>.env.production</code> (prod = <code>ms-prod.salsquared.xyz</code>). No open questions remain. <strong>⚠ OPEN-A was later superseded (2026-07-27)</strong> — the hostnames are now <code>mc.salsquared.xyz</code> / <code>mc-dev.salsquared.xyz</code>; see the superseding note at the end of this section.</p>
 
       <div class="callout tip"><strong>OQ1 — What Access session lifetime should the prod hostname use?</strong></div>
       <div class="oq-detail">
@@ -264,7 +264,7 @@ flowchart TB
           <li><strong>(a)</strong> <strong>24 hours.</strong> Set the prod Access app's session duration to 24h, so a passed login is re-prompted once per day. <em>Pros:</em> a session leaked from an untrusted/random computer expires within a day; bounds blast radius tightly. <em>Cons:</em> the owner re-authenticates daily even on their own devices (one click each time).</li>
           <li><strong>(b)</strong> <strong>1 week.</strong> Set prod to a 7-day session. <em>Pros:</em> fewer re-auth prompts. <em>Cons:</em> a session captured on an untrusted machine stays valid for up to a week — too long for a host the owner may sign in from on a random computer.</li>
         </ul>
-        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — prod (<code>ms-prod.salsquared.xyz</code>) session lifetime = <strong>24 hours</strong>, because the owner may sign in from an untrusted/random computer and a leaked session should expire within a day; the daily re-auth cost is one click.</p>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — prod (<code>mc.salsquared.xyz</code>, <code>ms-prod.salsquared.xyz</code> when decided) session lifetime = <strong>24 hours</strong>, because the owner may sign in from an untrusted/random computer and a leaked session should expire within a day; the daily re-auth cost is one click.</p>
       </div>
 
       <div class="callout tip"><strong>OQ2 — What Access session lifetime should the dev hostname use?</strong></div>
@@ -273,7 +273,7 @@ flowchart TB
           <li><strong>(a)</strong> <strong>1 week.</strong> Set the dev Access app to a 7-day session. <em>Pros:</em> shorter exposure window than a month. <em>Cons:</em> unnecessarily frequent re-auth on the owner's own devices, which is the only place dev is ever opened.</li>
           <li><strong>(b)</strong> <strong>1 month.</strong> Set dev to Cloudflare's longest preset for email-identity sessions (~1 month; there is no true "forever"). <em>Pros:</em> minimal re-auth friction on trusted own-devices; re-auth is one click when it does lapse. <em>Cons:</em> a leaked dev session lives up to a month — acceptable because dev is only accessed from the owner's own devices and exposes the same single mailbox.</li>
         </ul>
-        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — dev (<code>ms-dev.salsquared.xyz</code>) session lifetime = <strong>1 month</strong> (the longest email-identity preset), because dev is only ever opened from the owner's own devices, so re-auth friction is the dominant cost and the longer window is safe.</p>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — dev (<code>mc-dev.salsquared.xyz</code>, <code>ms-dev.salsquared.xyz</code> when decided) session lifetime = <strong>1 month</strong> (the longest email-identity preset), because dev is only ever opened from the owner's own devices, so re-auth friction is the dominant cost and the longer window is safe.</p>
       </div>
 
       <div class="callout tip"><strong>OQ3 — Should the origin verify the Cloudflare Access JWT, or trust the edge?</strong></div>
@@ -304,6 +304,14 @@ flowchart TB
         </ul>
         <p><em>Status:</em> <strong>✓ Decided → (a)</strong> from the live <code>.env.production</code> (2026-06-24). The P4 runbook now uses literal hostnames <code>ms-prod.salsquared.xyz</code> / <code>ms-dev.salsquared.xyz</code>; no env or Pub/Sub change is required.</p>
       </div>
+
+      <h3>OPEN-A superseded (2026-07-27) — the hostnames were renamed to <code>mc</code></h3>
+      <div class="callout warn"><strong>OPEN-A's pick stands as a record of what was true on 2026-06-24, but it no longer describes the live surface.</strong> Prod is now <code>mc.salsquared.xyz</code> and dev is <code>mc-dev.salsquared.xyz</code>. Nothing above is rewritten — the options and the <code>✓ Decided → (a)</code> line are the original text; this note appends the later decision.</div>
+      <div class="oq-detail">
+        <p><strong>What changed.</strong> OPEN-A was resolving an <em>ambiguity</em> — which hostname was already routed — not choosing a name on the merits. It picked <strong>(a) <code>ms-prod.salsquared.xyz</code></strong> because it "matches everything already deployed" and needs "no env or Pub/Sub change." On <strong>2026-07-27</strong> the owner deliberately took the <strong>option-(b) <em>shape</em></strong> — a hostname change that drags <code>NEXTAUTH_URL</code>, <code>PUBSUB_AUDIENCE</code>, and both Pub/Sub push subscriptions with it — but for a different reason and to a different value: naming consistency with the project itself (Mission Control ⇒ <code>mc</code>, matching <code>mc.local</code>, <code>pubsub-mc-publisher@…</code>, and the fetcher User-Agent strings), <strong>not</strong> the early brief's <code>ms.salsquared.xyz</code>.</p>
+        <p><strong>The costs (b) listed as <em>Cons</em> all came true, and were paid on purpose.</strong> The rename required exactly the work OPEN-A avoided: <code>NEXTAUTH_URL</code> and <code>PUBSUB_AUDIENCE</code> updated in both tier env files, both Pub/Sub push subscriptions repointed (<code>--push-endpoint</code> <em>and</em> <code>--push-auth-token-audience</code>, which must match the route's asserted <code>aud</code> byte-for-byte), the Google OAuth redirect URIs re-authorized, and all four Access apps repointed. None of it was a surprise — it was the migration's task list.</p>
+        <p><strong>Consequences for this doc.</strong> The P4 runbook, the OQ1/OQ2 session-duration lines, and the request-flow diagram now name the <code>mc</code> hostnames, because they describe <em>live configuration</em>. OPEN-A's own body and options (above) keep their <code>ms-*</code> text, because they describe a past decision. Full record — including the ordering invariant (Access apps before routing; routes before DNS before app deletion on teardown) and the <code>aud</code>-mismatch window — is in <a href="./hostname-ms-to-mc.html"><code>docs/hostname-ms-to-mc.html</code></a>.</p>
+      </div>
     </div>
   </details>
 
@@ -311,7 +319,7 @@ flowchart TB
     <summary><h2 id="tasks">Tasks</h2></summary>
     <div class="section-body">
       <h3>Implementation checklist</h3>
-      <p>OQ1–OQ4 and OPEN-A are all resolved, so the checklist is authored with literal hostnames (<code>ms-prod.salsquared.xyz</code> / <code>ms-dev.salsquared.xyz</code>) and is fully dispatchable. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;</code>.</p>
+      <p>OQ1–OQ4 and OPEN-A are all resolved, so the checklist is authored with literal hostnames (<code>mc.salsquared.xyz</code> / <code>mc-dev.salsquared.xyz</code>) and is fully dispatchable. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;</code>.</p>
 
       <div class="callout"><strong>Rollout ordering is load-bearing.</strong> <strong>P4 (edge config) must be live and verified in prod BEFORE P1's guard rewrite is merged/deployed</strong> — otherwise there's a window with no gate at all. P4 is dashboard-only and decoupled from the code, so it can be done first (or in parallel with P1/P2/P3 development), but the <em>deploy/merge of P1</em> waits on P4 being confirmed live.</div>
 
@@ -453,25 +461,25 @@ flowchart TB
           <span class="task-title">Phase 4 — Edge runbook (Cloudflare Zero Trust dashboard)</span>
         </summary>
         <div class="task-body">
-          <p><strong>No code.</strong> Done by the owner in the dashboard. <strong>Must be live + verified in prod before P1 is deployed.</strong> Decoupled from the code, so it can run first / in parallel with P1–P3 development. Hostnames are <code>ms-prod.salsquared.xyz</code> (prod) / <code>ms-dev.salsquared.xyz</code> (dev), confirmed via OPEN-A → (a).</p>
+          <p><strong>No code.</strong> Done by the owner in the dashboard. <strong>Must be live + verified in prod before P1 is deployed.</strong> Decoupled from the code, so it can run first / in parallel with P1–P3 development. Hostnames are <code>mc.salsquared.xyz</code> (prod) / <code>mc-dev.salsquared.xyz</code> (dev), confirmed via OPEN-A → (a).</p>
 
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.0</span><span class="task-title">Prod hostname confirmed (OPEN-A → a)</span></summary>
-            <div class="task-body"><p><strong>✓ Done.</strong> Prod = <code>ms-prod.salsquared.xyz</code> per live <code>.env.production</code>; no <code>NEXTAUTH_URL</code> / <code>PUBSUB_AUDIENCE</code> / Pub/Sub change needed.</p></div>
+            <div class="task-body"><p><strong>✓ Done.</strong> Prod = <code>ms-prod.salsquared.xyz</code> per live <code>.env.production</code>; no <code>NEXTAUTH_URL</code> / <code>PUBSUB_AUDIENCE</code> / Pub/Sub change needed. <strong>⚠ Superseded 2026-07-27:</strong> prod is now <code>mc.salsquared.xyz</code> — that rename <em>did</em> require the <code>NEXTAUTH_URL</code> + <code>PUBSUB_AUDIENCE</code> + Pub/Sub push-subscription updates, and they are done (<a href="./hostname-ms-to-mc.html"><code>docs/hostname-ms-to-mc.html</code></a>).</p></div>
           </details>
 
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Access App #1 — prod hostname</span></summary>
-            <div class="task-body"><p>Self-hosted app for <code>ms-prod.salsquared.xyz</code>. Allow policy: emails == <code>salsalcedo4321@gmail.com</code>; identity = Google / One-time-PIN; <strong>session duration 24h</strong> (OQ1). <em>Parallel-safe with P4.2/P4.3.</em></p></div>
+            <div class="task-body"><p>Self-hosted app for <code>mc.salsquared.xyz</code>. Allow policy: emails == <code>salsalcedo4321@gmail.com</code>; identity = Google / One-time-PIN; <strong>session duration 24h</strong> (OQ1). <em>Parallel-safe with P4.2/P4.3.</em></p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Access App #2 — dev hostname</span></summary>
-            <div class="task-body"><p>Self-hosted app for <code>ms-dev.salsquared.xyz</code>. Same email Allow policy; <strong>session duration 1 month</strong> (OQ2). <em>Parallel-safe with P4.1/P4.3.</em></p></div>
+            <div class="task-body"><p>Self-hosted app for <code>mc-dev.salsquared.xyz</code>. Same email Allow policy; <strong>session duration 1 month</strong> (OQ2). <em>Parallel-safe with P4.1/P4.3.</em></p></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.3</span><span class="task-title">Access Apps #3 + #4 — webhook Bypass (both hosts)</span></summary>
             <div class="task-body">
-              <p>Path-scoped apps for <code>ms-prod.salsquared.xyz/api/gmail/webhook</code> and <code>ms-dev.salsquared.xyz/api/gmail/webhook</code>, policy <strong>Bypass / Everyone</strong> (OQ4). Path-scoped takes precedence over the hostname app, so Pub/Sub OIDC reaches the origin. <em>Parallel-safe with P4.1/P4.2.</em></p>
+              <p>Path-scoped apps for <code>mc.salsquared.xyz/api/gmail/webhook</code> and <code>mc-dev.salsquared.xyz/api/gmail/webhook</code>, policy <strong>Bypass / Everyone</strong> (OQ4). Path-scoped takes precedence over the hostname app, so Pub/Sub OIDC reaches the origin. <em>Parallel-safe with P4.1/P4.2.</em></p>
               <details class="task">
                 <summary><input type="checkbox"><span class="task-id">P4.3.1</span><span class="task-title">Verify a live push still ingests</span></summary>
                 <div class="task-body"><p>Confirm a real Gmail push (or a known OIDC-signed test POST) reaches <code>/api/gmail/webhook</code> and lands an ingest — proving the Bypass works and the route's OIDC check still gates it.</p></div>

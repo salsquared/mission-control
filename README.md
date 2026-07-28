@@ -35,10 +35,10 @@ To run the application natively on the desktop without terminal windows:
 
 ```bash
 npm run build
-./launch-ms.sh
+./launch-mc.sh
 ```
 
-The production build runs on **port 3101** to avoid conflicts with active development, and is optimized to use a maximum of **1GB of RAM** (`--max-old-space-size=1024`). The `launch-ms.sh` script automatically opens a Chrome window in "App Mode" pointing to `http://127.0.0.1:3101`.
+The production build runs on **port 3101** to avoid conflicts with active development, and is optimized to use a maximum of **1GB of RAM** (`--max-old-space-size=1024`). The `launch-mc.sh` script automatically opens a Chrome window in "App Mode" pointing to `http://127.0.0.1:3101`.
 
 
 ## Documentation

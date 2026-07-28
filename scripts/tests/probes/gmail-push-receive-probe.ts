@@ -42,8 +42,8 @@ const PROJECT = "crypto-lexicon-490719-q9";
 // Public webhook URLs == each tier's PUBSUB_AUDIENCE (byte-for-byte). Override
 // with --prod-url=/--dev-url= if the hostnames ever change.
 const TIERS: Record<string, string> = {
-  prod: "https://ms-prod.salsquared.xyz/api/gmail/webhook",
-  dev: "https://ms-dev.salsquared.xyz/api/gmail/webhook",
+  prod: "https://mc.salsquared.xyz/api/gmail/webhook",
+  dev: "https://mc-dev.salsquared.xyz/api/gmail/webhook",
 };
 
 const args = process.argv.slice(2);
