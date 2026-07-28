@@ -55,11 +55,23 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
         // Window: postings first-seen since the last digest, or since the
         // watchlist was created if no prior digest. Using firstSeenAt (not
         // createdAt) so a re-surfaced posting doesn't fire a digest.
+        //
+        // The first-run bound is INCLUSIVE (gte): w.createdAt was never
+        // itself a dispatched posting's watermark, so there's no double-
+        // count risk, and on fast back-to-back writes a posting's
+        // firstSeenAt can land in the exact same millisecond as its
+        // watchlist's createdAt — an exclusive bound there silently and
+        // PERMANENTLY drops that posting, since the watermark only ever
+        // advances forward. A post-dispatch watermark (lastDigestAt, set
+        // below to maxIncluded) DOES equal an already-summarized posting's
+        // firstSeenAt, so that case stays exclusive (PB-2) to avoid
+        // re-summarizing it.
+        const isInitialWindow = w.lastDigestAt === null;
         const since = w.lastDigestAt ?? w.createdAt;
         const postings = await prisma.jobPosting.findMany({
             where: {
                 watchlistId: w.id,
-                firstSeenAt: { gt: since },
+                firstSeenAt: isInitialWindow ? { gte: since } : { gt: since },
                 status: { notIn: ["hidden", "closed"] },
             },
             orderBy: { firstSeenAt: "desc" },
