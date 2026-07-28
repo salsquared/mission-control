@@ -141,6 +141,17 @@ model User {
   // events. Gmail rejects `history.list?startHistoryId` older than ~7 days
   // with 404. The webhook updates this on each successful batch.
   lastSyncedHistoryId String?
+  // Multi-user "owner / crew" (docs/multi-user-crew.html, OQ4a). This column is
+  // the SINGLE record of who the owner is — OWNER_EMAIL is retired, not set, and
+  // resolveOwner() selects on `role = 'owner'` instead of guessing by row order.
+  // Defaults to the least-privileged value so any row created later by any path
+  // (the NextAuth adapter, a fixture, a smoke) is crew and never owner; the one
+  // pre-existing row per DB is promoted by the same migration that adds the
+  // column (`UPDATE "User" SET role = 'owner';`, hand-added to the SQL — a
+  // migration that CAN be applied without its backfill eventually will be).
+  // Invariant: exactly one 'owner' row per DB. Zero 403s the owner out of their
+  // own app; two silently hands the scheduler a non-owner.
+  role                String               @default("crew") // "owner" | "crew"
   accounts            Account[]
   sessions            Session[]
   applications        Application[]
@@ -158,6 +169,7 @@ model User {
   savedPapers         SavedPaper[]
   globalSetting       GlobalSetting?
   failedIngests       FailedIngest[]
+  aiUsage             AiUsage[]
 }
 
 model VerificationToken {
@@ -876,4 +888,33 @@ model Canon {
 
   @@unique([userId, slug])
   @@index([userId, track, active])
+}
+
+// Per-user daily Gemini credit counter (docs/multi-user-crew.html §2.9, OQ7a).
+// One row per (user, UTC day), incremented by lib/ai/quota.ts:consumeAiCredit
+// at the top of the LLM-bearing crew routes. The owner is exempt, so in
+// practice only crew rows accumulate; past CREW_AI_DAILY_LIMIT the route
+// returns 429 with { used, limit } so the UI can show a budget, not an error.
+//
+// Two deliberate imprecisions, recorded so nobody "fixes" them: it counts route
+// invocations, not Gemini calls (one POST /api/resumes can make three), and it
+// is a ROUTE-boundary cap, so the scheduler's classifyEmploymentTypes calls sit
+// outside it (bounded instead by CREW_WATCHLIST_LIMIT × posting volume). The
+// threat being bounded is a runaway interactive loop billed to the owner's key
+// that starves the Gmail ingest classifier — not fair-sharing.
+model AiUsage {
+  id     String @id @default(cuid())
+  userId String
+  // UTC "YYYY-MM-DD" bucket from utcDateBucket() (lib/notifications/dispatch.ts) —
+  // a string, not a DateTime, so the upsert key is an exact match and the day
+  // boundary can't drift with server-local time or DST. Reuse that helper; do
+  // not re-derive the bucket at the call site.
+  day    String
+  count  Int    @default(0)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // One counter row per user per day — the upsert's where-clause key. Its
+  // leftmost prefix doubles as the userId index (cascade delete on user removal).
+  @@unique([userId, day])
 }
