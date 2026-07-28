@@ -12,6 +12,9 @@
  *   4. Closed/hidden rows skipped (still NULL after sweep)
  *   5. Already-classified rows ignored (already-set employmentType preserved)
  *   6. Null model verdict → row stays NULL (re-tried on next sweep)
+ *   8. NO negative-filter gate (P2.3.4 / OQ11a) — a row matching a user's
+ *      blocklist is classified anyway, because the sweep is cross-user by
+ *      construction and has no single correct blocklist to apply
  */
 import { PrismaClient } from "@prisma/client";
 import { createHash } from "node:crypto";
@@ -90,10 +93,12 @@ async function main() {
 
     const createdWatchlistIds: string[] = [];
 
-    // Snapshot the real global negative filter — test-8 overrides it to a known
-    // value and must restore it (Sal's dev instance has live filters).
+    // Snapshot this user's negative filters — test-8 overrides them to a known
+    // value and must restore them (Sal's dev instance has live filters).
+    // Keyed on userId: GlobalSetting is one row per user, and the legacy
+    // id='global' row is just whichever account happened to be first.
     const origGlobalRow = await prisma.globalSetting.findUnique({
-        where: { id: "global" },
+        where: { userId: user.id },
         select: { globalNegativeFilters: true },
     });
 
@@ -258,19 +263,28 @@ async function main() {
         }
 
         // ───────────────────────────────────────────────────────────────
-        // Test 8 — global negative filter excludes a posting from the LLM
-        // call (defense-in-depth gate: a legacy null + blacklisted row must
-        // never reach Gemini). Override the global filter to block "Senior".
+        // Test 8 — the sweep consults NO negative filters (P2.3.4 / OQ11a).
+        //
+        // This used to assert the inverse: a row matching the owner's global
+        // blocklist was skipped so it never reached Gemini. That gate was
+        // deleted because the sweep is cross-user by construction — it selects
+        // no userId/watchlistId and dedupes by externalId, so one classification
+        // serves every row sharing the hash and there is no single correct
+        // blocklist to apply. Under multi-user the old gate let ONE user's
+        // filters withhold classification from everyone else's rows.
+        //
+        // We set a blocklisting filter on the row owner's settings and assert
+        // the sweep classifies anyway — i.e. the gate is really gone, not
+        // merely re-scoped.
         // ───────────────────────────────────────────────────────────────
         const senior = await seedPosting(w1.id, 600, { title: "Senior Staff Engineer" });
         const normal = await seedPosting(w1.id, 601, { title: "Engineer 601" });
         ours.add(senior.externalId);
         ours.add(normal.externalId);
         await prisma.globalSetting.upsert({
-            where: { id: "global" },
+            where: { userId: user.id },
             update: { globalNegativeFilters: JSON.stringify(["Senior"]) },
-            // userId required since the P2 scoping (one settings row per user).
-            create: { id: "global", userId: user.id, globalNegativeFilters: JSON.stringify(["Senior"]) },
+            create: { userId: user.id, globalNegativeFilters: JSON.stringify(["Senior"]) },
         });
 
         const mock6 = makeMockChat(parsed => parsed.map(p => (p.company.startsWith(`${TAG}-Co`) ? "full-time" : null)));
@@ -278,17 +292,21 @@ async function main() {
 
         const seniorAfter = await prisma.jobPosting.findUnique({ where: { id: senior.id }, select: { employmentType: true } });
         const normalAfter = await prisma.jobPosting.findUnique({ where: { id: normal.id }, select: { employmentType: true } });
-        if (seniorAfter?.employmentType !== null) fail(`test-8: global-filtered 'Senior' row was classified to "${seniorAfter?.employmentType}" (must be excluded from the LLM)`);
-        else pass("test-8: global-filtered 'Senior' posting excluded from LLM — stays NULL");
+        if (seniorAfter?.employmentType !== "full-time") fail(`test-8: 'Senior' row was NOT classified (got "${seniorAfter?.employmentType}") — a negative-filter gate is still in the sweep`);
+        else pass("test-8: a row matching a user's negative filter is classified anyway — no filter gate in the cross-user sweep");
         if (normalAfter?.employmentType !== "full-time") fail(`test-8: non-filtered row not classified (got "${normalAfter?.employmentType}")`);
-        else pass("test-8: non-filtered posting still classified normally (gate is targeted, not blanket)");
+        else pass("test-8: non-filtered posting classified normally");
     } finally {
-        // Restore Sal's real global filter (test-8 overrode it).
+        // Restore the real settings row's filters (test-8 overrode them). If the
+        // user had no row at all, test-8's upsert created one — drop it rather
+        // than leaving a "Senior" blocklist behind on a fresh DB.
         if (origGlobalRow) {
             await prisma.globalSetting.update({
-                where: { id: "global" },
+                where: { userId: user.id },
                 data: { globalNegativeFilters: origGlobalRow.globalNegativeFilters },
             }).catch(() => undefined);
+        } else {
+            await prisma.globalSetting.delete({ where: { userId: user.id } }).catch(() => undefined);
         }
         for (const wId of createdWatchlistIds) {
             await prisma.jobPosting.deleteMany({ where: { watchlistId: wId } }).catch(() => undefined);

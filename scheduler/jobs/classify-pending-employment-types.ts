@@ -22,8 +22,6 @@ import {
     type ChatJSONFn,
     type ClassifyInput,
 } from "@/lib/ai/classify-employment-type";
-import { compileNegativeFiltersFromArray, matchesNegativeFilters } from "@/lib/postings/negative-filters";
-import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
 
 const SWEEP_CAP = 1_000;
 
@@ -64,26 +62,23 @@ export async function runClassifyPendingEmploymentTypes(
 
     // Dedupe by externalId — same (company|title|sourceUrl) hash across
     // watchlists is the same posting, classify once and apply to all rows.
-    // Global negative-filter gate (defense-in-depth, 2026-05-29). The
-    // job-watcher ingestion drop stops NEW blacklisted postings from being
-    // stored, but legacy rows created before that landed can still be NULL +
-    // blacklisted. Skip them here so they never reach Gemini. A global match
-    // means the posting is hidden on every watchlist, so excluding the whole
-    // externalId is safe. (Per-watchlist filters are read-time only — not
-    // applied here, matching scope.) One cheap singleton query per sweep.
-    const globalSettingRow = await findGlobalSetting();
-    const globalNegativeRegexes = compileNegativeFiltersFromArray(
-        globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
-    );
-
+    //
+    // NO negative-filter gate here (removed P2.3.4 / OQ11a). One used to skip
+    // postings matching the owner's global blocklist as defense-in-depth for
+    // legacy NULL-employmentType rows, on the premise that "a global match
+    // means the posting is hidden on every watchlist". That premise dies the
+    // moment two users have different filters — and this sweep has no user to
+    // scope to: the select above pulls no userId or watchlistId, and the dedupe
+    // below means one classification serves every row sharing the externalId,
+    // so there is no single correct blocklist to apply. Scoping it would mean
+    // either picking a winner among disagreeing users or giving up the
+    // cross-user dedup that is the whole point of the sweep. The job-watcher
+    // ingestion drop (per-owner since P2.3.1) already keeps new blacklisted
+    // postings out of the table, so what's left is a finite legacy backlog —
+    // cheaper to classify once than to get wrong.
     const byExternalId = new Map<string, ClassifyInput>();
-    const filteredIds = new Set<string>();
     for (const p of pending) {
-        if (byExternalId.has(p.externalId) || filteredIds.has(p.externalId)) continue;
-        if (globalNegativeRegexes.length > 0 && matchesNegativeFilters(p, globalNegativeRegexes)) {
-            filteredIds.add(p.externalId);
-            continue;
-        }
+        if (byExternalId.has(p.externalId)) continue;
         byExternalId.set(p.externalId, {
             id: p.externalId,
             company: p.company,
@@ -92,9 +87,6 @@ export async function runClassifyPendingEmploymentTypes(
             location: p.location,
         });
         if (byExternalId.size >= SWEEP_CAP) break;
-    }
-    if (filteredIds.size > 0) {
-        console.info(`[classify-pending-employment-types] skipped ${filteredIds.size} distinct posting(s) via global negative filter — not sent to Gemini`);
     }
 
     const inputs = Array.from(byExternalId.values());

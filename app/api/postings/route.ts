@@ -5,7 +5,7 @@ import { JobPostingStatusSchema, EMPLOYMENT_TYPE_VALUES, WatchlistTrackSchema } 
 import { compileNegativeFilters, compileNegativeFiltersFromArray, matchesNegativeFilters } from "@/lib/postings/negative-filters";
 import { expandLocationFilters, locationMatchesChips } from "@/lib/postings/location-expansion";
 import { postingDedupKey } from "@/lib/postings/dedup-key";
-import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
+import { findGlobalSettingForUser, parseGlobalSetting } from "@/lib/repositories/settings";
 
 export const runtime = "nodejs";
 
@@ -170,7 +170,11 @@ export async function GET(req: NextRequest) {
                 take: fetchTake,
                 include: { watchlist: { select: { negativeFilters: true } } },
             }),
-            includeFiltered ? Promise.resolve(null) : findGlobalSetting(),
+            // P2.3.2: the VIEWER's own negative filters, never the owner's —
+            // the rows below already belong to `userId`, so filtering them with
+            // anyone else's config would hide a crew member's postings from
+            // them (or leak past their own blocklist).
+            includeFiltered ? Promise.resolve(null) : findGlobalSettingForUser(userId),
         ]);
 
         const globalRegexes = compileNegativeFiltersFromArray(

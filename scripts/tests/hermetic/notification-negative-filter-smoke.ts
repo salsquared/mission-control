@@ -35,11 +35,16 @@
  * the global drop; Parts 2-4 insert rows directly via prisma.create (bypassing
  * job-watcher) so they still exercise the digest READ-time filter.
  *
- * Cleans up: deletes scratch watchlists, postings, notifications, and
- * RESTORES the prior GlobalSetting.globalNegativeFilters value so this smoke
- * doesn't bleed into posting-digest-smoke (which uses "Senior Engineer N"
- * titles and would break if globalNegativeFilters were left containing
- * "Senior").
+ * UPDATE (P2.3, 2026-07-27): "global" negative filters are per-user — both the
+ * job-watcher drop and the digest cull read the WATCHLIST OWNER'S settings row
+ * (findGlobalSettingForUser), not the legacy id='global' singleton. So this
+ * smoke now writes filters onto its own throwaway user's row and never touches
+ * the real account's; the snapshot/restore dance around id='global' is gone,
+ * and with it the window where a concurrent smoke (posting-digest-smoke, whose
+ * titles contain "Senior") could observe this one's filters.
+ *
+ * Cleans up: deletes scratch watchlists, postings, notifications, and the
+ * throwaway user — whose GlobalSetting row cascades away with it.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from "http";
 import { AddressInfo } from "net";
@@ -90,50 +95,21 @@ class FixtureServer {
     async stop() { await new Promise<void>(r => this.server.close(() => r())); }
 }
 
-async function snapshotGlobalNegativeFilters(): Promise<{ existed: boolean; raw: string }> {
-    const row = await prisma.globalSetting.findUnique({ where: { id: "global" } });
-    if (!row) return { existed: false, raw: "[]" };
-    return { existed: true, raw: row.globalNegativeFilters };
-}
-
-async function setGlobalNegativeFilters(patterns: string[], fallbackUserId: string): Promise<void> {
+/**
+ * Set the "global" (= per-user, one row per account) negative filters for the
+ * smoke's OWN throwaway user. Since P2.3 both job-watcher and posting-digest
+ * read `findGlobalSettingForUser(<watchlist owner>)`, so the row that matters
+ * is this user's — the real account's legacy id='global' row is never read for
+ * these watchlists and is left untouched (it used to be mutated + restored).
+ */
+async function setGlobalNegativeFilters(patterns: string[], userId: string): Promise<void> {
     _resetNegativeFilterCache(); // ensure new patterns get compiled (cache is keyed by JSON string)
     const json = JSON.stringify(patterns);
-    const existing = await prisma.globalSetting.findUnique({ where: { id: "global" } });
-    if (existing) {
-        await prisma.globalSetting.update({
-            where: { id: "global" },
-            data: { globalNegativeFilters: json },
-        });
-    } else {
-        // userId required since the P2 scoping (one settings row per user);
-        // the throwaway smoke user owns the bootstrap row on a fresh DB.
-        await prisma.globalSetting.create({
-            data: {
-                id: "global",
-                userId: fallbackUserId,
-                isDarkMode: true,
-                viewHuesEnabled: true,
-                viewHues: "{}",
-                dashOrder: "[]",
-                dashTitles: "{}",
-                globalNegativeFilters: json,
-                version: 1,
-            },
-        });
-    }
-}
-
-async function restoreGlobalNegativeFilters(snap: { existed: boolean; raw: string }): Promise<void> {
-    _resetNegativeFilterCache();
-    if (!snap.existed) {
-        await prisma.globalSetting.delete({ where: { id: "global" } }).catch(() => undefined);
-        return;
-    }
-    await prisma.globalSetting.update({
-        where: { id: "global" },
-        data: { globalNegativeFilters: snap.raw },
-    }).catch(() => undefined);
+    await prisma.globalSetting.upsert({
+        where: { userId },
+        update: { globalNegativeFilters: json },
+        create: { userId, globalNegativeFilters: json, version: 1 },
+    });
 }
 
 async function main() {
@@ -141,7 +117,6 @@ async function main() {
     const userId = `negfilt-smoke-user-${tag}`;
     const watchlistIds: string[] = [];
     const fixture = new FixtureServer();
-    const globalSnap = await snapshotGlobalNegativeFilters();
 
     try {
         await fixture.start();
@@ -447,8 +422,10 @@ async function main() {
             await prisma.jobPosting.deleteMany({ where: { watchlistId: id } }).catch(() => undefined);
             await prisma.watchlist.delete({ where: { id } }).catch(() => undefined);
         }
+        // Deleting the user cascades its GlobalSetting row (schema onDelete:
+        // Cascade), so the filters this smoke set die with it.
         await prisma.user.delete({ where: { id: userId } }).catch(() => undefined);
-        await restoreGlobalNegativeFilters(globalSnap);
+        _resetNegativeFilterCache();
         await fixture.stop().catch(() => undefined);
         await prisma.$disconnect();
         console.log(`\n${passes}/${passes + fails} steps passed`);

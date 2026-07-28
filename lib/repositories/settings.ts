@@ -44,16 +44,35 @@ export type UpsertResult =
 // P2.3 (OQ2a): GlobalSetting is one row PER USER, keyed on the unique userId.
 // The pre-scoping singleton kept its legacy id 'global' and was backfilled to
 // the owner account, so owner reads land on the same row as before.
+//
+// THIS is the accessor every caller wants — including the scheduler, which has
+// no session but always has a row (`watchlist.userId`) naming whose config
+// applies. See `findGlobalSetting()` below for why the zero-arg variant is no
+// longer called from anywhere.
 export function findGlobalSettingForUser(userId: string): Promise<GlobalSetting | null> {
     return prisma.globalSetting.findUnique({ where: { userId } });
 }
 
-// Session-less owner read for non-request contexts: the scheduler jobs
-// (job-watcher / posting-digest / classify-pending sweeps) and the postings
-// feed read ONE settings row for negative filters + hidden watchlists, and
-// have no session to scope by. Resolves the owner account (memoized in
-// lib/user-scope.ts), falling back to the legacy singleton row so a DB where
-// the owner can't be resolved still behaves exactly as before the rework.
+// The owner's settings row, resolved without a session.
+//
+// NO REACHABLE PRODUCTION CALLERS as of P2.3 (docs/multi-user-crew.html §2.6).
+// It had four — job-watcher, posting-digest, classify-pending-employment-types
+// and the /api/postings feed — and every one of them applied the OWNER's
+// negative filters to other people's data: the job-watcher read dropped crew
+// postings before any DB write (silent, permanent loss), and posting-digest's
+// `culledOnly` watermark advance pushed a posting culled by someone else's
+// config past `lastDigestAt` so it was never digested at all. Three now call
+// `findGlobalSettingForUser()` with the owning user's id; the fourth (the
+// cross-user dedup sweep, which has no single correct user) had its filter gate
+// deleted outright (OQ11a).
+//
+// Its only remaining references are `scripts/tests/hermetic/user-scoping-smoke.ts`
+// and this file. Kept — not deleted — because deletion would also strip
+// `lib/user-scope.ts:resolveOwnerUserId()` of its last caller, and that is
+// deferred cleanup rather than part of a scoping fix. Do NOT reach for this in
+// new code: pass the userId whose config you mean. For "who is the owner" in a
+// request-less context use `lib/owner.ts:resolveOwner()`, which reads the
+// authoritative `User.role` column.
 export async function findGlobalSetting(): Promise<GlobalSetting | null> {
     const ownerId = await resolveOwnerUserId();
     if (ownerId) {

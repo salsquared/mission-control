@@ -77,8 +77,10 @@ model GlobalSetting {
   // One row PER USER (P2.3 / OQ2a) — the pre-scoping singleton design keyed
   // on id='global' is retired. The legacy row kept its 'global' id and was
   // backfilled to the owner account; new users get cuid ids. All reads/writes
-  // key on the unique userId, never on id (lib/notifications/dispatch.ts's
-  // quiet-hours read of id='global' still resolves to the owner's row).
+  // key on the unique userId, never on id. The last holdout —
+  // lib/notifications/dispatch.ts's quiet-hours read of id='global', which
+  // silently gated every user's email on the OWNER's quiet hours — was moved to
+  // where: { userId } by the multi-user owner/crew work (P2.3.5).
   id                    String   @id @default(cuid())
   userId                String   @unique
   isDarkMode            Boolean  @default(true)

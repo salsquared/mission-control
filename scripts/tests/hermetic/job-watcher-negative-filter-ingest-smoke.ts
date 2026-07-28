@@ -83,20 +83,16 @@ async function main() {
         data: { id: userId, email: `negfilt-ingest-smoke-${tag}@example.invalid` },
     });
 
-    // Snapshot + override the global filter to a known value (block "Senior").
-    const origGlobalRow = await prisma.globalSetting.findUnique({
-        where: { id: "global" },
-        select: { globalNegativeFilters: true },
-    });
-
     const createdWatchlistIds: string[] = [];
     try {
-        await prisma.globalSetting.upsert({
-            where: { id: "global" },
-            update: { globalNegativeFilters: JSON.stringify(["Senior"]) },
-            // userId required since the P2 scoping (one settings row per user);
-            // the throwaway smoke user owns the bootstrap row on a fresh DB.
-            create: { id: "global", userId, globalNegativeFilters: JSON.stringify(["Senior"]) },
+        // The filter lives on the WATCHLIST OWNER'S settings row (P2.3.1) —
+        // job-watcher reads findGlobalSettingForUser(watchlist.userId), not the
+        // owner account's legacy id='global' singleton. So this smoke gives its
+        // throwaway user its own row and never touches the real one (it used to
+        // mutate + restore id='global', which both bled into the live dev config
+        // for the duration of the run and stopped being what the job reads).
+        await prisma.globalSetting.create({
+            data: { userId, globalNegativeFilters: JSON.stringify(["Senior"]) },
         });
 
         const wlConfig = JSON.stringify({
@@ -156,12 +152,6 @@ async function main() {
         if (total !== 1) fail(`ingest-drop: expected 1 row total under the watchlist, got ${total}`);
         else pass("ingest-drop: exactly one row persisted under the watchlist");
     } finally {
-        if (origGlobalRow) {
-            await prisma.globalSetting.update({
-                where: { id: "global" },
-                data: { globalNegativeFilters: origGlobalRow.globalNegativeFilters },
-            }).catch(() => undefined);
-        }
         for (const wId of createdWatchlistIds) {
             await prisma.jobPosting.deleteMany({ where: { watchlistId: wId } }).catch(() => undefined);
             await prisma.watchlist.delete({ where: { id: wId } }).catch(() => undefined);

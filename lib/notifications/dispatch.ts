@@ -92,9 +92,15 @@ export async function dispatchNotification(input: DispatchInput): Promise<Notifi
     // strip "email" from channels so the row still surfaces in the bell
     // but no Gmail send fires. Critical tier (offers, etc.) bypasses quiet
     // hours — the user explicitly wants those even at 3am.
+    //
+    // P2.3.5: keyed on the NOTIFICATION'S OWN user, not the legacy id='global'
+    // singleton (which is the owner's row). GlobalSetting has been one row per
+    // user since the OQ2a scoping; reading 'global' meant every crew member's
+    // email was gated by the owner's window and none of them could set their
+    // own. No row ⇒ no window ⇒ deliver, same as an unconfigured owner.
     if (input.tier !== "critical" && channels.includes("email")) {
         const settings = await prisma.globalSetting.findUnique({
-            where: { id: "global" },
+            where: { userId: input.userId },
             select: { quietHoursStart: true, quietHoursEnd: true, quietHoursTimezone: true },
         });
         if (settings && isInQuietHours(new Date(), {

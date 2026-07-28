@@ -40,10 +40,12 @@ export function _resetOwnerCache(): void {
  *
  * @deprecated Since P1.3 there are no session-less requests — the LAN branch
  * this existed for is gone (see the module header), so `resolveScopedUserId`
- * never reaches it. The one remaining production caller is
- * `lib/repositories/settings.ts:findGlobalSetting()`, whose own call sites P2.3
- * removes; deletion of this function is deferred cleanup after that, and
- * `user-scoping-smoke.ts` still exercises it meanwhile.
+ * never reaches it. Its one-time production caller was
+ * `lib/repositories/settings.ts:findGlobalSetting()`, and P2.3 has now moved
+ * all four of THAT function's call sites onto `findGlobalSettingForUser(userId)`
+ * — so as of P2.3 neither function has a reachable production caller. Deletion
+ * of both is deferred cleanup, not v1; `user-scoping-smoke.ts` still exercises
+ * this one meanwhile.
  *
  * Do NOT reach for this in new code. For "who is the owner" in a context with
  * no request, use `lib/owner.ts:resolveOwner()`, which reads the authoritative

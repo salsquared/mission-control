@@ -18,7 +18,7 @@ import {
     compileNegativeFiltersFromArray,
     matchesNegativeFilters,
 } from "@/lib/postings/negative-filters";
-import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
+import { findGlobalSettingForUser, parseGlobalSetting } from "@/lib/repositories/settings";
 
 // Don't summarize more than this many postings inline in the body — we still
 // store all of them; the bell just shows the first N and a "+M more".
@@ -40,18 +40,27 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
         },
     });
 
-    // Global negative-filter parity with /api/postings GET and job-watcher
-    // per-posting dispatch. Compiled once per run; watchlist-specific set is
-    // compiled per iteration (cached by JSON identity in negative-filters.ts).
-    const globalSettingRow = await findGlobalSetting();
-    const globalNegativeRegexes = compileNegativeFiltersFromArray(
-        globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
-    );
-
     let summarized = 0;
     let totalPostings = 0;
 
     for (const w of watchlists) {
+        // Global negative-filter parity with /api/postings GET and job-watcher
+        // per-posting dispatch — read for THIS watchlist's owner (P2.3.3), which
+        // is why it sits inside the loop instead of being hoisted above it.
+        // Applying one user's filters to another's watchlist doesn't merely
+        // produce a wrong digest: the `culledOnly` advance at the bottom of this
+        // loop would push lastDigestAt past a posting that the owner's own
+        // config never culled, and the watermark only ever moves forward — so
+        // the posting is never digested at all. Lost, not deferred.
+        //
+        // One indexed findUnique per digest watchlist, on a daily job that
+        // already runs a findMany per watchlist. Both regex sets are compiled
+        // per iteration and cached by JSON identity in negative-filters.ts.
+        const globalSettingRow = await findGlobalSettingForUser(w.userId);
+        const globalNegativeRegexes = compileNegativeFiltersFromArray(
+            globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
+        );
+
         // Window: postings first-seen since the last digest, or since the
         // watchlist was created if no prior digest. Using firstSeenAt (not
         // createdAt) so a re-surfaced posting doesn't fire a digest.
@@ -158,6 +167,11 @@ export async function runPostingDigest(): Promise<PostingDigestRunResult> {
         // those have been "considered and rejected", and we don't want to keep
         // re-evaluating the same culled set forever. Don't advance on dispatch
         // failure (PB-3): the transient error should retry next tick.
+        //
+        // (b) is why the settings read above MUST be this watchlist's owner
+        // (P2.3.3): "considered and rejected" is only true if the config that
+        // rejected the posting was the owner's own. Under a foreign filter this
+        // branch silently retires a posting the owner never saw.
         const culledOnly = postings.length > 0 && filteredPostings.length === 0;
         if ((dispatchedOk || culledOnly) && maxIncluded !== null) {
             await prisma.watchlist.update({

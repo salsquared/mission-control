@@ -12,13 +12,22 @@
  *      other user's.
  *   2. GlobalSetting per-user — one row per user; the stranger's bootstrap
  *      write never touches the owner's row; reads key on userId.
- *   3. /api/settings If-Match contract via the REAL route handlers over the
- *      LAN bypass (host=localhost, no session → lib/user-scope.ts owner
- *      fallback): GET returns the owner's parsed row; POST without If-Match
- *      → 428; stale version → 409 + currentVersion; matching version → 200
- *      with version+1 — byte-identical to the pre-rework contract.
- *   4. /api/tasks GET over the LAN bypass returns only the owner's tasks, and
- *      POST creates rows owned by the owner.
+ *   3. /api/settings If-Match contract via the REAL route handlers, driven as
+ *      the owner through the __seedViewer seam (P1.2.4 — the LAN bypass those
+ *      phases used to ride is GONE, and the guards have no identity fallback):
+ *      GET returns the owner's parsed row; POST without If-Match → 428; stale
+ *      version → 409 + currentVersion; matching version → 200 with version+1 —
+ *      byte-identical to the pre-rework contract.
+ *   4. /api/tasks GET returns only the owner's tasks, and POST creates rows
+ *      owned by the owner.
+ *   5. THE OWNERSHIP INVARIANT (P1.4.2): exactly one role='owner' row — not
+ *      zero (the migration's UPDATE never ran, so requireOwner() locks the
+ *      owner out of their own app) and not two (the wrong row promoted, or a
+ *      second promoted later). Both failure modes are exercised, not just
+ *      asserted. Plus the resolver on top of it: resolveOwner() returns the
+ *      owner regardless of cuid order — the crew fixture's id deliberately
+ *      sorts FIRST, which is exactly what the retired
+ *      findFirst({ orderBy: { id: 'asc' } }) heuristic would have returned.
  *
  * Genuinely hermetic: no server, no network, no PM2 — the DB is a THROWAWAY
  * SQLite file in /tmp (DATABASE_URL pinned before any import; tables created
@@ -27,13 +36,19 @@
  */
 const TMP_DB = `/tmp/user-scoping-smoke-${process.pid}-${Date.now()}.db`;
 process.env.DATABASE_URL = `file:${TMP_DB}`;
-// Deterministic owner resolution for the LAN fallback: two users exist in the
-// fixture DB, so the sole-user heuristic can't apply — the allowlist must pick.
-const OWNER_EMAIL = "owner@user-scoping-smoke.invalid";
-process.env.ALLOWED_SIGNIN_EMAILS = OWNER_EMAIL;
+// `lib/user-scope.ts:resolveOwnerUserId()` (deprecated, but still the resolver
+// behind the zero-arg findGlobalSetting() the scheduler path uses) walks the
+// allowlist first. Two users exist in the fixture DB, so its sole-user
+// heuristic can't apply — the allowlist has to pick. NOTE this is user-scope's
+// legacy chain, NOT `lib/owner.ts:resolveOwner()`, which since P1.3.3 reads the
+// authoritative User.role column and consults no env var at all.
+const OWNER_ADDRESS = "owner@user-scoping-smoke.invalid";
+process.env.ALLOWED_SIGNIN_EMAILS = OWNER_ADDRESS;
 process.env.EMAIL_ENABLED = "0";
 
 import { unlinkSync } from "node:fs";
+import { __seedViewer, __resetViewer } from "@/lib/viewer";
+import { resolveOwner, __resetOwnerMemo } from "@/lib/owner";
 
 let passes = 0;
 let fails = 0;
@@ -117,8 +132,15 @@ const DDL = [
     `CREATE UNIQUE INDEX "SavedPaper_userId_paperId_key" ON "SavedPaper"("userId", "paperId")`,
 ];
 
-/** LAN-shaped request: host=localhost, no XFF, no session → owner fallback. */
-function lanRequest(path: string, init: RequestInit = {}): Request {
+/**
+ * A plain request to a route handler. It carries NO identity: since P1.3.2 the
+ * guards resolve through `lib/viewer.ts:resolveViewer()`, and an in-process
+ * handler call has no request scope, so `headers()` throws and every one of
+ * these would 401. The acting identity comes from the `__seedViewer` seam
+ * instead (seeded per phase in main()) — the "host=localhost ⇒ trusted" LAN
+ * bypass these phases used to ride no longer exists.
+ */
+function apiRequest(path: string, init: RequestInit = {}): Request {
     const headers = new Headers(init.headers);
     headers.set("host", "localhost");
     return new Request(`http://localhost${path}`, { ...init, headers });
@@ -145,11 +167,14 @@ async function main() {
     const settingsRepo = await import("@/lib/repositories/settings");
     const { resolveOwnerUserId, _resetOwnerCache } = await import("@/lib/user-scope");
 
+    // The crew id deliberately sorts BEFORE the owner id. The retired
+    // `findFirst({ orderBy: { id: 'asc' } })` heuristic would have resolved this
+    // fixture set to the STRANGER; the role column must not.
     const OWNER = "owner-user-scoping-smoke";
-    const STRANGER = "stranger-user-scoping-smoke";
+    const STRANGER = "a-stranger-user-scoping-smoke";
 
     try {
-        await prisma.user.create({ data: { id: OWNER, email: OWNER_EMAIL } });
+        await prisma.user.create({ data: { id: OWNER, email: OWNER_ADDRESS, role: "owner" } });
         await prisma.user.create({ data: { id: STRANGER, email: "stranger@user-scoping-smoke.invalid" } });
 
         // Owner fixtures across all four tables. The settings row mirrors the
@@ -230,33 +255,40 @@ async function main() {
         if (conflict.ok || conflict.currentVersion !== 1) fail("stale-version write should conflict with currentVersion 1", conflict);
         else pass("GlobalSetting: version mismatch surfaces currentVersion (per user)");
 
-        // ── 3. /api/settings If-Match contract over the LAN bypass ──────────
+        // ── 3. /api/settings If-Match contract through the REAL handlers ────
         _resetOwnerCache();
         const resolved = await resolveOwnerUserId();
         if (resolved !== OWNER) fail(`owner resolution picked ${resolved} (expected ${OWNER} via allowlist)`);
         else pass("user-scope: allowlist resolves the owner among multiple users");
 
+        // Act as the OWNER for the route-driven phases. These call the handlers
+        // in-process, where `headers()` throws, so `resolveViewer()` would 401
+        // every one of them — the guards deliberately have no identity fallback
+        // left (P1.3.2). The seam (P1.2.4) is the sanctioned injection point;
+        // it is cleared in the finally so it cannot leak into the next suite.
+        __seedViewer({ id: OWNER, email: OWNER_ADDRESS, role: "owner" });
+
         const settingsRoute = await import("@/app/api/settings/route");
-        const getRes = mustRespond(await settingsRoute.GET(lanRequest("/api/settings")), "settings GET");
+        const getRes = mustRespond(await settingsRoute.GET(apiRequest("/api/settings")), "settings GET");
         const getBody = await getRes.json();
         if (getRes.status !== 200 || getBody.data?.version !== 3 || getBody.data?.isDarkMode !== false) {
-            fail("LAN GET /api/settings should return the OWNER's parsed row", getBody);
-        } else pass("LAN GET /api/settings → owner's settings (session-less fallback)");
+            fail("GET /api/settings should return the OWNER's parsed row", getBody);
+        } else pass("GET /api/settings → owner's settings (seeded owner viewer)");
 
-        const noIfMatch = mustRespond(await settingsRoute.POST(lanRequest("/api/settings", {
+        const noIfMatch = mustRespond(await settingsRoute.POST(apiRequest("/api/settings", {
             method: "POST", body: JSON.stringify({ isDarkMode: true }),
         })), "settings POST (no If-Match)");
         if (noIfMatch.status !== 428) fail(`POST without If-Match should 428, got ${noIfMatch.status}`);
         else pass("POST /api/settings without If-Match → 428 (contract intact)");
 
-        const stale = mustRespond(await settingsRoute.POST(lanRequest("/api/settings", {
+        const stale = mustRespond(await settingsRoute.POST(apiRequest("/api/settings", {
             method: "POST", headers: { "if-match": "1" }, body: JSON.stringify({ isDarkMode: true }),
         })), "settings POST (stale)");
         const staleBody = await stale.json();
         if (stale.status !== 409 || staleBody.currentVersion !== 3) fail("stale If-Match should 409 with currentVersion 3", staleBody);
         else pass("POST /api/settings stale If-Match → 409 + currentVersion");
 
-        const good = mustRespond(await settingsRoute.POST(lanRequest("/api/settings", {
+        const good = mustRespond(await settingsRoute.POST(apiRequest("/api/settings", {
             method: "POST", headers: { "if-match": "3" }, body: JSON.stringify({ isDarkMode: true }),
         })), "settings POST (good)");
         const goodBody = await good.json();
@@ -275,38 +307,121 @@ async function main() {
             fail("zero-arg findGlobalSetting should resolve the owner's row", schedulerView);
         } else pass("findGlobalSetting() (scheduler path) resolves the owner's row");
 
-        // ── 4. /api/tasks over the LAN bypass ───────────────────────────────
+        // ── 4. /api/tasks through the real handlers, as the owner ───────────
         const tasksRoute = await import("@/app/api/tasks/route");
-        const tasksGet = mustRespond(await tasksRoute.GET(lanRequest("/api/tasks")), "tasks GET");
+        const tasksGet = mustRespond(await tasksRoute.GET(apiRequest("/api/tasks")), "tasks GET");
         const tasksBody = await tasksGet.json();
         if (tasksGet.status !== 200 || tasksBody.tasks?.length !== 2) {
-            fail(`LAN GET /api/tasks should list the owner's 2 tasks, got ${tasksBody.tasks?.length}`, tasksBody);
+            fail(`GET /api/tasks should list the owner's 2 tasks, got ${tasksBody.tasks?.length}`, tasksBody);
         } else if (tasksBody.tasks.some((t: { userId: string }) => t.userId !== OWNER)) {
-            fail("LAN GET /api/tasks leaked a non-owner row", tasksBody.tasks);
-        } else pass("LAN GET /api/tasks → owner's tasks only");
+            fail("GET /api/tasks leaked a non-owner row", tasksBody.tasks);
+        } else pass("GET /api/tasks → owner's tasks only");
 
-        const tasksPost = mustRespond(await tasksRoute.POST(lanRequest("/api/tasks", {
-            method: "POST", body: JSON.stringify({ text: "created via LAN" }),
+        const tasksPost = mustRespond(await tasksRoute.POST(apiRequest("/api/tasks", {
+            method: "POST", body: JSON.stringify({ text: "created via the tasks route" }),
         })), "tasks POST");
         const postBody = await tasksPost.json();
         const createdRow = postBody.id ? await prisma.task.findUnique({ where: { id: postBody.id } }) : null;
         if (tasksPost.status !== 200 || createdRow?.userId !== OWNER) {
-            fail("LAN POST /api/tasks should create a row owned by the owner", { status: tasksPost.status, createdRow });
-        } else pass("LAN POST /api/tasks → new row owned by the owner");
+            fail("POST /api/tasks should create a row owned by the owner", { status: tasksPost.status, createdRow });
+        } else pass("POST /api/tasks → new row owned by the owner");
+
+        // ── 5. THE OWNERSHIP INVARIANT: exactly one role='owner' row ────────
+        // This is what converts OQ4a's lock-out risk into a test failure. The
+        // real DBs are checked separately at P1.1.3; here the fixture DB stands
+        // in for them, and BOTH failure modes are exercised rather than merely
+        // asserted — a bare count check that never sees a violation is a check
+        // nobody has proved can fail.
+        //
+        // Read the count through raw SQL, deliberately: the point is the STORED
+        // fact, and a Prisma-level default or a stale client would otherwise be
+        // able to launder it.
+        const countOwners = async (): Promise<number> => {
+            const rows = await prisma.$queryRawUnsafe<Array<{ n: bigint | number }>>(
+                `SELECT COUNT(*) AS n FROM "User" WHERE "role" = 'owner'`,
+            );
+            return Number(rows[0]?.n ?? 0);
+        };
+        /** null ⇒ the invariant holds; a string ⇒ how it is violated. */
+        const ownerViolation = async (): Promise<string | null> => {
+            const n = await countOwners();
+            if (n === 0) return "zero role='owner' rows — the migration's backfill never ran, so requireOwner() locks the owner out of their own app";
+            if (n > 1) return `${n} role='owner' rows — the wrong row was promoted, or a second one was promoted later`;
+            return null;
+        };
+
+        const baseline = await ownerViolation();
+        const ownerRows = await prisma.user.findMany({ where: { role: "owner" }, select: { id: true } });
+        if (baseline !== null) fail("fixture DB must hold exactly one role='owner' row", baseline);
+        else if (ownerRows[0]?.id !== OWNER) fail("the single owner row must be the OWNER fixture", ownerRows);
+        else pass("invariant: exactly one role='owner' row, and it is the owner");
+
+        // Teeth (a): ZERO owners must fail the invariant. This is the migration
+        // whose `UPDATE "User" SET role = 'owner';` never ran.
+        await prisma.user.update({ where: { id: OWNER }, data: { role: "crew" } });
+        const zero = await ownerViolation();
+        if (zero === null) fail("invariant must FAIL with zero role='owner' rows (owner locked out)");
+        else pass(`invariant has teeth: zero owners is a violation — ${zero}`);
+
+        // …and with zero owners the resolver returns null rather than falling
+        // through to the crew row. `null` is never memoized, so the restore
+        // below takes without a restart — asserted right after.
+        __resetOwnerMemo();
+        const noOwner = await resolveOwner();
+        if (noOwner !== null) fail("resolveOwner() must return null with zero owners, never a crew row", noOwner);
+        else pass("resolveOwner(): zero owners → null (no fall-through to the crew row)");
+
+        // Teeth (b): TWO owners must fail the invariant. This is the wrong row
+        // promoted, or a second promoted later.
+        await prisma.user.update({ where: { id: OWNER }, data: { role: "owner" } });
+        await prisma.user.update({ where: { id: STRANGER }, data: { role: "owner" } });
+        const two = await ownerViolation();
+        if (two === null) fail("invariant must FAIL with two role='owner' rows");
+        else pass(`invariant has teeth: two owners is a violation — ${two}`);
+
+        // Restore, then assert the property the retired cuid heuristic did NOT
+        // have: with an owner row and a crew row present, resolveOwner() returns
+        // the OWNER even though the crew row's id sorts first.
+        await prisma.user.update({ where: { id: STRANGER }, data: { role: "crew" } });
+        if (await ownerViolation() !== null) fail("invariant should be restored after the teeth checks");
+        else pass("invariant restored: exactly one role='owner' row again");
+
+        __resetOwnerMemo();
+        const owner = await resolveOwner();
+        const idsInOrder = [OWNER, STRANGER].sort();
+        if (idsInOrder[0] !== STRANGER) {
+            fail("fixture precondition broken: the crew id must sort BEFORE the owner id for this assertion to bite", idsInOrder);
+        } else if (owner?.id !== OWNER || owner.email !== OWNER_ADDRESS) {
+            fail("resolveOwner() must return the role='owner' row regardless of cuid order", { owner, idsInOrder });
+        } else {
+            pass("resolveOwner(): returns the owner even though the crew row's cuid sorts first");
+        }
     } finally {
+        // Clear the identity seam first — a seam left armed here would hand the
+        // next suite in the pre-push gate this smoke's throwaway viewer.
+        __resetViewer();
+        __resetOwnerMemo();
         try { await prisma.$disconnect(); } catch { /* best-effort */ }
         for (const suffix of ["", "-journal", "-wal", "-shm"]) {
             try { unlinkSync(TMP_DB + suffix); } catch { /* may not exist */ }
         }
     }
+}
 
+/**
+ * The exit path lives OUT here, not at the bottom of `main()`, so no early
+ * `return` inside the body can skip it. `resume-list-smoke.ts` had exactly that
+ * bug: it printed `[FAIL]` and still exited 0, and the pre-push gate — which
+ * reads only the exit code — passed a red suite.
+ */
+function finish(): never {
     console.log(`\n${passes}/${passes + fails} steps passed`);
     if (fails > 0) process.exit(1);
     console.log("All checks passed.");
     process.exit(0);
 }
 
-main().catch((e) => {
+main().then(finish, (e) => {
     console.error("smoke crashed:", e);
     process.exit(1);
 });

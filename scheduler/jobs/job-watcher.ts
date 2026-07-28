@@ -44,7 +44,7 @@ import {
     compileNegativeFiltersFromArray,
     matchesNegativeFilters,
 } from "@/lib/postings/negative-filters";
-import { findGlobalSetting, parseGlobalSetting } from "@/lib/repositories/settings";
+import { findGlobalSettingForUser, parseGlobalSetting } from "@/lib/repositories/settings";
 import { parseCompensation } from "@/lib/postings/compensation";
 import { probeBatch, PROBE_PROFILES, type WatchlistKind } from "@/lib/postings/liveness";
 import { closeApplicationsForClosedPostings } from "@/lib/applications/close-from-posting";
@@ -224,7 +224,13 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     //     still land in the JobPosting table (surface via ?includeFiltered=true);
     //     here we only suppress the per-posting *notification* (parity with the
     //     /api/postings GET feed filter).
-    const globalSettingRow = await findGlobalSetting();
+    //
+    // P2.3.1: "global" means global TO THE WATCHLIST'S OWNER — read their row,
+    // never the owner account's. This drop is the highest-severity config bleed
+    // in the codebase precisely because it happens before any DB write: a
+    // posting dropped under someone else's blocklist leaves no row to notice,
+    // so the loss is silent and permanent.
+    const globalSettingRow = await findGlobalSettingForUser(watchlist.userId);
     const globalNegativeRegexes = compileNegativeFiltersFromArray(
         globalSettingRow ? parseGlobalSetting(globalSettingRow).negativeFilters : [],
     );
