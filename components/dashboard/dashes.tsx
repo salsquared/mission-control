@@ -51,3 +51,47 @@ export const BASE_DASHES: DashConfig[] = [
     { id: "profile", title: "Profile", component: <ProfileView /> },
     { id: "planning", title: "Planning & Strategy", component: <PlanningView /> },
 ];
+
+// Dash ids a crew member is shown. Everything else in BASE_DASHES is
+// owner-only. `planning` is in the set (OQ5a) because it costs nothing:
+// the tasks + goals routes behind it already run resolveScopedUserId,
+// which prefers the guard's session id, so they are per-user for free.
+const CREW_DASH_IDS = new Set(["applications", "profile", "planning"]);
+
+// Computed once at module init rather than per call, so both branches of
+// dashesForRole() return a referentially STABLE array. useDashCarousel
+// lists `baseDashes` in a useMemo dep (useDashCarousel.ts:60), so a fresh
+// array identity on every render would re-derive orderedDashes and churn
+// every navigation callback hanging off it. Filtering preserves
+// BASE_DASHES order, which the carousel's persisted-order resolution
+// assumes. Treat the result as read-only — it is a shared module array.
+const CREW_DASHES: DashConfig[] = BASE_DASHES.filter(d => CREW_DASH_IDS.has(d.id));
+
+/**
+ * The dashes a role is shown, in BASE_DASHES order.
+ *
+ * HIDING A DASH IS NOT ACCESS CONTROL. This is a UX affordance and nothing
+ * more — it keeps a crew member off surfaces that would only 403 on them.
+ * The actual enforcement is server-side at the route guard (requireOwner);
+ * a client-side array cannot stop anyone from typing a URL or calling the
+ * API directly. `internal-systems` in particular is an ops surface (live
+ * logs, system stats) that MUST be blocked at the route — omitting it here
+ * is the cosmetic half of that, never the whole of it.
+ *
+ * Pure over a static array — no hooks, no state, no I/O — so it is safe to
+ * call during render.
+ *
+ * `role` is deliberately NOT optional, and there is deliberately no
+ * unknown/loading return value. Neither candidate works: returning the crew
+ * set optimistically strands an owner on the wrong dash (useDashCarousel
+ * restores by id against whatever baseDashes its one-shot effect saw on the
+ * FIRST render, so the owner's last-viewed id is dropped and never restored
+ * when the set later widens — this is OQ9c, rejected), and returning []
+ * throws outright (useDashCarousel.ts:73 reads baseDashes[0].id with no
+ * empty-array guard). So the caller's obligation is structural: do not call
+ * this — and do not run the carousel hook at all — until the role has
+ * resolved (OQ9a). Do not paper over the unknown window with
+ * `dashesForRole(role ?? "crew")`; that is OQ9c with extra steps.
+ */
+export const dashesForRole = (role: "owner" | "crew"): DashConfig[] =>
+    role === "owner" ? BASE_DASHES : CREW_DASHES;
