@@ -27,7 +27,10 @@
 
     The section ORDER below is the rule — keep it. Delete the placeholder prose,
     not the structure. Sections marked OPTIONAL may be dropped when they don't
-    apply; the six REQUIRED ones always stay.
+    apply; the six REQUIRED ones always stay, and the GLOSSARY joins them the
+    moment the doc uses field-specific vocabulary — which, for a survey, is
+    almost always. Every glossary entry names the source its definition came
+    from; see the rule in that section.
   -->
 
   <h4 class="kicker">‹project›</h4>
@@ -47,6 +50,7 @@
       <li><a href="#adversarial">Adversarial surface</a> <em>(optional)</em></li>
       <li><a href="#open-questions">Open questions &amp; what would settle them</a></li>
       <li><a href="#confidence">Confidence ledger &amp; gaps</a></li>
+      <li><a href="#glossary">Glossary</a> <em>(required when the doc uses field-specific terms)</em></li>
       <li><a href="#sources">Sources</a></li>
     </ol>
   </details>
@@ -55,7 +59,7 @@
     <summary><h2 id="findings">Findings at a glance</h2></summary>
     <div class="section-body">
 
-      <div class="callout"><strong>Research-doc convention (delete before publishing).</strong> Six sections are <strong>required</strong>: <em>Findings at a glance</em> (first) → <em>Motivation &amp; scope</em> → <em>Prior art</em> → <em>Open questions</em> → <em>Confidence ledger &amp; gaps</em> → <em>Sources</em> (last). The tail order is fixed. The four middle sections are optional — include them when they apply. Two rules distinguish this archetype from a design doc: <strong>(1)</strong> every <code>OQ</code> carries a <em>Settled by:</em> line naming the concrete evidence that would resolve it — this is the research analogue of a task list, and it is what stops open questions becoming permanent debate; <strong>(2)</strong> the <strong>Confidence ledger</strong> separates cited findings from the author's own inference, so a later reader never inherits a guess as established fact. There is <strong>no Tasks section and no Rollback section</strong> — nothing is being sequenced and nothing is deployed. If you find yourself wanting either, the doc has graduated and wants the design-doc template.</div>
+      <div class="callout"><strong>Research-doc convention (delete before publishing).</strong> Six sections are <strong>required</strong>: <em>Findings at a glance</em> (first) → <em>Motivation &amp; scope</em> → <em>Prior art</em> → <em>Open questions</em> → <em>Confidence ledger &amp; gaps</em> → <em>Sources</em> (last), plus a <em>Glossary</em> immediately before Sources whenever the doc carries field-specific vocabulary (§11). The tail order is fixed. The four middle sections are optional — include them when they apply. Three rules distinguish this archetype from a design doc: <strong>(1)</strong> every <code>OQ</code> carries a <em>Settled by:</em> line naming the concrete evidence that would resolve it — this is the research analogue of a task list, and it is what stops open questions becoming permanent debate; <strong>(2)</strong> the <strong>Confidence ledger</strong> separates cited findings from the author's own inference, so a later reader never inherits a guess as established fact; <strong>(3)</strong> the <strong>Glossary</strong> defines every esoteric or field-specific term <em>from the literature, with the source named per entry</em> — a survey imports a vocabulary along with its findings, and an undefined term is an unverified one. There is <strong>no Tasks section and no Rollback section</strong> — nothing is being sequenced and nothing is deployed. If you find yourself wanting either, the doc has graduated and wants the design-doc template.</div>
 
       <h3>Summary</h3>
       <p>Five to eight bullets, each a <em>finding</em> rather than a topic — state the conclusion, not the subject area. Research docs get skimmed; anything a reader must know before forming an opinion belongs here, not on page four. Cross-reference the section that argues each one.</p>
@@ -106,7 +110,7 @@ flowchart LR
       <p>The main body of a research doc, and the section most often skipped by accident — if the doc jumps from motivation to a proposal, it is a design doc wearing a disguise.</p>
 
       <h3>&lt;Cluster one&gt;</h3>
-      <p>Group the literature by <em>approach family</em>, not chronology. For each: what it does, where it is deployed, and its known limits. <strong>Link every claim to §11</strong> — an unlinked assertion in a research doc is indistinguishable from an opinion. Note explicitly where the field's goals diverge from yours: published work optimizes for its own metrics, which are rarely the ones that matter to your use.</p>
+      <p>Group the literature by <em>approach family</em>, not chronology. For each: what it does, where it is deployed, and its known limits. <strong>Link every claim to §12</strong> — an unlinked assertion in a research doc is indistinguishable from an opinion. Note explicitly where the field's goals diverge from yours: published work optimizes for its own metrics, which are rarely the ones that matter to your use.</p>
 
       <h3>&lt;Cluster two&gt;</h3>
       <p>Tables work well for comparing several methods on shared axes.</p>
@@ -218,7 +222,7 @@ flowchart LR
     <summary><h2 id="confidence">Confidence ledger &amp; gaps</h2></summary>
     <div class="section-body">
       <h3>Verified vs. inferred</h3>
-      <div class="callout warn"><strong>This section is what makes a research doc trustworthy six months later.</strong> Most of the doc is grounded in §11. List the exceptions — claims that are your reasoning rather than a published finding — <strong>especially the load-bearing ones</strong>. Burying an uncited claim inside a confident paragraph is how a guess becomes institutional fact. Where an inferred claim underpins an <code>OQ</code>, say so and point at the experiment that tests it.</div>
+      <div class="callout warn"><strong>This section is what makes a research doc trustworthy six months later.</strong> Most of the doc is grounded in §12. List the exceptions — claims that are your reasoning rather than a published finding — <strong>especially the load-bearing ones</strong>. Burying an uncited claim inside a confident paragraph is how a guess becomes institutional fact. Where an inferred claim underpins an <code>OQ</code>, say so and point at the experiment that tests it.</div>
       <table>
         <thead><tr><th>Claim</th><th>Where it matters</th><th>Basis</th><th>Confidence</th></tr></thead>
         <tbody>
@@ -233,6 +237,39 @@ flowchart LR
         <li><strong>&lt;A whole approach nobody considered&gt;.</strong> &lt;Why it might matter, and what it would change&gt;.</li>
         <li><strong>Cost envelope.</strong> &lt;Whether feasibility was costed or merely asserted&gt;.</li>
       </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="glossary">Glossary <em>(required whenever the doc uses field-specific terms)</em></h2></summary>
+    <div class="section-body">
+
+      <div class="callout tip"><strong>The rule: if a term is esoteric, or reads like an ordinary English word but is not, it gets an entry — and the entry names its source.</strong> A survey imports a <em>vocabulary</em> along with its findings, and that vocabulary is where borrowed error hides: an undefined term is an unverified one, and a term used loosely for three sections becomes a term the next reader redefines by guessing. Two triggers, either sufficient:
+        <ul>
+          <li><strong>Field-specific jargon</strong> — an acronym or coinage that means nothing outside the literature: <em>ERGAS</em>, <em>Fmask</em>, <em>Bulyan</em>, <em>MNF</em>, <em>FWHM</em>.</li>
+          <li><strong>Vague literal meaning</strong> — the trap case, and the one most often missed. An everyday word carrying a narrow technical sense that a reader will otherwise supply from general English: <em>registration</em> is alignment, not enrolment; <em>harmonisation</em> is a fitted per-sensor transform, not agreement; <em>radiometry</em> is the values rather than the positions; a <em>medoid</em> is not a median. These read as understood and are therefore never looked up.</li>
+        </ul>
+      </div>
+
+      <p><strong>Entry rules</strong> — the same markup as the glossary archetype (<code>_template.glossary.html</code>), with one addition:</p>
+      <ul>
+        <li><strong>Every entry names its source</strong>, inline, in the closing <code>&lt;span class="see"&gt;</code>: <strong>Source:</strong> + a link to the primary paper, standards document or reference implementation the definition was taken from. Prefer the originating work (Kruse for SAM, Zhu &amp; Woodcock for Fmask) or the agency specification (ESA, USGS, NASA) over a secondary explainer. This is what separates a glossary from a set of remembered paraphrases — and it lets a later reader check a definition without re-running the search.</li>
+        <li>Definitions come <strong>from the literature, not from recall.</strong> If no source can be found for a term, that is itself a finding — say so in the entry rather than inventing a definition.</li>
+        <li>Where the doc's own argument extends, qualifies or leans on a definition, <strong>say so and cross-reference the section</strong> (&ldquo;…which is the mechanism behind <code>OQ4</code>&rdquo;). The glossary is the doc's vocabulary, not a general dictionary.</li>
+        <li>Sources cited <em>only</em> for a definition live here rather than being repeated in Sources; anything load-bearing for a finding belongs in both.</li>
+        <li>Group along whatever spine the doc uses (the processing chain, the approach families of Prior art), <strong>alphabetical within a group</strong>. One <code>&lt;h3&gt;</code> per group, each followed by its own <code>&lt;dl class="glossary"&gt;</code>.</li>
+        <li>Anchor every <code>&lt;dt id="g-slug"&gt;</code> so entries deep-link, and cross-link siblings inline with <code>&lt;a href="#g-slug"&gt;</code>.</li>
+        <li>If the project keeps a canonical <code>glossary.html</code>, that one wins on shared vocabulary — define here only what is specific to this survey, and point at the project glossary for the rest.</li>
+      </ul>
+
+      <h3>&lt;group name — e.g. the first stage of the processing chain&gt;</h3>
+      <dl class="glossary">
+        <dt id="g-first-term">&lt;Acronym&gt; — &lt;what it expands to&gt;</dt>
+        <dd>&lt;One-sentence definition taken from the source&gt;. &lt;Optional second sentence: the nuance that matters <em>for this doc</em>, and the section that depends on it&gt;. <span class="see"><strong>Source:</strong> <a href="https://example.com">Author, <em>Title</em>, venue &amp; year</a>.</span></dd>
+
+        <dt id="g-second-term">&lt;An ordinary-looking word with a narrow technical sense&gt;</dt>
+        <dd>&lt;The technical meaning&gt; — <em>not</em> &lt;the everyday reading a reader would otherwise assume&gt;. <span class="see"><strong>Source:</strong> <a href="https://example.com">Standards body or specification</a>.</span></dd>
+      </dl>
     </div>
   </details>
 
