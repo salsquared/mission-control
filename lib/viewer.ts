@@ -242,10 +242,16 @@ export async function resolveViewer(deps: ViewerResolverDeps = {}): Promise<View
         // is not a usable viewer). This is the deliberate two-step provisioning:
         // Access lets them past the edge, but this instance has no account for
         // them. ONE loud warn naming the email, because it is the owner's cue to
-        // run `scripts/manage-crew.ts add <email>`.
+        // run `scripts/manage-crew.ts add <email> --tier=<dev|prod>`. The tier
+        // flag is REQUIRED by that script (it refuses to guess which SQLite file
+        // to write), so it must appear here — a copy-pasteable command that
+        // exits 2 is worse than no command at all. `process.env.NODE_ENV` is the
+        // best tier hint available in-process; it is only a hint, hence the
+        // explicit flag rather than a silent default.
+        const tierHint = process.env.NODE_ENV === 'production' ? 'prod' : 'dev';
         console.warn(
             `[VIEWER] Access-verified identity with no User row: ${email} — denying (403). ` +
-            `Provision with: npx tsx scripts/manage-crew.ts add ${email}`,
+            `Provision with: npx tsx scripts/manage-crew.ts add ${email} --tier=${tierHint}`,
         );
         return { ok: false, status: 403, email };
     }
