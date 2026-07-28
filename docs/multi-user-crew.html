@@ -1,0 +1,1316 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Owner / Crew — two-role multi-user</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>Owner / Crew — two-role multi-user</h1>
+  <p class="subtitle">Turn the single-owner app into a two-role app: the <strong>owner</strong> keeps everything, <strong>crew</strong> (friends &amp; family) get only the job-search and resume surfaces — one project, one deployment, role-gated at the guard layer.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#context">Context &amp; problem</a></li>
+      <li><a href="#design">Design</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="context">Context &amp; problem</h2></summary>
+    <div class="section-body">
+
+      <div class="callout"><strong>This doc supersedes two standing decisions, and closes one open requirement.</strong></div>
+      <ul>
+        <li><code>docs/cloudflare-access-auth.html:63</code> — <em>"Non-goal: Multi-user / team support. The design is deliberately single-owner; revisit only if a second user is ever added."</em> A second user is now being added, so that line is <strong>superseded by this doc</strong>, not silently contradicted.</li>
+        <li>That doc's <strong>OQ3b</strong> declined origin-side verification of <code>Cf-Access-Jwt-Assertion</code> as <em>"redundant in the current single-owner topology"</em> (<code>cloudflare-access-auth.html:283</code>). <strong>That reasoning expires at the second user</strong> and this doc <strong>reverses it</strong> — see <a href="#design">§2.7</a> and OQ13. When there is one legitimate identity, a forged identity header buys an attacker nothing they did not already have; when there are several, it buys them somebody else's account.</li>
+        <li><strong><code>docs/user-stories.md</code> S15.20</strong> — <em>"the same gate applies whether I reach the app via <code>localhost</code>, <code>mc.local</code>, the phone-on-WiFi LAN IP, or the public Cloudflare-tunnel hostname. No network-based bypass."</em> That requirement was written by the user, and the Access change left it <strong>unclosed</strong> (it moved the gate to the edge but kept the origin's implicit LAN trust). OQ2 and OQ13 close it. Note the nuance: S15.x's <em>passcode mechanism</em> is superseded (<code>user-stories.md:145</code>) but its stated <em>requirement</em> was not — it is satisfied here by a different mechanism.</li>
+      </ul>
+      <p>The "trust the edge" argument survives only in a narrowed form: the edge is still the gate, but it no longer merely proves <em>that</em> the requester is authorized — it proves <em>which person</em> they are, the origin must read that identity rather than assume one, and the origin must now verify that the identity came from the edge at all.</p>
+
+      <h3>Problem</h3>
+      <p>Mission Control is a job-search / resume / research / space / finance dashboard that runs on the owner's Mac behind a Cloudflare tunnel, gated at the Cloudflare Access edge. Friends and family want the job-search half of it: application tracking, job-posting watchlists, the profile/bullet library, and resume generation. Today they cannot have it — not because the data model resists (it does not; see <a href="#design">§2.11</a>), but because <strong>the origin has exactly one notion of identity</strong>:</p>
+      <ul>
+        <li><code>lib/owner.ts:resolveOwner()</code> resolves "the owner" and memoizes it at module level (<code>lib/owner.ts:50</code>). All three guards in <code>lib/auth-guards.ts</code> call it and synthesize an owner session — <strong>every</strong> request that reaches the origin is served as the owner.</li>
+        <li><code>OWNER_EMAIL</code> is <strong>unset</strong> in <code>.env</code> (audited 2026-07-26), so <code>resolveOwner()</code> currently falls to branch (2) — <code>user.findFirst({ orderBy: { id: 'asc' } })</code>, <code>lib/owner.ts:89</code>. With one <code>User</code> row per DB that is exactly right. The moment a second row exists it becomes <em>"whoever has the lowest cuid"</em>.</li>
+        <li>There is a <strong>second</strong> owner resolver, <code>lib/user-scope.ts:resolveOwnerUserId()</code> (allowlist-first, then sole-user, then the legacy <code>id='global'</code> settings row), also module-memoized. Both must be reconciled.</li>
+        <li>The SSE stream has no notion of ownership at all: <code>ServerEvent</code> (<code>lib/events.ts:3</code>) carries no <code>userId</code>, and <code>broadcastEvent()</code> fans out to one process-global listener <code>Set</code>.</li>
+        <li>Every Gemini call goes through one <strong>cross-tier shared</strong> token bucket at 12 req/min on the owner's API key (<code>lib/ai/rate-limit.ts:42</code>, <code>data/gemini-bucket.db</code>), with no per-user fairness.</li>
+      </ul>
+      <p>Doing nothing costs nothing technically — but the job-search surfaces are the most complete and most useful part of the app, and the alternative asks (a fork, a second deployment) are strictly worse for a one-person maintainer (see <a href="#design">§2.15</a>).</p>
+
+      <h3>What is already multi-user-ready</h3>
+      <p>Most of the hard work is done. These are <strong>not</strong> re-solved by this design — they are load-bearing prerequisites that already hold:</p>
+      <ul>
+        <li><strong>The schema is <code>userId</code>-scoped throughout</strong>, with per-user compound unique keys: <code>Application @@unique([userId, normalizedCompany, normalizedRole, track])</code>, <code>SavedPaper @@unique([userId, paperId])</code>, <code>Canon @@unique([userId, slug])</code>, <code>BlacklistedCompany @@unique([userId, normalizedName])</code>. <code>GlobalSetting</code> is one row per user (<code>userId @unique</code>, <code>prisma/schema.prisma:71-101</code>). <strong>Every</strong> <code>User</code> relation is <code>onDelete: Cascade</code> — verified by grep, zero exceptions — which is what makes crew removal a one-liner (<a href="#risks">§3.3</a>).</li>
+        <li><strong>The formerly-global tables were already scoped</strong> in the P2.2 pass (migration <code>20260612235207_scope_user_tables_per_userid</code>): Task, LifeGoal, GlobalSetting, SavedPaper.</li>
+        <li><strong>The Gmail webhook already resolves its user from the Pub/Sub envelope</strong>, not the owner (<code>app/api/gmail/webhook/route.ts:79</code>).</li>
+        <li><strong>The scheduler is per-user at the row level.</strong> All 12 jobs iterate rows carrying <code>userId</code>; <code>gmail-watch-renew.ts:61-68</code> loops every Google-linked user. (One exception found — see <a href="#design">§2.6</a>.)</li>
+        <li><strong>65 of 67 routes are guarded.</strong> The two exceptions are deliberate: <code>auth/[...nextauth]</code> (NextAuth handler, gated by <code>ALLOWED_SIGNIN_EMAILS</code> in the <code>signIn</code> callback) and <code>gmail/webhook</code> (OIDC-verified via <code>verifyPubSubOIDC</code>).</li>
+        <li><strong>No cross-user cache leak today.</strong> The 10 <code>withCache</code> routes without <code>userKeyFn</code> all return global data; the 4 <code>withSharedCache</code> routes are global arXiv/HF data. No user-scoped route is cached at all.</li>
+        <li><strong>Cloudflare Access already provides per-person identity for free.</strong> <code>.env</code> carries <code>CLOUDFLARE_GOOGLE_OAUTH_CLIENT_ID</code>/<code>_SECRET</code>, so Access authenticates against Google as IdP and forwards <code>Cf-Access-Authenticated-User-Email</code> to the origin. Adding crew is an edge-policy edit, not code.</li>
+      </ul>
+
+      <h3>Goals &amp; non-goals</h3>
+      <ul>
+        <li><strong>Goal:</strong> A second role, <code>crew</code>, can sign in through Cloudflare Access with their own Google account and use <em>only</em> the job + resume surfaces, with their own applications, watchlists, postings, profile, canons and resumes — fully isolated from the owner's and from each other's.</li>
+        <li><strong>Goal:</strong> Role enforcement lives <strong>server-side at the guard layer</strong>, statically verifiable, and covered by the existing pre-push hermetic gate. Every one of the 67 routes has an explicit, tested classification.</li>
+        <li><strong>Goal:</strong> The diff stays centralized. Viewer identity is resolved in <em>one</em> new module; the 104 guard call sites keep their signatures and their <code>session.user.*</code> reads.</li>
+        <li><strong>Goal:</strong> <strong>One identity path, no network-based bypass.</strong> Every browser-facing request — the owner's included — is identified by the Cloudflare Access identity header and nothing else. A header-less request is <em>not</em> a trusted request; <code>resolveViewer()</code> has exactly one identity source and zero fallback branches (OQ2). This closes S15.20.</li>
+        <li><strong>Goal:</strong> <strong>The origin proves the identity header came from the edge</strong> rather than from a LAN client that typed it, via loopback binding plus <code>Cf-Access-Jwt-Assertion</code> verification (OQ13). Both layers ship in this change, not as later hardening.</li>
+        <li><strong>Goal:</strong> The machine paths are untouched: the Pulsar service-token branch of <code>requireSessionOrService</code> and the OIDC-verified Gmail push webhook keep working byte-for-byte.</li>
+        <li><strong>Goal:</strong> The owner's <em>in-app</em> experience is unchanged — same dashes, same data, no in-app sign-in wall. What does change, deliberately, is the <em>route in</em>: the owner reaches prod through <code>ms-prod.salsquared.xyz</code> like everyone else, and <code>mc.local</code> / <code>localhost:3101</code> stop being a way in (<a href="#design">§2.7</a>).</li>
+        <li><strong>Non-goal:</strong> An admin UI for provisioning, promoting, or removing crew. v1 provisioning is <strong>manual</strong> — the owner adds an Access-policy email and inserts a <code>User</code> row via <code>tsx</code>. Deferred until there is a second reason to build a settings surface.</li>
+        <li><strong>Non-goal:</strong> A permission model richer than the binary role. No per-dash grants, no <code>clearance</code> axis, no groups. Deferred until a second privilege axis actually exists.</li>
+        <li><strong>Non-goal:</strong> Sharing anything <em>between</em> users — no shared watchlists, no shared postings feed, no visibility of one person's pipeline by another. Isolation is the whole product.</li>
+        <li><strong>Non-goal:</strong> Preserving LAN reachability of the prod tier. <code>mc.local</code>'s prod vhost is <strong>retired</strong> and prod binds to loopback — deliberately, because a LAN client can forge the identity header (OQ13). On-box recovery keeps a loopback-only, explicit-env break-glass; the dev tier keeps a separate dev-only one for the integration suites (OQ14).</li>
+        <li><strong>Non-goal (v1):</strong> Per-minute Gemini fairness at the true chokepoint (<code>acquireGeminiSlot</code>). v1 caps at the route boundary instead — see <a href="#design">§2.9</a> and OQ7.</li>
+        <li><strong>Non-goal:</strong> New notification delivery wiring. Crew get the in-app bell (their own rows, already scoped); email delivery for crew degrades to the existing <code>emailError</code> path. One <em>correctness</em> fix to a hardcoded owner read is in scope (<a href="#design">§2.6</a>); no new features are wired into <code>dispatchNotification</code>.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="design">Design</h2></summary>
+    <div class="section-body">
+
+      <h3>Approach at a glance</h3>
+      <p>Seven changes, in dependency order. Everything else follows from them.</p>
+      <ol>
+        <li><strong>Set <code>OWNER_EMAIL</code>.</strong> A configuration change that must land <em>before</em> anything else, because owner resolution is currently a lowest-cuid heuristic. This is a hard prerequisite, not a task ordering preference (<a href="#risks">§3.1</a>, R3).</li>
+        <li><strong><code>User.role</code></strong> — one additive column, <code>"owner" | "crew"</code>.</li>
+        <li><strong><code>lib/viewer.ts:resolveViewer()</code></strong> — the single new identity chokepoint. Reads <code>Cf-Access-Authenticated-User-Email</code> via <code>await headers()</code>, looks up the <code>User</code> row, returns <code>{ id, email, role }</code>. <strong>No memoization, and no fallback identity.</strong></li>
+        <li><strong>Close the network bypass and authenticate the header</strong> — bind prod to loopback, retire the <code>mc.local</code> prod vhost, and verify <code>Cf-Access-Jwt-Assertion</code> against the team JWKS. Without this, role gating is decorative: any LAN client could type somebody else's email into a header (<a href="#design">§2.7</a>).</li>
+        <li><strong>A fourth guard, <code>requireOwner()</code></strong>, with the same return shape as <code>requireSession()</code>. Owner-only routes swap their guard import; nothing inside a handler changes.</li>
+        <li><strong>Per-user SSE fan-out</strong> — <code>ServerEvent</code> gains a user scope, and subscribers only receive their own events.</li>
+        <li><strong>Per-user config &amp; budget isolation</strong> — the <code>findGlobalSetting()</code> reads that silently return the <em>owner's</em> config become viewer-scoped, and a per-user daily Gemini cap bounds the worst case.</li>
+      </ol>
+
+      <h3>Trust boundary and request flow</h3>
+      <p>The edge stays the gate; the origin stops assuming who passed it, and starts checking that they passed it at all. There is <strong>no trusted network</strong> — the LAN is not a way in.</p>
+      <pre class="mermaid">
+flowchart TB
+  ownerb["Owner browser"] --> access["Cloudflare Access<br/>Google IdP + email policy"]
+  crewb["Crew browser"] --> access
+  lanx["LAN client<br/>mc.local · LAN IP · :3101"] --> closed["NO ROUTE TO ORIGIN<br/>loopback bind + vhost retired"]
+  pubsub["Google Pub/Sub"] --> bypass["Access Bypass app<br/>path-scoped /api/gmail/webhook"]
+  access -->|"Cf-Access-Authenticated-User-Email<br/>+ Cf-Access-Jwt-Assertion"| origin["Origin<br/>127.0.0.1:3101"]
+  bypass --> origin
+  origin --> guarded{"route carries a guard?"}
+  guarded -->|"no — only /api/gmail/webhook<br/>verifyPubSubOIDC instead"| webhook["webhook handler"]
+  guarded -->|yes| jwt{"Cf-Access-Jwt-Assertion<br/>verifies? team JWKS + AUD"}
+  jwt -->|no| deny["401 — no viewer"]
+  jwt -->|yes| rv["resolveViewer()"]
+  rv -->|"no header, or email has no User row"| deny
+  rv -->|"email matches a User row"| viewer["Viewer<br/>id · email · role"]
+  bg["dev-only break-glass<br/>loopback + explicit env"] -.->|"dev tier only, loudly logged"| viewer
+  viewer --> guard{"which guard?"}
+  guard -->|"requireSession<br/>requireLocalOrSession"| crewok["crew-allowed route<br/>39 routes"]
+  guard -->|"requireOwner"| rolechk{"role === owner?"}
+  rolechk -->|yes| ownerok["owner-only route<br/>26 routes"]
+  rolechk -->|no| forbidden["403 Forbidden"]
+      </pre>
+      <p>Two paths deliberately sit outside the identity flow, and both are already safe:</p>
+      <ul>
+        <li><strong>The Gmail webhook.</strong> It carries no guard at all and resolves its user from the Pub/Sub envelope (<code>app/api/gmail/webhook/route.ts:79</code>), so the Bypass app's missing identity header never reaches <code>resolveViewer()</code>. Its own <code>verifyPubSubOIDC</code> check is the gate. The Bypass app must stay <strong>path-scoped</strong> — widening it to the host would make the whole origin anonymous.</li>
+        <li><strong>The Pulsar service-token branch</strong> of <code>requireSessionOrService</code> / the new <code>requireOwnerOrService</code>. It checks a Bearer token in constant time plus a matching <code>?onBehalfOf=</code> (<code>lib/auth-guards.ts:39-67</code>) and never consults the identity header. Unchanged.</li>
+      </ul>
+
+      <h3>Viewer resolution — the one new chokepoint</h3>
+      <p>New module <code>lib/viewer.ts</code>, deliberately small:</p>
+      <pre><code class="language-typescript">export type Role = 'owner' | 'crew';
+export interface Viewer { id: string; email: string; role: Role }
+
+export async function resolveViewer(): Promise&lt;Viewer | null&gt;</code></pre>
+      <p>Resolution order — <strong>one identity source, zero fallback branches</strong> (OQ2):</p>
+      <ol>
+        <li>Verify <code>Cf-Access-Jwt-Assertion</code> (§2.7, Layer 2). Fails or absent → return <code>null</code>.</li>
+        <li>Read <code>cf-access-authenticated-user-email</code> from <code>await headers()</code>. Trim + lowercase. Absent → return <code>null</code>.</li>
+        <li><code>prisma.user.findUnique({ where: { email }, select: { id, email, role } })</code>. Hit → that viewer. Miss → return <code>null</code> plus one loud <code>console.warn</code> naming the email (OQ3).</li>
+        <li><code>null</code> → the guards 401. The response body points at <code>https://ms-prod.salsquared.xyz</code> so the failure is self-explaining rather than a bare 401.</li>
+      </ol>
+      <div class="callout danger"><strong>The <code>try/catch</code> must yield "no viewer", never "owner".</strong> <code>headers()</code> throws outside a request scope — <code>route-auth-smoke.ts:8</code> documents exactly this (<em>"Calling a route handler directly from a standalone tsx script throws 'headers() called outside a request scope'"</em>), and five hermetic smokes plus the scheduler are in that position. Because there is no owner fallback any more, the catch block <strong>must resolve to <code>null</code></strong>. Wiring it to <code>resolveOwner()</code> "so tests keep working" would silently reinstate the bypass this design exists to remove — and it would do so on a path with no request, i.e. reachable from anything that imports a guard. The break-glass paths below are <em>separate, explicit branches</em> gated on an env var; they are never the catch block.</div>
+      <p><strong>Why <code>headers()</code> and not a threaded <code>req</code>:</strong> <code>requireSession()</code> takes <em>no</em> request argument and has <strong>72</strong> call sites (104 across all three guards). <code>next/headers</code> is currently imported nowhere in the codebase, so this is a new dependency — but it is the standard Route-Handler mechanism, it is available in Next 16.2.9 (async <code>headers()</code>), and it keeps this change the same shape as the original Cloudflare Access change: rewrite the guards, touch no handler. (OQ1a.)</p>
+
+      <h4>Break-glass — two narrow, explicit, loudly-logged escapes</h4>
+      <p>Removing the LAN fallback removes two things that were load-bearing for non-browser use. Each gets a purpose-built escape rather than a general trust rule:</p>
+      <ul>
+        <li><strong>Dev tier, for the 10 integration suites</strong> (OQ14). <code>scripts/tests/integration/*.ts</code> all call <code>http://localhost:4101</code> with no identity header — verified: 10 files, all 10 reference 4101. An env var (e.g. <code>MC_DEV_LOOPBACK_OWNER=1</code>), <strong>off by default</strong>, makes a <em>loopback</em> request on the <em>dev</em> tier resolve to the owner, with one <code>console.warn</code> per process so it is visible in the in-app log viewer. Guarded three ways: the env var, <code>NODE_ENV !== 'production'</code>, and a loopback remote-address check. Dev is owner-only (OQ12), so this grants nothing that is not already the only identity on that tier. <strong>It can never be enabled on prod</strong> — the production guard is a hard code condition, not a convention.</li>
+        <li><strong>On-box recovery for prod.</strong> Same shape, separate var, same three guards minus the dev-tier condition — for the case where the tunnel or Access is down and the owner needs the app from the console. Off by default; setting it is a deliberate act with a log line attached.</li>
+        <li><strong>Interaction with §2.7 Layer 2:</strong> JWT verification must be <em>skipped</em> on a break-glass path, because a loopback request has no <code>Cf-Access-Jwt-Assertion</code> to verify. The branch order is therefore: break-glass check first (and if it fires, skip step 1), otherwise the strict path. Getting this backwards makes the break-glass dead code and the integration suites fail with a confusing JWT error.</li>
+      </ul>
+
+      <div class="callout danger"><strong>The memoization trap — read this before writing <code>lib/viewer.ts</code>.</strong> <code>lib/owner.ts</code> memoizes at module level (<code>let cachedOwner: Owner | null</code>, <code>lib/owner.ts:50</code>). That is <em>correct</em> for the owner — the owner genuinely never changes for a process lifetime. Copying the pattern into <code>resolveViewer()</code> is a <strong>total authorization bypass</strong>: the first request after a restart would populate the memo, and <em>every subsequent viewer would be served that identity</em> — a crew member's request would return the owner's rows, and vice versa. A module-level memo is not an optimization here, it is a defect. <strong>v1 uses no viewer memo at all</strong> — one <code>findUnique</code> on an indexed unique column per request, against a local SQLite file, is sub-millisecond and is not worth risking. If a memo is ever added it must be a bounded <code>Map</code> <em>keyed by email</em> with a short TTL, and the smoke below must still pass.</div>
+
+      <p>Guarding the trap: a hermetic smoke (<code>scripts/tests/hermetic/viewer-resolution-smoke.ts</code>) that resolves <strong>two different header emails back-to-back</strong> and asserts two different viewers, plus the no-header fallback and the unknown-email case. It goes into the pre-push gate, which auto-discovers new files under <code>scripts/tests/hermetic/</code>.</p>
+
+      <p><strong>Reconciling the two existing resolvers.</strong> Neither is deleted; each gets a narrowed, documented job:</p>
+      <pre class="mermaid">
+flowchart LR
+  hdr["Cf-Access-Authenticated-User-Email<br/>await headers()"] --> rv["lib/viewer.ts<br/>resolveViewer()<br/>PER-REQUEST · no memo"]
+  rv --> guards["lib/auth-guards.ts<br/>requireSession · requireLocalOrSession<br/>requireOwner · *OrService"]
+  rv -->|"no header — 401, NO fallback"| deny["null — no viewer"]
+  ro["lib/owner.ts<br/>resolveOwner()<br/>module memo — still correct"]
+  sched["scheduler jobs<br/>session-less reads"] --> ro
+  bg["break-glass env<br/>off by default"] -.-> ro
+  guards --> scoped["lib/user-scope.ts<br/>resolveScopedUserId(guard)<br/>always takes the session branch"]
+  scoped -.->|"now unreachable from routes"| rou["resolveOwnerUserId()"]
+  rou --> fgs["findGlobalSetting() — replaced, §2.6"]
+      </pre>
+      <ul>
+        <li><code>resolveOwner()</code> — <strong>unchanged code</strong>, narrowed contract: <em>"the identity of the owner, for contexts that have no request at all"</em> — i.e. the scheduler's session-less reads and the two break-glass branches. It is <strong>no longer reachable from the normal request path</strong>, which is the whole point of OQ2a. Its module memo stays valid (the owner genuinely never changes). Its <code>OWNER_EMAIL</code>-authoritative behavior — a miss returns <code>null</code> and never falls through to a stray row (<code>lib/owner.ts:82</code>) — becomes <em>much</em> more important once a second row exists; that hardening is already in place.</li>
+        <li><code>resolveScopedUserId(guard)</code> — <strong>unchanged code</strong>. Because the guards always synthesize a session, it always takes the session branch (<code>lib/user-scope.ts:96-102</code>) and returns the viewer's id. Correct by construction for <code>tasks</code>, <code>goals</code>, <code>settings</code>, <code>research/saved</code>.</li>
+        <li><code>resolveOwnerUserId()</code> — becomes reachable only via <code>findGlobalSetting()</code>, and §2.6 removes those call sites. Leave the function in place (its hermetic smoke covers it); mark it <em>deprecated, no production callers</em> once the four sites move. Deleting it is deferred cleanup, not v1.</li>
+      </ul>
+      <p><strong>One invariant, two sources of truth reconciled:</strong> the <code>role</code> column is authoritative for <em>authorization</em>; <code>OWNER_EMAIL</code> is authoritative for <em>which row <code>resolveOwner()</code> returns</em>. They must agree. A hermetic assertion checks the DB has <strong>exactly one</strong> <code>role='owner'</code> row and that its email equals <code>OWNER_EMAIL</code> when that env is set — a loud failure instead of a split brain.</p>
+
+      <h3>Role gating — one new guard plus a manifest test</h3>
+      <p><strong>Decision: enforce at the guard layer.</strong> Add a fourth guard to <code>lib/auth-guards.ts</code> with the <em>same return shape</em> as <code>requireSession()</code>:</p>
+      <pre><code class="language-typescript">export async function requireOwner()                              // 403 for crew
+export async function requireOwnerOrService(req, cfg)             // owner branch + unchanged Bearer branch</code></pre>
+      <p>An owner-only route changes by exactly two tokens — the import and the call. Handler bodies, <code>session.user.id</code> reads, and error wiring are untouched. The synthesized session gains <code>role</code> (<code>{ session: { user: { id, email, role } } }</code>) — purely additive, so existing reads keep working and the handful of places that want the role (the postings feed, the quota check) get it without a second lookup.</p>
+      <p><strong>Why the guard layer wins</strong> — it is the only option that plugs into machinery the repo already has:</p>
+      <ul>
+        <li><code>scripts/gen-api-docs.ts</code> detects <em>any</em> identifier imported from <code>lib/auth-guards</code> and invoked, and renders it as an auth chip (<code>gen-api-docs.ts:190-195</code>, <code>:310</code>). <code>requireOwner</code> therefore appears in <code>docs/apis.html</code> for free — a human-auditable, generated role map, with no new tooling.</li>
+        <li><code>scripts/tests/hermetic/route-auth-smoke.ts</code> already asserts per-route guard identity <em>structurally</em> (import present, awaited, error-wired) for 19 routes. Extending its <code>ROUTES</code> array to all 67 with a <code>role: 'owner' | 'any'</code> field gives the property a route manifest would have given — <strong>a new route with no classification fails the push</strong> — without introducing a runtime layer.</li>
+      </ul>
+      <p><strong>Two invariants to state loudly:</strong></p>
+      <div class="callout warn"><strong>Hiding a dash is not access control.</strong> The role-filtered dash set (§2.10) is UX only. Every owner-only surface is enforced server-side by <code>requireOwner()</code>; the client filter merely stops crew being shown doors that would 403. Any future "just hide the card" change to an owner-only capability is a bug.</div>
+      <div class="callout warn"><strong>Every crew-allowed route must scope its queries by the viewer's id.</strong> All 39 already do — spot-verified: <code>app/api/postings/route.ts:101-107</code> scopes through a <code>{ watchlist: { userId } }</code> join, <code>app/api/resumes/[id]/download/route.ts:32</code> uses <code>where: { id, userId }</code>, <code>app/api/applications/events/route.ts:158-163</code> re-checks <code>existing.application.userId !== userId</code>. The corollary invariant, inherited from <code>lib/cache.ts:279-281</code>: <strong>any newly-cached user-scoped route MUST pass <code>userKeyFn</code></strong>.</div>
+
+      <h3>The 67-route matrix</h3>
+      <p>Classification rule: a route is <strong>owner-only</strong> if it serves a non-job dash (research / space / finance / AI news), is an ops surface, or requires the owner's Google tokens. Everything on the job + resume path is crew-allowed. Guard column shows today's guard → the target.</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Class</th><th>Count</th><th>Routes</th><th>Guard change</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Owner-only</strong> — other dashes</td>
+            <td>16</td>
+            <td><code>ai</code> · <code>ai/llmleaderboard</code> · <code>company-news</code> · <code>finance</code> · <code>finance/history</code> · <code>space</code> · <code>space/launches</code> · <code>space/moon</code> · <code>space/satellites</code> · <code>space/solar</code> · <code>research</code> · <code>research/hf</code> · <code>research/historical</code> · <code>research/review</code> · <code>research/import</code> · <code>research/saved</code></td>
+            <td><code>requireLocalOrSession</code>/<code>requireSession</code> → <code>requireOwner</code></td>
+          </tr>
+          <tr>
+            <td><strong>Owner-only</strong> — ops</td>
+            <td>6</td>
+            <td><code>system</code> · <code>system/cache/invalidate</code> · <code>system/logs</code> · <code>system/logs/historical</code> · <code>system/fetcher-health</code> · <code>notifications/test</code></td>
+            <td>→ <code>requireOwner</code></td>
+          </tr>
+          <tr>
+            <td><strong>Owner-only</strong> — needs Google directly</td>
+            <td>4</td>
+            <td><code>applications/backfill</code> · <code>applications/events/adopt</code> · <code>applications/events/gcal-candidates</code> · <code>calendar/event</code></td>
+            <td>→ <code>requireOwner</code>; <code>calendar/event</code> → <code>requireOwnerOrService</code> (Pulsar Bearer branch unchanged)</td>
+          </tr>
+          <tr>
+            <td><strong>Crew-allowed</strong> — applications</td>
+            <td>6</td>
+            <td><code>applications</code> · <code>applications/bulk-track</code> · <code>applications/contacts</code> · <code>applications/events</code> · <code>applications/events/sync</code> · <code>applications/pipeline-picker</code></td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td><strong>Crew-allowed</strong> — postings &amp; watchlists</td>
+            <td>8</td>
+            <td><code>postings</code> · <code>postings/[id]</code> · <code>postings/[id]/track-as-application</code> · <code>watchlists</code> · <code>watchlists/[id]</code> · <code>watchlists/[id]/run</code> · <code>blacklist</code> · <code>blacklist/[id]</code></td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td><strong>Crew-allowed</strong> — profile &amp; resumes</td>
+            <td>18</td>
+            <td><code>profile</code> · <code>profile/bullets/assist</code> · <code>profile/education</code> · <code>profile/import</code> · <code>profile/projects</code> · <code>profile/snapshots</code> · <code>profile/snapshots/[id]</code> · <code>profile/tagline/draft</code> · <code>profile/work-roles</code> · <code>resumes</code> · <code>resumes/[id]</code> · <code>resumes/[id]/download</code> · <code>resumes/diff</code> · <code>resumes/specialize</code> · <code>canons</code> · <code>canons/[id]</code> · <code>canons/[id]/preview</code> · <code>canons/[id]/selection</code></td>
+            <td>none</td>
+          </tr>
+          <tr>
+            <td><strong>Crew-allowed</strong> — shell &amp; cross-cutting</td>
+            <td>7</td>
+            <td><code>account</code> · <code>events</code> · <code>settings</code> · <code>notifications</code> · <code>discovery/suggest</code> · <code>tasks</code> · <code>goals</code></td>
+            <td>none — <code>tasks</code>/<code>goals</code> depend on OQ5</td>
+          </tr>
+          <tr>
+            <td><strong>Unguarded by design</strong></td>
+            <td>2</td>
+            <td><code>auth/[...nextauth]</code> (gated by <code>ALLOWED_SIGNIN_EMAILS</code> in the <code>signIn</code> callback) · <code>gmail/webhook</code> (<code>verifyPubSubOIDC</code>)</td>
+            <td>none</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+      <p><strong>26 owner-only + 39 crew-allowed + 2 unguarded = 67.</strong> Of the 26, seventeen currently use <code>requireLocalOrSession</code> — meaning only three <code>requireLocalOrSession</code> routes stay crew-allowed (<code>tasks</code>, <code>goals</code>, <code>settings</code>). That guard's LAN-bypass semantics have been dead since the Access change (it just calls <code>resolveOwner()</code>); collapsing it into <code>requireSession()</code> is <strong>deferred cleanup, explicitly not v1</strong> — it would touch 29 files for zero behavior change.</p>
+      <p>Two entries deserve their reasoning on the record:</p>
+      <ul>
+        <li><code>settings</code> is <strong>crew-allowed with no change</strong>: <code>GlobalSetting</code> is already one row per user, so theme / hues / <code>dashOrder</code> / negative filters are already per-person. Nothing to design.</li>
+        <li><code>system/logs</code> must be owner-only <em>server-side</em>, not merely hidden: <code>lib/logger.ts</code> monkey-patches <code>console.*</code> into a ring buffer, and in prod that includes the Prisma <code>$allOperations</code> query log with parameter values — i.e. every user's data. The route's own comment already says "never expose unauthenticated" (<code>app/api/system/logs/route.ts:22-23</code>); <code>requireOwner</code> makes that true under multi-user.</li>
+      </ul>
+
+      <h3>Per-user config bleed — four <code>findGlobalSetting()</code> reads</h3>
+      <div class="callout danger"><strong>Found during this design; not in the preliminary audit.</strong> <code>lib/repositories/settings.ts:57</code> exposes a zero-argument <code>findGlobalSetting()</code> that resolves <strong>the owner's</strong> settings row via <code>resolveOwnerUserId()</code>. It has four production call sites, and under multi-user every one of them applies the <em>owner's</em> global negative filters to <em>other people's</em> data. The worst is an <strong>ingestion drop</strong>: <code>scheduler/jobs/job-watcher.ts:227</code> reads the owner's filters and then removes matching postings <em>before any DB write</em> (<code>job-watcher.ts:258-264</code>) — so if the owner blacklists a pattern, crew postings matching it would silently never enter the system. This contradicts the audit's "zero owner hardcoding anywhere in the scheduler" and is v1-blocking.</div>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Call site</th><th>Effect if left</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td><code>scheduler/jobs/job-watcher.ts:227</code></td><td>Owner's filters <strong>drop crew postings at ingest</strong> — invisible data loss</td><td><code>findGlobalSettingForUser(watchlist.userId)</code> — already in scope</td></tr>
+          <tr><td><code>app/api/postings/route.ts:173</code></td><td>Owner's filters hide rows from a crew member's feed at read time</td><td><code>findGlobalSettingForUser(userId)</code> — the viewer, already resolved at <code>:62</code></td></tr>
+          <tr><td><code>scheduler/jobs/posting-digest.ts:46</code></td><td>Owner's filters cull crew digest contents</td><td>Move inside the loop → <code>findGlobalSettingForUser(w.userId)</code> (<code>w.userId</code> already selected, <code>:37</code>)</td></tr>
+          <tr><td><code>scheduler/jobs/classify-pending-employment-types.ts:74</code></td><td>Gemini-spend heuristic on a <em>cross-user</em> dedup batch — no single correct user</td><td><strong>Remove the gate entirely</strong> (OQ11) — the <code>pending</code> select stays unchanged</td></tr>
+        </tbody>
+      </table>
+      </div>
+      <p><strong>Why the fourth one is deleted rather than scoped.</strong> The sweep selects <code>externalId, company, title, snippet, location</code> — <em>no <code>userId</code>, no <code>watchlistId</code></em> — and dedupes by <code>externalId</code> so one classification serves every row sharing that hash. Its own comment states the premise multi-user breaks: <em>"A global match means the posting is hidden on every watchlist, so excluding the whole externalId is safe."</em> That is false the moment two people have different filters. Scoping it would mean either widening the select and picking a winner among disagreeing users, or abandoning the cross-user dedup that is the sweep's entire efficiency. Since the gate is self-described defence-in-depth for legacy NULL-<code>employmentType</code> rows, and the job-watcher's ingestion drop already stops new blacklisted postings from being stored, <strong>deleting it is correct for every user by construction</strong>. The cost is paying Gemini once for a finite legacy backlog. (Rejected alternatives are recorded under OQ11.)</p>
+      <p>A second hardcoded owner read, same class: <code>lib/notifications/dispatch.ts:96-98</code> reads quiet hours from <code>globalSetting</code> <code>where: { id: "global" }</code> — the owner's legacy row. Crew email delivery would be gated by the owner's quiet hours and crew could never set their own. The fix is one line (<code>where: { userId }</code>, using the notification's own userId). Per the standing hold on the notification system this is scoped strictly as a <em>correctness</em> fix — no new delivery wiring.</p>
+
+      <h3>Header authenticity — closing the forgery path</h3>
+      <div class="callout danger"><strong>Role gating is decorative without this section.</strong> <code>Cf-Access-Authenticated-User-Email</code> is just a header. Any client that can open a TCP connection to the origin can set it to any value. Rejecting <em>header-less</em> requests (OQ2) does nothing against a <em>forged</em> one — so with crew accounts in existence, a LAN client could send <code>Cf-Access-Authenticated-User-Email: &lt;owner&gt;</code> and be served as the owner, or send a crew member's address and read their pipeline. Two layers close it, and <strong>both ship in this change</strong> (OQ13a).</div>
+
+      <h4>Layer 1 — remove the unauthenticated route to the origin (config, no code)</h4>
+      <p>Three facts make this concrete, all verified on the box:</p>
+      <ul>
+        <li><code>next start -p 3101</code> has <strong>no <code>-H</code></strong> (<code>package.json:8</code>), so prod binds all interfaces; PM2 launches it as <code>npm run start -- -p 3101</code> (<code>ecosystem.config.cjs:7</code>). Add <code>-H 127.0.0.1</code>.</li>
+        <li><strong>Loopback binding alone does NOT close the LAN path.</strong> Caddy runs <code>--config /opt/homebrew/etc/Caddyfile</code> (confirmed from the live process args) and that config is <code>mc.local:443 { tls internal; reverse_proxy 127.0.0.1:3101 }</code> — a LAN-reachable listener proxying <em>to</em> loopback. So <strong>retiring the <code>mc.local</code> prod vhost is load-bearing</strong>, not cosmetic.</li>
+        <li><strong>There is only ONE Caddyfile.</strong> <code>/opt/homebrew/etc/Caddyfile</code> is a <em>symlink</em> to <code>~/.config/caddy/Caddyfile</code> (<code>lrwxr-xr-x … -&gt; /Users/sal/.config/caddy/Caddyfile</code>), exactly as <code>launch-ms.sh:27</code>'s one-time setup documents (<code>ln -sf</code>). Edit the real file at <code>~/.config/caddy/Caddyfile</code>; editing "both" is not needed and there is no stale duplicate to chase. Verify with <code>ls -la /opt/homebrew/etc/Caddyfile</code> before touching either path.</li>
+      </ul>
+      <p>Consequential follow-ons: <code>launch-ms.sh:33-37</code> picks <code>APP_URL="https://mc.local"</code> when Caddy is running and falls back to <code>http://localhost:$PORT</code> — <strong>both die</strong> under this change and must be repointed at <code>https://ms-prod.salsquared.xyz</code>. Its line 31 comment (<em>"Add to .env: <code>NEXTAUTH_URL=https://mc.local</code>"</em>) is <strong>stale already</strong> — the real env is <code>NEXTAUTH_URL="https://ms-prod.salsquared.xyz"</code> (and <code>ms-dev</code> for dev), so the Google connect redirect is <em>not</em> affected by retiring the vhost. Delete the comment. The ~11 <code>mc.local</code> occurrences in fetcher User-Agent strings (<code>+https://mc.local; personal job-search agent</code>) are outbound politeness labels — leave them alone.</p>
+      <div class="callout warn"><strong>Blocking prerequisite: verify the tunnel's origin URL by hand first.</strong> <code>cloudflared</code> runs token-based — <code>tunnel run --token …</code> with <strong>no local config file</strong> (confirmed from the live process args), so the ingress rules live only in the Cloudflare dashboard and <em>cannot be read from the box</em>. If a public hostname's service points at anything other than <code>localhost</code> / <code>127.0.0.1</code>, flipping the bind takes prod offline. Check Zero Trust → Networks → Tunnels → Public Hostnames for both <code>ms-prod</code> and <code>ms-dev</code> <strong>before</strong> the bind change (task P0.2 gates P4.1).</div>
+
+      <h4>Layer 2 — verify the Access JWT (code)</h4>
+      <p>Layer 1 is a configuration property, and configuration regresses: a future <code>next start</code> tweak, a restored Caddyfile, or a new reverse proxy silently reopens it. Layer 2 makes forgery fail <em>cryptographically</em> regardless. New module <code>lib/access-jwt.ts</code>:</p>
+      <ul>
+        <li>Fetch the team JWKS from <code>https://&lt;team&gt;.cloudflareaccess.com/cdn-cgi/access/certs</code>, cache it in module memory with a TTL and a refresh-on-unknown-<code>kid</code> path (key rotation must not require a restart).</li>
+        <li>Verify <code>Cf-Access-Jwt-Assertion</code>: RS256 signature, <code>iss</code> = the team domain, <code>aud</code> = the per-app AUD, plus <code>exp</code>/<code>nbf</code>. Any failure → <code>null</code>, i.e. no viewer.</li>
+        <li>Cross-check: the verified token's <code>email</code> claim must equal the <code>Cf-Access-Authenticated-User-Email</code> header. A mismatch means one of them was tampered with — reject. <em>(Once this holds, the header is strictly redundant; it is kept because it is the documented, stable surface and the JWT claim shape is Cloudflare's to change.)</em></li>
+        <li>New env: the team domain and a per-app AUD per hostname (prod and dev differ). Both go in <code>.env.{development,production}.example</code>.</li>
+        <li><strong>Fail-closed, deliberately.</strong> Unlike the caches and the rate buckets — which are best-effort by design — an unavailable JWKS must 401, not admit. A network blip that degrades to "trust the header" would be the bypass with extra steps. The JWKS cache TTL is what absorbs transient failures.</li>
+        <li><strong>Skipped on the break-glass paths only</strong> (§2.3), since a loopback request has no JWT. Branch order: break-glass first, else strict.</li>
+      </ul>
+
+      <h3>SSE — per-user fan-out</h3>
+      <p>Today <code>ServerEvent</code> has no <code>userId</code> and <code>broadcastEvent()</code> writes to one process-global <code>Set</code>, so <code>app/api/events/route.ts</code> hands every guarded client the whole firehose. Under multi-user, crew receive the owner's row-change events and each other's: activity metadata plus row ids on the wire, and a spurious refetch per event per client.</p>
+      <p><strong>Design:</strong> give the event a user scope and filter at the subscriber.</p>
+      <pre class="mermaid">
+flowchart LR
+  src["broadcastEvent(event)<br/>~55 call sites"] --> kind{"event kind"}
+  kind -->|"GlobalServerEvent<br/>Cache · FinanceTick"| everyone["deliver to every subscriber"]
+  kind -->|"UserServerEvent<br/>carries event.userId"| scopechk{"subscriber.viewerId<br/>=== event.userId ?"}
+  scopechk -->|yes| deliver["deliver"]
+  scopechk -->|no| dropped["drop"]
+      </pre>
+      <ul>
+        <li><code>ModelName</code> splits into a user-scoped set (Task, Goal, SavedPaper, Application, CalendarEvent, Setting, Profile, ProfileSnapshot, Watchlist, Posting, Notification, Contact, GeneratedResume, Canon) and a global set (<strong>Cache</strong>, <strong>FinanceTick</strong> — only two, from <code>lib/cache.ts:182,203</code> and <code>lib/pulsar-ws-relay.ts:57</code>). Shape per OQ8; the lean makes <code>userId</code> structurally required on the user-scoped variant so <code>tsc</code> enumerates every unmigrated call site.</li>
+        <li><code>subscribeToEvents(viewerId, listener)</code>; the registry stores <code>{ viewerId, listener }</code> entries, preserving the existing per-listener <code>try/catch</code> that stops one dead client blackholing the loop (<code>lib/events.ts:22-32</code>, and its regression smoke <code>events-broadcast-regression-smoke.ts</code>).</li>
+        <li><strong>Normalize the <code>job-watcher.ts:804</code> hack.</strong> It smuggles <code>userId</code> through the <code>id</code> field on Notification events. <strong>New finding:</strong> that smuggle is <em>vestigial</em> — the only client consumer is <code>hooks/useServerEvents.ts</code>, whose listener is <code>() =&gt; onInvalidateRef.current()</code> and <strong>discards the event object entirely</strong>. No consumer reads <code>event.id</code>, anywhere. So moving the userId onto the real field costs nothing and breaks nothing.</li>
+        <li><strong>68 broadcast call sites</strong> across ~20 files (excluding <code>lib/events.ts</code> itself). Almost all already have the owning <code>userId</code> in scope (routes have it from the guard; <code>lib/applications/ingest.ts:569</code>, <code>lib/postings/track-as-application.ts</code>, <code>lib/applications/close-from-posting.ts:60</code> all thread it). This is the bulk of the mechanical work, and because it is <code>tsc</code>-enforced it fans out safely — though see §5's contention table: this task's file footprint overlaps almost every other Phase 2 task, so it is a <strong>serial barrier within the phase</strong>.</li>
+        <li><strong>Zero client changes.</strong> The filter is entirely server-side, and no consumer reads the payload beyond <code>model</code>: all 18 <code>useServerEvents</code> call sites pass zero-argument callbacks against <code>onInvalidate: () =&gt; void</code>, and the shared dispatcher's listener is <code>() =&gt; onInvalidateRef.current()</code>. Only the <code>ServerEventModel</code> type alias in <code>hooks/useServerEvents.ts</code> moves, and only to stay in sync.</li>
+      </ul>
+
+      <h3>Gemini budget and the LLM cache</h3>
+      <p>Crew reach a lot of Gemini: <code>resumes</code> (resume-rewrite on <code>MODEL_FLASH</code>, resume-tagline, posting-parse), <code>resumes/specialize</code>, <code>profile/bullets/assist</code>, <code>profile/tagline/draft</code>, <code>profile/import</code> (import-llm + synthesize + auto-tag), <code>discovery/suggest</code>, <code>watchlists/[id]/run</code> (employment-type classify). All of it spends the <strong>owner's</strong> <code>GOOGLE_GENERATIVE_AI_KEY</code> against one shared 12/min cross-tier bucket.</p>
+      <p>Two things already protect against the unbounded case, and should not be rebuilt:</p>
+      <ul>
+        <li><code>GEMINI_RATE_BURST</code> (default 60, ~5 minutes of backlog) makes <code>acquireGeminiSlot()</code> <strong>fail-fast</strong> rather than accumulate an unbounded queue (<code>lib/ai/rate-limit.ts:100-104</code>). It bounds the backlog; it does <em>not</em> prevent starvation.</li>
+        <li>The shared-file bucket already paces <em>all four processes</em> as one line — dev, prod, and both schedulers (<code>lib/ai/rate-limit.ts:11-20</code>). <em>(Note: <code>CLAUDE.md</code> still describes this as "process-shared"; see §5.2.)</em></li>
+      </ul>
+      <p>What is <em>not</em> protected is <strong>starvation of the owner's Gmail ingest classifier</strong>. <code>lib/email-parser.ts:parseApplicationEmail</code> is the load-bearing consumer: if a crew member loops "regenerate resume", the ingest classifier queues behind them and the owner's applications stop being ingested from email. That is the failure this design must prevent, and it is what makes a per-user cap load-bearing rather than nice-to-have.</p>
+      <p><strong>Design (OQ7 lean): a per-user daily credit counter at the route boundary.</strong> One additive model, one helper, called at the top of the LLM-bearing crew routes:</p>
+      <pre><code class="language-typescript">// prisma/schema.prisma
+model AiUsage {
+  id       String @id @default(cuid())
+  userId   String
+  day      String   // utcDateBucket() — "YYYY-MM-DD"
+  count    Int      @default(0)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@unique([userId, day])
+}
+
+// lib/ai/quota.ts
+export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ ok: boolean; used: number; limit: number }&gt;</code></pre>
+      <p>The owner is exempt. Crew get <code>CREW_AI_DAILY_LIMIT</code> (default ~20) generations/day; over it the route returns 429 with <code>{ used, limit }</code> so the UI can say "you've used 20 of 20 today". <code>utcDateBucket()</code> already exists (<code>lib/notifications/dispatch.ts:56</code>) — reuse it, do not re-derive. It counts <em>route invocations</em>, not Gemini calls (one <code>POST /api/resumes</code> can make three) — a deliberate imprecision noted in Risks; it bounds the runaway loop, which is the actual threat.</p>
+      <p><strong>The content-addressed LLM cache needs no change.</strong> Two people's resumes never dedupe — correctly, because their inputs differ. And the converse is safe: <code>lib/ai/llm-cache.ts</code> keys on <em>resolved model + rendered prompt + output schema</em>, so a cross-user cache hit can only occur when the inputs are byte-identical, meaning the requester already supplied everything the cached value derives from. No information crosses a user boundary. <strong>Propose nothing here.</strong> Growth is handled by the existing daily <code>llm-cache-prune</code> job.</p>
+
+      <h3>Frontend</h3>
+      <ul>
+        <li><code>GET /api/account</code> adds <code>role</code> to its payload (<code>{ user: { id, email, role }, googleConnected }</code>) — the value is already in hand from the guard's synthesized session, so it costs zero queries. <code>hooks/useAccount.ts</code> exposes it.</li>
+        <li><code>components/dashboard/dashes.tsx</code> — <code>DashConfig</code> gains a role field and the module exports <code>dashesForRole(role)</code>. <strong>No new machinery is needed downstream:</strong> <code>useDashCarousel</code> already resolves persisted <code>dashOrder</code> against whatever <code>baseDashes</code> it is handed, drops ids that are not present (<code>useDashCarousel.ts:80</code>), and <code>syncAvailableDashes</code> purges stale ids from the persisted order. Passing a filtered array is the whole change. Crew set: <code>applications</code> + <code>profile</code> (+ <code>planning</code> per OQ5).</li>
+        <li><strong>First-paint ordering is a real bug, not a cosmetic one.</strong> The shells mount before <code>useAccount()</code> resolves. If the full dash set renders first and then narrows, the carousel's restore-by-id has already run against the wrong <code>baseDashes</code> — the owner's last-viewed <code>rocketry</code> would be dropped, the carousel would land on position 0, and the subsequent expansion would leave it on the wrong dash. OQ9 settles what renders in that window.</li>
+        <li><strong>Library overlay</strong> (<code>SavedPapersOverlay</code>) — its backing route <code>research/saved</code> is owner-only, and <code>getTopic()</code> maps both crew dashes to <code>'General'</code>, so for crew it is an empty panel behind a 403. Hide the entry point for crew in <code>DesktopShell</code> / <code>MobileShell</code> / <code>LaunchpadOverlay</code>.</li>
+        <li><strong>AI Companion overlay — propose nothing.</strong> The audit flags it for gating "for Gemini cost"; that rationale is wrong. <code>components/AICompanion.tsx</code> is a <strong>mock</strong> — it renders a literal "PREVIEW — not connected to a real model yet" banner (<code>:50</code>), makes zero network calls, and answers from a <code>setTimeout</code> with hardcoded strings (<code>:36-42</code>). It is also feature-flagged off by default (<code>aiCompanionEnabled: false</code>, <code>components/providers/state/index.ts:180</code>). It costs nothing and leaks nothing. Leave it; role-gate it <em>when</em> it is wired to a real model, and note that requirement in <code>llm-calls.html</code> at that time.</li>
+        <li><strong>Hide the "Connect Gmail / Calendar" affordance for crew</strong> in <code>ProfileView</code>, <code>ApplicationsView</code>, <code>CalendarWidget</code>. This is a <em>required consequence</em> of OQ6a, not a polish item: crew have no <code>Account</code> row, so <code>googleConnected</code> is permanently <code>false</code> and the affordance renders forever. Left visible, it does worse than look broken — it <strong>invites crew into a Gmail scope grant that is an explicit v1 non-goal</strong>. The condition is <code>role === 'crew'</code>, not <code>googleConnected</code>.</li>
+        <li><strong>Quota feedback.</strong> The 429 from §2.9 carries <code>{ used, limit }</code>; surface it as "you've used N of M generations today" rather than a generic error, so the cap reads as a budget and not a bug.</li>
+      </ul>
+
+      <h3>Data model &amp; migration ordering</h3>
+      <pre><code class="language-prisma">model User {
+  // …
+  role String @default("crew")   // "owner" | "crew" — see OQ4
+}</code></pre>
+      <p>One additive column. Both DBs hold exactly <strong>one</strong> <code>User</code> row today (<code>salsalcedo4321@gmail.com</code>), so the backfill is a single-row <code>UPDATE</code> in the same migration.</p>
+      <div class="callout danger"><strong>Hard ordering — <code>OWNER_EMAIL</code> before everything.</strong> <code>OWNER_EMAIL</code> must be set in <code>.env</code> and both tiers restarted <em>before</em> the migration lands and <em>certainly</em> before a second <code>User</code> row is inserted. Without it, <code>resolveOwner()</code> returns <code>user.findFirst({ orderBy: { id: 'asc' } })</code> — and a crew member's cuid can sort lower than the owner's, at which point the scheduler's session-less reads, the LAN fallback, and <code>findGlobalSetting()</code> all silently resolve to a crew member. This is a sequencing dependency, not a preference.</div>
+      <p><strong><code>JobPosting</code> isolation is already solved — propose nothing.</strong> The audit asks whether crew share posting rows or get isolated watchlists; the schema already answers it. <code>JobPosting.watchlistId</code> with <code>@@unique([watchlistId, externalId])</code> means every watchlist stores its own row for the same underlying job — already true today for the owner's overlapping watchlists (<code>app/api/postings/route.ts:198-201</code> exists precisely to dedupe them at read time). Crew get isolated posting rows for free, with cascade delete. The <em>only</em> residual cost is duplicated outbound crawling (§3.1, R7 and OQ10) — an ATS-politeness concern, not a data-model one.</p>
+      <p>Deployment: back up first (<code>scripts/backup-db.sh</code>), then <code>npx prisma migrate deploy</code> once per tier with <code>DATABASE_URL</code> pointed at each file. Remember the relative-path gotcha: <code>DATABASE_URL="file:./dev.db"</code>, never <code>file:./prisma/dev.db</code>. A tier left schema-behind will emit the documented <code>P2021</code> warning and disable the affected scheduler job for that process's lifetime.</p>
+
+      <h3>Cloudflare Access &amp; Google OAuth</h3>
+      <ul>
+        <li><strong>Edge (no code):</strong> add crew emails to the Allow policy of the <code>ms-prod.salsquared.xyz</code> Access app. That policy <em>is</em> the feature flag and the kill switch — see §3.3.</li>
+        <li><div class="callout danger" style="margin:0"><strong>Ordering rule — the policy edit comes LAST, never first.</strong> The original Access change's rollout order was "edge live before code," because the edge was the only gate. That order <strong>inverts</strong> here: if crew emails land on the Access policy while prod is still running a build without <code>requireOwner</code>, a crew member who signs in is served as <strong>the owner</strong> — every dash, the server log tail, cache invalidation, the lot. The role-gated build must be live in prod (task P5.2) before the policy is widened (P5.3), and crew <code>User</code> rows come after that (P5.4).</div></li>
+        <li><strong>Keep the webhook Bypass path-scoped.</strong> Apps 3/4 (<code>…/api/gmail/webhook</code>, Bypass/Everyone) must stay scoped to that path. Widening them to the host would make the entire origin anonymous, and under the trust-the-edge model that is a full compromise, not a degradation.</li>
+        <li><strong>Dev tier</strong> (<code>ms-dev</code>, 1-month session) — OQ12; the default is owner-only.</li>
+        <li><strong>Google OAuth / <code>ALLOWED_SIGNIN_EMAILS</code>:</strong> under OQ6's lean, crew never connect Google, so the allowlist <strong>stays at its single entry</strong> and is <em>reinforced</em>, not reframed — it is what makes "crew have no Google" enforceable rather than merely intended. This also removes the app's OAuth publishing-status question (100-user cap / unverified interstitial) from the critical path entirely: it only matters if crew ever consent.</li>
+        <li>Adding a Google scope still requires bumping <code>authOptions.scope</code> <em>and</em> <code>REQUIRED_SCOPES</code> in <code>app/api/account/route.ts:13-17</code> — unchanged, restated because the account route is being edited.</li>
+      </ul>
+
+      <h3>What already works — propose nothing</h3>
+      <p>Verified against the tree; each of these would be wasted work:</p>
+      <ul>
+        <li><strong><code>tasks</code> / <code>goals</code> / <code>settings</code> / <code>research/saved</code> scoping.</strong> <code>resolveScopedUserId(guard)</code> takes the session branch and returns the viewer. Zero change.</li>
+        <li><strong>gcal side-effects for a user with no Google account.</strong> <code>lib/calendar/sync.ts:110-121</code> already catches the auth failure, warns, and returns <code>null</code> (with an opt-in <code>throwOnError</code>). And <code>purgeApplicationEvents</code> only calls out when <code>gcalEventId</code> is non-null — which it never is for an unlinked user. So <code>applications/events</code> (including DELETE) is safe for crew as-is.</li>
+        <li><strong>Notification email for crew.</strong> <code>lib/email/send.ts:126-143</code> catches and returns <code>{ ok: false, error }</code>, which the dispatch layer records as <code>emailError</code>. Crew get the in-app bell; email degrades on the existing path. No new wiring.</li>
+        <li><strong>Resume file storage.</strong> <code>data/resumes/&lt;generatedResumeId&gt;.&lt;ext&gt;</code> is flat, but the download route gates on <code>where: { id, userId }</code> before touching disk — row-scoped, not path-scoped. Restate as an invariant; change nothing.</li>
+        <li><strong>The cache layer.</strong> No user-scoped route is cached; the <code>userKeyFn</code> seam already exists for when one is.</li>
+        <li><strong>Cascade deletes.</strong> Every <code>User</code> relation is <code>onDelete: Cascade</code>. Crew removal is one <code>prisma.user.delete</code>.</li>
+      </ul>
+
+      <h3>Touch list</h3>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Area</th><th>Files</th></tr></thead>
+        <tbody>
+          <tr><td>Config (first)</td><td><code>.env</code> (<code>OWNER_EMAIL</code>, <code>CREW_AI_DAILY_LIMIT</code>, <code>CREW_WATCHLIST_LIMIT</code>, Access team domain + per-app AUD, the two break-glass vars) · <code>.env.development.example</code> · <code>.env.production.example</code></td></tr>
+          <tr><td>Schema</td><td><code>prisma/schema.prisma</code> (<code>User.role</code>, <code>AiUsage</code>) · one new migration</td></tr>
+          <tr><td>Identity</td><td><strong>new</strong> <code>lib/viewer.ts</code> · <strong>new</strong> <code>lib/access-jwt.ts</code> · <code>lib/auth-guards.ts</code> (+<code>requireOwner</code>, +<code>requireOwnerOrService</code>, repoint the three existing) · <code>lib/owner.ts</code> (docstring only) · <code>lib/user-scope.ts</code> (docstring <strong>and</strong> the stale <code>:5</code> comment — <em>"the kiosk use-case — localhost / mc.local skip auth entirely"</em> — which is now false)</td></tr>
+          <tr><td>Network (Layer 1)</td><td><code>package.json</code> (<code>start</code> → <code>-H 127.0.0.1</code>) · <code>~/.config/caddy/Caddyfile</code> (retire the <code>mc.local</code> vhost — one file; <code>/opt/homebrew/etc/Caddyfile</code> is a symlink to it) · <code>launch-ms.sh</code> (<code>APP_URL</code> at <code>:33-37</code>, stale <code>NEXTAUTH_URL</code> comment at <code>:31</code>)</td></tr>
+          <tr><td>Provisioning</td><td><strong>new</strong> <code>scripts/manage-crew.ts</code> — add / list / remove. No production <code>user.create</code> path exists today (only the NextAuth adapter and test fixtures), so this is genuinely new work, not a wrapper.</td></tr>
+          <tr><td>Role gating</td><td>26 owner-only route files (import + call swap)</td></tr>
+          <tr><td>Config bleed</td><td><code>lib/repositories/settings.ts</code> · <code>app/api/postings/route.ts</code> · <code>scheduler/jobs/job-watcher.ts</code> · <code>scheduler/jobs/posting-digest.ts</code> · <code>scheduler/jobs/classify-pending-employment-types.ts</code> · <code>lib/notifications/dispatch.ts</code></td></tr>
+          <tr><td>SSE</td><td><code>lib/events.ts</code> · <code>app/api/events/route.ts</code> · ~20 broadcast call-site files · <code>hooks/useServerEvents.ts</code> (type only)</td></tr>
+          <tr><td>Quota</td><td><strong>new</strong> <code>lib/ai/quota.ts</code> · 8 LLM-bearing crew route files</td></tr>
+          <tr><td>Frontend</td><td><code>app/api/account/route.ts</code> · <code>hooks/useAccount.ts</code> · <code>components/dashboard/dashes.tsx</code> · <code>DesktopShell.tsx</code> · <code>MobileShell.tsx</code> · <code>components/overlays/LaunchpadOverlay.tsx</code> · <code>ProfileView.tsx</code> · <code>ApplicationsView.tsx</code> · <code>components/widgets/CalendarWidget.tsx</code></td></tr>
+          <tr><td>Tests</td><td><strong>new</strong> <code>scripts/tests/hermetic/viewer-resolution-smoke.ts</code> · <strong>new</strong> <code>scripts/tests/hermetic/role-matrix-smoke.ts</code> (or extend <code>route-auth-smoke.ts</code> to all 67) · <strong>new</strong> <code>access-jwt-smoke.ts</code> · <strong>new</strong> <code>ai-quota-smoke.ts</code> · <code>events-broadcast-regression-smoke.ts</code> · <code>owner-auth-smoke.ts</code> · <code>user-scoping-smoke.ts</code> (already builds OWNER + STRANGER users — the natural place for the role assertions)</td></tr>
+          <tr><td>Generated</td><td><code>docs/apis.html</code> via <code>npm run gen:api-docs</code> — <strong>mandatory</strong>: <code>api-docs-smoke.ts</code> runs the generator in <code>--check</code> mode and fails the push if stale. No new routes are added, so no new <code>meta.ts</code> is required; add one if that changes.</td></tr>
+          <tr><td>Docs</td><td><code>docs/cloudflare-access-auth.html:63</code> (mark superseded, link here) · <code>docs/architecture.html</code> (auth/guard section) · <code>CLAUDE.md</code> (Auth §, Dashboard § — <code>BASE_DASHES</code> is <code>components/dashboard/dashes.tsx:44</code>, not <code>Dashboard.tsx</code>; Gemini § — "process-shared" → cross-tier shared file, and the cache-file list is missing <code>data/{gemini-bucket,fetcher-health,logs}.db</code>) · <code>docs/next_steps.md</code> · <code>docs/llm-calls.html</code> (per-user cap column)</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Alternatives considered</h3>
+      <p>Two were <strong>decided before this doc</strong> and are recorded here so the reasoning is not re-litigated:</p>
+      <ul>
+        <li><strong>Fork into a slim friends-and-family app.</strong> <em>Rejected.</em> It would have to invent its own auth story from scratch (the whole point of the Access edge is that there is none to write); it would mean three deployments on one Mac; two codebases for one maintainer; and it would multiply the cross-tier shared-SQLite coordination that <code>data/{llm-cache,research-cache,arxiv-bucket,gemini-bucket}.db</code> already carefully serialize across four processes. <strong>Option C — one project, role-gated — was chosen.</strong></li>
+        <li><strong>Give crew the whole dashboard unchanged.</strong> <em>Rejected.</em> The research, space, and finance dashes are irrelevant to a job hunt, <code>internal-systems</code> is an ops surface that exposes the server log tail (every user's Prisma query parameters in prod), and the incremental cost of a role filter is one array predicate.</li>
+        <li><strong>Naming: <code>admin</code>/<code>member</code>, <code>owner</code>/<code>guest</code>, <code>flight-director</code>/<code>crew</code>.</strong> <em>Rejected in favor of <code>owner</code>/<code>crew</code>:</em> <code>admin/member</code> is generic and fights the theme; <code>owner/guest</code> reads as temporary and second-class; <code>flight-director/crew</code> is purer but forces renaming everything already called <code>owner</code> (~104 guard call sites, <code>OWNER_EMAIL</code>, <code>resolveOwner</code>). <code>owner</code>/<code>crew</code> keeps the existing vocabulary at zero rename cost and fits the Mission Control metaphor. If privileges ever need a second axis, <code>clearance</code> is the theme-consistent word — do not build it until that axis exists.</li>
+      </ul>
+      <p>Alternatives decided <em>in</em> this doc:</p>
+      <ul>
+        <li><strong>Per-route inline role checks</strong> instead of a guard. <em>Rejected:</em> more code in every handler, nothing to statically verify, and trivially forgettable on a new route — which is precisely the failure mode with the worst blast radius (§3.1, R1).</li>
+        <li><strong>A central route manifest enforced in <code>middleware.ts</code>.</strong> <em>Rejected on a hard technical ground:</em> there is no middleware today, and Next middleware runs on the Edge runtime — it cannot touch Prisma, so it could not read <code>User.role</code> at all without a second identity channel. Path matching would also duplicate the filesystem router and be invisible at the call site. The manifest's one genuine virtue — "a new route without a classification is caught" — is captured instead by making the manifest a <strong>hermetic test</strong> in the pre-push gate (§2.4).</li>
+        <li><strong>Threading <code>req</code> through the guards</strong> to get the identity header. <em>Rejected (OQ1b):</em> 104 signature changes would bury this design's ~15 substantive edits in mechanical noise, on precisely the diff that most needs a legible security review.</li>
+        <li><strong>Keeping the LAN as a trusted network</strong> (the original OQ2 framing: no header ⇒ owner). <em>Rejected:</em> the premise was invalidated — the owner will have friends on the home WiFi <em>using their own accounts</em>, so "no header means owner" is a one-step impersonation of the owner by anyone on the network, and it leaves S15.20 unclosed. Replaced by a hard 401 plus two narrow, explicit break-glass branches.</li>
+        <li><strong>Deferring <code>Cf-Access-Jwt-Assertion</code> verification</strong> as future hardening, per <code>cloudflare-access-auth.html</code>'s OQ3b. <em>Rejected (OQ13a):</em> that decision's stated justification was redundancy <em>"in the current single-owner topology"</em>, which is exactly the premise this change removes. Deferring it would leave role gating enforceable only by a configuration property (the loopback bind), and configuration regresses silently.</li>
+        <li><strong>A per-user token bucket inside <code>acquireGeminiSlot()</code>.</strong> <em>Deferred (OQ7b).</em> It is the correct fix at the true chokepoint, but it requires threading a <code>userId</code> through ~15 lib modules and every scheduler caller. The route-boundary daily cap bounds the actual threat (a runaway loop) at a fraction of the diff; promote (b) if fairness, not bounding, becomes the complaint.</li>
+        <li><strong>Collapsing <code>requireLocalOrSession</code> into <code>requireSession</code>.</strong> <em>Deferred.</em> Its LAN-bypass semantics are already dead, but the collapse touches 29 files for zero behavior change and would bloat the review surface of a security-sensitive diff.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+
+      <h3>Risks &amp; mitigations</h3>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Risk</th><th>Likelihood</th><th>Blast radius</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>R1</td>
+            <td><strong>A gating bug exposes everyone.</strong> One route left on <code>requireSession()</code> that should be <code>requireOwner()</code> gives every crew member full read/write on that surface — and the symmetric failure (a crew route not scoping by viewer id) gives them each other's data.</td>
+            <td>med</td>
+            <td><strong>total, for that surface</strong></td>
+            <td>Enforcement at the guard layer (not per-route), plus the 67-route <code>role-matrix-smoke</code> in the pre-push gate so an unclassified route <em>fails the push</em>, plus the generated auth chips in <code>docs/apis.html</code> as a human-readable audit. Post-implementation, route this change to <code>security-auditor</code> — not just the default review gate.</td>
+          </tr>
+          <tr>
+            <td>R2</td>
+            <td><strong>The viewer memo trap.</strong> A future "optimization" copies <code>lib/owner.ts</code>'s module-level memo into <code>resolveViewer()</code>; the first request's identity is then served to every subsequent viewer.</td>
+            <td>med</td>
+            <td><strong>complete authorization bypass</strong></td>
+            <td>No memo in v1; a <code>callout danger</code> comment at the top of <code>lib/viewer.ts</code>; and a hermetic smoke that resolves two different header emails back-to-back and asserts two different viewers.</td>
+          </tr>
+          <tr>
+            <td>R3</td>
+            <td><strong><code>OWNER_EMAIL</code> still unset when the second <code>User</code> row lands.</strong> <code>resolveOwner()</code> falls to lowest-cuid; a crew member becomes "the owner" for the LAN fallback, all session-less scheduler reads, and <code>findGlobalSetting()</code>.</td>
+            <td>low (if sequenced)</td>
+            <td>high — wrong-user config applied app-wide</td>
+            <td>Set <code>OWNER_EMAIL</code> and restart both tiers as the <strong>first</strong> task, before the migration. Add the hermetic assertion that exactly one <code>role='owner'</code> row exists and its email matches <code>OWNER_EMAIL</code> when set.</td>
+          </tr>
+          <tr>
+            <td>R4</td>
+            <td><strong>Identity-header forgery from the LAN.</strong> <code>Cf-Access-Authenticated-User-Email</code> is an ordinary header; anyone who can reach the origin can set it to the owner's address or a crew member's. The friends who will be on the home WiFi are exactly the population with an incentive.</td>
+            <td>—</td>
+            <td><strong>would be total impersonation</strong></td>
+            <td><strong>Closed by design, not accepted</strong> (OQ2a + OQ13a): a header-less request 401s with zero fallback; prod binds to <code>127.0.0.1</code> and the <code>mc.local</code> vhost is retired, so there is no LAN route at all; and <code>Cf-Access-Jwt-Assertion</code> is verified against the team JWKS with a per-app AUD and an email-claim cross-check, so a forged header fails cryptographically even if the bind regresses. This is what closes S15.20.</td>
+          </tr>
+          <tr>
+            <td>R4b</td>
+            <td><strong>The loopback bind takes prod offline.</strong> <code>cloudflared</code> runs token-based with no local config, so the tunnel's ingress service URL is only visible in the Cloudflare dashboard. If a public hostname targets a non-loopback address, binding to <code>127.0.0.1</code> breaks the tunnel.</td>
+            <td>low</td>
+            <td>prod unreachable until reverted</td>
+            <td>Encoded as a <strong>blocking dependency</strong>: task P0.2 is a manual dashboard check (Zero Trust → Networks → Tunnels → Public Hostnames) that gates P4.1. Rollback is a one-line <code>package.json</code> revert plus <code>pm2 restart</code>.</td>
+          </tr>
+          <tr>
+            <td>R4c</td>
+            <td><strong>A break-glass var left set, or set on prod.</strong> Either escape (dev-tier for the integration suites, on-box recovery for prod) reinstates a network-trust path for as long as it is enabled.</td>
+            <td>med</td>
+            <td>owner-equivalent access from loopback</td>
+            <td>Off by default; three independent guards each (env var + loopback remote-address + tier condition); one <code>console.warn</code> per process so an enabled break-glass is visible in the in-app log viewer; the dev-tier variant is additionally hard-gated on <code>NODE_ENV !== 'production'</code> in code, not by convention. Neither var goes in any <code>.env.*</code> file that is loaded by default — they are documented in the <code>.example</code> files as commented-out.</td>
+          </tr>
+          <tr>
+            <td>R4d</td>
+            <td><strong>JWKS unavailable → fail-open temptation.</strong> Every other shared/cached subsystem in this repo is deliberately best-effort (the three SQLite caches, both rate buckets), so "degrade to trusting the header" would look idiomatic here.</td>
+            <td>med</td>
+            <td>silently reopens R4</td>
+            <td><code>lib/access-jwt.ts</code> is <strong>fail-closed by contract</strong> — an unverifiable request 401s. Transient failures are absorbed by the JWKS module-memory cache with refresh-on-unknown-<code>kid</code>; the fail-closed choice is stated in the module docstring so a later "make it best-effort like the rest" refactor reads as the regression it would be.</td>
+          </tr>
+          <tr>
+            <td>R5</td>
+            <td><strong>Custodianship / blast radius of one <code>prod.db</code>.</strong> See §3.2 — treated separately because the mitigation is partly disclosure, not code.</td>
+            <td>certain (by design)</td>
+            <td>several people's PII</td>
+            <td>§3.2</td>
+          </tr>
+          <tr>
+            <td>R6</td>
+            <td><strong>Crew starve the owner's Gmail ingest classifier.</strong> A repeated "regenerate" loop queues behind <code>parseApplicationEmail</code> on the shared 12/min bucket, so the owner's application emails stop being ingested.</td>
+            <td>med</td>
+            <td>owner's core workflow stalls (recoverable — <code>lastSyncedHistoryId</code> resumes)</td>
+            <td>The §2.9 daily per-user cap bounds the loop. Residual: the cap counts route calls, not Gemini calls, so a single request can still make 3-4 calls — accepted for v1; OQ7b is the precise fix. The existing <code>GEMINI_RATE_BURST</code> fail-fast keeps the backlog bounded meanwhile.</td>
+          </tr>
+          <tr>
+            <td>R7</td>
+            <td><strong>ATS crawl multiplication.</strong> <code>runDueWatchlists</code> crawls serially with a 3-10s jittered gap before each subsequent <em>fragile</em> source (<code>job-watcher.ts:936-946</code>). N crew × M watchlists lengthens the tick and multiplies outbound LinkedIn/Indeed scrapes from one residential IP.</td>
+            <td>med</td>
+            <td>a source IP-blocks — degrades everyone's postings</td>
+            <td>OQ10 (per-crew watchlist cap). The existing jitter + serial crawl already prevent bursts; the risk is sustained volume, not burstiness.</td>
+          </tr>
+          <tr>
+            <td>R8</td>
+            <td><strong>Migration lands on one tier only.</strong> A schema-behind tier hits Prisma <code>P2021</code>, and the affected scheduler job disables itself for that process's lifetime.</td>
+            <td>med</td>
+            <td>one tier's jobs silently off</td>
+            <td>Documented existing behavior (one loud warning, then disabled). Run <code>migrate deploy</code> for <em>both</em> <code>DATABASE_URL</code>s in the same step and restart both schedulers.</td>
+          </tr>
+          <tr>
+            <td>R9</td>
+            <td><strong>Silent posting loss from the owner's negative filters</strong> if §2.6's <code>job-watcher.ts:227</code> fix is missed — crew postings are dropped <em>before</em> any DB write, so there is no row to notice is absent.</td>
+            <td>high if not fixed</td>
+            <td>invisible data loss</td>
+            <td>Fix is in v1 scope with a hermetic assertion that two users' filters do not cross-apply. This is the single most likely thing to be forgotten, because it is in the scheduler rather than a route.</td>
+          </tr>
+          <tr>
+            <td>R10</td>
+            <td><strong>No support path for crew.</strong> No admin UI: provisioning, promoting, and removing crew are manual <code>tsx</code>/SQL operations by the owner, and a crew member who breaks their own state has no self-service recovery.</td>
+            <td>high</td>
+            <td>owner time</td>
+            <td>Accepted — that is the minimal-v1 trade. Mitigated by shipping <code>scripts/manage-crew.ts</code> (add / list / remove) rather than ad-hoc SQL, since no production <code>user.create</code> path exists to lean on.</td>
+          </tr>
+          <tr>
+            <td>R11</td>
+            <td><strong>Crew emails widen the Access policy before the gated build is live</strong>, so a crew sign-in is served as the owner.</td>
+            <td>med</td>
+            <td><strong>total, for the window</strong></td>
+            <td>The original Access rollout order ("edge before code") <em>inverts</em> here. Encoded as hard task ordering: P5.2 (build + deploy) → P5.3 (policy) → P5.4 (crew rows). Stated in §2.12 as an ordering rule, not left implicit in the task list.</td>
+          </tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Custodianship &amp; blast radius</h3>
+      <p>This is the risk that is not primarily technical, and it should be decided consciously rather than absorbed.</p>
+      <ul>
+        <li><strong>One file holds several people's identity.</strong> <code>prisma/prod.db</code> would contain each crew member's full <code>Profile</code> — resumes carry home address, phone number, and complete employment history — alongside every application they have ever tracked. It also contains the owner's plaintext <code>Account.refresh_token</code>, which is <strong>mailbox-equivalent</strong> credential material for the owner's Gmail.</li>
+        <li><strong>The backup is now multi-person-sensitive.</strong> <code>scripts/backup-db.sh</code> snapshots that file and mirrors it to Google Drive via rclone. Age encryption is applied <em>only when</em> <code>~/.config/mission-control/backup.pub</code> is present. <strong>Recommendation: make that key a hard prerequisite of this change</strong> — an unencrypted multi-person PII snapshot in cloud storage is a materially different exposure from an unencrypted single-owner one.</li>
+        <li><strong>The host is a home Mac</strong> behind a residential connection, with no formal availability or incident story.</li>
+        <li><strong>The owner can read everything, unavoidably.</strong> DB access is DB access; no role model changes that. This is not fixable, it is <em>disclosable</em> — tell crew in one plain sentence what is stored and who can see it, before they enter anything.</li>
+        <li><strong>OQ6a materially shrinks this, and it is decided.</strong> Crew never connect Google, so no crew <code>refresh_token</code> ever lands in <code>prod.db</code> — the worst case stays "crew resumes and applications" rather than "crew mailboxes". This was the single largest custodianship lever available and it has been taken.</li>
+      </ul>
+
+      <h3>Rollback</h3>
+      <p>Five independent levers, in the order to reach for them:</p>
+      <ol>
+        <li><strong>Edge — instant, no deploy, no code.</strong> Remove the crew emails from the <code>ms-prod.salsquared.xyz</code> Access policy in the Zero Trust dashboard. Crew can no longer reach the origin <em>at all</em>; their sessions die at the edge on the next request. <strong>The Access policy is the feature flag</strong> — this is why no <code>CREW_ENABLED</code> env flag is proposed. Do this first in any incident, then diagnose.</li>
+        <li><strong>Network — independent of both the edge and the code.</strong> If the loopback bind or the retired vhost breaks the owner's access, restore <code>mc.local</code> by re-adding the vhost to <code>~/.config/caddy/Caddyfile</code> + <code>brew services restart caddy</code>, and/or drop <code>-H 127.0.0.1</code> from <code>package.json</code>'s <code>start</code> + <code>pm2 restart mission-control --update-env</code>. Note this <em>reopens R4's forgery path</em>, so it is a temporary measure while Layer 2 (JWT verification) still holds the line — which is precisely why both layers ship together rather than relying on either alone.</li>
+        <li><strong>Code — revert + rebuild.</strong> <code>git revert</code> the range → <code>npm run build</code> → <code>pm2 restart mission-control --update-env</code> and <code>pm2 restart mission-control-scheduler-prod --update-env</code>. Both new columns are <strong>additive and unread by the reverted code</strong>, so no migration-down is required; the reverted guards resolve the owner exactly as they do today. Leave <code>OWNER_EMAIL</code> set — it is strictly an improvement on the pre-change state.</li>
+        <li><strong>Data — remove a crew member.</strong> <code>await prisma.user.delete({ where: { email } })</code> removes their entire footprint: every <code>User</code> relation is <code>onDelete: Cascade</code> (verified, zero exceptions). <strong>Two things do not cascade</strong> and need a manual sweep: their generated resume files at <code>data/resumes/&lt;generatedResumeId&gt;.&lt;ext&gt;</code> (collect the ids before deleting the row), and their rows in the three throwaway cache files — which need nothing, since those are best-effort and content-addressed.</li>
+        <li><strong>Migration-down, only if genuinely wanted.</strong> <code>ALTER TABLE User DROP COLUMN role</code> and drop <code>AiUsage</code>. Not needed for rollback; listed for completeness.</li>
+      </ol>
+      <p>Before any of it: <code>scripts/backup-db.sh</code> for a pre-migration snapshot of both <code>prod.db</code> and <code>data/resumes/</code>. The full fresh-machine recovery path is in <code>docs/backup-recovery.md</code>.</p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+
+      <h3>Decisions</h3>
+      <div class="callout tip"><strong>All 14 resolved with the user — the Tasks section (§5) is authored.</strong> Each decision <em>appends</em> to its options rather than replacing them, so the record of what was weighed survives. Two entries were <strong>rewritten rather than appended to</strong>: <strong>OQ2</strong>, whose original framing was invalidated by a fact about the environment (see its note), and <strong>OQ11</strong>, whose options rested on a false premise about the code. <strong>OQ13</strong> and <strong>OQ14</strong> were added during the decision pass — both surfaced by OQ2's resolution, which exposed that rejecting header-<em>less</em> requests does nothing about forged ones, and that ten integration suites depended on the trust rule being removed.</div>
+
+      <div class="callout tip"><strong>OQ1 — How does <code>resolveViewer()</code> learn the request's identity?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Read the header inside the resolver via <code>await headers()</code>.</strong> <code>lib/viewer.ts</code> imports <code>headers</code> from <code>next/headers</code> and reads <code>cf-access-authenticated-user-email</code>, wrapped in a <code>try/catch</code> because the dynamic API throws outside a request scope (hermetic smokes and the scheduler call the guards directly). Every guard signature — and therefore all <strong>104</strong> call sites — is untouched. <em>Pros:</em> the diff is confined to <code>lib/viewer.ts</code> + <code>lib/auth-guards.ts</code>, exactly the shape of the original Cloudflare Access change; <code>requireSession()</code> keeps taking no argument. <em>Cons:</em> introduces the codebase's first <code>next/headers</code> import; identity becomes implicit request-scoped state rather than an explicit parameter; the <code>try/catch</code> fallback path must be deliberately designed or the hermetic smokes silently exercise the wrong branch.</li>
+          <li><strong>(b)</strong> <strong>Thread <code>req</code> through every guard.</strong> Change <code>requireSession()</code> → <code>requireSession(req)</code> and update all 72 call sites (plus 29 <code>requireLocalOrSession</code>, 3 <code>requireSessionOrService</code>), reading the header off <code>req.headers</code>. <em>Pros:</em> identity is an explicit parameter — no hidden async-local state, works identically in tests and any future non-Next context. <em>Cons:</em> a 104-file mechanical diff on the security-critical path, which buries the ~15 substantive changes in this design under noise and makes the review far harder; every future route must remember to pass <code>req</code>.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — read the header via <code>await headers()</code> inside <code>resolveViewer()</code>; the guards keep their signatures and all 104 call sites are untouched. The whole value of the previous Access change was that the guards' return shapes absorbed the change so no handler moved; giving that up for parameter explicitness costs 104 files of review noise on precisely the diff that most needs a legible review, and <code>next/headers</code> is the sanctioned Route-Handler mechanism in Next 16.2.9. <strong>One consequence hardened by OQ2:</strong> (a)'s <code>try/catch</code> around the out-of-request-scope throw <em>must</em> resolve to <code>null</code>, never to an identity — see §2.3's danger callout.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ2 — A request arrives with no <code>Cf-Access-Authenticated-User-Email</code>. What does the origin do?</strong></div>
+      <div class="oq-detail">
+        <p class="note"><strong>Rewritten, not appended to.</strong> The original question asked <em>"who is the viewer on a LAN request?"</em> — which presupposed that a header-less request is a trusted request. That premise was invalidated: the owner will have <strong>friends on the home WiFi using their own accounts</strong>, so "no header ⇒ owner" is not a conservative default, it is a one-step impersonation path available to every device on the network. The question is therefore reframed from <em>who</em> to <em>whether</em>, and the old option (a) survives below only as the rejected (b).</p>
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>401 — no fallback identity of any kind.</strong> <code>resolveViewer()</code> has exactly one identity source (the verified Access header) and zero fallback branches; a header-less request gets 401 with a response body pointing at <code>https://ms-prod.salsquared.xyz</code> so the failure explains itself. The two non-browser cases that genuinely needed network trust get purpose-built, off-by-default, loudly-logged break-glass branches instead (loopback + explicit env; OQ14 covers the dev/test one). <em>Pros:</em> one identity path, no implicit trust anywhere; satisfies the user's own S15.20 (<em>"No network-based bypass"</em>), which the Access change left unclosed; the <code>headers()</code>-throws catch block has nothing to fall back <em>to</em>, so it cannot silently become a bypass. <em>Cons:</em> the owner loses <code>mc.local</code> / <code>localhost:3101</code> as a route in and must use the tunnel hostname; two new env vars exist purely as escapes; <code>launch-ms.sh</code> and the 10 integration suites both need attention.</li>
+          <li><strong>(b)</strong> <strong>Fall back to the owner</strong> — the original framing. No header → return <code>resolveOwner()</code>'s result with <code>role: 'owner'</code>, preserving today's behaviour byte-for-byte. <em>Pros:</em> zero regression for LAN/kiosk use; hermetic smokes and integration suites keep working untouched; no new env surface. <em>Cons:</em> <strong>invalidated</strong> — with friends' devices on the same WiFi this hands owner-equivalent access to anyone who can reach <code>mc.local:443</code> or <code>:3101</code>, and it makes the out-of-request-scope <code>catch</code> block a bypass reachable from anything that imports a guard.</li>
+          <li><strong>(c)</strong> <strong>Pin the header-less viewer with a <code>LAN_VIEWER_EMAIL</code> env var.</strong> No header → look up that email; unset → 401. <em>Pros:</em> explicit rather than heuristic; nameable in config. <em>Cons:</em> duplicates <code>OWNER_EMAIL</code> in every realistic case and adds a drift surface between them; and it does not reduce the LAN's privilege at all — it only writes it down, so the impersonation path in (b) survives verbatim.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — <strong>no network-based bypass.</strong> A header-less request 401s; <code>resolveViewer()</code> has one identity source and zero fallback branches; on-box recovery and the integration suites get narrow, explicit, loudly-logged break-glass branches rather than a standing trust rule. (b) is not a conservative default once friends' devices share the network — it is the single cheapest way to become the owner — and (c) buys none of (a)'s safety while adding config. This closes <code>docs/user-stories.md</code> <strong>S15.20</strong>, a requirement the user wrote and the Access change left open. Note that (a) alone is <em>not sufficient</em>: rejecting header-less requests says nothing about forged ones, which is why OQ13 exists.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ3 — What happens when an Access-passed email has no matching <code>User</code> row?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Reject with 403 and one loud <code>console.warn</code>.</strong> <code>resolveViewer()</code> returns <code>null</code> for an unknown email; the guards produce an error response and the log line names the email so the owner can provision deliberately (add the Access-policy email <em>and</em> insert the <code>User</code> row). <em>Pros:</em> the <code>User</code> table stays an intentional list; a mis-typed or over-broad Access policy cannot silently create accounts; the log line makes the intended-but-unprovisioned case obvious in the in-app log viewer. <em>Cons:</em> two-step provisioning, so a crew member's first visit fails until the owner runs a command — needs a legible error page rather than a bare 403.</li>
+          <li><strong>(b)</strong> <strong>Auto-provision a <code>role='crew'</code> row.</strong> First Access-passed request for an unknown email creates the <code>User</code>. <em>Pros:</em> one-step onboarding — add the email to the Access policy and the person just works. <em>Cons:</em> the Access policy silently becomes the account-creation surface, so a policy widened by accident (an email domain, or an "Everyone" rule while debugging) provisions strangers; also races on concurrent first requests, needing an <code>INSERT OR IGNORE</code>-style guard.</li>
+          <li><strong>(c)</strong> <strong>Auto-provision, but only for emails in a <code>CREW_EMAILS</code> env allowlist.</strong> <em>Pros:</em> one-step onboarding with an origin-side second gate. <em>Cons:</em> a third allowlist alongside the Access policy and <code>ALLOWED_SIGNIN_EMAILS</code>, and the owner still has to edit config on each addition — so it buys the convenience of (b) at nearly the ceremony of (a).</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — reject unknown identities; provision by hand. With a handful of family members the two-step cost is a one-time command, and it keeps "who has an account" a decision the owner makes explicitly rather than a side effect of an edge-policy edit — exactly the mistake with the largest blast radius (R1, R11). <strong>Scope note discovered during verification:</strong> there is <em>no production <code>user.create</code> path</em> in the codebase — only the NextAuth adapter and test fixtures — so the provisioning script (<code>scripts/manage-crew.ts</code>: add / list / remove) is genuinely new work rather than a thin wrapper, and it is a first-class task (P5.4.1), not an afterthought.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ4 — What is <code>User.role</code>'s column default, and how is the existing row backfilled?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong><code>@default("crew")</code> plus a same-migration <code>UPDATE User SET role = 'owner'</code>.</strong> The column defaults to least-privileged, and the single existing row in each DB (verified: exactly one, <code>salsalcedo4321@gmail.com</code>) is promoted in the same migration SQL. <em>Pros:</em> fail-closed — any row created later by any path (a stray NextAuth adapter insert, a fixture, a smoke) is crew, not owner; the backfill is deterministic because the row count is known to be 1. <em>Cons:</em> hard-depends on <code>OWNER_EMAIL</code> being set first, because if the promotion were ever missed the DB would have zero owners and <code>requireOwner</code> would 403 the owner out of their own app.</li>
+          <li><strong>(b)</strong> <strong><code>@default("owner")</code>, then demote crew rows as they are added.</strong> The migration needs no <code>UPDATE</code>. <em>Pros:</em> zero-risk backfill; the owner cannot lock themselves out. <em>Cons:</em> fail-open — every accidentally-created row is an <em>owner</em>, which is the same class of defect as R1 with none of R1's static verification to catch it; and it makes the crew-provisioning command's correctness load-bearing forever, not just once.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — default <code>crew</code>, promote the one existing row via a hand-added <code>UPDATE "User" SET role = 'owner';</code> in the generated migration SQL, and land the hermetic <em>"exactly one <code>role='owner'</code> row, and its email matches <code>OWNER_EMAIL</code> when set"</em> assertion in the same phase (P1.4.2, extending <code>user-scoping-smoke.ts</code>, which already builds OWNER + STRANGER fixtures). The lock-out concern in (a)'s cons is a one-time, immediately-visible failure on a known single-row table, whereas (b)'s failure mode is a silent privilege escalation that could surface months later; the assertion converts (a)'s risk into a test failure.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ5 — Does the <code>planning</code> dash (to-dos + life goals) join the crew dash set?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Include it.</strong> Crew set becomes <code>applications</code> + <code>profile</code> + <code>planning</code>; <code>tasks</code> and <code>goals</code> stay crew-allowed. <em>Pros:</em> marginal cost is genuinely <strong>zero</strong> — <code>PlanningView</code> is just <code>GoalCard</code> + <code>ToDoCard</code>, both routes already resolve the viewer through <code>resolveScopedUserId</code>, and <code>Task</code>/<code>LifeGoal</code> were scoped per-user in migration <code>20260612235207</code>; a to-do list is directly useful to a job hunt (follow-ups, half-finished applications). <em>Cons:</em> widens the crew surface beyond the stated "job + resume" purpose, adding two more routes to the crew-allowed side of the matrix that must stay correctly scoped forever.</li>
+          <li><strong>(b)</strong> <strong>Exclude it.</strong> Crew set is <code>applications</code> + <code>profile</code>; <code>tasks</code> and <code>goals</code> become owner-only. <em>Pros:</em> the tightest possible crew surface, exactly matching the stated purpose; two fewer routes to keep honest. <em>Cons:</em> flips two routes to <code>requireOwner</code> that need no change otherwise, and adding the dash later is a one-line change — so the "minimal" option is here the one that does <em>more</em> work.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — include <code>planning</code>. Re-verified as <strong>truly zero code</strong> on the server side: <code>tasks</code> and <code>goals</code> both already run <code>requireLocalOrSession</code> → <code>resolveScopedUserId(guard)</code>, and <code>resolveScopedUserId</code> prefers <code>guard.session.user.id</code> (<code>lib/user-scope.ts:96-97</code>), so both routes turn viewer-aware for free the moment the guards resolve the viewer. The only change is one array entry in <code>dashesForRole()</code>. This is the unusual case where including costs strictly less than excluding — (b) would mean writing changes to <em>remove</em> a capability that already works correctly per-user.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ6 — Do crew get Google (Gmail ingest + Calendar) in v1?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>No — manual entry only.</strong> <code>ALLOWED_SIGNIN_EMAILS</code> stays at its single entry, so the <code>signIn</code> callback rejects any crew Google consent; the four routes that call <code>getGoogleAuthClient</code> directly become owner-only; the "Connect Gmail / Calendar" affordance is hidden for crew. Crew add applications by hand and track postings from their watchlists. <em>Pros:</em> no crew <code>refresh_token</code> ever lands in <code>prod.db</code>, which is the single largest custodianship reduction available (§3.2); it removes the OAuth publishing-status unknown (100-user cap, unverified interstitial) from the critical path entirely; it removes crew from the Gmail-push, watch-renewal, and ingest-retry paths, which are the most stateful machinery in the app. <em>Cons:</em> crew lose the app's best feature — automatic status tracking from ATS email — so their pipeline is only as current as their manual updates, and the value proposition is noticeably thinner.</li>
+          <li><strong>(b)</strong> <strong>Yes — crew connect their own Gmail + Calendar.</strong> Add crew emails to <code>ALLOWED_SIGNIN_EMAILS</code>; each crew member consents to <code>gmail.readonly</code> + <code>gmail.send</code> + <code>calendar.events</code>; the scheduler's <code>gmail-watch-renew</code> already loops every Google-linked user, so ingest works per-user with no new code. <em>Pros:</em> crew get the full product; the per-user machinery already exists and is tested. <em>Cons:</em> each crew member's plaintext <code>refresh_token</code> — mailbox-equivalent credential material — lands in the owner's <code>prod.db</code> and its Drive-mirrored backups; it hard-depends on the app's OAuth publishing status (unverified + restricted scopes shows a "Google hasn't verified this app" interstitial before granting mailbox read, which is a lot to ask of family); and it puts crew traffic on the Gmail push fan-out and the LLM classifier, compounding R6.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — no crew Google in v1. The custodianship asymmetry decides it: (b) converts "the owner holds some relatives' resumes" into "the owner holds several relatives' mailbox credentials, backed up to Drive," which is a categorically larger promise to make on a home Mac. The job + resume surfaces are fully usable without it, and (b) remains available later as its own wave once the OAuth consent screen's publishing status is confirmed and the backup is verified encrypted. <strong>Required consequence, designed not assumed:</strong> crew have no <code>Account</code> row, so <code>googleConnected</code> is permanently <code>false</code> and the "Connect Gmail / Calendar" affordance must be <strong>hidden on <code>role === 'crew'</code></strong> (not merely left unclicked, and not keyed on <code>googleConnected</code>) — otherwise the UI actively invites crew into a scope grant that is an explicit non-goal. Enforcement stays server-side too: <code>ALLOWED_SIGNIN_EMAILS</code> keeps its single entry, so the <code>signIn</code> callback rejects a crew consent even if the button were somehow reached.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ7 — How is the per-user Gemini budget enforced?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Daily per-user credit counter at the route boundary.</strong> New <code>AiUsage</code> model (<code>@@unique([userId, day])</code>) and <code>lib/ai/quota.ts:consumeAiCredit(userId, role)</code>, called at the top of the 8 LLM-bearing crew routes; owner exempt; over-limit returns 429 with <code>{ used, limit }</code>. <em>Pros:</em> ~40 lines plus one table; deterministic and hermetically testable; no <code>userId</code> threading into any lib; the limit is a number a crew member can understand and the UI can display; reuses the existing <code>utcDateBucket()</code>. <em>Cons:</em> counts requests, not Gemini calls — one <code>POST /api/resumes</code> can make 3-4 — so the true spend per credit varies; and it does nothing about a <em>burst</em> within the daily allowance, which is the shape that starves the owner's classifier (R6).</li>
+          <li><strong>(b)</strong> <strong>Per-user token bucket inside <code>acquireGeminiSlot()</code>.</strong> Add per-<code>userId</code> rows to the shared <code>data/gemini-bucket.db</code> and thread a <code>userId</code> parameter through <code>chatJSON</code>, <code>parseApplicationEmail</code>, and every intermediate helper (~15 lib modules, ~25 call sites, plus scheduler callers). <em>Pros:</em> fairness at the true chokepoint, per-minute rather than per-day; structurally prevents R6 rather than bounding it; reserves the owner a guaranteed share. <em>Cons:</em> by far the largest diff in this design and it lands in the one module that must never break (a bug here stops all AI, both tiers); the threading touches the Gmail ingest path, which is the most retry-sensitive code in the app.</li>
+          <li><strong>(c)</strong> <strong>No per-user cap in v1.</strong> Rely on the existing <code>GEMINI_RATE_BURST</code> fail-fast and on crew being a handful of trusted people. <em>Pros:</em> zero code, zero new state. <em>Cons:</em> one crew member holding down "regenerate" starves the owner's email classifier with no bound and no visibility, and every call is billed to the owner's key — an entirely foreseeable failure with a cheap prevention.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — the daily route-boundary credit counter. It bounds the actual threat (an unbounded loop billed to the owner's key, starving the Gmail ingest classifier) for a small fraction of (b)'s diff and without touching the ingest retry path; the imprecision in (a)'s cons is acceptable because the goal is <em>bounding</em>, not fair-sharing. Promote to (b) as its own later wave if the complaint ever becomes "crew and owner contend" rather than "crew ran away."</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ8 — What shape does the user scope take on <code>ServerEvent</code>?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Discriminated union on the model.</strong> Split <code>ModelName</code> into user-scoped and global sets and define <code>ServerEvent = UserServerEvent (userId required) | GlobalServerEvent (no userId)</code>. <em>Pros:</em> <code>tsc</code> enumerates every unmigrated call site <em>and</em> makes the wrong pairing impossible — a <code>Cache</code> event cannot carry a userId and an <code>Application</code> event cannot omit one; that co-variance is what actually prevents the mistake when ~55 call sites are being edited across ~20 files by parallel agents. <em>Cons:</em> the largest of the three diffs — every one of the ~55 lines must be touched — and consumers doing <code>event.model === 'X'</code> narrowing need a quick check (the client discards the event object entirely, so in practice only the type alias in <code>hooks/useServerEvents.ts</code> moves).</li>
+          <li><strong>(b)</strong> <strong>Optional <code>userId?</code>, absent means fan out to everyone.</strong> <em>Pros:</em> smallest diff — only the ~14 user-scoped model call sites need editing, and the 2 global ones are already correct. <em>Cons:</em> fail-open in the worst way: a user-scoped broadcast that forgets <code>userId</code> compiles, passes tests, and silently fans out to every connected client — and since the savings versus (a) is only ~3 lines (there are just two global models), it buys almost nothing for a permanently unsafe default.</li>
+          <li><strong>(c)</strong> <strong>Required <code>userId: string | 'GLOBAL'</code> on a single interface.</strong> <em>Pros:</em> <code>tsc</code> still forces every call site to state a scope, with no union to thread through consumers; simplest type change. <em>Cons:</em> nothing stops <code>userId: 'GLOBAL'</code> on an <code>Application</code> event, so a hurried implementer can re-create the leak while satisfying the compiler; and a magic string in the identity position invites exactly that.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — the discriminated union. Two verification results strengthen this. First, the real count is <strong>68 call sites</strong>, not ~55 — a wider mechanical fan-out makes compiler-enforced correctness more valuable, not less, and it makes (b)'s fail-open default correspondingly more dangerous. Second, the only two truly global models are <code>Cache</code> and <code>FinanceTick</code>, so (b)'s smaller-diff argument is worth roughly three lines. (a) is the only option where the compiler rejects the specific mistake this change exists to prevent. <strong>Client cost is zero:</strong> per-subscriber filtering is entirely server-side and all 18 <code>useServerEvents</code> call sites pass zero-argument callbacks against <code>onInvalidate: () =&gt; void</code>, so no consumer reads the payload beyond <code>model</code>.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ9 — What does the dashboard shell render before <code>role</code> resolves?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Gate the shell on role resolution.</strong> <code>Dashboard</code> renders the existing loading spinner until <code>useAccount()</code> returns, then mounts the shells with the correct <code>baseDashes</code>. <em>Pros:</em> the carousel's restore-by-id runs exactly once against the final dash set, so the wrong-dash bug cannot occur; no change to the render model, the <code>ssr: false</code> boundary, or the prerender behavior <code>CLAUDE.md</code> flags as delicate; one extra round-trip to a local route. <em>Cons:</em> a brief spinner on every cold load, including the owner's — the app feels marginally slower to start.</li>
+          <li><strong>(b)</strong> <strong>Inject the role from the server.</strong> Make <code>app/page.tsx</code> a Server Component that calls <code>resolveViewer()</code>, and move the <code>dynamic(..., { ssr: false })</code> import into a thin <code>"use client"</code> wrapper that receives <code>role</code> as a prop (<code>ssr: false</code> is not permitted directly in a Server Component). <em>Pros:</em> zero flash and zero extra round-trip — the correct dash set is known at first paint. <em>Cons:</em> a new file plus a restructured page boundary, and reading <code>headers()</code> opts the route out of static prerender — a behavior <code>CLAUDE.md</code> explicitly warns differs between the Turbopack dev and webpack prod builds, so it needs a <code>test:hermetic</code> re-run to trust.</li>
+          <li><strong>(c)</strong> <strong>Render the crew set optimistically, then expand for the owner.</strong> <em>Pros:</em> no spinner; crew (the new users) see the right thing immediately. <em>Cons:</em> actively broken for the owner — <code>useDashCarousel</code> restores by id against the dashes it was given, so an owner whose last dash was <code>rocketry</code> has that id dropped, lands on position 0, and then the set expands underneath them leaving the wrong dash showing; it trades a spinner for a real bug.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — gate the shell on role resolution. The request is a local API call on the same machine, so the spinner is brief, and (a) is the only option that neither disturbs the <code>ssr: false</code> / prerender boundary <code>CLAUDE.md</code> flags as delicate nor risks the restore-by-id regression that makes (c) actively broken for the owner. Revisit (b) if the cold-start delay ever becomes noticeable in use.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ10 — Is the number of watchlists per crew member capped?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Hard cap in <code>POST /api/watchlists</code>.</strong> Count the viewer's existing rows and reject over <code>CREW_WATCHLIST_LIMIT</code> (default 5) with a 400 naming the limit; the owner is exempt. <em>Pros:</em> ~8 lines; directly bounds R7 (outbound crawl volume from one residential IP, which is what gets a scraped source to block); the limit is legible to the user. <em>Cons:</em> an arbitrary number that will occasionally be the wrong one, and it constrains the most useful crew feature.</li>
+          <li><strong>(b)</strong> <strong>No cap.</strong> Rely on <code>runDueWatchlists</code>' serial crawl with its 3-10s jittered gap before each subsequent fragile source. <em>Pros:</em> zero code; the existing pacing already prevents bursts. <em>Cons:</em> the pacing bounds burstiness, not sustained volume — N crew × M LinkedIn watchlists lengthens every tick and raises the steady-state scrape rate from one IP, and a block degrades <em>everyone's</em> postings, not just the over-user's.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — cap at 5 per crew member (<code>CREW_WATCHLIST_LIMIT</code>), owner exempt. Confirmed no cap exists today: <code>defaultLoadDue</code> selects <em>every</em> active watchlist whose <code>lastRunAt</code> is older than <code>scheduleMinutes</code> with no ceiling (<code>job-watcher.ts:916-921</code>). The cost is trivial and the failure it prevents is shared — a LinkedIn block degrades the owner's pipeline too, not just the over-user's.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ11 — What happens to the negative-filter gate in the cross-user <code>classify-pending-employment-types</code> sweep?</strong></div>
+      <div class="oq-detail">
+        <p class="note"><strong>Re-scoped, not appended to.</strong> The original question asked <em>whose</em> filters should gate the sweep, and its options assumed the row's owner was cheaply reachable. That was wrong: the <code>pending</code> query selects only <code>externalId, company, title, snippet, location</code> — <strong>no <code>userId</code>, no <code>watchlistId</code></strong> — and then dedupes by <code>externalId</code> so one classification serves every row sharing the hash. The estimate of "~5 extra lines" for a per-row scoping was therefore wrong, and more importantly the sweep's own comment states the premise multi-user breaks: <em>"A global match means the posting is hidden on every watchlist, so excluding the whole externalId is safe."</em> The real question is whether the gate belongs there at all.</p>
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Remove the gate entirely.</strong> Delete the <code>findGlobalSetting()</code> read and the <code>matchesNegativeFilters</code> skip from the sweep (and their now-unused imports); the <code>pending</code> select stays exactly as it is. Every pending posting gets classified. <em>Pros:</em> correct for every user by construction — no user's postings are skipped because of another user's filters, and no ordering question arises; zero interaction with the cross-user dedup, which is the sweep's whole efficiency; smallest and most obviously-right diff. <em>Cons:</em> loses the Gemini-spend saving on legacy blacklisted rows, so the sweep pays once for a finite backlog of postings nobody wanted classified.</li>
+          <li><strong>(b)</strong> <strong>Intersect all users' filters</strong> — skip an <code>externalId</code> only when <em>every</em> user's filter set matches it. <em>Pros:</em> keeps some spend saving while never wrongly skipping for any individual. <em>Cons:</em> requires reading every user's settings row per sweep and computing an intersection that, with even two people whose filters differ at all, degenerates to matching almost nothing — so it buys near-zero saving for real added complexity, on a path whose only job is to be cheap.</li>
+          <li><strong>(c)</strong> <strong>Make the sweep per-user.</strong> Widen the <code>pending</code> select to carry <code>watchlist.userId</code>, group by user, and run the gate per group. <em>Pros:</em> per-user correct and keeps the full spend saving. <em>Cons:</em> abandons the cross-user <code>externalId</code> dedup that is the reason the sweep is cheap — the same posting on three people's watchlists would now be classified up to three times, so the "saving" is spent immediately on duplicate classification; and it is by far the largest change to the file.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — remove the gate. It is self-described defence-in-depth for legacy NULL-<code>employmentType</code> rows, and the job-watcher's ingestion drop (now correctly per-user, P2.3.2) already prevents new blacklisted postings from ever being stored — so the gate guards a shrinking, finite backlog. (b) collapses to no saving as soon as two people's filters differ, and (c) trades the saving for duplicate classification, which is the same spend it was trying to avoid. Paying Gemini once for that legacy backlog is the cheapest of the three, and it is the only option where correctness needs no argument.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ12 — Does the dev tier (<code>ms-dev.salsquared.xyz</code>) admit crew?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Owner-only.</strong> Crew emails go on the <code>ms-prod</code> Access app's policy only; the <code>ms-dev</code> app keeps its single-email Allow rule and 1-month session. <em>Pros:</em> dev is where breaking changes land and where <code>EMAIL_ENABLED=0</code> and other unsafe-for-humans settings live; <code>dev.db</code> is a scratch DB that hermetic smokes and debug scripts mutate, so crew would have no meaningful rows there anyway. <em>Cons:</em> no way to let a crew member try a change before it reaches prod.</li>
+          <li><strong>(b)</strong> <strong>Crew on both tiers.</strong> <em>Pros:</em> crew can preview changes; both tiers behave identically, so a role bug shows up in dev first. <em>Cons:</em> crew would need duplicate <code>User</code> rows and duplicate data in <code>dev.db</code> to test anything real; and pointing non-technical users at the tier that is deliberately allowed to be broken generates support load for no product benefit.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — dev stays owner-only. Dev is a workshop, not a preview environment, and role bugs are caught by the hermetic role-matrix smoke rather than by crew exercising dev. This decision is also what makes OQ14's dev-only break-glass safe: since the owner is the only identity on that tier, a loopback escape there grants nothing that is not already the sole account.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ13 — How does the origin prove the identity header came from Cloudflare rather than from a LAN client that forged it?</strong></div>
+      <div class="oq-detail">
+        <p class="note"><strong>Added during the decision pass, and it supersedes a prior decision.</strong> Surfaced by resolving OQ2: rejecting <em>header-less</em> requests says nothing about <em>forged</em> ones. <code>Cf-Access-Authenticated-User-Email</code> is an ordinary header and anything that can open a socket to the origin can set it. <code>docs/cloudflare-access-auth.html</code>'s <strong>OQ3b</strong> declined origin-side JWT verification as <em>"redundant in the current single-owner topology"</em> (<code>:283</code>) — <strong>that reasoning expires at the second user</strong>, and this OQ reverses it. With one legitimate identity, forging the header gains nothing; with several, it gains somebody else's account.</p>
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Both layers, in this change.</strong> <em>Layer 1 (config):</em> add <code>-H 127.0.0.1</code> to <code>package.json</code>'s <code>start</code> and <strong>retire the <code>mc.local</code> prod vhost</strong> from <code>~/.config/caddy/Caddyfile</code>, so no LAN client can reach the origin at all; repoint <code>launch-ms.sh</code>'s <code>APP_URL</code>. <em>Layer 2 (code):</em> new <code>lib/access-jwt.ts</code> verifies <code>Cf-Access-Jwt-Assertion</code> against the team JWKS with a per-app AUD and an email-claim cross-check, fail-closed. <em>Pros:</em> defence in depth across two independent failure modes — Layer 1 removes the attack surface, Layer 2 makes forgery fail cryptographically if Layer 1 ever regresses (a <code>start</code>-script tweak, a restored Caddyfile, a new proxy); both land before crew exist, so there is no window. <em>Cons:</em> the largest scope in the change; new env (team domain + per-app AUD); a hard manual prerequisite (the tunnel's origin URL) before the bind can flip; and it takes <code>mc.local</code> away from the owner.</li>
+          <li><strong>(b)</strong> <strong>Layer 1 only — bind + retire the vhost, no JWT verification.</strong> <em>Pros:</em> zero code, immediate, and it genuinely closes today's forgery path since there is no route to the origin to forge over. <em>Cons:</em> the whole guarantee rests on a configuration property that regresses silently and invisibly — nothing in the test suite can assert "prod is not listening on the LAN," so a future <code>-H</code> removal or a re-added vhost reopens full impersonation with no signal.</li>
+          <li><strong>(c)</strong> <strong>Layer 2 only — verify the JWT, leave the network as it is.</strong> <em>Pros:</em> the guarantee is cryptographic and testable, and it survives any network change. <em>Cons:</em> leaves the origin directly reachable from the LAN, so every unguarded or future surface (and the whole <code>/api/gmail/webhook</code> Bypass path) stays exposed to LAN traffic; and it makes the JWKS a hard availability dependency for all access with no network fallback in front of it.</li>
+          <li><strong>(d)</strong> <strong>Neither — status quo.</strong> <em>Pros:</em> no work. <em>Cons:</em> role gating becomes decorative: any device on the home WiFi types one header and becomes the owner or any crew member. Given that the whole premise of this change is friends on that network, this is not a viable position.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — both layers, in the same wave, <strong>not deferred as hardening</strong>. (b) and (c) each close the hole through exactly one mechanism, and the two mechanisms fail in unrelated ways: configuration drifts silently, and a code-only check leaves the LAN pointed at the origin. Shipping both means a single regression is never sufficient to reopen impersonation. Three verified facts shape the tasks: <strong>loopback binding alone is not enough</strong> — Caddy proxies <code>mc.local:443 → 127.0.0.1:3101</code>, so retiring the vhost is load-bearing; <strong>there is only one Caddyfile</strong> — <code>/opt/homebrew/etc/Caddyfile</code> is a symlink to <code>~/.config/caddy/Caddyfile</code>, so there is no stale duplicate to chase; and <strong><code>cloudflared</code> runs token-based with no local config</strong>, so the tunnel's ingress URL is only visible in the dashboard — making a manual check (Zero Trust → Networks → Tunnels → Public Hostnames) a <strong>blocking prerequisite</strong> (P0.2 gates P4.1), because if a hostname targets a non-loopback address the bind takes prod offline.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ14 — How do the 10 integration suites authenticate once there is no network-trust path?</strong></div>
+      <div class="oq-detail">
+        <p class="note"><strong>Added during the decision pass.</strong> A direct consequence of OQ2a: all 10 files under <code>scripts/tests/integration/</code> call <code>http://localhost:4101</code> with no identity header (verified — 10 suites, all 10 reference 4101), and <code>test-integration.sh</code> aborts unless <code>mission-control-dev</code> is online. Removing the header-less fallback 401s every one of them.</p>
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>A dev-only env break-glass.</strong> An env var — off by default — makes a <em>loopback</em> request on the <em>dev</em> tier resolve to the owner, hard-gated three ways (the var, a loopback remote-address check, and <code>NODE_ENV !== 'production'</code> in code), emitting one <code>console.warn</code> per process so an enabled escape is visible in the in-app log viewer. <em>Pros:</em> zero suite edits; the escape is explicit, discoverable in logs, and scoped to the tier that is owner-only anyway (OQ12a), so it grants nothing beyond the only identity on that tier; it also doubles as the on-box recovery pattern for prod (separate var). <em>Cons:</em> a bypass exists in the codebase, so it must be reviewed as security-relevant and can never be allowed to reach prod; and it needs an explicit carve-out from OQ13's JWT verification, since a loopback request carries no JWT.</li>
+          <li><strong>(b)</strong> <strong>Add a forged identity header to all 10 suites.</strong> <em>Pros:</em> no production code path exists for tests to walk through. <em>Cons:</em> only works if the origin <em>accepts</em> forged headers — i.e. it requires abandoning OQ13's Layer 2 entirely, which is a far larger concession than a gated dev escape; and it would need re-adding to every future suite.</li>
+          <li><strong>(c)</strong> <strong>Mint a service token for the suites</strong>, reusing the <code>requireServiceToken</code> pattern. <em>Pros:</em> uses an existing, constant-time-compared mechanism with no new trust concept. <em>Cons:</em> that pattern is per-service (<code>tokenEnv</code> + <code>userIdEnv</code> + a matching <code>?onBehalfOf=</code>) and is wired into exactly one route today, so every suite's every request would need the Bearer header <em>and</em> the query param — a bigger, more invasive edit than (b) across all 10 files, plus a long-lived token in the dev env.</li>
+          <li><strong>(d)</strong> <strong>Drop the integration suites.</strong> <em>Pros:</em> no auth question. <em>Cons:</em> loses the only tests that exercise real routes end-to-end against a live server; they are already outside the pre-push gate, so they cost nothing to keep and are the only safety net for exactly the kind of wiring this change touches.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — a dev-only, off-by-default, loudly-logged loopback break-glass; the suites need no edits. (b) would require giving up JWT verification, (c) is a larger edit than (b) for a token that then lives in the dev env indefinitely, and (d) discards the only end-to-end coverage of the surfaces being changed. <strong>Two constraints the implementation must honour:</strong> the production guard is a code condition (<code>NODE_ENV</code>), not a convention or a config comment; and OQ13 Layer 2's JWT verification must be <em>skipped</em> on this path — branch order is break-glass first, else strict — because there is no JWT on a loopback request. Getting that order backwards makes the escape dead code and the suites fail with a misleading JWT error.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+      <h3>Implementation checklist</h3>
+      <p>All 14 OQs are resolved, so this is the executable plan. Ids are <code>P&lt;phase&gt;.&lt;task&gt;.&lt;sub&gt;</code>. Everything is one <strong>wave</strong> — the product ordering is trivial here because nothing ships to crew until the whole gate is in place, so the interesting structure is entirely <strong>dependency</strong> ordering (rounds), laid out in §5.3.</p>
+      <div class="callout danger"><strong>Three sequencing constraints are non-negotiable.</strong> Each is a correctness or security property, not a scheduling preference. <strong>(1)</strong> <code>OWNER_EMAIL</code> lands before anything else — it is currently unset, so owner resolution is a lowest-cuid lottery the instant a second <code>User</code> row exists (R3). <strong>(2)</strong> The manual cloudflared dashboard check (P0.2) gates the loopback bind (P4.1) — the tunnel's ingress URL is not readable from the box, and a non-loopback target means the bind takes prod offline (R4b). <strong>(3)</strong> The Access-policy widening for crew emails (P5.3) comes <em>after</em> the role-gated build is live in prod (P5.2) — reversed, a crew sign-in is served as the owner (R11). This <em>inverts</em> the original Access change's "edge before code" rollout order; do not copy that precedent.</div>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P0</span>
+          <span class="task-title">Phase 0 — Prerequisites (config + manual checks, no application code)</span>
+        </summary>
+        <div class="task-body">
+          <p>Serial and cheap. P0.1 gates every code phase; P0.2 gates P4.1 only. Both must be done by a human with dashboard access — they are not delegable to a build agent.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.1</span>
+              <span class="task-title">Pin the owner with OWNER_EMAIL</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <code>.env</code>, <code>.env.development.example</code>, <code>.env.production.example</code>. <em>Blocks everything.</em></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.1.1</span><span class="task-title">Set the var</span></summary>
+                <div class="task-body"><p>Add <code>OWNER_EMAIL=salsalcedo4321@gmail.com</code> to the untracked <code>.env</code>. Both <code>.example</code> files already carry it commented out (<code>.env.development.example:41</code>, <code>.env.production.example:53</code>) — uncomment and annotate as <strong>required</strong>, not optional.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.1.2</span><span class="task-title">Restart all four processes with --update-env</span></summary>
+                <div class="task-body"><p><code>pm2 restart mission-control mission-control-dev mission-control-scheduler-dev mission-control-scheduler-prod --update-env</code>. Without <code>--update-env</code> PM2 keeps the old environment and the pin silently does nothing.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P0.1.3</span><span class="task-title">Verify the pin took</span></summary>
+                <div class="task-body"><p><code>owner-auth-smoke.ts</code> still passes (it covers the <code>OWNER_EMAIL</code>-miss regression), and <code>/api/account</code> returns the pinned identity. Confirm the log shows no <code>[user-scope]</code> unresolvable warning.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.2</span>
+              <span class="task-title">Manual: verify the tunnel's origin URL (blocks P4.1)</span>
+            </summary>
+            <div class="task-body">
+              <p>Cloudflare Zero Trust → Networks → Tunnels → the mission-control tunnel → Public Hostnames. Confirm the service for <strong>both</strong> <code>ms-prod.salsquared.xyz</code> and <code>ms-dev.salsquared.xyz</code> targets <code>localhost</code> or <code>127.0.0.1</code>. <em>Parallel-safe</em> with P0.1 and all of P1. <strong>Cannot be verified from the box</strong> — <code>cloudflared</code> runs <code>tunnel run --token …</code> with no local config file. If either targets a LAN address, P4.1.1 must repoint it in the dashboard first or prod goes dark.</p>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.3</span>
+              <span class="task-title">Backup: confirm encryption, take a pre-migration snapshot</span>
+            </summary>
+            <div class="task-body">
+              <p>Confirm <code>~/.config/mission-control/backup.pub</code> exists — <code>scripts/backup-db.sh</code> age-encrypts only when it does, and §3.2 makes it a hard prerequisite now that the snapshot becomes multi-person-sensitive. Then run the script for a pre-migration snapshot of <code>prod.db</code> + <code>data/resumes/</code>. <em>Parallel-safe</em> with P0.1 and P0.2.</p>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Identity foundation (the serial bottleneck)</span>
+        </summary>
+        <div class="task-body">
+          <p>The substrate every other phase builds on. <code>lib/viewer.ts</code> is the <strong>most-constrained node in the whole plan</strong> — schedule it first and review it hardest; it is also the file where a single copy-pasted memo is a total authorization bypass (R2).</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.1</span>
+              <span class="task-title">Schema + migration</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <code>prisma/schema.prisma</code> + one new migration directory. <em>Parallel-safe</em> with P1.2 (disjoint files). <em>Depends on</em> P0.1.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.1</span><span class="task-title">Add User.role and the AiUsage model</span></summary>
+                <div class="task-body"><p><code>role String @default("crew")</code> on <code>User</code> (OQ4a). New <code>AiUsage { userId, day, count, @@unique([userId, day]) }</code> with <code>onDelete: Cascade</code> to match all 17 existing <code>User</code> relations, plus the <code>aiUsage AiUsage[]</code> back-relation.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.2</span><span class="task-title">Hand-add the owner promotion to the generated SQL</span></summary>
+                <div class="task-body"><p>Append <code>UPDATE "User" SET role = 'owner';</code> to the generated migration. Deterministic because each DB holds exactly one row today. Do <strong>not</strong> leave this to a separate script — a migration that can be applied without its backfill is a migration that will be.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.1.3</span><span class="task-title">Apply to both DBs, restart both schedulers</span></summary>
+                <div class="task-body"><p><code>npx prisma migrate deploy</code> once per tier with <code>DATABASE_URL</code> pointed at each — <code>file:./dev.db</code> and <code>file:./prod.db</code>, <strong>never</strong> <code>file:./prisma/dev.db</code> (Prisma resolves relative to <code>prisma/</code> and would create a phantom DB). Then <code>pm2 restart mission-control-scheduler-dev mission-control-scheduler-prod</code> so any <code>P2021</code>-disabled job re-arms (R8).</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.2</span>
+              <span class="task-title">lib/viewer.ts — resolveViewer() (MOST CONSTRAINED)</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <strong>new</strong> <code>lib/viewer.ts</code>. Sole owner of the file. <em>Parallel-safe</em> with P1.1 and P4.1. <em>Depends on</em> P0.1.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title">The strict path — one identity source, no memo</span></summary>
+                <div class="task-body"><p><code>await headers()</code> → <code>cf-access-authenticated-user-email</code> → trim/lowercase → <code>prisma.user.findUnique({ where: { email }, select: { id, email, role } })</code>. <strong>No memoization of any kind</strong> (OQ1a + R2); open the file with the danger callout from §2.3 as a comment so the next reader cannot miss why. Unknown email → <code>null</code> + one loud <code>console.warn</code> naming it (OQ3a).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title">The out-of-request-scope catch must yield null</span></summary>
+                <div class="task-body"><p><code>headers()</code> throws outside a request scope (<code>route-auth-smoke.ts:8</code> documents it). The <code>catch</code> resolves to <strong><code>null</code></strong>, never to <code>resolveOwner()</code> — wiring it to an identity "so the smokes pass" reinstates the bypass OQ2 removed, on a path reachable from anything that imports a guard.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.2.3</span><span class="task-title">The two break-glass branches</span></summary>
+                <div class="task-body"><p>Separate explicit branches, evaluated <em>before</em> the strict path (so P4.2's JWT check is skipped on them): a dev-tier escape for the integration suites (OQ14a) and an on-box prod recovery escape. Each gated on its own env var (off by default) <strong>and</strong> a loopback remote-address check; the dev one additionally on <code>NODE_ENV !== 'production'</code> as a code condition. One <code>console.warn</code> per process when either fires. Documented commented-out in the <code>.example</code> files only — never in a loaded <code>.env</code>.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.3</span>
+              <span class="task-title">lib/auth-guards.ts — requireOwner + repoint the three existing guards</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <code>lib/auth-guards.ts</code>, plus docstring-only edits to <code>lib/owner.ts</code> and <code>lib/user-scope.ts</code>. <em>Depends on</em> P1.2 and P1.1 (needs <code>role</code> on the model).</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.1</span><span class="task-title">Add requireOwner() and requireOwnerOrService()</span></summary>
+                <div class="task-body"><p>Same <code>{ session } | { error }</code> shape as <code>requireSession()</code> so no handler body changes; 403 (not 401) for an authenticated non-owner. <code>requireOwnerOrService</code> keeps the Bearer branch byte-for-byte (<code>lib/auth-guards.ts:39-67</code>) and applies the owner check only on the session branch.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.2</span><span class="task-title">Repoint the three existing guards and add role to the session</span></summary>
+                <div class="task-body"><p><code>requireSession</code> / <code>requireLocalOrSession</code> / <code>requireSessionOrService</code> call <code>resolveViewer()</code> instead of <code>resolveOwner()</code>. Synthesized user becomes <code>{ id, email, role }</code> — purely additive, so the ~104 call sites and their <code>session.user.*</code> reads are untouched. Do <strong>not</strong> collapse <code>requireLocalOrSession</code> into <code>requireSession</code> (deferred cleanup: 29 files, zero behaviour change).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.3.3</span><span class="task-title">Narrow the two owner-resolver docstrings</span></summary>
+                <div class="task-body"><p><code>lib/owner.ts</code>: <code>resolveOwner()</code> is now "the owner's identity for contexts with no request" (scheduler + break-glass), no longer on the request path. <code>lib/user-scope.ts</code>: fix the <strong>false</strong> comment at <code>:5</code> — <em>"the kiosk use-case — localhost / mc.local skip auth entirely"</em> — and mark <code>resolveOwnerUserId()</code> as having no production callers once P2.3 lands.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.4</span>
+              <span class="task-title">Foundation smokes</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <strong>new</strong> <code>scripts/tests/hermetic/viewer-resolution-smoke.ts</code> + edits to <code>user-scoping-smoke.ts</code> and <code>owner-auth-smoke.ts</code>. <em>Depends on</em> P1.2, P1.3. Auto-registers in the pre-push gate by glob.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.4.1</span><span class="task-title">viewer-resolution-smoke — the R2 regression</span></summary>
+                <div class="task-body"><p>Assert: two <em>different</em> header emails resolved back-to-back return two <em>different</em> viewers (the memo trap); no header → <code>null</code>; unknown email → <code>null</code>; an out-of-request-scope call → <code>null</code> and not an identity; each break-glass branch is inert with its env var unset.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.4.2</span><span class="task-title">Role invariant in user-scoping-smoke</span></summary>
+                <div class="task-body"><p>Extend the existing OWNER + STRANGER fixtures: exactly one <code>role='owner'</code> row, and its email equals <code>OWNER_EMAIL</code> when set. This is what converts OQ4a's lock-out risk into a test failure.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P1.4.3</span><span class="task-title">Adapt the existing OWNER_EMAIL-pinning smokes</span></summary>
+                <div class="task-body"><p><code>owner-auth-smoke.ts</code> plus the 7 multi-user smokes that pin <code>OWNER_EMAIL</code> and reset the memo. They currently exercise <code>resolveOwner()</code> through the guards; the guards now go through <code>resolveViewer()</code>, so their seams need repointing without weakening what they assert.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — Role gating + per-user isolation</span>
+        </summary>
+        <div class="task-body">
+          <p><em>Depends on</em> P1.3. <strong>P2.4 is a serial barrier inside this phase</strong> — its 68 broadcast call sites overlap the file footprint of nearly every sibling (see §5.3's contention table), so it runs alone in its round and the rest fan out afterwards. To make that clean, P2.4 also <strong>absorbs the four owner-only guard swaps whose files it is already editing</strong>.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.4</span>
+              <span class="task-title">SSE per-user fan-out (runs FIRST in this phase — serial barrier)</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <code>lib/events.ts</code>, <code>app/api/events/route.ts</code>, ~20 broadcast-site files, <code>hooks/useServerEvents.ts</code> (type alias only), <code>events-broadcast-regression-smoke.ts</code>. <em>Depends on</em> P1.3. <strong>Blocks</strong> P2.1, P2.3, P2.5, P2.6.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.4.1</span><span class="task-title">Discriminated union + per-subscriber registry</span></summary>
+                <div class="task-body"><p>Split <code>ModelName</code> into user-scoped (14) and global (<code>Cache</code>, <code>FinanceTick</code>) sets; <code>ServerEvent = UserServerEvent (userId required) | GlobalServerEvent</code> (OQ8a). <code>subscribeToEvents(viewerId, listener)</code>; the registry holds <code>{ viewerId, listener }</code> entries — <strong>keep the existing per-listener <code>try/catch</code></strong> (<code>lib/events.ts:22-32</code>) so one dead client still cannot blackhole the loop.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.4.2</span><span class="task-title">Migrate all 68 call sites (tsc-driven)</span></summary>
+                <div class="task-body"><p><code>tsc --noEmit</code> enumerates them. Every route has its <code>userId</code> from the guard; <code>lib/applications/ingest.ts:569</code>, <code>lib/postings/track-as-application.ts</code>, <code>lib/applications/close-from-posting.ts:60</code> already thread it. Normalize <code>scheduler/jobs/job-watcher.ts:804</code> — move <code>watchlist.userId</code> off the <code>id</code> field onto <code>userId</code>; free, because no consumer reads <code>id</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.4.3</span><span class="task-title">Absorb the 4 contended owner-only guard swaps</span></summary>
+                <div class="task-body"><p>While in these files anyway, swap their guard to <code>requireOwner</code> (<code>requireOwnerOrService</code> for <code>calendar/event</code>): <code>applications/backfill</code>, <code>calendar/event</code>, <code>notifications/test</code>, <code>research/saved</code>. Exactly these four owner-only routes carry <code>broadcastEvent</code> calls; folding them here makes P2.1 fully file-disjoint from P2.4 and removes a node from the critical path.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.4.4</span><span class="task-title">Cross-user isolation assertion</span></summary>
+                <div class="task-body"><p>Extend <code>events-broadcast-regression-smoke.ts</code>: two subscribers with different viewer ids each receive only their own user-scoped events, and both receive global ones. Keep the existing Bug-G throwing-listener regression intact.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.1</span>
+              <span class="task-title">Swap the remaining 22 owner-only routes to requireOwner</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: 22 route files, import + call swap only. <em>Depends on</em> P2.4 (which took the other 4). <em>Parallel-safe</em> with P2.3, P2.5, P2.6.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title">15 other-dash routes</span></summary>
+                <div class="task-body"><p><code>ai</code>, <code>ai/llmleaderboard</code>, <code>company-news</code>, <code>finance</code>, <code>finance/history</code>, <code>space</code>×5, <code>research</code>, <code>research/hf</code>, <code>research/historical</code>, <code>research/review</code>, <code>research/import</code>. (<code>research/saved</code> is in P2.4.3.)</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.2</span><span class="task-title">5 ops routes</span></summary>
+                <div class="task-body"><p><code>system</code>, <code>system/cache/invalidate</code>, <code>system/logs</code>, <code>system/logs/historical</code>, <code>system/fetcher-health</code>. <code>system/logs</code> is the sharpest — the ring buffer carries prod Prisma query parameters, i.e. every user's data.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.1.3</span><span class="task-title">2 remaining Google-dependent routes</span></summary>
+                <div class="task-body"><p><code>applications/events/adopt</code>, <code>applications/events/gcal-candidates</code> — both call <code>getGoogleAuthClient</code> directly and unguarded, so they would throw for a crew viewer with no <code>Account</code> row.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.2</span>
+              <span class="task-title">Role-matrix hermetic smoke over all 67 routes</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <strong>new</strong> <code>scripts/tests/hermetic/role-matrix-smoke.ts</code> (or extend <code>route-auth-smoke.ts</code>'s <code>ROUTES</code> array from 19 to 67 with a <code>role</code> field). <em>Depends on</em> P2.1 and P2.4.3.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.2.1</span><span class="task-title">Assert the declared class matches the guard in use</span></summary>
+                <div class="task-body"><p>Structural, same technique as the existing smoke: import present, awaited, error-wired. 26 owner-only + 39 crew-allowed + 2 deliberately unguarded = 67.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.2.2</span><span class="task-title">Fail on an unclassified route</span></summary>
+                <div class="task-body"><p>Glob <code>app/api/**/route.ts</code> and fail if any file is absent from the manifest. <strong>This is what gives the guard approach the one virtue a middleware manifest would have had</strong> — a new route with no role decision cannot reach <code>main</code> (R1).</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.3</span>
+              <span class="task-title">Per-user config bleed — the findGlobalSetting cluster</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <code>app/api/postings/route.ts</code>, <code>scheduler/jobs/{job-watcher,posting-digest,classify-pending-employment-types}.ts</code>, <code>lib/notifications/dispatch.ts</code>, <code>lib/repositories/settings.ts</code>. <em>Depends on</em> P2.4 (shares <code>job-watcher.ts</code>). <em>Parallel-safe</em> with P2.1, P2.5, P2.6. <strong>R9 — the likeliest task to be forgotten, because it lives in the scheduler rather than a route.</strong></p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.3.1</span><span class="task-title">job-watcher:227 — the ingestion drop (highest severity)</span></summary>
+                <div class="task-body"><p><code>findGlobalSettingForUser(watchlist.userId)</code>. Today the owner's filters drop crew postings at <code>:258-264</code> <em>before any DB write</em>, so the loss leaves no row to notice. Add an assertion that two users' filters do not cross-apply.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.3.2</span><span class="task-title">postings route:173 — crew feed read filter</span></summary>
+                <div class="task-body"><p><code>findGlobalSettingForUser(userId)</code>; the viewer is already resolved at <code>:62</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.3.3</span><span class="task-title">posting-digest:46 — move the read inside the loop</span></summary>
+                <div class="task-body"><p>It is currently hoisted above <code>for (const w of watchlists)</code>; <code>w.userId</code> is already selected at <code>:37</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.3.4</span><span class="task-title">classify-pending:74 — delete the gate (OQ11a)</span></summary>
+                <div class="task-body"><p>Remove the <code>findGlobalSetting()</code> read, the <code>matchesNegativeFilters</code> skip, the <code>filteredIds</code> set and its log line, plus the now-unused imports. The <code>pending</code> select is <strong>unchanged</strong>. Update the stale comment asserting <em>"a global match means the posting is hidden on every watchlist"</em>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.3.5</span><span class="task-title">dispatch.ts:96 — quiet hours read the notification's own user</span></summary>
+                <div class="task-body"><p><code>where: { userId }</code> instead of <code>where: { id: "global" }</code>. Strictly a correctness fix — no new delivery wiring, per the standing hold on the notification system.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.3.6</span><span class="task-title">Retire the zero-arg accessor</span></summary>
+                <div class="task-body"><p>With all four callers gone, mark <code>findGlobalSetting()</code> — and therefore <code>resolveOwnerUserId()</code> — as having no production callers. Keep both functions and their smoke coverage; deletion is separate cleanup.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.5</span>
+              <span class="task-title">Per-user Gemini daily cap</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <strong>new</strong> <code>lib/ai/quota.ts</code>, <strong>new</strong> <code>ai-quota-smoke.ts</code>, 8 LLM-bearing crew route files. <em>Depends on</em> P1.1 (<code>AiUsage</code>) and P2.4 (shares <code>resumes</code>, <code>resumes/specialize</code>, <code>profile/import</code>). <em>Parallel-safe</em> with P2.1, P2.3, P2.6.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.5.1</span><span class="task-title">consumeAiCredit(userId, role)</span></summary>
+                <div class="task-body"><p>Upsert-and-increment on <code>@@unique([userId, day])</code>. Reuse <code>utcDateBucket()</code> from <code>lib/notifications/dispatch.ts:56</code> — do not re-derive a date bucket. Owner exempt; crew limited by <code>CREW_AI_DAILY_LIMIT</code> (default 20). Returns <code>{ ok, used, limit }</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.5.2</span><span class="task-title">Wire the 8 routes</span></summary>
+                <div class="task-body"><p><code>resumes</code>, <code>resumes/specialize</code>, <code>profile/bullets/assist</code>, <code>profile/tagline/draft</code>, <code>profile/import</code>, <code>discovery/suggest</code>, <code>watchlists/[id]/run</code>, <code>canons/[id]/preview</code>. Check at the top, before any work; 429 with <code>{ used, limit }</code> on refusal.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.5.3</span><span class="task-title">Quota smoke</span></summary>
+                <div class="task-body"><p>Owner unlimited; crew refused at N+1; the day bucket rolls over; two crew members have independent counters.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.6</span>
+              <span class="task-title">Per-crew watchlist cap</span>
+            </summary>
+            <div class="task-body">
+              <p>Scope: <code>app/api/watchlists/route.ts</code> (POST only). <em>Depends on</em> P2.4 (shares the file). <em>Parallel-safe</em> with P2.1, P2.3, P2.5.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P2.6.1</span><span class="task-title">Count-and-reject on create</span></summary>
+                <div class="task-body"><p>Owner exempt; crew capped at <code>CREW_WATCHLIST_LIMIT</code> (default 5). 400 naming the limit so the UI can state it plainly. Bounds R7 — <code>defaultLoadDue</code> has no ceiling today (<code>job-watcher.ts:916-921</code>).</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Frontend</span>
+        </summary>
+        <div class="task-body">
+          <p><em>Depends on</em> P1.3. All six tasks own disjoint files, so after P3.1 they fan out completely.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">role on /api/account + useAccount()</span></summary>
+            <div class="task-body"><p>Scope: <code>app/api/account/route.ts</code>, <code>hooks/useAccount.ts</code>. <em>Depends on</em> P1.3. Zero extra queries — <code>role</code> is already in the guard's synthesized session. <strong>Blocks</strong> P3.3, P3.4, P3.5.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">dashesForRole() in the dash registry</span></summary>
+            <div class="task-body"><p>Scope: <code>components/dashboard/dashes.tsx</code> (sole owner). <em>Parallel-safe</em> with P3.1 — pure, depends on nothing. Crew set = <code>applications</code>, <code>profile</code>, <code>planning</code> (OQ5a). No downstream machinery needed: <code>useDashCarousel</code> already drops ids absent from <code>baseDashes</code> (<code>:80</code>) and <code>syncAvailableDashes</code> purges them from the persisted order.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">Gate the shell on role resolution</span></summary>
+            <div class="task-body"><p>Scope: <code>components/Dashboard.tsx</code> (sole owner). <em>Depends on</em> P3.1, P3.2. Render the loading state until <code>useAccount()</code> returns, then mount the shells with the filtered set (OQ9a). This is what prevents the restore-by-id regression — not a cosmetic choice.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.4</span><span class="task-title">Hide the Library entry point for crew</span></summary>
+            <div class="task-body"><p>Scope: <code>DesktopShell.tsx</code>, <code>MobileShell.tsx</code>, <code>components/overlays/LaunchpadOverlay.tsx</code>. <em>Depends on</em> P3.1. <em>Parallel-safe</em> with P3.3 (disjoint files). Its route <code>research/saved</code> is owner-only and <code>getTopic()</code> maps both crew dashes to <code>'General'</code>, so for crew it is an empty panel behind a 403. <strong>Leave the AI Companion alone</strong> — it is a mock and flag-off (§2.10).</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.5</span><span class="task-title">Hide the Connect-Google affordance for crew</span></summary>
+            <div class="task-body"><p>Scope: <code>ProfileView.tsx</code>, <code>ApplicationsView.tsx</code>, <code>components/widgets/CalendarWidget.tsx</code>. <em>Depends on</em> P3.1. <em>Parallel-safe</em> with P3.2-P3.4, P3.6. Condition on <code>role === 'crew'</code>, <strong>not</strong> on <code>googleConnected</code> — required by OQ6a so the UI does not invite crew into a scope grant that is an explicit non-goal.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P3.6</span><span class="task-title">Surface the quota 429</span></summary>
+            <div class="task-body"><p>Scope: the resume / profile mutation error handlers. <em>Depends on</em> P2.5. <em>Parallel-safe</em> with P3.2-P3.5. Render "you've used N of M generations today" from <code>{ used, limit }</code> rather than a generic failure.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P4</span>
+          <span class="task-title">Phase 4 — Header authenticity, both layers (OQ13a)</span>
+        </summary>
+        <div class="task-body">
+          <p>Runs fully in parallel with Phases 2 and 3. <strong>Must complete before P5.3</strong> — without it, role gating is decorative. P4.1 <em>authors</em> the config changes; the cutover itself happens in P5.2 so prod is not disturbed mid-build.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Layer 1 — remove the LAN route to the origin</span></summary>
+            <div class="task-body">
+              <p>Scope: <code>package.json</code>, <code>~/.config/caddy/Caddyfile</code>, <code>launch-ms.sh</code>. <em>Depends on</em> <strong>P0.2</strong> (blocking manual check). <em>Parallel-safe</em> with all of P1-P3.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.1.1</span><span class="task-title">Bind prod to loopback</span></summary>
+                <div class="task-body"><p><code>next start -p 3101 -H 127.0.0.1</code> in <code>package.json:8</code>. Confirm PM2's <code>args: "run start -- -p 3101"</code> still composes (the <code>--</code> passthrough duplicates <code>-p</code>; harmless, but verify).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.1.2</span><span class="task-title">Retire the mc.local prod vhost</span></summary>
+                <div class="task-body"><p>Edit <code>~/.config/caddy/Caddyfile</code> — <strong>the single real file</strong>; <code>/opt/homebrew/etc/Caddyfile</code> is a <em>symlink</em> to it (verify with <code>ls -la</code> before touching either path). Load-bearing: Caddy proxies <code>mc.local:443 → 127.0.0.1:3101</code>, so P4.1.1's bind alone would not close the LAN path. Reload at cutover.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.1.3</span><span class="task-title">Repoint the launcher, delete its stale comment</span></summary>
+                <div class="task-body"><p><code>launch-ms.sh:33-37</code> — both <code>APP_URL</code> branches (<code>https://mc.local</code> and the <code>http://localhost:$PORT</code> fallback) die; point at <code>https://ms-prod.salsquared.xyz</code>. Delete the <code>:31</code> comment instructing the reader to set <code>NEXTAUTH_URL=https://mc.local</code> — already false; the real env is <code>https://ms-prod.salsquared.xyz</code>, which is why retiring the vhost does <em>not</em> break the Google connect redirect. Leave the ~11 fetcher User-Agent <code>mc.local</code> strings alone — outbound politeness labels.</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Layer 2 — verify Cf-Access-Jwt-Assertion</span></summary>
+            <div class="task-body">
+              <p>Scope: <strong>new</strong> <code>lib/access-jwt.ts</code>, <strong>new</strong> <code>access-jwt-smoke.ts</code>, one call added inside <code>lib/viewer.ts</code>. <em>Depends on</em> P1.2 (shares <code>lib/viewer.ts</code>). <em>Parallel-safe</em> with P4.1 and all of P2/P3.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.2.1</span><span class="task-title">JWKS fetch + cache + verify</span></summary>
+                <div class="task-body"><p>Team JWKS at <code>/cdn-cgi/access/certs</code>, module-memory cache with a TTL and refresh-on-unknown-<code>kid</code> so key rotation needs no restart. RS256 signature, <code>iss</code>, per-app <code>aud</code>, <code>exp</code>/<code>nbf</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.2.2</span><span class="task-title">Email-claim cross-check + fail-closed contract</span></summary>
+                <div class="task-body"><p>The verified token's <code>email</code> must equal the header; a mismatch means tampering — reject. Document <strong>fail-closed</strong> in the module docstring: unlike every cache and rate bucket in this repo, an unavailable JWKS must 401, never admit (R4d).</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.2.3</span><span class="task-title">Branch order: break-glass first, else strict</span></summary>
+                <div class="task-body"><p>A loopback break-glass request carries no JWT, so verification is skipped on those branches only. Backwards, the escape becomes dead code and the integration suites fail with a misleading JWT error.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P4.2.4</span><span class="task-title">Env + smoke</span></summary>
+                <div class="task-body"><p>Team domain + per-app AUD (prod and dev differ) in both <code>.env.*.example</code>. Smoke: a forged header with no valid JWT → no viewer; an expired token → no viewer; a header/claim mismatch → no viewer.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P5</span>
+          <span class="task-title">Phase 5 — Verify, deploy, go live (strictly ordered)</span>
+        </summary>
+        <div class="task-body">
+          <p>Every step here is serial, and the order carries the security property from R11.</p>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.1</span><span class="task-title">Verify</span></summary>
+            <div class="task-body">
+              <p><em>Depends on</em> all of P2, P3, P4.2, P1.4.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.1.1</span><span class="task-title">tsc + full hermetic suite</span></summary>
+                <div class="task-body"><p><code>npx tsc --noEmit</code>, then <code>npm run test:hermetic</code>. The four new smokes auto-register by glob — no list to maintain.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.1.2</span><span class="task-title">Regenerate apis.html</span></summary>
+                <div class="task-body"><p><code>npm run gen:api-docs</code> and commit. <code>api-docs-smoke.ts</code> runs the generator in <code>--check</code> mode and <strong>fails the push if stale</strong>. No new routes, so no new <code>meta.ts</code> — but <code>requireOwner</code> now renders as an auth chip on 26 routes, which is itself the audit artifact.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.1.3</span><span class="task-title">Integration suites via the dev break-glass</span></summary>
+                <div class="task-body"><p>Enable the dev-tier var, run <code>npm run test:integration</code> against <code>mission-control-dev</code>, then <strong>unset it and restart dev</strong>. Confirm the warn line appeared in the log viewer while it was on — that is the observability property being tested, not just the suites.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.1.4</span><span class="task-title">Security review before deploy</span></summary>
+                <div class="task-body"><p>Route to <code>security-auditor</code>, not only the default review gate — this change touches authn/authz, adds two deliberate bypass branches, and its failure mode is total (R1, R4c).</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.2</span><span class="task-title">Deploy + network cutover</span></summary>
+            <div class="task-body"><p><em>Depends on</em> P5.1 and P4.1. <code>npm run build</code> → <code>pm2 restart mission-control --update-env</code> (picks up the loopback bind) → <code>brew services restart caddy</code> (drops the vhost) → restart both schedulers. Verify from a <strong>second LAN device</strong> that both <code>mc.local</code> and <code>:3101</code> are unreachable, and that <code>ms-prod.salsquared.xyz</code> still works.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.3</span><span class="task-title">Widen the Access policy — never before P5.2</span></summary>
+            <div class="task-body"><p>Add crew emails to the <code>ms-prod.salsquared.xyz</code> Access app's Allow policy; leave <code>ms-dev</code> owner-only (OQ12a). Verify each crew email reaches the origin and lands on the 403-unknown-identity path — they have no <code>User</code> row yet, and that is the expected, correct state. <strong>R11: doing this before P5.2 serves crew as the owner.</strong></p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.4</span><span class="task-title">Provision crew</span></summary>
+            <div class="task-body">
+              <p><em>Depends on</em> P5.3.</p>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.4.1</span><span class="task-title">scripts/manage-crew.ts — add / list / remove</span></summary>
+                <div class="task-body"><p>Genuinely new work: no production <code>user.create</code> path exists (only the NextAuth adapter and test fixtures). <code>remove</code> must delete the <code>User</code> row (all 17 relations cascade) <strong>and</strong> first collect that person's <code>GeneratedResume</code> ids so their files at <code>data/resumes/&lt;id&gt;.&lt;ext&gt;</code> can be swept — the filesystem does not cascade.</p></div>
+              </details>
+              <details class="task">
+                <summary><input type="checkbox"><span class="task-id">P5.4.2</span><span class="task-title">Create the rows and disclose</span></summary>
+                <div class="task-body"><p>One <code>role='crew'</code> row per person. Before they enter anything, tell them in one plain sentence what is stored and that the owner can read all of it (§3.2 — disclosable, not fixable).</p></div>
+              </details>
+            </div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox"><span class="task-id">P5.5</span><span class="task-title">Regression pass</span></summary>
+            <div class="task-body"><p><em>Depends on</em> P5.4. <strong>Owner:</strong> all 8 dashes, Library and the log tail present, Gmail ingest still landing events. <strong>Crew:</strong> 3 dashes only; a direct hit on an owner-only route 403s; applications / postings / resumes are their own; the Connect-Google affordance is absent; the quota message renders at the limit.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <h3>Docs to update</h3>
+      <p>Phase 6, and <strong>not optional</strong> — one item is enforced by the pre-push hook and four others are load-bearing statements that are now false. All are file-disjoint from each other and from every code phase, so they fan out freely, but they must land in the same push as the code.</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>Id</th><th>File</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td>P6.1</td><td><code>docs/apis.html</code></td><td><strong>Generated — enforced.</strong> <code>npm run gen:api-docs</code> + commit, or <code>api-docs-smoke.ts</code> fails the push. Any <em>new</em> route would additionally need a sibling <code>meta.ts</code> (none added here).</td></tr>
+          <tr><td>P6.2</td><td><code>docs/cloudflare-access-auth.html</code></td><td>Mark <code>:63</code>'s multi-user non-goal <strong>superseded</strong> by this doc, and <code>:283</code>'s <strong>OQ3b</strong> — which declined JWT verification as redundant <em>"in the current single-owner topology"</em> — <strong>reversed</strong> by OQ13a, stating that the premise expired at the second user. Link both ways.</td></tr>
+          <tr><td>P6.3</td><td><code>docs/user-stories.md:210</code></td><td>Note <strong>S15.20 now satisfied</strong> — by edge identity + no-fallback resolution + the loopback bind, <em>not</em> by the passcode mechanism that section describes (already marked superseded at <code>:145</code>). Distinguish mechanism from requirement.</td></tr>
+          <tr><td>P6.4</td><td><code>CLAUDE.md:205</code></td><td>Delete the stale LAN-trust clause — <em>"while LAN hosts (localhost / mc.local) reach the origin directly"</em> — and rewrite the Auth section around viewer resolution, the role guard, and the no-network-bypass rule.</td></tr>
+          <tr><td>P6.5</td><td><code>docs/architecture.html:604</code></td><td>Rewrite the <code>requireLocalOrSession</code> bullet: it claims the guard "treats every request that reaches the origin — LAN or Access-passed tunnel — as the single owner" and closes with <em>"The Caddy reverse proxy at <code>mc.local</code> remains the LAN boundary."</em> Both are now false. Also update the guard count (4 → 6 with <code>requireOwner</code> + <code>requireOwnerOrService</code>).</td></tr>
+          <tr><td>P6.6</td><td><code>docs/backup-recovery.md:102</code></td><td>Same stale LAN-trust sentence. Also state that the snapshot is now multi-person-sensitive and that <code>~/.config/mission-control/backup.pub</code> is a prerequisite, not an option (§3.2).</td></tr>
+          <tr><td>P6.7</td><td><code>CLAUDE.md</code> (Dashboard §)</td><td><code>BASE_DASHES</code> lives in <code>components/dashboard/dashes.tsx:44</code>, not <code>Dashboard.tsx</code> (now a 27-line shell picker). Add <code>dashesForRole()</code> and the <em>"hiding a dash is not access control"</em> invariant.</td></tr>
+          <tr><td>P6.8</td><td><code>CLAUDE.md</code> (Gemini §)</td><td>The bucket is no longer "process-shared" — it is a <strong>cross-tier shared file</strong> at <code>data/gemini-bucket.db</code>. Add the per-user daily cap, and add the three undocumented cache files to the list: <code>data/{gemini-bucket,fetcher-health,logs}.db</code>.</td></tr>
+          <tr><td>P6.9</td><td><code>.env.{development,production}.example</code></td><td><code>OWNER_EMAIL</code> promoted from commented to <strong>required</strong>; add <code>CREW_AI_DAILY_LIMIT</code>, <code>CREW_WATCHLIST_LIMIT</code>, the Access team domain + per-app AUD, and both break-glass vars <strong>commented out</strong> with a warning about what enabling them does.</td></tr>
+          <tr><td>P6.10</td><td><code>docs/llm-calls.html</code></td><td>Note the per-user cap on the 8 crew-reachable callsites, and that the content-addressed cache never dedupes across users by design (§2.9).</td></tr>
+          <tr><td>P6.11</td><td><code>docs/next_steps.md</code></td><td>Per the session protocol — updated in the same logical step as the commits, and flushed to match <code>origin/main</code> before any push.</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <h3>Parallelization &amp; critical path</h3>
+      <p>Edges read "must finish before"; siblings with no edge between them fan out to parallel agents.</p>
+      <pre class="mermaid">
+flowchart LR
+  P01["P0.1 OWNER_EMAIL<br/>serial prereq"] --> P11["P1.1 schema + migration"]
+  P01 --> P12["P1.2 lib/viewer.ts<br/>MOST CONSTRAINED"]
+  P02["P0.2 cloudflared origin-URL<br/>dashboard check — manual"] --> P41["P4.1 loopback bind<br/>+ retire mc.local vhost"]
+  P12 --> P13["P1.3 guards + requireOwner"]
+  P11 --> P13
+  P13 --> P14["P1.4 foundation smokes"]
+  P13 --> P24["P2.4 SSE fan-out<br/>68 sites — serial barrier"]
+  P12 --> P42["P4.2 Access-JWT verify"]
+  P24 --> P21["P2.1 22 guard swaps"]
+  P24 --> P23["P2.3 config-bleed fixes"]
+  P24 --> P25["P2.5 Gemini quota"]
+  P24 --> P26["P2.6 watchlist cap"]
+  P21 --> P22["P2.2 role-matrix smoke<br/>all 67 routes"]
+  P13 --> P31["P3.1 role on /api/account"]
+  P31 --> P3x["P3.2-P3.6 frontend fan-out"]
+  P25 --> P3x
+  P22 --> P51["P5.1 verify + gen:api-docs"]
+  P23 --> P51
+  P26 --> P51
+  P3x --> P51
+  P14 --> P51
+  P42 --> P51
+  P51 --> P52["P5.2 build + deploy + cutover"]
+  P41 --> P52
+  P52 --> P53["P5.3 crew emails on Access policy<br/>NEVER before P5.2"]
+  P53 --> P54["P5.4 provision crew rows"]
+  P54 --> P55["P5.5 owner + crew regression"]
+      </pre>
+
+      <p><strong>File contention.</strong> One task owns each file. The dominant fact is that <strong>P2.4's ~20-file broadcast footprint overlaps almost every Phase 2 sibling</strong>, which is why it is a serial barrier rather than a parallel peer — and why it absorbs the four owner-only guard swaps it would otherwise collide with.</p>
+      <div class="table-wrap">
+      <table>
+        <thead><tr><th>File / module</th><th>Tasks that want it</th><th>Resolution</th></tr></thead>
+        <tbody>
+          <tr><td><code>lib/viewer.ts</code></td><td>P1.2, P4.2.3</td><td>serialize — P1.2 creates it, P4.2 adds one call after</td></tr>
+          <tr><td><code>prisma/schema.prisma</code></td><td>P1.1.1 (role + AiUsage)</td><td>one migration, one owner — do not split</td></tr>
+          <tr><td><code>applications/backfill</code>, <code>calendar/event</code>, <code>notifications/test</code>, <code>research/saved</code></td><td>P2.1 (guard swap) <strong>+</strong> P2.4.2 (broadcast)</td><td><strong>folded into P2.4.3</strong> — the only 4 owner-only routes carrying broadcasts; folding makes P2.1 ∥ P2.4 disjoint</td></tr>
+          <tr><td><code>scheduler/jobs/job-watcher.ts</code></td><td>P2.3.1 (<code>:227</code>) + P2.4.2 (<code>:799-804</code>)</td><td>serialize — P2.4 first, then P2.3</td></tr>
+          <tr><td><code>resumes</code>, <code>resumes/specialize</code>, <code>profile/import</code></td><td>P2.5.2 (quota) + P2.4.2 (broadcast)</td><td>serialize — P2.5 after P2.4</td></tr>
+          <tr><td><code>app/api/watchlists/route.ts</code></td><td>P2.6.1 (cap) + P2.4.2 (<code>:151</code>)</td><td>serialize — P2.6 after P2.4</td></tr>
+          <tr><td><code>components/Dashboard.tsx</code></td><td>P3.3</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>DesktopShell</code>, <code>MobileShell</code>, <code>LaunchpadOverlay</code></td><td>P3.4</td><td>sole owner — parallel-safe with P3.3</td></tr>
+          <tr><td><code>package.json</code>, Caddyfile, <code>launch-ms.sh</code></td><td>P4.1</td><td>sole owner — no overlap with any code task</td></tr>
+          <tr><td><code>docs/*</code>, <code>.env.*.example</code></td><td>P6.1-P6.11</td><td>all disjoint — full fan-out</td></tr>
+        </tbody>
+      </table>
+      </div>
+
+      <p><strong>Rounds.</strong> A round is a dependency-barrier batch dispatched at once.</p>
+      <ul>
+        <li><strong>Round 0 (human, no agents):</strong> P0.1 · P0.2 · P0.3 — all three parallel. P0.1 gates everything; P0.2 gates only P4.1.</li>
+        <li><strong>Round 1:</strong> P1.1 ∥ P1.2 ∥ P4.1 — three agents, fully disjoint files (schema / new module / config + shell).</li>
+        <li><strong>Round 2:</strong> P1.3 ∥ P4.2 — P4.2 can start as soon as P1.2 lands; P1.3 needs both P1.1 and P1.2.</li>
+        <li><strong>Round 3:</strong> P1.4 ∥ P2.4 ∥ P3.1 — P2.4 is the long pole here (68 call sites); the other two are small.</li>
+        <li><strong>Round 4 (widest fan-out — five agents):</strong> P2.1 ∥ P2.3 ∥ P2.5 ∥ P2.6 ∥ P3.2-P3.6. Every file conflict was resolved in Round 3.</li>
+        <li><strong>Round 5:</strong> P2.2 (role-matrix smoke) ∥ P6.1-P6.11 (docs). The docs round can begin earlier for anything not describing final code.</li>
+        <li><strong>Round 6 (serial, human-supervised):</strong> P5.1 → P5.2 → P5.3 → P5.4 → P5.5. <strong>No parallelism here by design</strong> — the ordering <em>is</em> the security property.</li>
+      </ul>
+      <p><strong>Critical path:</strong> <code>P0.1 → P1.2 → P1.3 → P2.4 → P2.1 → P2.2 → P5.1 → P5.2 → P5.3 → P5.4 → P5.5</code> — eleven nodes, the floor on wall-clock even with unlimited agents. Two nodes deserve scheduling attention:</p>
+      <ul>
+        <li><strong><code>P1.2</code> (<code>lib/viewer.ts</code>) is the most-constrained node.</strong> Everything downstream blocks on it, and it is the file where one copied memo is a complete authorization bypass (R2). Schedule it first, give it the most review, and do not batch it with unrelated work.</li>
+        <li><strong><code>P2.4</code> (SSE) is the longest single task and a barrier.</strong> Its 68 <code>tsc</code>-enumerated call sites are mechanical but wide; starting it the moment P1.3 lands is what keeps Round 4's five-way fan-out from slipping.</li>
+        <li><strong><code>P0.2</code> is the sneaky one</strong> — a two-minute manual dashboard check that, if deferred, blocks P4.1 and therefore P5.2. Do it in Round 0 with the others, not "when we get to Phase 4."</li>
+      </ul>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
