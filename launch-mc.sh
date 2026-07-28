@@ -22,19 +22,18 @@ fi
 export PORT=3101
 
 # ---------------------------------------------------------------------------
-# Caddy reverse proxy — managed as a brew service (auto-starts at login).
-# One-time setup (do once on the Mac mini):
-#   ln -sf ~/.config/caddy/Caddyfile /opt/homebrew/etc/Caddyfile
-#   brew services start caddy
-#   sudo caddy trust        # installs local CA into macOS Keychain
-#   sudo sh -c 'echo "127.0.0.1 mc.local" >> /etc/hosts'
-#   Add to .env:  NEXTAUTH_URL=https://mc.local
+# 2026-07-27 — the local Caddy vhost (mc.local:443 -> 127.0.0.1:3101) is RETIRED,
+# and prod binds loopback-only (see the `-H 127.0.0.1` below and package.json:8).
+# Together they remove the unauthenticated LAN route to the origin, which is what
+# made a forged `Cf-Access-Authenticated-User-Email` header an impersonation
+# vector. See docs/multi-user-crew.html §2.7 / P4.1.
+#
+# Do NOT re-add the vhost, the `127.0.0.1 mc.local` /etc/hosts entry, or the
+# `caddy trust` local CA to "make localhost work" — that reopens the hole. The
+# only inbound path is the Cloudflare Access-gated tunnel; NEXTAUTH_URL is
+# already https://mc.salsquared.xyz, so the Google connect redirect is unaffected.
 # ---------------------------------------------------------------------------
-if pgrep -x caddy > /dev/null; then
-  APP_URL="https://mc.local"
-else
-  APP_URL="http://localhost:$PORT"
-fi
+APP_URL="https://mc.salsquared.xyz"
 
 # Check for restart flag
 if [ "$1" == "--restart" ] || [ "$1" == "restart" ]; then
@@ -66,7 +65,10 @@ else
   echo "Starting the Next.js server via PM2..."
   # Start the Next.js server persistently in the background using PM2 directly to the binary.
   # This prevents NPM wrapper from leaving an orphaned node process running on port 3101 when deleted!
-  NODE_OPTIONS='--max-old-space-size=1024' pm2 start node_modules/next/dist/bin/next --kill-timeout 10000 --name "mission-control" -- start -p $PORT
+  # NOTE: this path invokes the `next` binary directly and therefore does NOT go through
+  # package.json's `start` script — so `-H 127.0.0.1` must be repeated here. Keep it in sync
+  # with package.json:8; dropping it silently reopens the LAN route (docs/multi-user-crew.html P4.1.1).
+  NODE_OPTIONS='--max-old-space-size=1024' pm2 start node_modules/next/dist/bin/next --kill-timeout 10000 --name "mission-control" -- start -p $PORT -H 127.0.0.1
 
   echo "Starting the scheduler process via PM2..."
   # Run scheduler/index.ts directly via tsx — no build step. Scheduler owns

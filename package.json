@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "NODE_OPTIONS='--max-old-space-size=2048' next dev -p 4101 --turbopack",
     "build": "next build --webpack",
-    "start": "NODE_OPTIONS='--max-old-space-size=1024' next start -p 3101",
+    "start": "NODE_OPTIONS='--max-old-space-size=1024' next start -p 3101 -H 127.0.0.1",
     "lint": "eslint",
     "migrate:prod": "DATABASE_URL=file:./prod.db npx prisma migrate deploy",
     "test": "vitest run",
