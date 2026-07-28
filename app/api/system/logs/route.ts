@@ -1,6 +1,6 @@
 import { getLogs, subscribeToLogs, LogEntry, LOG_TIER } from '@/lib/logger';
 import { readLogsSince, latestLogId, type LogRow } from '@/lib/logs-store';
-import { requireSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,9 +19,14 @@ function rowToEntry(r: LogRow): LogEntry {
 }
 
 export async function GET(req: Request) {
-    // The ring buffer captures every console.* call including Prisma query
-    // logs (parameter values), posting URLs, etc. Never expose unauthenticated.
-    const guard = await requireSession();
+    // OWNER-ONLY, and this is the sharpest case in the whole matrix. The ring
+    // buffer captures every console.* call — in prod that includes the Prisma
+    // $allOperations query log WITH PARAMETER VALUES, i.e. every user's rows,
+    // plus posting URLs and anything a library logs. A crew viewer reading this
+    // stream would read the entire instance. `requireSession` was sufficient
+    // when the only viewer was the owner; under multi-user it is not, so this
+    // is `requireOwner` — crew get 403, no verified identity gets 401.
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
 
     const encoder = new TextEncoder();

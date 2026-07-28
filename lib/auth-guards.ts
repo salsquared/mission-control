@@ -179,6 +179,13 @@ export function requireServiceToken(req: Request, config: ServiceTokenConfig) {
 // Returns { userId }, NOT { session } — the handlers behind this guard
 // destructure `userId` directly, and the Bearer branch has no session to hand
 // them.
+//
+// ZERO production callers as of P2.4.3: its only user, `/api/calendar/event`,
+// moved to `requireOwnerOrService` (that route needs the owner's Google tokens,
+// so a crew viewer must not reach it). Kept — it is the crew-allowed half of the
+// service-token pair and the shape a future crew-reachable Pulsar-style route
+// would need. `role-matrix-smoke.ts` asserts no crew-allowed route uses it,
+// because it admits a Bearer caller with no viewer at all.
 export async function requireSessionOrService(req: Request, config: ServiceTokenConfig) {
   const auth = req.headers.get('authorization');
   if (auth?.toLowerCase().startsWith('bearer ')) {
@@ -214,11 +221,15 @@ export async function requireOwnerOrService(req: Request, config: ServiceTokenCo
 
 // Historically "LAN request OR session"; the LAN exemption is gone (there is no
 // trusted network any more) so this is now `requireSession` plus a vestigial
-// `ok: true` in the success shape, which 29 call sites across 20 route files
-// still read. It is kept as a separate export deliberately: collapsing it into
-// `requireSession` is a pure-rename change with zero behavioural difference,
-// and doing it inside the auth rewrite would bury a 20-file diff in a
-// security-sensitive one. Deferred cleanup — see the design doc's P1.3.2.
+// `ok: true` in the success shape. As of P2.1 that is read by **10 call sites
+// across 3 route files** — `/api/settings`, `/api/tasks`, `/api/goals`, the
+// three crew-allowed routes §2.5 predicts survive here; the other 17 former
+// callers moved to `requireOwner`. (An earlier comment said "29 call sites
+// across 20 route files", which was true before that swap.) It is kept as a
+// separate export deliberately: collapsing it into `requireSession` is a
+// pure-rename change with zero behavioural difference, and doing it inside the
+// auth rewrite would bury the diff in a security-sensitive one. Now a 3-file
+// change rather than 20 — deferred cleanup, see the design doc's P1.3.2.
 //
 // The `_req` parameter is likewise vestigial (nothing reads the request any
 // more) and kept only so the call sites don't have to change.

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import Parser from 'rss-parser';
 import { ResearchImportSchema } from '@/lib/schemas/research-import';
-import { requireSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { checkUserRateLimit } from '@/lib/api/user-rate-limit';
 import { fetchArxivXml } from '@/lib/arxiv/fetch';
 import { loggedFetch } from '@/lib/external-fetch';
@@ -50,8 +50,9 @@ function userIdFromGuard(guard: { session: { user?: unknown } }): string | null 
 
 export async function POST(request: Request) {
     // Write-shaped: triggers external API calls (Semantic Scholar, arXiv).
-    // Gate behind a session everywhere.
-    const guard = await requireSession();
+    // Owner-only — the research dash is not a crew surface, and the shared
+    // arXiv budget it spends is instance-wide.
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });

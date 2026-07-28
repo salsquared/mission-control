@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
-import { requireSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { LOG_TIER, type LogSource, type LogTier } from '@/lib/logger';
 import { readLogsWindow } from '@/lib/logs-store';
 
@@ -23,8 +23,10 @@ function pm2LogPath(): string {
 type HistEntry = { ts: string; level: string; msg: string; source: LogSource; tier: LogTier };
 
 export async function GET(req: NextRequest) {
-    // Same data class as the live SSE log stream — never unauthenticated.
-    const guard = await requireSession();
+    // Same data class as the live SSE log stream (/api/system/logs) — the PM2
+    // out.log and the scheduler log store carry every user's rows. Owner-only,
+    // for exactly the reason spelled out there.
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
 
     const { searchParams } = new URL(req.url);

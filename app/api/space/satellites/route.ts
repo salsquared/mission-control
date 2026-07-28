@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache, readCachedDataIgnoringExpiry } from '../../../../lib/cache';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { loggedFetch } from '@/lib/external-fetch';
 
 const UPSTREAM_HOST = 'celestrak.org';
@@ -110,7 +110,7 @@ async function getHandler() {
 
 const cachedGET = withCache(getHandler, { ttlSeconds: SATELLITE_TTL_SECONDS, upstreamHost: UPSTREAM_HOST });
 export const GET = async (req: Request) => {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     return cachedGET(req);
 };

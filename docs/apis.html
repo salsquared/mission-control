@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-06-24 · 67/67 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-07-28 · 67/67 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -66,7 +66,7 @@
     <div class="section-body">
 <div class="api-route" id="/api/calendar/event">
   <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method delete">DELETE</span><code class="api-path">/api/calendar/event</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSessionOrService</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwnerOrService</span><span class="api-chip ext">Google Calendar API v3</span></div>
   <p class="api-purpose">Read upcoming events, create/update an event, or delete an event on the user's primary Google Calendar; user id is derived from the session.</p>
   <p class="api-notes">Mutations broadcast { model: 'CalendarEvent', action: 'upsert'|'delete' }. All times treated as UTC. When POST has an eventId the event is updated, otherwise inserted.</p>
   <p class="api-schema-label">POST body — <code>CalendarEventPostSchema</code></p><pre><code class="language-json">{
@@ -556,7 +556,7 @@
 
 <div class="api-route" id="/api/applications/backfill">
   <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/applications/backfill</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gmail API v1</span><span class="api-chip ext">Gemini</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip ext">Gmail API v1</span><span class="api-chip ext">Gemini</span></div>
   <p class="api-purpose">One-shot maintenance sweep that scans the user's inbox for application-likely emails over the last N days and runs each through the same ingest pipeline as the Gmail webhook, reporting created/updated/skipped counts.</p>
   <p class="api-notes">Idempotent (ingest dedupes); broadcasts Application/CalendarEvent invalidate SSE events when any rows change.</p>
   <p class="api-schema-label">POST body — <code>BackfillRequestSchema</code></p><pre><code class="language-json">{
@@ -894,7 +894,7 @@
 
 <div class="api-route" id="/api/applications/events/adopt">
   <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/applications/events/adopt</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip ext">Google Calendar API v3</span></div>
   <p class="api-purpose">Adopts an existing Google Calendar event into an application by creating a mirroring ApplicationEvent row and tagging the Gcal event with mission-control extendedProperties so future syncs recognize ownership.</p>
   <p class="api-notes">Rejects re-adopting an already-linked event with 409; broadcasts a CalendarEvent upsert SSE event.</p>
   <p class="api-schema-label">POST body — <code>ApplicationEventAdoptPostSchema</code></p><pre><code class="language-json">{
@@ -937,7 +937,7 @@
 
 <div class="api-route" id="/api/applications/events/gcal-candidates">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/applications/events/gcal-candidates</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Google Calendar API v3</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip ext">Google Calendar API v3</span></div>
   <p class="api-purpose">Lists upcoming Google Calendar events (next 90 days by default) that aren't already linked to a mission-control ApplicationEvent, for use by the adopt-existing-event flow.</p>
   <p class="api-src"><code>app/api/applications/events/gcal-candidates/route.ts</code></p>
 </div>
@@ -3307,7 +3307,7 @@
 
 <div class="api-route" id="/api/notifications/test">
   <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/notifications/test</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Gmail API v1</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip ext">Gmail API v1</span></div>
   <p class="api-purpose">Fires a self-addressed test notification through the in-app + Gmail send pipeline to verify the email side-channel works.</p>
   <p class="api-notes">Per-user 30s rate limit; email only actually sends when EMAIL_ENABLED=1.</p>
   <p class="api-src"><code>app/api/notifications/test/route.ts</code></p>
@@ -3320,14 +3320,14 @@
     <div class="section-body">
 <div class="api-route" id="/api/ai">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/ai</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · hn.algolia.com</span><span class="api-chip ext">Hacker News Algolia API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 3600s · hn.algolia.com</span><span class="api-chip ext">Hacker News Algolia API</span></div>
   <p class="api-purpose">Fetches the latest stories related to "Artificial Intelligence" or "AI".</p>
   <p class="api-src"><code>app/api/ai/route.ts</code></p>
 </div>
 
 <div class="api-route" id="/api/ai/llmleaderboard">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/ai/llmleaderboard</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip ext">LM Arena</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip ext">LM Arena</span></div>
   <p class="api-purpose">Scrapes and parses the LM Arena leaderboard for a given category (default "text"), returning the top 50 models sorted by Elo score.</p>
   <p class="api-notes">Dedupes repeated model rows in the scraped table, keeping the highest-Elo occurrence per id.</p>
   <p class="api-src"><code>app/api/ai/llmleaderboard/route.ts</code></p>
@@ -3335,21 +3335,21 @@
 
 <div class="api-route" id="/api/research">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 43200s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 43200s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
   <p class="api-purpose">Fetches recent research papers for a topic (ai, crypto, space), using Hugging Face Daily Papers for the AI topic and arXiv otherwise, enriched with citation counts.</p>
   <p class="api-src"><code>app/api/research/route.ts</code></p>
 </div>
 
 <div class="api-route" id="/api/research/hf">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/hf</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 3600s · huggingface.co</span><span class="api-chip ext">Hugging Face Daily Papers API</span></div>
   <p class="api-purpose">Fetches daily papers directly from Hugging Face without arXiv fallback or Semantic Scholar enrichment.</p>
   <p class="api-src"><code>app/api/research/hf/route.ts</code></p>
 </div>
 
 <div class="api-route" id="/api/research/historical">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/historical</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 86400s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 86400s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
   <p class="api-purpose">Selects and fetches one historical research paper (3–30 years old) per topic per week, avoiding duplicates and enriching with citation counts.</p>
   <p class="api-notes">The weekly pick is locked in the SelectedHistoricalPaper table for persistence across requests.</p>
   <p class="api-src"><code>app/api/research/historical/route.ts</code></p>
@@ -3357,7 +3357,7 @@
 
 <div class="api-route" id="/api/research/import">
   <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/research/import</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Semantic Scholar API</span><span class="api-chip ext">arXiv API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip ext">Semantic Scholar API</span><span class="api-chip ext">arXiv API</span></div>
   <p class="api-purpose">Imports a research paper by ArXiv ID, DOI, or URL, fetching metadata from Semantic Scholar first and falling back to arXiv.</p>
   <p class="api-schema-label">POST body — <code>ResearchImportSchema</code></p><pre><code class="language-json">{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3378,7 +3378,7 @@
 
 <div class="api-route" id="/api/research/review">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/research/review</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 86400s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 86400s · export.arxiv.org</span><span class="api-chip ext">arXiv API</span><span class="api-chip ext">Semantic Scholar API</span></div>
   <p class="api-purpose">Picks and features one review or survey paper from the last 365 days per topic per week, enriching with citation counts.</p>
   <p class="api-notes">The weekly pick is locked in the SelectedReviewPaper table for persistence across requests.</p>
   <p class="api-src"><code>app/api/research/review/route.ts</code></p>
@@ -3386,7 +3386,7 @@
 
 <div class="api-route" id="/api/research/saved">
   <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method delete">DELETE</span><code class="api-path">/api/research/saved</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span></div>
   <p class="api-purpose">Manages the user's saved research paper library — listing, upserting (with read status/topic), and deleting tracked papers.</p>
   <p class="api-notes">Mutations broadcast { model: 'SavedPaper', action: 'upsert'|'delete' } over the SSE event stream.</p>
   <p class="api-schema-label">GET body — <code>SavedPaperListQuerySchema</code></p><pre><code class="language-json">{
@@ -3479,7 +3479,7 @@
     <div class="section-body">
 <div class="api-route" id="/api/company-news">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/company-news</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s</span><span class="api-chip ext">Company RSS feeds</span><span class="api-chip ext">Spaceflight News API</span><span class="api-chip ext">Google News RSS</span><span class="api-chip ext">vendor JSON APIs</span><span class="api-chip ext">Microlink</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 3600s</span><span class="api-chip ext">Company RSS feeds</span><span class="api-chip ext">Spaceflight News API</span><span class="api-chip ext">Google News RSS</span><span class="api-chip ext">vendor JSON APIs</span><span class="api-chip ext">Microlink</span></div>
   <p class="api-purpose">Fetches the latest news articles for a registered company, dispatching to its declared fetch strategy (RSS, scrape, Spaceflight News API, Google News, vendor JSON API, or a custom inline fetcher), with a legacy generic-RSS path via ?rss=.</p>
   <p class="api-notes">Upstream host is derived per-request from the ?company= (or ?rss=) value for Fetcher Health grouping.</p>
   <p class="api-src"><code>app/api/company-news/route.ts</code></p>
@@ -3492,7 +3492,7 @@
     <div class="section-body">
 <div class="api-route" id="/api/finance">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/finance</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 300s</span><span class="api-chip ext">Pulsar (PULSAR_URL)</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 300s</span><span class="api-chip ext">Pulsar (PULSAR_URL)</span></div>
   <p class="api-purpose">Fetches latest crypto prices + the filtered top-100 list and current Bitcoin recommended fees, all sourced from the local Pulsar ingestion service.</p>
   <p class="api-notes">Filters known spam/stable/RWA tokens via SPAM_COIN_IDS and BTC fee-tier ids via BTC_FEE_IDS. Cache upstreamHost is derived from PULSAR_URL at request time.</p>
   <p class="api-src"><code>app/api/finance/route.ts</code></p>
@@ -3500,7 +3500,7 @@
 
 <div class="api-route" id="/api/finance/history">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/finance/history</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 300s</span><span class="api-chip ext">Pulsar (PULSAR_URL)</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 300s</span><span class="api-chip ext">Pulsar (PULSAR_URL)</span></div>
   <p class="api-purpose">Returns a historical price series for a coin — hourly OHLCV bars for short ranges (&lt;=30 days), pre-aggregated daily summaries downsampled to ~500 points for longer ranges or "max".</p>
   <p class="api-src"><code>app/api/finance/history/route.ts</code></p>
 </div>
@@ -3512,21 +3512,21 @@
     <div class="section-body">
 <div class="api-route" id="/api/space">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 3600s · api.spaceflightnewsapi.net</span><span class="api-chip ext">Spaceflight News API</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 3600s · api.spaceflightnewsapi.net</span><span class="api-chip ext">Spaceflight News API</span></div>
   <p class="api-purpose">Retrieves the latest spaceflight and exploration news articles, capped per news site.</p>
   <p class="api-src"><code>app/api/space/route.ts</code></p>
 </div>
 
 <div class="api-route" id="/api/space/launches">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/launches</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 1800s · ll.thespacedevs.com</span><span class="api-chip ext">The Space Devs Launch Library 2</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 1800s · ll.thespacedevs.com</span><span class="api-chip ext">The Space Devs Launch Library 2</span></div>
   <p class="api-purpose">Fetches the next upcoming rocket launches worldwide, or launches within a year/month window when those query params are supplied.</p>
   <p class="api-src"><code>app/api/space/launches/route.ts</code></p>
 </div>
 
 <div class="api-route" id="/api/space/moon">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/moon</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 86400s</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 86400s</span></div>
   <p class="api-purpose">Provides a weekly calendar of the moon's cycles and highlights upcoming global lunar phenomena (supermoons, lunar eclipses).</p>
   <p class="api-notes">Pure local computation — algorithmic phase calculation + a hardcoded LUNAR_PHENOMENA table. No upstreamHost, so intentionally absent from the Fetcher Health card.</p>
   <p class="api-src"><code>app/api/space/moon/route.ts</code></p>
@@ -3534,7 +3534,7 @@
 
 <div class="api-route" id="/api/space/satellites">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/satellites</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 21600s · celestrak.org</span><span class="api-chip ext">Celestrak GP Data</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 21600s · celestrak.org</span><span class="api-chip ext">Celestrak GP Data</span></div>
   <p class="api-purpose">Active-satellite counts for Earth-centric orbits, categorized by orbit type (LEO, MEO, GEO, SSO) and notable constellations (Starlink, OneWeb).</p>
   <p class="api-notes">Celestrak returns 403 ("GP data has not updated…") on unchanged re-requests; the route throws so withCache serves the stale entry instead of a 500.</p>
   <p class="api-src"><code>app/api/space/satellites/route.ts</code></p>
@@ -3542,7 +3542,7 @@
 
 <div class="api-route" id="/api/space/solar">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/space/solar</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span><span class="api-chip cache">cache 300s · services.swpc.noaa.gov</span><span class="api-chip ext">NOAA SWPC</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 300s · services.swpc.noaa.gov</span><span class="api-chip ext">NOAA SWPC</span></div>
   <p class="api-purpose">Reports current solar activity (latest GOES primary X-ray flux) categorized into a status level (Normal/Moderate/High/Extreme).</p>
   <p class="api-src"><code>app/api/space/solar/route.ts</code></p>
 </div>
@@ -3554,7 +3554,7 @@
     <div class="section-body">
 <div class="api-route" id="/api/system">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span></div>
   <p class="api-purpose">Real-time process and system telemetry: CPU usage, RSS memory vs. the --max-old-space-size limit, uptime, DB connectivity, Pulsar reachability, and withCache hit/miss/key stats.</p>
   <p class="api-notes">Pings ${PULSAR_URL}/api/prices/latest with a 2s timeout for liveness only.</p>
   <p class="api-src"><code>app/api/system/route.ts</code></p>
@@ -3562,7 +3562,7 @@
 
 <div class="api-route" id="/api/system/cache/invalidate">
   <div class="api-route-head"><span class="api-method post">POST</span><code class="api-path">/api/system/cache/invalidate</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span></div>
   <p class="api-purpose">Invalidates entries in the in-memory withCache store by exact key or by key prefix, returning how many entries were evicted.</p>
   <p class="api-schema-label">POST body — <code>CacheInvalidatePostSchema</code></p><pre><code class="language-json">{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -3583,7 +3583,7 @@
 
 <div class="api-route" id="/api/system/fetcher-health">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system/fetcher-health</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip cache">cache 30s</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span><span class="api-chip cache">cache 30s</span></div>
   <p class="api-purpose">Parses the PM2 log file for cache/external-API/scraper log lines and aggregates per-upstream-host ok/fallback/broken counts over 1h/6h/1d windows for the Fetcher Health card.</p>
   <p class="api-notes">Reads the per-tier PM2 out.log (dev vs prod chosen by NODE_ENV; overridable via PM2_LOG_PATH).</p>
   <p class="api-src"><code>app/api/system/fetcher-health/route.ts</code></p>
@@ -3591,7 +3591,7 @@
 
 <div class="api-route" id="/api/system/logs">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system/logs</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span></div>
   <p class="api-purpose">Streams server logs over Server-Sent Events — an initial snapshot frame on connect, then one frame per new log line.</p>
   <p class="api-notes">Reads the in-memory log ring buffer (lib/logger.ts); 10s ping comments keep the connection alive.</p>
   <p class="api-src"><code>app/api/system/logs/route.ts</code></p>
@@ -3599,7 +3599,7 @@
 
 <div class="api-route" id="/api/system/logs/historical">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/system/logs/historical</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span></div>
   <p class="api-purpose">Reads the on-disk PM2 log file, parses its JSON-lines entries, applies optional time-range and level filters, and returns up to the most recent 1000 matches.</p>
   <p class="api-notes">Reads ~/.pm2/logs/mission-control-out.log (overridable via PM2_LOG_PATH); non-JSON lines are skipped.</p>
   <p class="api-src"><code>app/api/system/logs/historical/route.ts</code></p>

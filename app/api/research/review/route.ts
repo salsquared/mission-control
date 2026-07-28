@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withSharedCache, researchSharedStore } from '@/lib/research/shared-cache';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { fetchArxivXml } from '@/lib/arxiv/fetch';
 import { ArxivUnavailableError } from '@/lib/arxiv/errors';
 import { loggedFetch } from '@/lib/external-fetch';
@@ -238,7 +238,7 @@ const cachedGET = withSharedCache(getHandler, {
     fallbackOnError: (err) => (err instanceof ArxivUnavailableError ? [] : undefined),
 });
 export const GET = async (req: Request) => {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     return cachedGET(req);
 };

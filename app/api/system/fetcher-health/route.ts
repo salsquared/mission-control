@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '@/lib/cache';
-import { requireSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { readFetcherHealth, currentTier, type Source, type WindowKey } from '@/lib/fetcher-health/store';
 
 export const dynamic = 'force-dynamic';
@@ -33,9 +33,10 @@ async function getHandler(req: Request): Promise<NextResponse> {
 const cachedGET = withCache(getHandler, 30);
 export const GET = async (req: Request) => {
     // Auth lives outside withCache — otherwise the cached response would be
-    // served to unauthenticated callers once the first authenticated hit
-    // populated the entry. Matches /api/finance, /api/company-news, etc.
-    const guard = await requireSession();
+    // served to unauthorized callers (unauthenticated, or crew) once the first
+    // owner hit populated the entry. Matches /api/finance, /api/company-news,
+    // and every other owner-only cached route.
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     return cachedGET(req);
 };

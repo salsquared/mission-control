@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../../lib/cache';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { loggedFetch } from '@/lib/external-fetch';
 
 export const revalidate = 300; // Cache for 5 minutes
@@ -48,7 +48,7 @@ async function getHandler() {
 
 const cachedGET = withCache(getHandler, { ttlSeconds: 300, upstreamHost: 'services.swpc.noaa.gov' }); // Cache for 5 mins
 export const GET = async (req: Request) => {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     return cachedGET(req);
 };

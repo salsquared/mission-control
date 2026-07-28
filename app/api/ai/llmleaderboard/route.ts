@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import axios from 'axios';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { parseLmarenaLeaderboard } from '@/lib/ai/lmarena-leaderboard';
 import { harvestOrgLogos } from '@/lib/ai/org-logos';
 
 export const revalidate = 3600; // Cache for 1 hour
 
 export async function GET(req: NextRequest) {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     try {
         const { searchParams } = new URL(req.url);

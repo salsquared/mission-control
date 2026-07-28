@@ -4,7 +4,7 @@ import fs from 'fs';
 import path from 'path';
 import { getCacheStats } from '@/lib/cache';
 import { pingDatabase } from '@/lib/repositories/system';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 
 let cachedMaxMemSysLimitGB: number | null = null;
 
@@ -56,8 +56,10 @@ async function getCachedPulsarOnline(): Promise<boolean> {
 }
 
 export async function GET(req: Request) {
-    // Server telemetry — fine on LAN, tunnel requires a session.
-    const guard = await requireLocalOrSession(req);
+    // Server telemetry (CPU / RSS / uptime / DB + Pulsar health / cache stats)
+    // is an ops surface, not a per-user one — owner-only. The old comment here
+    // ("fine on LAN") described a trust boundary that no longer exists.
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     try {
         // Process CPU Usage (since last request)

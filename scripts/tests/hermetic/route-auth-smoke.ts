@@ -30,33 +30,44 @@ function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, de
 interface RouteSpec {
     label: string;
     file: string;
-    /** "session" = requireSession; "local-or-session" = requireLocalOrSession. */
-    guard: "session" | "local-or-session";
+    /**
+     * "session"          = requireSession        (crew-allowed)
+     * "local-or-session" = requireLocalOrSession (crew-allowed)
+     * "owner"            = requireOwner          (owner-only, 403s crew)
+     *
+     * The multi-user owner/crew work (docs/multi-user-crew.html P2.1/P2.4)
+     * moved 26 routes onto requireOwner. Note scripts/tests/hermetic/
+     * role-matrix-smoke.ts is the exhaustive 67-route classifier; THIS smoke
+     * stays because it additionally asserts the WRONG guard is absent, which a
+     * classification manifest does not catch.
+     */
+    guard: "session" | "local-or-session" | "owner";
 }
 
 const ROUTES: RouteSpec[] = [
-    // requireSession (always require auth, tunnel + LAN)
+    // requireSession — crew-allowed (any provisioned viewer)
     { label: "/api/events",                       file: "app/api/events/route.ts",                       guard: "session" },
-    { label: "/api/system/logs",                  file: "app/api/system/logs/route.ts",                  guard: "session" },
-    { label: "/api/system/logs/historical",       file: "app/api/system/logs/historical/route.ts",       guard: "session" },
-    { label: "/api/research/import",              file: "app/api/research/import/route.ts",              guard: "session" },
+    { label: "/api/system/logs",                  file: "app/api/system/logs/route.ts",                  guard: "owner" },
+    { label: "/api/system/logs/historical",       file: "app/api/system/logs/historical/route.ts",       guard: "owner" },
+    { label: "/api/research/import",              file: "app/api/research/import/route.ts",              guard: "owner" },
 
-    // requireLocalOrSession (LAN skip, tunnel requires session)
-    { label: "/api/system",                       file: "app/api/system/route.ts",                       guard: "local-or-session" },
-    { label: "/api/research",                     file: "app/api/research/route.ts",                     guard: "local-or-session" },
-    { label: "/api/research/historical",          file: "app/api/research/historical/route.ts",          guard: "local-or-session" },
-    { label: "/api/research/review",              file: "app/api/research/review/route.ts",              guard: "local-or-session" },
-    { label: "/api/research/hf",                  file: "app/api/research/hf/route.ts",                  guard: "local-or-session" },
-    { label: "/api/company-news",                 file: "app/api/company-news/route.ts",                 guard: "local-or-session" },
-    { label: "/api/ai",                           file: "app/api/ai/route.ts",                           guard: "local-or-session" },
-    { label: "/api/ai/llmleaderboard",            file: "app/api/ai/llmleaderboard/route.ts",            guard: "local-or-session" },
-    { label: "/api/finance",                      file: "app/api/finance/route.ts",                      guard: "local-or-session" },
-    { label: "/api/finance/history",              file: "app/api/finance/history/route.ts",              guard: "local-or-session" },
-    { label: "/api/space",                        file: "app/api/space/route.ts",                        guard: "local-or-session" },
-    { label: "/api/space/solar",                  file: "app/api/space/solar/route.ts",                  guard: "local-or-session" },
-    { label: "/api/space/launches",               file: "app/api/space/launches/route.ts",               guard: "local-or-session" },
-    { label: "/api/space/moon",                   file: "app/api/space/moon/route.ts",                   guard: "local-or-session" },
-    { label: "/api/space/satellites",             file: "app/api/space/satellites/route.ts",             guard: "local-or-session" },
+    // requireOwner — owner-only. Crew get 403 (authenticated, not permitted),
+    // an unverified request gets 401. See docs/multi-user-crew.html §2.5.
+    { label: "/api/system",                       file: "app/api/system/route.ts",                       guard: "owner" },
+    { label: "/api/research",                     file: "app/api/research/route.ts",                     guard: "owner" },
+    { label: "/api/research/historical",          file: "app/api/research/historical/route.ts",          guard: "owner" },
+    { label: "/api/research/review",              file: "app/api/research/review/route.ts",              guard: "owner" },
+    { label: "/api/research/hf",                  file: "app/api/research/hf/route.ts",                  guard: "owner" },
+    { label: "/api/company-news",                 file: "app/api/company-news/route.ts",                 guard: "owner" },
+    { label: "/api/ai",                           file: "app/api/ai/route.ts",                           guard: "owner" },
+    { label: "/api/ai/llmleaderboard",            file: "app/api/ai/llmleaderboard/route.ts",            guard: "owner" },
+    { label: "/api/finance",                      file: "app/api/finance/route.ts",                      guard: "owner" },
+    { label: "/api/finance/history",              file: "app/api/finance/history/route.ts",              guard: "owner" },
+    { label: "/api/space",                        file: "app/api/space/route.ts",                        guard: "owner" },
+    { label: "/api/space/solar",                  file: "app/api/space/solar/route.ts",                  guard: "owner" },
+    { label: "/api/space/launches",               file: "app/api/space/launches/route.ts",               guard: "owner" },
+    { label: "/api/space/moon",                   file: "app/api/space/moon/route.ts",                   guard: "owner" },
+    { label: "/api/space/satellites",             file: "app/api/space/satellites/route.ts",             guard: "owner" },
 ];
 
 const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
@@ -68,7 +79,12 @@ function assertGuarded(spec: RouteSpec) {
         return;
     }
     const src = fs.readFileSync(abs, "utf8");
-    const expectedFn = spec.guard === "session" ? "requireSession" : "requireLocalOrSession";
+    const GUARD_FN = {
+        "session": "requireSession",
+        "local-or-session": "requireLocalOrSession",
+        "owner": "requireOwner",
+    } as const;
+    const expectedFn = GUARD_FN[spec.guard];
 
     // 1. Import present.
     const importRe = new RegExp(`import\\s*{[^}]*\\b${expectedFn}\\b[^}]*}\\s*from\\s+['"][^'"]*auth-guards['"]`);
@@ -93,12 +109,16 @@ function assertGuarded(spec: RouteSpec) {
 
     // 3. Sanity: it's NOT also using the WRONG guard (e.g. session-required
     // routes shouldn't also be wrapped in requireLocalOrSession).
-    const wrongFn = spec.guard === "session" ? "requireLocalOrSession" : "requireSession";
-    const wrongCallRe = new RegExp(`\\bawait\\s+${wrongFn}\\s*\\(`);
-    if (wrongCallRe.test(src)) {
-        fail(`${spec.label}: also calls ${wrongFn} — guards conflict`);
+    // For an owner-only route the sharpest regression is silently DOWNGRADING
+    // it to a crew-allowed guard, so both crew-allowed guards are wrong there.
+    const wrongFns = spec.guard === "owner"
+        ? ["requireSession", "requireLocalOrSession"]
+        : [GUARD_FN[spec.guard] === "requireSession" ? "requireLocalOrSession" : "requireSession", "requireOwner"];
+    const offenders = wrongFns.filter((fn) => new RegExp(`\\bawait\\s+${fn}\\s*\\(`).test(src));
+    if (offenders.length > 0) {
+        fail(`${spec.label}: also calls ${offenders.join(", ")} — guards conflict`);
     } else {
-        pass(`${spec.label}: does not also call ${wrongFn}`);
+        pass(`${spec.label}: does not also call ${wrongFns.join("/")}`);
     }
 }
 

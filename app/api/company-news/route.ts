@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { withCache } from '../../../lib/cache';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { MAX_NEWS_ARTICLES } from '../../../lib/constants';
 import { getAdapter, resolveCompanyId, getUpstreamHost } from '../../../lib/companies';
 import { fetchRSS } from '../../../lib/fetchers';
@@ -80,7 +80,7 @@ function deriveUpstreamHost(req: Request): string | null {
 // Cache with 1hr TTL (individual company TTLs are aspirational for a future cache-per-key system)
 const cachedGET = withCache(getHandler, { ttlSeconds: 3600, upstreamHost: deriveUpstreamHost });
 export const GET = async (req: Request) => {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     return cachedGET(req);
 };

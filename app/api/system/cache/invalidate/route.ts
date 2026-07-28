@@ -1,10 +1,10 @@
 import { NextResponse } from 'next/server';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { invalidateCacheKey, invalidateCacheByPrefix } from '@/lib/cache';
 import { CacheInvalidatePostSchema } from '@/lib/schemas/cache';
 
 export async function POST(req: Request) {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
 
     try {

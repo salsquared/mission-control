@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
-import { requireSession } from "@/lib/auth-guards";
+import { requireOwner } from "@/lib/auth-guards";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import { GCAL_EVENT_TAG } from "@/lib/calendar/sync";
 
@@ -15,7 +15,7 @@ export const runtime = "nodejs";
  * they made manually and ties it to an Application.
  */
 export async function GET(req: NextRequest) {
-    const guard = await requireSession();
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     const userId = (guard.session.user as { id?: string }).id;
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
