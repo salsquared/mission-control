@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
     }
     try {
         const canon = await createCanon(userId, parsed.data);
-        broadcastEvent({ model: "Canon", action: "upsert", id: canon.id, timestamp: Date.now() });
+        broadcastEvent({ model: "Canon", action: "upsert", id: canon.id, userId, timestamp: Date.now() });
         return NextResponse.json({ canon }, { status: 201 });
     } catch (e) {
         const code = (e as { code?: string } | null)?.code;

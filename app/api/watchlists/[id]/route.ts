@@ -105,7 +105,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         }
 
         const row = await prisma.watchlist.update({ where: { id }, data });
-        broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, userId, timestamp: Date.now() });
         const serialized = serialize(row);
         if (!serialized) {
             console.error(`[watchlists/${id} PATCH] serialize returned null after our own update`);
@@ -132,7 +132,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
 
     try {
         await prisma.watchlist.delete({ where: { id } });
-        broadcastEvent({ model: 'Watchlist', action: 'delete', id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Watchlist', action: 'delete', id, userId, timestamp: Date.now() });
         // "Last-one-out" cleanup: retire the linked SIDE canon once no watchlist
         // still feeds it. Generated resumes + applications survive (the FK is
         // onDelete: SetNull) — they stay in the Generated Resumes card. This is
@@ -140,7 +140,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
         try {
             const deletedCanonId = await deleteOrphanedSideCanon(userId, existing.canonId);
             if (deletedCanonId) {
-                broadcastEvent({ model: 'Canon', action: 'delete', id: deletedCanonId, timestamp: Date.now() });
+                broadcastEvent({ model: 'Canon', action: 'delete', id: deletedCanonId, userId, timestamp: Date.now() });
             }
         } catch (e) {
             console.warn(`[watchlists/${id} DELETE] canon cascade failed:`, e instanceof Error ? e.message : e);

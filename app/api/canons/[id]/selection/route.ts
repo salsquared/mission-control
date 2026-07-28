@@ -47,7 +47,7 @@ export async function PUT(req: NextRequest, { params }: { params: Promise<{ id: 
     try {
         const ok = await saveCanonSelection(userId, id, parsed.data);
         if (!ok) return NextResponse.json({ error: "Canon not found" }, { status: 404 });
-        broadcastEvent({ model: "Canon", action: "upsert", id, timestamp: Date.now() });
+        broadcastEvent({ model: "Canon", action: "upsert", id, userId, timestamp: Date.now() });
         return NextResponse.json({ ok: true }, { status: 200 });
     } catch (e) {
         console.error(`[canons/${id}/selection PUT] error:`, e);

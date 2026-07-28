@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
-import { requireSession } from "@/lib/auth-guards";
+import { requireOwner } from "@/lib/auth-guards";
 import { checkUserRateLimit } from "@/lib/api/user-rate-limit";
 import { findUserByEmail } from "@/lib/repositories/users";
 import { getGoogleAuthClient } from "@/lib/googleapis";
@@ -28,19 +28,22 @@ const DEFAULT_MAX = 200;
 export async function POST(req: NextRequest) {
     const started = Date.now();
     try {
-        // RAH-24: switched from inline getServerSession to the shared
-        // requireSession helper for consistency with the rest of the API surface.
-        const guard = await requireSession();
+        // RAH-24: switched from inline getServerSession to a shared guard for
+        // consistency with the rest of the API surface. P2.4.3: owner-only —
+        // this sweeps the owner's Gmail mailbox (the only mailbox the app has a
+        // token for), so a crew caller would either scan someone else's inbox
+        // or fail; 403 is the honest answer.
+        const guard = await requireOwner();
         if ('error' in guard) return guard.error;
-        // requireSession guarantees session.user.email is non-null (it returns
-        // a 401 otherwise) but TS doesn't carry the narrowing — assert.
+        // requireOwner guarantees session.user.email is non-null (it returns
+        // a 401/403 otherwise) but TS doesn't carry the narrowing — assert.
         const sessionEmail = guard.session.user!.email!;
 
         // P1.5: per-user rate limit BEFORE any Gmail/LLM work. A backfill is
         // the heaviest token-spend route in the app (up to `max` emails ×
         // one Gemini classification each, plus Gmail list/get traffic), so
         // cap it at 1 sweep per 5 minutes. Keyed on the session email — it's
-        // the identity requireSession guarantees, and the same per-user key
+        // the identity the guard guarantees, and the same per-user key
         // the rest of this handler resolves the account from.
         const rl = checkUserRateLimit("applications:backfill", sessionEmail, Date.now(), { max: 1, windowMs: 5 * 60 * 1000 });
         if (!rl.ok) {
@@ -121,8 +124,8 @@ export async function POST(req: NextRequest) {
         }
 
         if (counts.created > 0 || counts.updated > 0) {
-            broadcastEvent({ model: "Application", action: "invalidate", timestamp: Date.now() });
-            broadcastEvent({ model: "CalendarEvent", action: "invalidate", timestamp: Date.now() });
+            broadcastEvent({ model: "Application", action: "invalidate", userId: user.id, timestamp: Date.now() });
+            broadcastEvent({ model: "CalendarEvent", action: "invalidate", userId: user.id, timestamp: Date.now() });
         }
 
         const result = {

@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireOwner } from '@/lib/auth-guards';
 import { resolveScopedUserId } from '@/lib/user-scope';
 import { broadcastEvent } from '@/lib/events';
 import { findSavedPapers, upsertSavedPaper, deleteSavedPaper } from '@/lib/repositories/saved-papers';
@@ -9,13 +9,15 @@ import {
     SavedPaperListQuerySchema,
 } from '@/lib/schemas/saved-papers';
 
-// P2.2 (OQ2a): every handler scopes to the session user (or the LAN owner
-// fallback — see lib/user-scope.ts).
+// P2.2 (OQ2a): every handler scopes to the session user (see lib/user-scope.ts).
+// P2.4.3: owner-only. The saved-papers library is a research surface the crew
+// role does not carry, so the guard is `requireOwner` — `resolveScopedUserId`
+// still resolves the id from the session it returns, unchanged.
 const NO_USER = () =>
     NextResponse.json({ error: 'No user account resolvable for this request' }, { status: 401 });
 
 export async function GET(request: Request) {
-    const guard = await requireLocalOrSession(request);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     const userId = await resolveScopedUserId(guard);
     if (!userId) return NO_USER();
@@ -40,7 +42,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
-    const guard = await requireLocalOrSession(request);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     const userId = await resolveScopedUserId(guard);
     if (!userId) return NO_USER();
@@ -63,7 +65,7 @@ export async function POST(request: Request) {
             status,
         });
 
-        broadcastEvent({ model: 'SavedPaper', action: 'upsert', id: paper.paperId, timestamp: Date.now() });
+        broadcastEvent({ model: 'SavedPaper', action: 'upsert', id: paper.paperId, userId, timestamp: Date.now() });
         return NextResponse.json(paper);
     } catch (error) {
         console.error("Error saving paper:", error);
@@ -72,7 +74,7 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
-    const guard = await requireLocalOrSession(request);
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     const userId = await resolveScopedUserId(guard);
     if (!userId) return NO_USER();
@@ -89,7 +91,7 @@ export async function DELETE(request: Request) {
 
         await deleteSavedPaper(userId, paperId);
 
-        broadcastEvent({ model: 'SavedPaper', action: 'delete', id: paperId, timestamp: Date.now() });
+        broadcastEvent({ model: 'SavedPaper', action: 'delete', id: paperId, userId, timestamp: Date.now() });
         return NextResponse.json({ success: true });
     } catch (error) {
         console.error("Error deleting saved paper:", error);

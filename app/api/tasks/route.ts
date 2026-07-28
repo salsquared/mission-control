@@ -65,7 +65,7 @@ export async function PATCH(req: Request) {
 
         const updatedTask = await updateTask(id, userId, updateData);
 
-        broadcastEvent({ model: 'Task', action: 'upsert', id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Task', action: 'upsert', id, userId, timestamp: Date.now() });
 
         return NextResponse.json({ task: updatedTask });
     } catch (e: any) {
@@ -109,7 +109,7 @@ export async function POST(req: Request) {
             });
         }
 
-        broadcastEvent({ model: 'Task', action: 'upsert', id: created.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Task', action: 'upsert', id: created.id, userId, timestamp: Date.now() });
 
         return NextResponse.json({ success: true, id: created.id });
     } catch (e: any) {
@@ -143,7 +143,7 @@ export async function DELETE(req: Request) {
         }
 
         await deleteTask(id, userId);
-        broadcastEvent({ model: 'Task', action: 'delete', id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Task', action: 'delete', id, userId, timestamp: Date.now() });
 
         return NextResponse.json({ success: true, id });
     } catch (e: any) {

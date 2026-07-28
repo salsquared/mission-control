@@ -21,8 +21,6 @@ export async function register() {
         const { clearRestartFlag } = await import('./lib/restart-guard');
         clearRestartFlag();
 
-        const { subscribeToEvents } = await import('./lib/events');
-
         // Diagnose-and-drain shutdown handlers. Historical pm2.log shows
         // dozens of SIGINT-driven exits going back to 2026-05-15 with no
         // in-tree caller — likely something external (sleep/wake, an agent
@@ -33,8 +31,12 @@ export async function register() {
                 ?.split('\n').slice(0, 8).join('\n');
             console.warn(`[SHUTDOWN] ${signal} received pid=${process.pid} uptime=${process.uptime().toFixed(1)}s\n${stack ?? '(no stack)'}`);
             stopPulsarRelay();
-            const unsub = subscribeToEvents(() => {});
-            unsub();
+            // (There used to be a `subscribeToEvents(() => {})` immediately
+            // followed by its own unsubscribe here — a literal no-op left over
+            // from an unfinished "drain SSE listeners on shutdown" idea. It was
+            // removed when `subscribeToEvents` gained a required viewer id:
+            // keeping it would have meant inventing a fake identity for a
+            // subscriber that is deleted on the next line.)
             setTimeout(() => {
                 console.info(`[SHUTDOWN] Clean exit (signal=${signal}).`);
                 process.exit(0);

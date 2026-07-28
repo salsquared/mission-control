@@ -566,9 +566,9 @@ export async function ingestGmailMessage(opts: IngestOptions): Promise<IngestOut
     }
 
     if (broadcast) {
-        broadcastEvent({ model: "Application", action: "upsert", id: appId, timestamp: Date.now() });
+        broadcastEvent({ model: "Application", action: "upsert", id: appId, userId, timestamp: Date.now() });
         if (allEventsForMsg.length > 0) {
-            broadcastEvent({ model: "CalendarEvent", action: "invalidate", timestamp: Date.now() });
+            broadcastEvent({ model: "CalendarEvent", action: "invalidate", userId, timestamp: Date.now() });
         }
     }
 

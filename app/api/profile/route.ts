@@ -39,7 +39,7 @@ export async function PATCH(req: NextRequest) {
 
     try {
         const profile = await updateProfileHeader(userId, parsed.data);
-        broadcastEvent({ model: 'Profile', action: 'upsert', id: profile.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Profile', action: 'upsert', id: profile.id, userId, timestamp: Date.now() });
         return NextResponse.json({ profile }, { status: 200 });
     } catch (e) {
         console.error("[profile PATCH] error:", e);

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth-guards";
+import { requireOwner } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { dispatchNotification } from "@/lib/notifications/dispatch";
 
@@ -33,7 +33,7 @@ const testLastSent: Map<string, number> =
  * can see emailSentAt / emailError synchronously.
  */
 export async function POST(_req: NextRequest) {
-    const guard = await requireSession();
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     const userId = userIdFromGuard(guard);
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
@@ -73,7 +73,10 @@ export async function POST(_req: NextRequest) {
 
         // Re-fetch to surface emailSentAt / emailError from the dispatch.
         const refreshed = await prisma.notification.findUnique({ where: { id: created.id } });
-        broadcastEvent({ model: 'Notification', action: 'upsert', id: userId, timestamp: Date.now() });
+        // `id` now holds the Notification's own id — it previously carried the
+        // user id, one of three sites smuggling a scope through the row-id
+        // field, all normalized together; see lib/events.ts.
+        broadcastEvent({ model: 'Notification', action: 'upsert', id: created.id, userId, timestamp: Date.now() });
         return NextResponse.json({
             notification: refreshed,
             sent: !!refreshed?.emailSentAt,

@@ -38,7 +38,7 @@ export async function POST(req: Request) {
 
         const goal = await createGoal(userId, parsed.data);
 
-        broadcastEvent({ model: 'Goal', action: 'upsert', id: goal.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Goal', action: 'upsert', id: goal.id, userId, timestamp: Date.now() });
         return NextResponse.json({ goal });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
@@ -60,7 +60,7 @@ export async function PATCH(req: Request) {
 
         const goal = await updateGoal(id, userId, { completed });
 
-        broadcastEvent({ model: 'Goal', action: 'upsert', id: goal.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Goal', action: 'upsert', id: goal.id, userId, timestamp: Date.now() });
         return NextResponse.json({ goal });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });
@@ -82,7 +82,7 @@ export async function DELETE(req: Request) {
 
         await deleteGoal(id, userId);
 
-        broadcastEvent({ model: 'Goal', action: 'delete', id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Goal', action: 'delete', id, userId, timestamp: Date.now() });
         return NextResponse.json({ success: true });
     } catch (e: any) {
         return NextResponse.json({ error: e.message }, { status: 500 });

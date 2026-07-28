@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
 import { prisma } from "@/lib/prisma";
-import { requireSession } from "@/lib/auth-guards";
+import { requireOwner } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import {
@@ -22,7 +22,7 @@ export const runtime = "nodejs";
  *      identify ownership.
  */
 export async function POST(req: NextRequest) {
-    const guard = await requireSession();
+    const guard = await requireOwner();
     if ('error' in guard) return guard.error;
     const userId = (guard.session.user as { id?: string }).id;
     if (!userId) return NextResponse.json({ error: "Session missing user.id" }, { status: 401 });
@@ -106,6 +106,6 @@ export async function POST(req: NextRequest) {
         console.warn(`[gcal-adopt] tag patch failed for ${parsed.data.gcalEventId}: ${(err as Error).message}`);
     }
 
-    broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, timestamp: Date.now() });
+    broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, userId, timestamp: Date.now() });
     return NextResponse.json({ event }, { status: 200 });
 }

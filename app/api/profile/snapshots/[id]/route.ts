@@ -60,7 +60,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     try {
         const ok = await deleteProfileSnapshot(userId, id);
         if (!ok) return NextResponse.json({ error: "Snapshot not found" }, { status: 404 });
-        broadcastEvent({ model: 'ProfileSnapshot', action: 'delete', id, timestamp: Date.now() });
+        broadcastEvent({ model: 'ProfileSnapshot', action: 'delete', id, userId, timestamp: Date.now() });
         return NextResponse.json({ success: true, id }, { status: 200 });
     } catch (e) {
         console.error("[profile/snapshots/[id] DELETE] error:", e);

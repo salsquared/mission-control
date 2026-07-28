@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
             pinKeywords: parsed.data.pinKeywords ?? null,
             position: parsed.data.position,
         });
-        broadcastEvent({ model: 'Profile', action: 'upsert', id: education.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Profile', action: 'upsert', id: education.id, userId, timestamp: Date.now() });
         return NextResponse.json({ education }, { status: 200 });
     } catch (e) {
         console.error("[education POST] error:", e);
@@ -72,7 +72,7 @@ export async function PATCH(req: NextRequest) {
         });
         if (!education) return NextResponse.json({ error: "Education not found" }, { status: 404 });
         await markCanonsStaleForEntity(userId, education.id).catch(e => console.warn("[education PATCH] canon stale failed:", e));
-        broadcastEvent({ model: 'Profile', action: 'upsert', id: education.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Profile', action: 'upsert', id: education.id, userId, timestamp: Date.now() });
         return NextResponse.json({ education }, { status: 200 });
     } catch (e) {
         console.error("[education PATCH] error:", e);
@@ -98,7 +98,7 @@ export async function DELETE(req: NextRequest) {
         const ok = await deleteEducation(userId, parsed.data.id);
         if (!ok) return NextResponse.json({ error: "Education not found" }, { status: 404 });
         await markCanonsStaleForEntity(userId, parsed.data.id).catch(e => console.warn("[education DELETE] canon stale failed:", e));
-        broadcastEvent({ model: 'Profile', action: 'delete', id: parsed.data.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Profile', action: 'delete', id: parsed.data.id, userId, timestamp: Date.now() });
         return NextResponse.json({ success: true, id: parsed.data.id }, { status: 200 });
     } catch (e) {
         console.error("[education DELETE] error:", e);

@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
         // the same browser tab both invalidate. ApplicationsView already keys
         // on a predicate match for 'applications' so this fans out cleanly.
         for (const id of result.ids) {
-            broadcastEvent({ model: 'Application', action: 'upsert', id, timestamp: Date.now() });
+            broadcastEvent({ model: 'Application', action: 'upsert', id, userId, timestamp: Date.now() });
         }
         return NextResponse.json({ updated: result.updated, ids: result.ids }, { status: 200 });
     } catch (e) {

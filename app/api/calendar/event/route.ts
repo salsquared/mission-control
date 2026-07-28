@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getGoogleAuthClient } from "@/lib/googleapis";
 import { google } from "googleapis";
-import { requireSessionOrService, type ServiceTokenConfig } from "@/lib/auth-guards";
+import { requireOwnerOrService, type ServiceTokenConfig } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { CalendarEventPostSchema } from "@/lib/schemas/calendar";
 import { USER_TIMEZONE, GCAL_EVENT_TAG } from "@/lib/calendar/sync";
@@ -17,7 +17,7 @@ const PULSAR_SERVICE_CONFIG: ServiceTokenConfig = {
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
-  const guard = await requireSessionOrService(req, PULSAR_SERVICE_CONFIG);
+  const guard = await requireOwnerOrService(req, PULSAR_SERVICE_CONFIG);
   if ('error' in guard) return guard.error;
   const { userId } = guard;
 
@@ -45,7 +45,7 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireSessionOrService(req, PULSAR_SERVICE_CONFIG);
+  const guard = await requireOwnerOrService(req, PULSAR_SERVICE_CONFIG);
   if ('error' in guard) return guard.error;
   const { userId } = guard;
 
@@ -74,7 +74,7 @@ export async function POST(req: NextRequest) {
         eventId,
         requestBody: event,
       });
-      broadcastEvent({ model: 'CalendarEvent', action: 'upsert', id: eventId, timestamp: Date.now() });
+      broadcastEvent({ model: 'CalendarEvent', action: 'upsert', id: eventId, userId, timestamp: Date.now() });
       return NextResponse.json({ event: response.data }, { status: 200 });
     } else {
       const response = await calendar.events.insert({
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
         requestBody: event,
       });
       const newId = response.data.id ?? undefined;
-      broadcastEvent({ model: 'CalendarEvent', action: 'upsert', id: newId, timestamp: Date.now() });
+      broadcastEvent({ model: 'CalendarEvent', action: 'upsert', id: newId, userId, timestamp: Date.now() });
       return NextResponse.json({ event: response.data }, { status: 200 });
     }
   } catch (error: any) {
@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const guard = await requireSessionOrService(req, PULSAR_SERVICE_CONFIG);
+  const guard = await requireOwnerOrService(req, PULSAR_SERVICE_CONFIG);
   if ('error' in guard) return guard.error;
   const { userId } = guard;
 
@@ -136,7 +136,7 @@ export async function DELETE(req: NextRequest) {
       eventId,
     });
 
-    broadcastEvent({ model: 'CalendarEvent', action: 'delete', id: eventId, timestamp: Date.now() });
+    broadcastEvent({ model: 'CalendarEvent', action: 'delete', id: eventId, userId, timestamp: Date.now() });
     return NextResponse.json({ success: true }, { status: 200 });
   } catch (error: any) {
     console.error("Error deleting calendar event:", error);

@@ -108,8 +108,8 @@ export async function trackAsApplication(
             posting,
             userId,
         );
-        broadcastEvent({ model: "Application", action: "upsert", id: merged.applicationId, timestamp: Date.now() });
-        broadcastEvent({ model: "Posting", action: "upsert", id: merged.postingId, timestamp: Date.now() });
+        broadcastEvent({ model: "Application", action: "upsert", id: merged.applicationId, userId, timestamp: Date.now() });
+        broadcastEvent({ model: "Posting", action: "upsert", id: merged.postingId, userId, timestamp: Date.now() });
         return {
             ok: true,
             created: false,
@@ -229,8 +229,8 @@ export async function trackAsApplication(
                     posting,
                     userId,
                 );
-                broadcastEvent({ model: "Application", action: "upsert", id: merged.applicationId, timestamp: Date.now() });
-                broadcastEvent({ model: "Posting", action: "upsert", id: merged.postingId, timestamp: Date.now() });
+                broadcastEvent({ model: "Application", action: "upsert", id: merged.applicationId, userId, timestamp: Date.now() });
+                broadcastEvent({ model: "Posting", action: "upsert", id: merged.postingId, userId, timestamp: Date.now() });
                 return {
                     ok: true,
                     created: false,
@@ -243,8 +243,8 @@ export async function trackAsApplication(
         throw e;
     }
 
-    broadcastEvent({ model: "Application", action: "upsert", id: application.id, timestamp: Date.now() });
-    broadcastEvent({ model: "Posting", action: "upsert", id: updatedPosting.id, timestamp: Date.now() });
+    broadcastEvent({ model: "Application", action: "upsert", id: application.id, userId, timestamp: Date.now() });
+    broadcastEvent({ model: "Posting", action: "upsert", id: updatedPosting.id, userId, timestamp: Date.now() });
 
     return {
         ok: true,

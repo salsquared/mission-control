@@ -83,7 +83,7 @@ export async function POST(req: NextRequest) {
             // 404 over 403 — don't leak existence.
             return NextResponse.json({ error: "Application not found" }, { status: 404 });
         }
-        broadcastEvent({ model: 'Contact', action: 'upsert', id: contact.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Contact', action: 'upsert', id: contact.id, userId, timestamp: Date.now() });
         return NextResponse.json({ contact: serialize(contact) }, { status: 200 });
     } catch (e) {
         console.error("[contacts POST] error:", e);
@@ -114,7 +114,7 @@ export async function PATCH(req: NextRequest) {
             position: parsed.data.position,
         });
         if (!contact) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
-        broadcastEvent({ model: 'Contact', action: 'upsert', id: contact.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Contact', action: 'upsert', id: contact.id, userId, timestamp: Date.now() });
         return NextResponse.json({ contact: serialize(contact) }, { status: 200 });
     } catch (e) {
         console.error("[contacts PATCH] error:", e);
@@ -138,7 +138,7 @@ export async function DELETE(req: NextRequest) {
     try {
         const ok = await deleteContact(userId, parsed.data.id);
         if (!ok) return NextResponse.json({ error: "Contact not found" }, { status: 404 });
-        broadcastEvent({ model: 'Contact', action: 'delete', id: parsed.data.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Contact', action: 'delete', id: parsed.data.id, userId, timestamp: Date.now() });
         return NextResponse.json({ success: true, id: parsed.data.id }, { status: 200 });
     } catch (e) {
         console.error("[contacts DELETE] error:", e);

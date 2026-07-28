@@ -17,7 +17,7 @@ export async function POST() {
 
     const result = await pullGcalChanges(userId);
     if (result.applied > 0 || result.deleted > 0) {
-        broadcastEvent({ model: "CalendarEvent", action: "invalidate", timestamp: Date.now() });
+        broadcastEvent({ model: "CalendarEvent", action: "invalidate", userId, timestamp: Date.now() });
     }
     return NextResponse.json(result, { status: 200 });
 }

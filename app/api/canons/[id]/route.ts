@@ -42,7 +42,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     try {
         const canon = await updateCanon(userId, id, parsed.data);
         if (!canon) return NextResponse.json({ error: "Canon not found" }, { status: 404 });
-        broadcastEvent({ model: "Canon", action: "upsert", id, timestamp: Date.now() });
+        broadcastEvent({ model: "Canon", action: "upsert", id, userId, timestamp: Date.now() });
         return NextResponse.json({ canon }, { status: 200 });
     } catch (e) {
         const code = (e as { code?: string } | null)?.code;
@@ -67,7 +67,7 @@ export async function DELETE(_req: NextRequest, { params }: { params: Promise<{ 
     try {
         const ok = await deleteCanon(userId, id);
         if (!ok) return NextResponse.json({ error: "Canon not found" }, { status: 404 });
-        broadcastEvent({ model: "Canon", action: "delete", id, timestamp: Date.now() });
+        broadcastEvent({ model: "Canon", action: "delete", id, userId, timestamp: Date.now() });
         return NextResponse.json({ ok: true }, { status: 200 });
     } catch (e) {
         console.error(`[canons/${id} DELETE] error:`, e);

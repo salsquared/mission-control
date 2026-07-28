@@ -802,12 +802,19 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     }
 
     if (broadcast) {
-        broadcastEvent({ model: "Watchlist", action: "upsert", id: watchlistId, timestamp: runAt.getTime() });
+        // The watchlist's owner is the only viewer these belong to — a crawl of
+        // one crew member's watchlist must not wake every other client.
+        broadcastEvent({ model: "Watchlist", action: "upsert", id: watchlistId, userId: watchlist.userId, timestamp: runAt.getTime() });
         if (newPostings > 0 || seenAgain > 0) {
-            broadcastEvent({ model: "Posting", action: "upsert", id: watchlistId, timestamp: runAt.getTime() });
+            broadcastEvent({ model: "Posting", action: "upsert", id: watchlistId, userId: watchlist.userId, timestamp: runAt.getTime() });
         }
         if (newPostings > 0) {
-            broadcastEvent({ model: "Notification", action: "upsert", id: watchlist.userId, timestamp: runAt.getTime() });
+            // `id` intentionally omitted: the notifications dispatched above are
+            // fire-and-forget, so there is no single row to name. (It previously
+            // carried `id: watchlist.userId` — one of three sites smuggling a
+            // user id through the row-id field, all normalized together; see
+            // lib/events.ts.)
+            broadcastEvent({ model: "Notification", action: "upsert", userId: watchlist.userId, timestamp: runAt.getTime() });
         }
     }
 

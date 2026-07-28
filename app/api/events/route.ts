@@ -4,11 +4,14 @@ import { requireSession } from '@/lib/auth-guards';
 export const dynamic = 'force-dynamic';
 
 export async function GET(req: Request) {
-    // Tunnel + LAN both require a session — the stream carries cross-row
+    // Every subscriber must be a resolved viewer — the stream carries cross-row
     // event ids (Application, Posting, Notification, etc.) and shouldn't be
     // publicly subscribable from any origin.
     const guard = await requireSession();
     if ('error' in guard) return guard.error;
+    // The fan-out filter key. Server-side and guard-derived: a client cannot
+    // ask for another viewer's stream, because it never gets to name one.
+    const viewerId = guard.session.user.id;
 
     const encoder = new TextEncoder();
 
@@ -16,7 +19,7 @@ export async function GET(req: Request) {
         start(controller) {
             controller.enqueue(encoder.encode(': connected\n\n'));
 
-            const unsub = subscribeToEvents((event) => {
+            const unsub = subscribeToEvents(viewerId, (event) => {
                 controller.enqueue(
                     encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
                 );

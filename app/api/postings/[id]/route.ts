@@ -100,7 +100,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             await closeApplicationsForClosedPostings([row.id], { at: closedAt, source: "ms" })
                 .catch(e => console.warn(`[postings/${id} PATCH] cascade close failed:`, e));
         }
-        broadcastEvent({ model: 'Posting', action: 'upsert', id: row.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Posting', action: 'upsert', id: row.id, userId, timestamp: Date.now() });
         return NextResponse.json({ posting: serialize(row) }, { status: 200 });
     } catch (e) {
         console.error(`[postings/${id} PATCH] error:`, e);

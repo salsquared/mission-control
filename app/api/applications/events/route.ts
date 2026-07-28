@@ -97,7 +97,7 @@ export async function POST(req: NextRequest) {
     // ingest path (Gmail webhook) fires the notification, which is where
     // dispatch actually makes sense (the user wouldn't otherwise know).
 
-    broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, timestamp: Date.now() });
+    broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, userId, timestamp: Date.now() });
     return NextResponse.json({ event }, { status: 200 });
 }
 
@@ -141,7 +141,7 @@ export async function PATCH(req: NextRequest) {
         role: event.application.role,
     });
 
-    broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, timestamp: Date.now() });
+    broadcastEvent({ model: "CalendarEvent", action: "upsert", id: event.id, userId, timestamp: Date.now() });
     return NextResponse.json({ event }, { status: 200 });
 }
 
@@ -166,6 +166,6 @@ export async function DELETE(req: NextRequest) {
     // Fix C: gcal-sweep-before-delete via the canonical helper (never a raw
     // row delete that would orphan the calendar event).
     await purgeApplicationEvents([id]);
-    broadcastEvent({ model: "CalendarEvent", action: "delete", id, timestamp: Date.now() });
+    broadcastEvent({ model: "CalendarEvent", action: "delete", id, userId, timestamp: Date.now() });
     return NextResponse.json({ success: true }, { status: 200 });
 }

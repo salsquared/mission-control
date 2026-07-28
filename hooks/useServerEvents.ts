@@ -1,6 +1,16 @@
 import { useEffect, useRef } from 'react';
 
-export type ServerEventModel = 'Task' | 'Goal' | 'SavedPaper' | 'Application' | 'CalendarEvent' | 'Setting' | 'FinanceTick' | 'Cache' | 'Profile' | 'ProfileSnapshot' | 'Watchlist' | 'Posting' | 'Notification' | 'Contact' | 'GeneratedResume' | 'Canon';
+// Kept in sync with the server union by aliasing it directly, rather than
+// restating the 16 literals. `ModelName` is `UserModelName | GlobalModelName`
+// (lib/events.ts) — the client subscribes by model and never sees the split,
+// because the per-user filter runs entirely server-side: by the time an event
+// reaches this EventSource it is already one this viewer is allowed. No
+// consumer reads the payload beyond `model`, so nothing else here moves.
+// `import type` is fully erased, so this pulls no server module into the
+// client bundle — it is a compile-time link only.
+import type { ModelName } from '@/lib/events';
+
+export type ServerEventModel = ModelName;
 
 // Single shared EventSource per browser tab. Every useServerEvents call adds
 // itself to an in-memory subscriber map and the EventSource is opened on the

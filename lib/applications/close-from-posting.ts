@@ -30,9 +30,13 @@ export async function closeApplicationsForClosedPostings(
     // INTERESTED-only (OQ7). Select the candidates first so we can write a
     // per-app STATUS_CHANGED event capturing the from-status (always
     // INTERESTED here, but mirror the manual PATCH shape for symmetry).
+    // `userId` is selected purely to scope the SSE broadcast below. It is NOT
+    // threaded in as a parameter, because `postingIds` is not guaranteed to
+    // belong to one user — the manual PATCH caller passes a single posting, but
+    // the probe caller passes a batch — so the owner has to be read per row.
     const candidates = await prisma.application.findMany({
         where: { postingId: { in: postingIds }, status: "INTERESTED" },
-        select: { id: true, status: true },
+        select: { id: true, status: true, userId: true },
     });
 
     const closedAppIds: string[] = [];
@@ -57,7 +61,7 @@ export async function closeApplicationsForClosedPostings(
                 syncSource: opts.source,
             },
         });
-        broadcastEvent({ model: "Application", action: "upsert", id: app.id, timestamp: Date.now() });
+        broadcastEvent({ model: "Application", action: "upsert", id: app.id, userId: app.userId, timestamp: Date.now() });
         closedAppIds.push(app.id);
     }
 

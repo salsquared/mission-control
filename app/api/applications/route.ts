@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
             });
         }
 
-        broadcastEvent({ model: 'Application', action: 'upsert', id: application.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Application', action: 'upsert', id: application.id, userId, timestamp: Date.now() });
         return NextResponse.json({ application }, { status: 200 });
     } catch (e: any) {
         console.error("[applications POST] error:", e);
@@ -171,7 +171,7 @@ export async function PATCH(req: NextRequest) {
             });
         }
 
-        broadcastEvent({ model: 'Application', action: 'upsert', id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Application', action: 'upsert', id, userId, timestamp: Date.now() });
         return NextResponse.json({ application }, { status: 200 });
     } catch (e: any) {
         console.error("[applications PATCH] error:", e);
@@ -201,7 +201,7 @@ export async function DELETE(req: NextRequest) {
         }
         await deleteApplication(id);
 
-        broadcastEvent({ model: 'Application', action: 'delete', id, timestamp: Date.now() });
+        broadcastEvent({ model: 'Application', action: 'delete', id, userId, timestamp: Date.now() });
         return NextResponse.json({ success: true, id }, { status: 200 });
     } catch (e: any) {
         console.error("[applications DELETE] error:", e);

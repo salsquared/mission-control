@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
 
     try {
         const snapshot = await createProfileSnapshot(userId, parsed.data.label ?? null);
-        broadcastEvent({ model: 'ProfileSnapshot', action: 'upsert', id: snapshot.id, timestamp: Date.now() });
+        broadcastEvent({ model: 'ProfileSnapshot', action: 'upsert', id: snapshot.id, userId, timestamp: Date.now() });
         return NextResponse.json({ snapshot: serializeSummary(snapshot) }, { status: 200 });
     } catch (e) {
         console.error("[profile/snapshots POST] error:", e);

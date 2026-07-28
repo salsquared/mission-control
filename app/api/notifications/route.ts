@@ -106,7 +106,11 @@ export async function PATCH(req: NextRequest) {
             updated = r.count;
         }
         if (updated > 0) {
-            broadcastEvent({ model: 'Notification', action: 'upsert', id: userId, timestamp: Date.now() });
+            // `id` intentionally omitted: this is a bulk updateMany, so there is
+            // no single row to name. (It previously carried `id: userId` — one
+            // of three sites smuggling a user id through the row-id field, all
+            // normalized together; see lib/events.ts.)
+            broadcastEvent({ model: 'Notification', action: 'upsert', userId, timestamp: Date.now() });
         }
         return NextResponse.json({ updated }, { status: 200 });
     } catch (e) {
