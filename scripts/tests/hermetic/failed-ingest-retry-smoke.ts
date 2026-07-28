@@ -43,7 +43,12 @@ const DDL = [
         "email" TEXT,
         "emailVerified" DATETIME,
         "image" TEXT,
-        "lastSyncedHistoryId" TEXT
+        "lastSyncedHistoryId" TEXT,
+        -- Multi-user owner/crew (docs/multi-user-crew.html P1.1.1). This DDL is
+        -- hand-maintained and does NOT track prisma/schema.prisma automatically,
+        -- so a new NOT NULL column on User breaks every create() here with P2022
+        -- until it is mirrored. Keep in sync with the migration's User table.
+        "role" TEXT NOT NULL DEFAULT 'crew'
     )`,
     `CREATE UNIQUE INDEX "User_email_key" ON "User"("email")`,
     `CREATE TABLE "FailedIngest" (
