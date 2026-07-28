@@ -145,19 +145,53 @@ async function main() {
                     kind: "INTERVIEW_SCHEDULED",
                     scheduledAt: new Date(Date.now() + 86_400_000),
                 });
-                // Real failure: throwaway user has no Google Account rows → auth throws.
+                // Real failure: throwaway user has no Google Account rows at all.
+                // Since the multi-user owner/crew work this is short-circuited by
+                // syncEventToGcal's own "no Account row" pre-check (added so that
+                // crew — who have no Google grant BY DESIGN, OQ6a — don't warn into
+                // the owner's log ring buffer on every event they create). Both
+                // this and the getGoogleAuthClient throw below are auth failures
+                // and must be classified identically by callers.
                 let thrown: unknown = null;
                 try {
                     await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" }, { throwOnError: true });
                 } catch (e) {
                     thrown = e;
                 }
-                check("(d) syncEventToGcal throwOnError:true rethrows on auth failure", thrown !== null);
+                check("(d) syncEventToGcal throwOnError:true rethrows on auth failure (no Account row)", thrown !== null);
                 check(
                     "(d) the rethrown error is the auth failure",
                     /not linked|refresh token/i.test((thrown as Error | null)?.message ?? ""),
                     thrown,
                 );
+
+                // The OTHER auth-failure path, which the pre-check above would
+                // otherwise hide: an Account row that EXISTS but carries no
+                // refresh_token, so getGoogleAuthClient itself throws
+                // (lib/googleapis.ts:12). Without this case the pre-check masks
+                // the original code path and it goes untested.
+                const acct = await prisma.account.create({
+                    data: {
+                        userId: user.id,
+                        type: "oauth",
+                        provider: "google",
+                        providerAccountId: `smoke-ckpt-${Date.now().toString(36)}`,
+                        refresh_token: null,
+                    },
+                });
+                let thrownNoToken: unknown = null;
+                try {
+                    await syncEventToGcal(user.id, futureEv, { company: "Smoke Co" }, { throwOnError: true });
+                } catch (e) {
+                    thrownNoToken = e;
+                }
+                check("(d) Account row present but no refresh_token → getGoogleAuthClient still throws", thrownNoToken !== null);
+                check(
+                    "(d) that error is classified as the same auth failure",
+                    /not linked|refresh token/i.test((thrownNoToken as Error | null)?.message ?? ""),
+                    thrownNoToken,
+                );
+                await prisma.account.delete({ where: { id: acct.id } });
 
                 // Benign no-op: nothing scheduled → null, no throw, even with the flag.
                 const unscheduledEv = makeEvent({ scheduledAt: null });

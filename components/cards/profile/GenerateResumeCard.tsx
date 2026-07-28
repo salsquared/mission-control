@@ -18,6 +18,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys } from "@/lib/api-client";
+import { aiQuotaNotice } from "@/lib/api-errors";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { Card } from "../../ui/Card";
 import { buildResumeDisplayLabel } from "@/lib/resumes/labels";
@@ -168,6 +169,16 @@ export function GenerateResumeCard() {
                 let stageLabel = "";
                 try {
                     const j = await res.json();
+                    // P3.6 — the daily-AI-credit 429 is a ceiling, not a
+                    // breakage. Its `error` already reads "you've used N of M
+                    // today. Resets at 00:00 UTC", so render it verbatim as a
+                    // warning and skip the "Generate failed: <stage>" framing
+                    // below, which would present a working limit as a fault.
+                    const quota = aiQuotaNotice(j);
+                    if (quota) {
+                        toastStore.push({ message: quota.message, type: "warning" });
+                        return;
+                    }
                     detail = j.error ? (typeof j.error === "string" ? j.error : JSON.stringify(j.error)) : "";
                     stageLabel = STAGE_LABELS[j.stage as keyof typeof STAGE_LABELS] ?? "";
                 } catch { /* non-JSON */ }

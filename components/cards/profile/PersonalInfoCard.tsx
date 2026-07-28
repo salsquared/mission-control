@@ -452,7 +452,11 @@ const TaglineRow: React.FC<{
             />
             {draftError && (
                 <div className="flex items-center justify-between gap-2 text-xs text-rose-300 bg-rose-500/10 border border-rose-500/30 rounded px-2 py-1">
-                    <span className="truncate">{draftError}</span>
+                    {/* Wraps rather than truncates (P3.6): the daily-AI-credit
+                        429's sentence is long, and `truncate` cut it off right
+                        before the "you've used N of M today" that makes it
+                        actionable. Every other long error gains the same. */}
+                    <span className="min-w-0">{draftError}</span>
                     <button
                         type="button"
                         onClick={() => setDraftError(null)}

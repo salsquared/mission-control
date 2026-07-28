@@ -29,10 +29,26 @@ function errMessage(e: unknown): string {
 }
 
 export const ProfileView: React.FC = () => {
-    // Edge-trusted: the owner is always present once past Cloudflare Access, so
-    // there's no "signed out" wall. `googleConnected` drives only a NON-blocking
-    // reconnect banner (token missing / scopes stale).
-    const { user, googleConnected, isLoading: accountLoading } = useAccount();
+    // Edge-trusted: a verified viewer is always present once past Cloudflare
+    // Access, so there's no "signed out" wall. `googleConnected` drives only a
+    // NON-blocking reconnect banner (token missing / scopes stale).
+    const { user, role, googleConnected, isLoading: accountLoading } = useAccount();
+
+    // The reconnect banner is OWNER-ONLY (docs/multi-user-crew.html P3.5,
+    // decided in OQ6a: crew never connect Google in v1).
+    //
+    // The condition is `role === 'owner'`, NOT `googleConnected`. Crew have no
+    // `Account` row, so `googleConnected` is permanently false for them and is
+    // indistinguishable from the owner's "not connected yet" — keyed on it, the
+    // banner renders for crew forever, and it does worse than look broken: it
+    // invites them into a Gmail/Calendar scope grant that is an explicit v1
+    // non-goal (and one `ALLOWED_SIGNIN_EMAILS` would reject anyway, so the
+    // invitation cannot even be accepted).
+    //
+    // `=== 'owner'` rather than `!== 'crew'` so the unknown-role window (`role`
+    // is `undefined` until /api/account resolves) behaves like crew. The owner
+    // sees no flash: the spinner below covers the first resolve.
+    const isOwner = role === 'owner';
     const queryClient = useQueryClient();
 
     const { data: profileData, isLoading } = useQuery({
@@ -227,9 +243,11 @@ export const ProfileView: React.FC = () => {
     };
 
     // ─── Render gates ──────────────────────────────────────────────────────
-    // No sign-in wall: the owner is always authenticated past the edge. A spinner
-    // covers the first owner/profile resolve; the connect banner (below) is the
-    // only Google-related surface, and it never blocks the view.
+    // No sign-in wall: a verified viewer is always present past the edge. A
+    // spinner covers the first viewer/profile resolve — which is also what keeps
+    // the owner-only connect banner (below) from flashing in a beat late. The
+    // banner is the only Google-related surface here, and it never blocks the
+    // view.
     if (accountLoading || isLoading || !profile) {
         return (
             <div className="w-full h-full flex items-center justify-center">
@@ -319,7 +337,7 @@ export const ProfileView: React.FC = () => {
 
     return (
         <Scrollbar className="w-full h-full pb-8">
-            {!googleConnected && (
+            {isOwner && !googleConnected && (
                 <div className="mt-4 flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 bg-purple-500/10 border border-purple-500/20 rounded-2xl">
                     <div className="p-2 bg-purple-500/10 rounded-xl shrink-0">
                         <Mail className="w-6 h-6 text-purple-400" />

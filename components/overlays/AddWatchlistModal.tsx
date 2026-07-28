@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom";
 import { X, Plus, Loader2, Search, Building2, Settings2, Sparkles, Check, Minus, ArrowUpToLine, ChevronLeft, ChevronRight, Telescope, RefreshCw, Copy, AlertTriangle, Ban } from "lucide-react";
 import { api } from "@/lib/api-client";
+import { firstRejectionNotice, watchlistLimitNotice } from "@/lib/api-errors";
 import { toastStore } from "@/lib/toast-store";
 import {
     DIRECTORY_TAGS,
@@ -518,6 +519,12 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     message: `Failed: ${failedLabels.join(", ")}`,
                     type: "error",
                 });
+                // The label list says nothing about WHY. At the per-crew
+                // watchlist cap every create fails for one reason, and the
+                // server's sentence names the cap and the remedy — surface it
+                // once rather than dropping it (P3.6 companion).
+                const limit = firstRejectionNotice(results, watchlistLimitNotice);
+                if (limit) toastStore.push({ message: limit.message, type: "warning" });
             }
             onCreated();
             if (failedIdx.length === 0) {
@@ -595,6 +602,10 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     message: `Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`,
                     type: "error",
                 });
+                // Name list without a reason — surface the watchlist-cap
+                // sentence once when that is what rejected them.
+                const limit = firstRejectionNotice(results, watchlistLimitNotice);
+                if (limit) toastStore.push({ message: limit.message, type: "warning" });
             }
             onCreated();
             if (failed.length === 0) {
@@ -705,6 +716,10 @@ export const AddWatchlistModal: React.FC<AddWatchlistModalProps> = ({ open, onCl
                     message: `Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`,
                     type: "error",
                 });
+                // Name list without a reason — surface the watchlist-cap
+                // sentence once when that is what rejected them.
+                const limit = firstRejectionNotice(results, watchlistLimitNotice);
+                if (limit) toastStore.push({ message: limit.message, type: "warning" });
             }
             onCreated();
             if (failed.length === 0) {

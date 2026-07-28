@@ -23,6 +23,7 @@ import {
     MapPin,
 } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
+import { aiQuotaNotice } from "@/lib/api-errors";
 import {
     APPLICATION_STATUSES,
     APPLICATION_KINDS,
@@ -994,6 +995,14 @@ const ApplicationResumesSection: React.FC<{ applicationId: string; company: stri
             });
             if (!res.ok) {
                 const body = await res.json().catch(() => ({}));
+                // P3.6 — daily-AI-credit ceiling. Render the server's own
+                // "you've used N of M today" sentence as a warning instead of
+                // the generic "Generate failed: …" error toast below.
+                const quota = aiQuotaNotice(body);
+                if (quota) {
+                    toastStore.push({ message: quota.message, type: "warning" });
+                    return;
+                }
                 throw new Error(body.error ?? `HTTP ${res.status}`);
             }
             const resumeId = res.headers.get("X-Resume-Id");

@@ -59,11 +59,29 @@ function trackShadow(track: PostingsTrackKey): React.CSSProperties {
 }
 
 export const ApplicationsView: React.FC = () => {
-    // Edge-trusted: the owner is always present past Cloudflare Access, so the
-    // list queries gate on owner presence (not a session) and there's no access
-    // wall. `googleConnected` drives only the non-blocking reconnect affordance
-    // in the Account Status card.
-    const { user, googleConnected, isLoading: accountLoading } = useAccount();
+    // Edge-trusted: a verified viewer is always present past Cloudflare Access,
+    // so the list queries gate on viewer presence (not a session) and there's no
+    // access wall. `googleConnected` drives only the non-blocking reconnect
+    // affordance in the Account Status card — and only for the owner.
+    const { user, role, googleConnected, isLoading: accountLoading } = useAccount();
+
+    // Google-backed controls are OWNER-ONLY (docs/multi-user-crew.html P3.5 +
+    // P3.7, decided in OQ6a): crew never connect Google, so every route below
+    // that reaches `getGoogleAuthClient` either 403s or throws for them.
+    //
+    // Two things this deliberately is NOT:
+    //   - NOT keyed on `googleConnected`. Crew have no `Account` row, so that
+    //     flag is permanently false and is indistinguishable from the owner's
+    //     "not connected yet" — gating on it would show crew a Connect button
+    //     forever, inviting them into a scope grant that is an explicit v1
+    //     non-goal (OQ6a).
+    //   - NOT `role !== 'crew'`. `role` is `undefined` until /api/account
+    //     resolves; the unknown-role window must behave like crew so no
+    //     owner-only request can leave the client before we know who is asking.
+    //     (The owner never sees these controls flash in late either: the
+    //     spinner below covers the first resolve, and a background refetch
+    //     keeps the cached role.)
+    const isOwner = role === 'owner';
     const [isCalendarAdding, setIsCalendarAdding] = useState(false);
     const [isCalendarEditing, setIsCalendarEditing] = useState(false);
     const [isScanning, setIsScanning] = useState(false);
@@ -142,7 +160,7 @@ export const ApplicationsView: React.FC = () => {
     }, [queryClient]);
 
     const syncFromGcal = useCallback(async (silent = false) => {
-        if (!user) return;
+        if (!user || !isOwner) return;
         setIsSyncing(true);
         try {
             const result = await api.applications.events.sync();
@@ -162,18 +180,32 @@ export const ApplicationsView: React.FC = () => {
         } finally {
             setIsSyncing(false);
         }
-    }, [user, queryClient]);
+    }, [user, isOwner, queryClient]);
 
     // Background poll while the view is mounted. 5-min cadence so we don't
     // hammer Google; the syncToken makes each tick cheap. Silent toasts —
     // user only sees noise when they hit "Sync now" themselves.
+    //
+    // OWNER-ONLY, and the timer is never ARMED for anyone else — the effect
+    // returns before `setInterval`, rather than arming a timer whose callback
+    // bails. This is the one item in P3.7 that is an OWNER-facing defect: for
+    // crew, `/api/applications/events/sync` reaches `getGoogleAuthClient`, which
+    // throws on a missing `Account` row; `syncFromGcal` swallows that silently
+    // (`silent = true` suppresses the toast), so crew would see nothing while
+    // every crew tab wrote a warning into the OWNER's 500-deep log ring buffer
+    // every five minutes, indefinitely, evicting real signal. `isOwner` is in
+    // the deps so the timer arms the moment the role resolves to owner, and is
+    // torn down if it ever stops being owner.
     useEffect(() => {
-        if (!user) return;
+        if (!user || !isOwner) return;
         const id = setInterval(() => syncFromGcal(true), 5 * 60 * 1000);
         return () => clearInterval(id);
-    }, [user, syncFromGcal]);
+    }, [user, isOwner, syncFromGcal]);
 
     const scanInbox = useCallback(async () => {
+        // Owner-only route (`/api/applications/backfill`, `requireOwner`).
+        // Guard the CALL, not just the button that is already hidden below.
+        if (!isOwner) return;
         setIsScanning(true);
         try {
             const result = await api.applications.backfill();
@@ -198,7 +230,7 @@ export const ApplicationsView: React.FC = () => {
         } finally {
             setIsScanning(false);
         }
-    }, [invalidateApps]);
+    }, [isOwner, invalidateApps]);
 
     if (accountLoading && !hasEverResolvedRef.current) {
         return (
@@ -296,12 +328,19 @@ export const ApplicationsView: React.FC = () => {
                                 <Mail className="w-4 h-4 text-slate-400" />
                             </div>
                             <div className="flex flex-col min-w-0 flex-1">
-                                <span className="text-sm font-semibold text-slate-200 truncate leading-tight">{user?.email ?? "Owner"}</span>
-                                <span className={`text-xs truncate leading-tight ${googleConnected ? "text-emerald-400" : "text-amber-400"}`}>
-                                    {googleConnected ? "Google connected" : "Google not connected"}
-                                </span>
+                                <span className="text-sm font-semibold text-slate-200 truncate leading-tight">{user?.email ?? "Signed in"}</span>
+                                {/* The connection line is part of the same
+                                    invitation as the button beside it: for crew
+                                    a permanent amber "Google not connected"
+                                    reads as a setup step they are expected to
+                                    finish. Owner-only, same condition. */}
+                                {isOwner && (
+                                    <span className={`text-xs truncate leading-tight ${googleConnected ? "text-emerald-400" : "text-amber-400"}`}>
+                                        {googleConnected ? "Google connected" : "Google not connected"}
+                                    </span>
+                                )}
                             </div>
-                            {!googleConnected && (
+                            {isOwner && !googleConnected && (
                                 <button
                                     onClick={() => signIn("google")}
                                     className="shrink-0 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold text-blue-300 transition-all"
@@ -312,12 +351,22 @@ export const ApplicationsView: React.FC = () => {
                             )}
                         </div>
                         <div className="flex flex-row gap-2">
-                            <button onClick={scanInbox} disabled={isScanning} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
-                                <Inbox className={`w-3.5 h-3.5 shrink-0 ${isScanning ? "animate-pulse" : ""}`} /> <span className="truncate">{isScanning ? "Scanning…" : "Scan Inbox"}</span>
-                            </button>
-                            <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
-                                <RotateCw className={`w-3.5 h-3.5 shrink-0 ${isSyncing ? "animate-spin" : ""}`} /> <span className="truncate">{isSyncing ? "Syncing…" : "Sync Gcal"}</span>
-                            </button>
+                            {/* Scan Inbox → /api/applications/backfill and Sync
+                                Gcal → /api/applications/events/sync are both
+                                owner-only. Hidden, not disabled: a greyed-out
+                                control still reads as "yours, later", and these
+                                never become available to crew. Ping Status is a
+                                pure cache invalidation, so it stays for all. */}
+                            {isOwner && (
+                                <button onClick={scanInbox} disabled={isScanning} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold transition-all text-blue-300 disabled:opacity-50" title="Scan last 6 months of Gmail for application emails">
+                                    <Inbox className={`w-3.5 h-3.5 shrink-0 ${isScanning ? "animate-pulse" : ""}`} /> <span className="truncate">{isScanning ? "Scanning…" : "Scan Inbox"}</span>
+                                </button>
+                            )}
+                            {isOwner && (
+                                <button onClick={() => syncFromGcal(false)} disabled={isSyncing} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 active:scale-95 border border-emerald-500/20 rounded-lg text-xs font-semibold transition-all text-emerald-300 disabled:opacity-50" title="Pull changes from Google Calendar">
+                                    <RotateCw className={`w-3.5 h-3.5 shrink-0 ${isSyncing ? "animate-spin" : ""}`} /> <span className="truncate">{isSyncing ? "Syncing…" : "Sync Gcal"}</span>
+                                </button>
+                            )}
                             <button onClick={() => invalidateApps()} disabled={activeLoading} className="flex-1 flex items-center justify-center gap-1.5 px-2 py-2 bg-white/5 hover:bg-white/10 active:scale-95 border border-white/10 rounded-lg text-xs font-semibold transition-all text-slate-200 disabled:opacity-50" title="Refresh application list">
                                 <RefreshCw className={`w-3.5 h-3.5 shrink-0 ${activeLoading ? "animate-spin" : ""}`} /> <span className="truncate">Ping Status</span>
                             </button>
@@ -330,10 +379,17 @@ export const ApplicationsView: React.FC = () => {
 
     return (
         <Scrollbar className="w-full h-full pb-8">
-            <Section title="Applications Pipeline" description="Auto-syncs via Gmail & Pub/Sub API">
-                {/* No access wall: the owner is always authenticated past the edge.
-                    The track switch + pipeline render directly; Google connection
-                    state is surfaced (non-blocking) in the Account Status card. */}
+            {/* The subtitle is role-dependent for the same reason as the
+                controls: crew have no Gmail ingest (OQ6a), so promising them an
+                auto-syncing pipeline describes a feature they do not have. */}
+            <Section
+                title="Applications Pipeline"
+                description={isOwner ? "Auto-syncs via Gmail & Pub/Sub API" : "Track applications and postings from your watchlists"}
+            >
+                {/* No access wall: a verified viewer is always present past the
+                    edge. The track switch + pipeline render directly; Google
+                    connection state is surfaced (non-blocking) in the Account
+                    Status card, and only for the owner. */}
                 {/* Track switch — flips the kanban + discovery cards between
                     tracks. Interviews + Account Status below are shared. */}
                 <div className="mt-4 flex items-center gap-2" role="tablist" aria-label="Application track">

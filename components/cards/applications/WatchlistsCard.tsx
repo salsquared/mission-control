@@ -3,6 +3,7 @@ import React, { useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Eye, EyeOff, Loader2, Pause, Play, Plus, RefreshCw, Trash2, AlertCircle, Filter, ChevronRight, ChevronLeft, Bell, BellOff, Layers, X, Search, Pencil, Sparkles } from "lucide-react";
 import { api, queryKeys } from "@/lib/api-client";
+import { aiQuotaNotice, firstRejectionNotice } from "@/lib/api-errors";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { toastStore } from "@/lib/toast-store";
 import { useAppStore } from "../../providers/state";
@@ -254,7 +255,14 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
             invalidatePostings();
             queryClient.invalidateQueries({ queryKey: queryKeys.notifications() });
         } catch (e) {
-            toastStore.push({ message: `Run failed: ${errMessage(e)}`, type: "error" });
+            // P3.6 — a run is AI-gated (employment-type classification), so it
+            // can come back on the daily-credit ceiling. That is a limit, not a
+            // fetcher failure: render the server's "you've used N of M today"
+            // sentence verbatim rather than wrapping it in "Run failed:".
+            const quota = aiQuotaNotice(e);
+            toastStore.push(quota
+                ? { message: quota.message, type: "warning" }
+                : { message: `Run failed: ${errMessage(e)}`, type: "error" });
         } finally {
             endBusy([id]);
         }
@@ -347,6 +355,12 @@ export function WatchlistsCard({ track = "career" }: WatchlistsCardProps = {}) {
                     message: `${results.length - failures.length}/${results.length} sources ran; ${failures.join(", ")} failed`,
                     type: "error",
                 });
+                // P3.6 — the count toast above names WHICH sources failed and
+                // nothing about why. At the daily-AI-credit ceiling every
+                // member fails for the same reason, so one notice explains the
+                // whole batch; without it the message is dropped entirely.
+                const quota = firstRejectionNotice(results, aiQuotaNotice);
+                if (quota) toastStore.push({ message: quota.message, type: "warning" });
             }
             invalidateWatchlists();
             invalidatePostings();

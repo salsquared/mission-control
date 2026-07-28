@@ -4,6 +4,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Loader2, Upload, FileText, FilePlus, X } from "lucide-react";
 import { toastStore } from "@/lib/toast-store";
 import { queryKeys } from "@/lib/api-client";
+import { aiQuotaNotice } from "@/lib/api-errors";
 import { Card } from "../../ui/Card";
 
 interface PerFileCounts {
@@ -81,6 +82,14 @@ export function ImportResumesCard() {
             const res = await fetch("/api/profile/import", { method: "POST", body: fd });
             const body = await res.json().catch(() => ({}));
             if (!res.ok) {
+                // P3.6 — daily-AI-credit ceiling. The generic path would prefix
+                // the internal stage token, showing the user "[ai-quota] Daily
+                // AI limit reached…"; render the sentence on its own instead.
+                const quota = aiQuotaNotice(body);
+                if (quota) {
+                    toastStore.push({ message: quota.message, type: "warning" });
+                    return;
+                }
                 const stage = body.stage ? `[${body.stage}] ` : "";
                 throw new Error(`${stage}${body.error ?? `HTTP ${res.status}`}`);
             }

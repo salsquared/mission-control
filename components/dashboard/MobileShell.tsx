@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
 import { useFinePointer } from "@/hooks/useMobileLayout";
+import { useAccount } from "@/hooks/useAccount";
 import { LaunchpadOverlay } from "../overlays/LaunchpadOverlay";
 import { NotificationBell } from "../overlays/NotificationBell";
 import { SavedPapersOverlay } from "../overlays/SavedPapersOverlay";
@@ -58,6 +59,7 @@ export const MobileShell: React.FC<MobileShellProps> = ({ carousel, baseDashes }
 
     const { aiCompanionEnabled } = useSettingsStore();
     const { viewHues } = useThemeStore();
+    const { role } = useAccount();
     const hasFinePointer = useFinePointer();
 
     const viewportRef = useRef<HTMLDivElement>(null);
@@ -103,10 +105,29 @@ export const MobileShell: React.FC<MobileShellProps> = ({ carousel, baseDashes }
         setIsLaunchpadOpen(false);
     };
 
-    const openLibraryFromSheet = () => {
-        setIsLaunchpadOpen(false);
-        setIsLibraryOpen(true);
-    };
+    // Library — OWNER ONLY (P3.4). There is no bottom controls bar on mobile,
+    // so the Library entry point is the Launchpad sheet's "More" row, and that
+    // row renders only when a handler is passed. Withholding the handler is
+    // therefore what hides it — the same caller-gates contract
+    // `openAIFromSheet` already uses for the AI-Companion flag below.
+    //
+    // The reason is the backing route, not taste: the panel reads
+    // `GET /api/research/saved`, guarded by `requireOwner`, so for a crew
+    // member it is an empty list behind a 403.
+    //
+    // `role === 'owner'`, NOT `role !== 'crew'`: `useAccount()` returns
+    // `role === undefined` while /api/account is in flight, and the negative
+    // form would show the row through that window and then remove it.
+    //
+    // HIDING A CONTROL IS NOT ACCESS CONTROL. `research/saved` enforces itself
+    // server-side; this only stops crew from tapping into a guaranteed 403.
+    // Anyone can still call the API directly.
+    const openLibraryFromSheet = role === 'owner'
+        ? () => {
+            setIsLaunchpadOpen(false);
+            setIsLibraryOpen(true);
+        }
+        : undefined;
 
     const openAIFromSheet = aiCompanionEnabled
         ? () => {

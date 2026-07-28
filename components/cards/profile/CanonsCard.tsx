@@ -21,6 +21,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toastStore } from "@/lib/toast-store";
 import { api, queryKeys, type CanonWire } from "@/lib/api-client";
+import { aiQuotaNotice } from "@/lib/api-errors";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { Card } from "../../ui/Card";
 import { ResumeBuilderOverlay } from "@/components/overlays/ResumeBuilderOverlay";
@@ -116,6 +117,14 @@ export function CanonsCard() {
                 let detail = "";
                 try {
                     const j = await res.json();
+                    // P3.6 — daily-AI-credit ceiling. Skipping the generic path
+                    // matters extra here: it would append the internal stage
+                    // token, surfacing "… (ai-quota)" to the user.
+                    const quota = aiQuotaNotice(j);
+                    if (quota) {
+                        toastStore.push({ message: quota.message, type: "warning" });
+                        return;
+                    }
                     const msg = j.error
                         ? (typeof j.error === "string" ? j.error : JSON.stringify(j.error))
                         : "";

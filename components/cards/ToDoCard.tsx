@@ -113,6 +113,17 @@ export const ToDoCard: React.FC<ToDoCardProps> = ({
                     />
                 ) : (
                     <div className="h-full overflow-y-auto custom-scrollbar p-6">
+                        {/* The SECOND CalendarWidget mount site (the first is
+                            ApplicationsView's Upcoming Interviews card), and the
+                            reason PlanningView joining the crew dash set was not
+                            free (docs/multi-user-crew.html OQ5a, P3.7).
+
+                            No role check here on purpose: the widget's owner-only
+                            link-from-Google mode is gated INSIDE CalendarWidget,
+                            so both mount sites are covered by one condition and
+                            neither can drift. Read-only here besides — `isAdding`
+                            is pinned false and the setter is a no-op, so the
+                            add/link panel never opens from this card at all. */}
                         <CalendarWidget
                             isAdding={false}
                             setIsAdding={() => {}}

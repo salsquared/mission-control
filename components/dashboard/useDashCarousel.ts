@@ -36,6 +36,26 @@ export interface DashCarouselState {
  * persists the WRONG id). Holding the id as the source of truth and deriving
  * the index against the current `orderedDashes` means a re-sort moves the
  * index with the dash instead of the dash under the index.
+ *
+ * ── CALLER CONTRACT (OQ9a / P3.3) ───────────────────────────────────────────
+ * `baseDashes` must be the viewer's FINAL dash set on the very first render,
+ * and must never be empty. The effect below is a ONE-SHOT `useEffect(…, [])`:
+ * it closes over the first render's `baseDashes`, calls `syncAvailableDashes`
+ * with it (which PURGES persisted order entries absent from that array) and
+ * restores the last-viewed dash by id against it. A later, wider array does
+ * not re-trigger any of that.
+ *
+ * So a caller that renders this hook before the viewer's role is known — with
+ * the unfiltered set, the crew set "optimistically", or `[]` as a placeholder —
+ * corrupts state it cannot repair: an owner whose last dash was `rocketry` has
+ * that id dropped by the sync and never restored when the set widens, leaving
+ * them on position 0. That is OQ9c, the rejected option.
+ *
+ * The enforcement is structural, not defensive: `Dashboard` gates on
+ * `useAccount()` and only MOUNTS `RoleDashboard` — the sole caller — once the
+ * role has resolved, so this hook does not run during the unknown window at
+ * all. Do not "fix" a future unknown-role window by handing this hook a
+ * placeholder array; move the gate instead.
  */
 export function useDashCarousel(baseDashes: DashConfig[]): DashCarouselState {
     // Source of truth: the current dash ID. null = not yet restored (renders
@@ -60,6 +80,21 @@ export function useDashCarousel(baseDashes: DashConfig[]): DashCarouselState {
     }, [dashOrder, dashTitles, isMounted, baseDashes]);
 
     useEffect(() => {
+        // Contract violation, not a supported input — see the caller contract
+        // above. Logged and degraded rather than left to throw on the
+        // `baseDashes[0]` read below, so the mistake surfaces as a named error
+        // instead of a blank screen. The sync is skipped deliberately: handing
+        // `syncAvailableDashes` an empty set would purge the persisted dash
+        // order outright.
+        if (baseDashes.length === 0) {
+            console.error(
+                '[useDashCarousel] mounted with an empty baseDashes array. `[]` is not a ' +
+                '"role not resolved yet" value — the hook must not be rendered until the ' +
+                'viewer\'s dash set is final (OQ9a / P3.3).',
+            );
+            return;
+        }
+
         const store = useThemeStore.getState();
         store.syncAvailableDashes(baseDashes.map(d => ({ id: d.id, title: d.title })));
 

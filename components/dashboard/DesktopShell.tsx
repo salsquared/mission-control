@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { ChevronLeft, ChevronRight, LayoutGrid, MessageSquare, Library } from "lucide-react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useSettingsStore } from "@/components/providers/settingsStore";
+import { useAccount } from "@/hooks/useAccount";
 import { LaunchpadOverlay } from "../overlays/LaunchpadOverlay";
 import { NotificationBell } from "../overlays/NotificationBell";
 import type { DashCarouselState } from "./useDashCarousel";
@@ -24,6 +25,7 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({ carousel, baseDashes
     const [isLibraryOpen, setIsLibraryOpen] = useState(false);
 
     const { aiCompanionEnabled } = useSettingsStore();
+    const { role } = useAccount();
 
     const handleGoToSlide = (id: string) => {
         goToSlide(id);
@@ -106,20 +108,41 @@ export const DesktopShell: React.FC<DesktopShellProps> = ({ carousel, baseDashes
                     <LayoutGrid className="w-6 h-6" />
                 </button>
 
-                <div className="w-px h-8 bg-white/10" />
+                {/* Library — OWNER ONLY (P3.4). The reason is the backing route,
+                    not taste: the panel reads `GET /api/research/saved`, which is
+                    guarded by `requireOwner`, so for a crew member it is an empty
+                    list behind a 403. The saved-papers library is a research
+                    surface the crew role simply does not carry.
 
-                <button
-                    onClick={() => setIsLibraryOpen(!isLibraryOpen)}
-                    className={cn(
-                        "p-3 rounded-xl transition-all",
-                        isLibraryOpen
-                            ? "bg-white/20 text-white border border-white/30"
-                            : "hover:bg-white/10 text-white/70 hover:text-white"
-                    )}
-                    title="My Library"
-                >
-                    <Library className="w-6 h-6" />
-                </button>
+                    Gated on `role === 'owner'`, NOT `role !== 'crew'`.
+                    `useAccount()` returns `role === undefined` while
+                    /api/account is in flight, and the negative form would render
+                    the button through that window and then yank it away. The
+                    owner pays a one-render pop-in instead; a control that
+                    appears and vanishes is the worse trade.
+
+                    HIDING A CONTROL IS NOT ACCESS CONTROL. `research/saved`
+                    enforces itself server-side via `requireOwner`; this only
+                    stops crew from clicking into a guaranteed 403. Anyone can
+                    still call the API directly. */}
+                {role === 'owner' && (
+                    <>
+                        <div className="w-px h-8 bg-white/10" />
+
+                        <button
+                            onClick={() => setIsLibraryOpen(!isLibraryOpen)}
+                            className={cn(
+                                "p-3 rounded-xl transition-all",
+                                isLibraryOpen
+                                    ? "bg-white/20 text-white border border-white/30"
+                                    : "hover:bg-white/10 text-white/70 hover:text-white"
+                            )}
+                            title="My Library"
+                        >
+                            <Library className="w-6 h-6" />
+                        </button>
+                    </>
+                )}
 
                 {aiCompanionEnabled && (
                     <>

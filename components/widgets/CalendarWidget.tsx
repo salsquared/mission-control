@@ -45,9 +45,24 @@ interface CalendarWidgetProps {
 }
 
 export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsAdding, isEditing = false }) => {
-    const { user } = useAccount();
+    const { user, role } = useAccount();
     const userId = user?.id ?? null;
     const queryClient = useQueryClient();
+
+    // Link-from-Google mode is OWNER-ONLY (docs/multi-user-crew.html P3.7, OQ6a):
+    // both of its calls — `gcal-candidates` and `adopt` — reach
+    // `getGoogleAuthClient`, which throws for a crew member (no `Account` row).
+    // The gate lives HERE, inside the widget, rather than at either mount site,
+    // because the widget renders on both crew dashes — ApplicationsView (the
+    // Upcoming Interviews card) and ToDoCard's calendar mode on PlanningView —
+    // and gating one call site would leave the other live.
+    //
+    // `role === 'owner'`, not `role !== 'crew'`: `role` is `undefined` until
+    // /api/account resolves, and the unknown-role window must behave like crew
+    // (no owner-only request may leave the client before we know who is asking).
+    // The mode also never renders and then vanishes — it appears only once the
+    // owner is confirmed.
+    const isOwner = role === 'owner';
 
     const { data: eventsResponse, isLoading } = useQuery({
         queryKey: queryKeys.applicationEvents(QUERY_FILTER),
@@ -75,10 +90,19 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsA
     const [mode, setMode] = useState<"create" | "link">("create");
     const loading = isLoading || submitting;
 
+    // The mode the widget actually RENDERS and QUERIES on. Derived rather than
+    // read straight off state so a non-owner can never be in "link" — not even
+    // transiently, e.g. if the owner picked it and the account query later
+    // resolved to something else. Every downstream read uses `activeMode`; only
+    // the toggle (owner-only, below) writes `mode`.
+    const activeMode = isOwner ? mode : "create";
+
     const { data: candidatesResponse, isLoading: candidatesLoading } = useQuery({
         queryKey: ['gcal-candidates'],
         queryFn: () => api.applications.events.gcalCandidates(),
-        enabled: Boolean(userId) && isAdding && mode === "link",
+        // `isOwner` first: this is the fetch gate, not just the button gate.
+        // Never enabled for crew or during the unknown-role window.
+        enabled: isOwner && Boolean(userId) && isAdding && activeMode === "link",
     });
     const candidates = candidatesResponse?.candidates ?? [];
 
@@ -121,6 +145,11 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsA
     };
 
     const handleAdopt = async (gcalEventId: string) => {
+        // Owner-only route (`/api/applications/events/adopt`). Unreachable from
+        // the UI below, which never renders the candidate list for a non-owner —
+        // this is the belt to that braces, so the guard is on the call and not
+        // only on the control that makes it.
+        if (!isOwner) return;
         if (!newEvent.applicationId) {
             toastStore.push({ message: 'Pick an application first', type: 'warning' });
             return;
@@ -170,20 +199,26 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsA
             <div className="overflow-y-auto flex-1 custom-scrollbar pr-2">
                 {isAdding && (
                     <div className="bg-slate-800/80 p-4 rounded-xl border border-slate-700 space-y-3 mb-4">
-                        <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 w-fit">
-                            <button
-                                onClick={() => setMode("create")}
-                                className={`px-3 py-1.5 text-xs rounded-md transition-all ${mode === "create" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"}`}
-                            >
-                                New event
-                            </button>
-                            <button
-                                onClick={() => setMode("link")}
-                                className={`px-3 py-1.5 text-xs rounded-md transition-all ${mode === "link" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"}`}
-                            >
-                                Link Gcal event
-                            </button>
-                        </div>
+                        {/* Owner-only. Hidden whole for crew rather than shown
+                            disabled: "Link Gcal event" advertises a Google
+                            connection crew will never have (OQ6a), and a
+                            one-option switch is not a switch. */}
+                        {isOwner && (
+                            <div className="flex bg-slate-900 p-1 rounded-lg border border-slate-700 w-fit">
+                                <button
+                                    onClick={() => setMode("create")}
+                                    className={`px-3 py-1.5 text-xs rounded-md transition-all ${activeMode === "create" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"}`}
+                                >
+                                    New event
+                                </button>
+                                <button
+                                    onClick={() => setMode("link")}
+                                    className={`px-3 py-1.5 text-xs rounded-md transition-all ${activeMode === "link" ? "bg-blue-600 text-white" : "text-slate-400 hover:text-slate-200"}`}
+                                >
+                                    Link Gcal event
+                                </button>
+                            </div>
+                        )}
 
                         <select
                             className="w-full bg-slate-900 border border-slate-700 rounded-lg p-2 text-sm text-slate-200"
@@ -207,7 +242,7 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsA
                             <option value="NOTE">Note</option>
                         </select>
 
-                        {mode === "create" ? (
+                        {activeMode === "create" ? (
                             <>
                                 <input
                                     placeholder="Title (e.g. 'Final round interview')"

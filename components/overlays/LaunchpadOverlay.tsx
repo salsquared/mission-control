@@ -20,7 +20,22 @@ interface LaunchpadOverlayProps {
     onClose?: () => void;
     /** Sheet variant only — renders a "Library" row below the dash grid
      *  if provided. Wired from MobileShell since the desktop bottom
-     *  controls bar doesn't exist on mobile. */
+     *  controls bar doesn't exist on mobile.
+     *
+     *  OWNER ONLY (P3.4) — and gated BY THE CALLER, on
+     *  `useAccount().role === 'owner'`, exactly as `onOpenAICompanion` is
+     *  gated on `aiCompanionEnabled`. Pass `undefined` for a crew member
+     *  AND while the role is still unknown (`role === undefined` during the
+     *  /api/account fetch), so the row is never rendered and then removed.
+     *  Don't re-derive the role in here: the shell owns viewer state, this
+     *  overlay stays presentational, and two sources of truth would drift.
+     *
+     *  The reason is the backing route: the Library panel reads
+     *  `GET /api/research/saved`, guarded by `requireOwner`, so for crew it
+     *  is an empty list behind a 403. Withholding this handler is NOT access
+     *  control — the route enforces itself server-side; this only stops crew
+     *  from tapping into a guaranteed 403. Anyone can still call the API
+     *  directly. */
     onOpenLibrary?: () => void;
     /** Sheet variant only — renders an "AI Companion" row below the
      *  dash grid if provided. Gated by the caller on

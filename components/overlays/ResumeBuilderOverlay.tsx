@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, queryKeys } from "@/lib/api-client";
+import { aiQuotaNotice } from "@/lib/api-errors";
 import { toastStore } from "@/lib/toast-store";
 import type { ProfileWire } from "@/lib/schemas/profile";
 import type { CanonSelection } from "@/lib/schemas/canons";
@@ -378,6 +379,14 @@ export function ResumeBuilderOverlay(props: ResumeBuilderOverlayProps): React.JS
                 let stageLabel = "";
                 try {
                     const j = await res.json();
+                    // P3.6 — daily-AI-credit ceiling. The selection was already
+                    // saved above, so nothing is lost: tell the user how many
+                    // generations they have left, not that generation "failed".
+                    const quota = aiQuotaNotice(j);
+                    if (quota) {
+                        toastStore.push({ message: quota.message, type: "warning" });
+                        return;
+                    }
                     detail = j.error ? (typeof j.error === "string" ? j.error : JSON.stringify(j.error)) : "";
                     stageLabel = STAGE_LABELS[j.stage as keyof typeof STAGE_LABELS] ?? "";
                 } catch { /* non-JSON */ }
