@@ -208,6 +208,20 @@ flowchart TD
 
 **Multi-device / multi-network.**
 - **S15.20** 🔴 As the user, the same gate applies whether I reach the app via `localhost`, `mc.local`, the phone-on-WiFi LAN IP, or the public Cloudflare-tunnel hostname. No network-based bypass. (This explicitly replaces `requireLocalOrSession`'s LAN-trusts-the-network behavior for browser-facing routes.)
+
+  > **✅ Requirement satisfied 2026-07-28 — by a different mechanism than this section describes.** Read the distinction carefully, because the two halves of S15.20 landed differently:
+  >
+  > - **The requirement is met.** One gate applies on every path, and the LAN is no longer a bypass — delivered by the owner/crew work ([`multi-user-crew.html`](./multi-user-crew.html)).
+  > - **The mechanism is not the passcode.** No app-wide passcode was ever built (see the ⚠️ banner at the top of §15). Nothing below is an argument for building one.
+  >
+  > What actually satisfies it, in three parts — all of them outside the app's own session layer:
+  >
+  > 1. **Edge identity.** Cloudflare Access authenticates the human and stamps the verified address onto `Cf-Access-Authenticated-User-Email`.
+  > 2. **No-fallback viewer resolution.** `lib/viewer.ts` turns that header into the `User` row it names and does nothing else — exactly one identity source, **zero fallback branches** on the normal request path, and in particular **no `resolveOwner()` fallback**. An unstamped request resolves to nobody and is refused, instead of being served as the owner. This is the clause that actually retires `requireLocalOrSession`'s LAN-trusts-the-network behavior, which S15.20 called out by name.
+  > 3. **Loopback bind.** Prod binds loopback (`next start -p 3101 -H 127.0.0.1`, `package.json:8`), so a LAN client cannot reach the origin directly and set that header itself. The `mc.local` Caddy vhost that used to proxy the LAN inward is commented out in `/opt/homebrew/etc/Caddyfile` — **authored, not yet cut over**: the `brew services restart caddy` that drops the `:443` listener is the still-pending P5.2 step, so as of 2026-07-28 the LAN route is closed in config but the old config is still resident in the running Caddy.
+  >
+  > **What this does *not* imply.** The passcode-shaped stories around S15.20 stay unbuilt and are not back-doored in by the above: S15.21 (per-browser Unlocked sessions), S15.22–S15.23 (active-session list / revoke), S15.25–S15.27 (rotation), and S15.28–S15.30 (reset script + runbook). Access owns session lifetime now, and there is no app-level shared secret to rotate or reset.
+
 - **S15.21** 🔴 As the user, each browser maintains its own Unlocked session — unlocking on my laptop does not unlock my phone. The shared secret is the passcode, not the session.
 - **S15.22** 🟡 As the user, I can see a list of currently-active Local Auth sessions (rough identifier: User-Agent + IP + last-seen) on an "Active sessions" surface, with a per-row "Revoke" button.
 - **S15.23** 🟡 As the user, "Revoke all other sessions" is a single button on the same surface. Useful after I've rotated the passcode or after I think I left a session open somewhere.
