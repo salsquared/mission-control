@@ -59,6 +59,12 @@ async function main() {
             }),
         });
         const wrBody = await wr.json();
+        // Guard the seed responses. Reading `.workRole.id` / `.application.id`
+        // straight off a non-200 body throws `Cannot read properties of
+        // undefined`, which reports as an unhandled crash and hides WHICH call
+        // was rejected and why — that's how the 401 and the missing-`track` 400
+        // both surfaced on 2026-07-29.
+        if (wr.status !== 200 || !wrBody.workRole?.id) return fail(`seed work role failed (HTTP ${wr.status})`, wrBody);
         cleanup.push(() => fetch(`${BASE}/api/profile/work-roles?id=${wrBody.workRole.id}`, { method: "DELETE", headers: { Cookie: cookie } }));
 
         // Seed an Application
@@ -69,9 +75,13 @@ async function main() {
                 role: "Senior Engineer",
                 status: "INTERESTED",
                 kind: "job",
+                // Required by ApplicationCreate (lib/schemas/applications.ts)
+                // since d424225 (2026-05-27) — without it this 400s.
+                track: "career",
             }),
         });
         const appBody = await app.json();
+        if (app.status !== 200 || !appBody.application?.id) return fail(`seed application failed (HTTP ${app.status})`, appBody);
         const applicationId = appBody.application.id;
         cleanup.push(() => fetch(`${BASE}/api/applications?id=${applicationId}`, { method: "DELETE", headers: { Cookie: cookie } }));
 
@@ -163,13 +173,28 @@ async function main() {
         }
         await prisma.session.delete({ where: { sessionToken } }).catch(() => undefined);
         await prisma.$disconnect();
-        console.log(`\n${passes}/${passes + fails} steps passed`);
-        if (fails === 0) console.log("All checks passed.");
     }
-    if (fails > 0) process.exit(1);
 }
 
-main().catch(e => {
+/**
+ * THE EXIT PATH LIVES OUT HERE — DO NOT MOVE IT BACK INTO `main()`.
+ *
+ * Latent false green, and newly reachable: this file's steps bail with
+ * `return fail(...)`, which runs the finally and leaves `main()` — skipping an
+ * exit check placed after the try/finally. It only ever exited non-zero
+ * because it CRASHED on `appBody.application.id` before reaching a `fail()`.
+ * Now that the seeds are guarded (above), every rejection routes through
+ * `fail()`, so the check has to live here or this suite goes green while red.
+ * Same fix as the hermetic suite's 0a235be.
+ */
+function finish(): never {
+    console.log(`\n${passes}/${passes + fails} steps passed`);
+    if (fails > 0) process.exit(1);
+    console.log("All checks passed.");
+    process.exit(0);
+}
+
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });

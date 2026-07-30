@@ -221,14 +221,26 @@ async function main() {
         }
         await prisma.session.delete({ where: { sessionToken } }).catch(() => undefined);
         await prisma.$disconnect();
-        console.log(`\n${passes}/${passes + fails} steps passed`);
-        if (fails === 0) console.log("All checks passed.");
     }
-
-    if (fails > 0) process.exit(1);
 }
 
-main().catch(e => {
+/**
+ * THE EXIT PATH LIVES OUT HERE — DO NOT MOVE IT BACK INTO `main()`.
+ *
+ * Several steps bail with `return fail(...)`, and a `return` inside the try
+ * runs the finally and then leaves `main()` — skipping any exit check placed
+ * after the try/finally. That made this smoke exit 0 while printing
+ * `[FAIL] GET /api/profile status 401` / `0/1 steps passed` (verified
+ * 2026-07-29). In `.then()` the check is unskippable — same fix as 0a235be.
+ */
+function finish(): never {
+    console.log(`\n${passes}/${passes + fails} steps passed`);
+    if (fails > 0) process.exit(1);
+    console.log("All checks passed.");
+    process.exit(0);
+}
+
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });

@@ -98,8 +98,14 @@ async function main() {
         }
 
         if (watchlistIds.length === 0) {
+            // A SKIP MUST NOT DISCARD ACCUMULATED FAILURES. This used to be a
+            // bare `process.exit(0)`, which turned every earlier `fail(...)`
+            // into a green run — on 2026-07-29 both watchlist POSTs 401'd, no
+            // watchlist was created, and the suite exited 0 reporting a skip.
+            // `return` instead: the finally below still cleans up and `finish()`
+            // exits 0 only when nothing actually failed.
             console.warn("[SKIP] no fetcher reachable — can't run Track→App or closed tests");
-            process.exit(0);
+            return;
         }
 
         // ─── 3) Track→App ───────────────────────────────────────────────────
@@ -185,13 +191,26 @@ async function main() {
         await prisma.notification.deleteMany({ where: { userId: user.id, createdAt: { gte: new Date(Date.now() - 5 * 60 * 1000) } } }).catch(() => undefined);
         await prisma.session.delete({ where: { sessionToken } }).catch(() => undefined);
         await prisma.$disconnect();
-        console.log(`\n${passes}/${passes + fails} steps passed`);
-        if (fails === 0) console.log("All checks passed.");
     }
-    if (fails > 0) process.exit(1);
 }
 
-main().catch(e => {
+/**
+ * THE EXIT PATH LIVES OUT HERE — DO NOT MOVE IT BACK INTO `main()`.
+ *
+ * Two ways this smoke used to go green while red: the skip path above called
+ * `process.exit(0)` with failures already counted, and any `return` inside the
+ * try skipped the exit check that sat after the try/finally. Both funnel
+ * through here now, so a skip is green only when `fails === 0`.
+ * Same fix as the hermetic suite's 0a235be.
+ */
+function finish(): never {
+    console.log(`\n${passes}/${passes + fails} steps passed`);
+    if (fails > 0) process.exit(1);
+    console.log("All checks passed.");
+    process.exit(0);
+}
+
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });

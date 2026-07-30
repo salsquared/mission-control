@@ -14,6 +14,18 @@ import { randomBytes } from "crypto";
 const BASE = process.env.MC_BASE_URL ?? "http://localhost:4101";
 const prisma = new PrismaClient();
 
+/** Counted here, reported by `finish()` at the bottom — never `process.exit`ed inside `main()`. */
+let fails = 0;
+
+// Per-run token for the DOCX fixture's project. The fixture used to name it the
+// literal "mission-control", which matches the owner's real "Mission Control"
+// project in dev.db: the importer MERGED into that row instead of adding one,
+// so `projectsAdded` was 0 and the "expected 1 new project" assertion failed on
+// every run against a real profile (2026-07-29). A per-run token makes the
+// fixture unable to collide with anything already in the profile.
+const RUN_TAG = randomBytes(3).toString("hex");
+const SMOKE_PROJECT_NAME = `smoke-project-${RUN_TAG}`;
+
 const RESUME_HTML_PDF = `<!doctype html><html><head><meta charset="utf-8"><style>
 body { font-family: Helvetica, sans-serif; padding: 40px; color: #111; font-size: 11pt; }
 h1 { font-size: 18pt; margin: 0; }
@@ -46,7 +58,7 @@ const DOCX_PARAGRAPHS = [
     "- Pair-programmed a React component library used across three internal dashboards",
     "",
     "PROJECTS",
-    "mission-control (github.com/smoketester/mission-control)",
+    `${SMOKE_PROJECT_NAME} (github.com/smoketester/${SMOKE_PROJECT_NAME})`,
     "- Personal Next.js dashboard for tracking job applications",
     "- Built dash carousel architecture in TypeScript + Zustand",
 ];
@@ -133,6 +145,15 @@ async function main() {
         // Snapshot profile before import so we can diff
         const beforeRes = await fetch(`${BASE}/api/profile`, { headers: { Cookie: cookie } });
         const beforeJson = await beforeRes.json();
+        // Guard before destructuring: on a rejection (401 without an
+        // Access-verified identity, say) `beforeJson.profile` is undefined and
+        // the `.workRoles` read below throws a bare TypeError that names
+        // neither the status nor the call.
+        if (beforeRes.status !== 200 || !beforeJson.profile) {
+            console.error(`[FAIL] GET /api/profile (before snapshot) → HTTP ${beforeRes.status}`, beforeJson);
+            fails++;
+            return;
+        }
         const beforeWorkRoleIds = new Set<string>(beforeJson.profile.workRoles.map((w: { id: string }) => w.id));
         const beforeProjectIds = new Set<string>(beforeJson.profile.projects.map((p: { id: string }) => p.id));
         const beforeEducationIds = new Set<string>(beforeJson.profile.education.map((e: { id: string }) => e.id));
@@ -171,7 +192,6 @@ async function main() {
         //   - One Hubble Labs work role created (from PDF), merged with DOCX's overlapping role (dedup'd 3 bullets, added 1).
         //   - One project created (from DOCX only).
         //   - One education entry created (from PDF only).
-        let fails = 0;
         if (createdWorkRoleIds.length !== 1) { console.error(`[FAIL] expected 1 new work role, got ${createdWorkRoleIds.length}`); fails++; }
         if (createdProjectIds.length !== 1) { console.error(`[FAIL] expected 1 new project, got ${createdProjectIds.length}`); fails++; }
         if (createdEducationIds.length !== 1) { console.error(`[FAIL] expected 1 new education, got ${createdEducationIds.length}`); fails++; }
@@ -183,12 +203,12 @@ async function main() {
             if (hubble.bullets.length < 4) { console.error(`[FAIL] expected >= 4 bullets on merged Hubble Labs role, got ${hubble.bullets.length}`); fails++; }
         }
 
-        if (fails === 0) {
-            console.log("[PASS] all expectations met");
-        } else {
-            console.error(`[FAIL] ${fails} expectations failed`);
-            process.exit(1);
-        }
+        // NO `process.exit()` HERE — the verdict is `finish()`'s job. This used
+        // to be `process.exit(1)` on a failed expectation, INSIDE the try:
+        // `process.exit` does not run pending `finally` blocks, so the cleanup
+        // below never executed and every failing run leaked its scratch work
+        // role / project / education rows into the profile (one orphaned
+        // "Hubble Labs" role was found in dev.db on 2026-07-29).
     } finally {
         // Cleanup: delete entities we created.
         for (const id of createdWorkRoleIds) {
@@ -206,7 +226,25 @@ async function main() {
     }
 }
 
-main().catch(e => {
+/**
+ * THE EXIT PATH LIVES OUT HERE — DO NOT MOVE IT BACK INTO `main()`.
+ *
+ * Two bugs met at the old in-try `process.exit(1)`: it skipped the `finally`
+ * cleanup (leaking fixture rows into the owner's profile on every failing run),
+ * and any `return` inside the try would have skipped a check placed after the
+ * try/finally. Running the verdict from `.then()` fixes both — cleanup always
+ * runs, and no early exit can dodge the exit code. Same fix as 0a235be.
+ */
+function finish(): never {
+    if (fails > 0) {
+        console.error(`\n[FAIL] ${fails} expectation(s) failed`);
+        process.exit(1);
+    }
+    console.log("\n[PASS] all expectations met");
+    process.exit(0);
+}
+
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });

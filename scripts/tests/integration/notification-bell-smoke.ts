@@ -46,7 +46,10 @@ async function main() {
         // 1. Create an application
         const appRes = await fetch(`${BASE}/api/applications`, {
             method: "POST", headers,
-            body: JSON.stringify({ company: "Bell Smoke Co", role: "Senior Engineer", status: "APPLIED", kind: "job" }),
+            // `track` is REQUIRED by ApplicationCreate (lib/schemas/applications.ts)
+            // since d424225 (2026-05-27); omitting it 400s with
+            // `expected one of "career"|"side"`.
+            body: JSON.stringify({ company: "Bell Smoke Co", role: "Senior Engineer", status: "APPLIED", kind: "job", track: "career" }),
         });
         const appBody = await appRes.json();
         if (appRes.status !== 200) return fail("create application failed", appBody);
@@ -151,13 +154,27 @@ async function main() {
         if (appId) await fetch(`${BASE}/api/applications?id=${appId}`, { method: "DELETE", headers: { Cookie: cookie } }).catch(() => undefined);
         await prisma.session.delete({ where: { sessionToken } }).catch(() => undefined);
         await prisma.$disconnect();
-        console.log(`\n${passes}/${passes + fails} steps passed`);
-        if (fails === 0) console.log("All checks passed.");
     }
-    if (fails > 0) process.exit(1);
 }
 
-main().catch(e => {
+/**
+ * THE EXIT PATH LIVES OUT HERE — DO NOT MOVE IT BACK INTO `main()`.
+ *
+ * This was a live false green: step 1 bails with `return fail(...)` on a
+ * non-200, and the summary + `process.exit(1)` used to sit AFTER `main()`'s
+ * try/finally, which a `return` inside the try skips. The smoke printed
+ * `[FAIL] create application failed` / `0/1 steps passed` and still exited 0
+ * (verified 2026-07-29). Hoisting the check into `.then()` makes it
+ * unskippable — same fix as the hermetic suite's 0a235be.
+ */
+function finish(): never {
+    console.log(`\n${passes}/${passes + fails} steps passed`);
+    if (fails > 0) process.exit(1);
+    console.log("All checks passed.");
+    process.exit(0);
+}
+
+main().then(finish, e => {
     console.error("Unhandled error:", e);
     process.exit(2);
 });
