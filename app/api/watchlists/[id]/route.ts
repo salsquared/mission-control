@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { WatchlistPatchSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig } from "@/lib/watchlists/hydrate";
+import { scheduleFloorRejection } from "@/lib/watchlists/schedule-floor";
 import { deleteOrphanedSideCanon } from "@/lib/watchlists/cascade-canon";
 
 export const runtime = "nodejs";
@@ -72,6 +73,13 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
+    // Cadence floor (lib/watchlists/schedule-floor.ts). PATCH matters as much as
+    // POST here: without it a crew member creates at a legal cadence and then
+    // edits it down to 1 minute. No-ops when the patch doesn't touch
+    // `scheduleMinutes`, and the owner is exempt.
+    const floorRejection = scheduleFloorRejection(guard.session.user.role, parsed.data.scheduleMinutes);
+    if (floorRejection) return floorRejection;
+
     // §6 Q4 — verify a non-null canon link belongs to this user.
     if (parsed.data.canonId) {
         const ownCanon = await prisma.canon.findFirst({ where: { id: parsed.data.canonId, userId }, select: { id: true } });

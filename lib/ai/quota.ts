@@ -26,16 +26,29 @@
 //      `scheduler/jobs/job-watcher.ts` calls `classifyEmploymentTypes` on every
 //      automatic crawl of every watchlist, crew's included. That path never
 //      passes through a route, so `consumeAiCredit` never sees it and a crew
-//      member's SCHEDULED Gemini spend is uncapped in v1. This is a recorded
-//      decision (2026-07-28, §2.9's callout + R6), not an oversight: what
-//      bounds it is CREW_WATCHLIST_LIMIT × posting volume (OQ10a caps crew at 5
-//      watchlists) — a real ceiling, just an indirect one — and unlike the
-//      interactive path there is no runaway-loop shape available to a user,
-//      because the crawl cadence is the scheduler's and not theirs. Extending
-//      the credit check into the scheduler would mean threading a quota
-//      decision into the job that must never stall and answering "what does a
-//      scheduled job do when a user is over budget" (skip? defer? partially
-//      classify?) for no v1 benefit. DO NOT wire this module into the
+//      member's SCHEDULED Gemini spend is not metered per-call in v1. This is a
+//      recorded decision (2026-07-28, §2.9's callout + R6), not an oversight:
+//      what bounds it instead is the product of TWO route-level rules, both
+//      `if (!isOwner)` and both in the watchlist routes —
+//
+//        count × rate  =  CREW_WATCHLIST_LIMIT × (1440 / CREW_MIN_SCHEDULE_MINUTES)
+//                      =  5 × (1440 / 60)  =  120 crawls/day/crew at the defaults
+//
+//      (`app/api/watchlists/route.ts` for the count, OQ10a;
+//      `lib/watchlists/schedule-floor.ts` for the cadence floor, enforced on
+//      POST and PATCH). Both halves are required. The rate half was MISSING
+//      until 2026-07-29 — `scheduleMinutes` was a bare `positive()` int, so this
+//      comment used to claim "there is no runaway-loop shape available to a
+//      user, because the crawl cadence is the scheduler's and not theirs",
+//      which was false: a crew member could set `scheduleMinutes: 1` and take
+//      the same five watchlists to ~7,200 crawls/day. It is true now because
+//      the floor makes it true, not because the scheduler is inherently out of
+//      reach — so DO NOT relax either rule while this exemption stands.
+//
+//      Extending the credit check into the scheduler would mean threading a
+//      quota decision into the job that must never stall and answering "what
+//      does a scheduled job do when a user is over budget" (skip? defer?
+//      partially classify?) for no v1 benefit. DO NOT wire this module into the
 //      scheduler without reopening that question. The signal to watch is Gemini
 //      usage rising with crew watchlist count rather than with crew activity.
 //

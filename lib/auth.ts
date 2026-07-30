@@ -3,12 +3,25 @@ import GoogleProvider from "next-auth/providers/google";
 import { PrismaAdapter } from "@auth/prisma-adapter";
 import { prisma } from "./prisma";
 import { registerGmailWatch } from "./gmail/watch";
-import { isAllowedSignInEmail, isAllowlistConfigured } from "./auth-allowlist";
+import { allowlistUnconfiguredMessage, evaluateSignIn } from "./auth-allowlist";
 
-// P1.1 (OQ1a): warn ONCE per process when the sign-in allowlist is unset —
-// fail-open so a fresh machine can still sign in, but loudly, so the gap
-// is visible in the in-app log viewer.
-let warnedAllowlistUnset = false;
+/**
+ * Where an unconfigured allowlist sends the browser. NextAuth's built-in error
+ * page renders `Configuration` as "Server error — There is a problem with the
+ * server configuration. Check the server logs for more information." (HTTP 500),
+ * which is exactly right here and is NOT what a plain `return false` produces:
+ * that yields `AccessDenied` ("You do not have permission to sign in"), i.e. the
+ * page a genuinely rejected address should see. Keeping the two apart is the
+ * difference between "fix your env" and "you're not on the list".
+ *
+ * NextAuth sets this string as the `Location` header verbatim
+ * (next-auth/next `toResponse`), so a relative URL is valid; NEXTAUTH_URL is
+ * used when set purely so the redirect is absolute like NextAuth's own.
+ */
+function signInConfigErrorUrl(): string {
+    const base = (process.env.NEXTAUTH_URL ?? "").trim().replace(/\/+$/, "");
+    return `${base}/api/auth/error?error=Configuration`;
+}
 
 export const authOptions: NextAuthOptions = {
     adapter: PrismaAdapter(prisma) as any,
@@ -45,19 +58,21 @@ export const authOptions: NextAuthOptions = {
     callbacks: {
         async signIn({ user, account }) {
             // P1.1 (OQ1a) sign-in allowlist — runs BEFORE any token persist so
-            // a disallowed Google account never writes to the Account row. The
-            // app is publicly exposed via the Cloudflare tunnel, so without
-            // this gate ANY Google account could establish a session.
-            const allowlistEnv = process.env.ALLOWED_SIGNIN_EMAILS;
-            if (!isAllowlistConfigured(allowlistEnv)) {
-                if (!warnedAllowlistUnset) {
-                    warnedAllowlistUnset = true;
-                    console.warn(
-                        "[auth] ALLOWED_SIGNIN_EMAILS is unset/empty — sign-in allowlist DISABLED (fail-open): " +
-                        "ANY Google account can sign in. Set ALLOWED_SIGNIN_EMAILS in .env (comma-separated) to lock this down."
-                    );
+            // a disallowed Google account never writes to the Account row, and
+            // before PrismaAdapter can mint a `User` row for it. Since the
+            // multi-user work that row IS authorization to use this instance
+            // (CLAUDE.md §Auth), so this check is FAIL-CLOSED: an unset
+            // ALLOWED_SIGNIN_EMAILS refuses everyone rather than admitting
+            // everyone. See lib/auth-allowlist.ts's header for the full why.
+            const decision = evaluateSignIn(user?.email, process.env.ALLOWED_SIGNIN_EMAILS);
+            if (!decision.ok) {
+                if (decision.reason === "unconfigured") {
+                    // Logged on EVERY attempt, not once per process: the whole
+                    // point is that the line is there when the operator looks,
+                    // which is the moment sign-in just failed on them.
+                    console.error(allowlistUnconfiguredMessage());
+                    return signInConfigErrorUrl();
                 }
-            } else if (!isAllowedSignInEmail(user?.email, allowlistEnv)) {
                 console.warn(`[auth] sign-in REJECTED for ${user?.email ?? "<no email>"} — not in ALLOWED_SIGNIN_EMAILS`);
                 return false;
             }

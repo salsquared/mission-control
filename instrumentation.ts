@@ -3,6 +3,17 @@ export async function register() {
         const { initLogger } = await import('./lib/logger');
         initLogger();
 
+        // Sign-in allowlist config check. Runs right after initLogger so the
+        // line lands in the ring buffer the in-app log viewer reads. The
+        // allowlist is FAIL-CLOSED (lib/auth-allowlist.ts): unset ⇒ every
+        // Google sign-in is refused, which would otherwise only be discovered
+        // the next time the owner tried to refresh the Gmail + Calendar token.
+        // Reports and returns — deliberately never throws, because this gates
+        // one flow, not request authorization (cf. lib/access-jwt.ts, where
+        // missing config MUST take the tier to 401s).
+        const { checkSignInAllowlistAtStartup } = await import('./lib/auth-allowlist');
+        checkSignInAllowlistAtStartup();
+
         // LOP-1: Lunary tracing. Gated on env var so dev / CI runs without
         // the key are a true no-op. See docs/implementation.md §LLM
         // observability for the integration design + the 9 callsite names.

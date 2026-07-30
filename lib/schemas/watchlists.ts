@@ -271,6 +271,12 @@ export const WatchlistPostSchema = z.object({
     // most employers — checking every 4h is plenty without burning quota, and
     // LinkedIn's guest endpoint bot-detects more aggressively than the
     // structured ATSes do. UI exposes this as an hours-stepper.
+    //
+    // `positive()` is NOT the whole rule: a per-crew FLOOR (default 60 min) is
+    // enforced at the route, in `lib/watchlists/schedule-floor.ts`. It lives
+    // there and not here because a Zod schema has no idea who is posting and the
+    // OWNER must stay able to set a fast cadence. Don't add a `.min()` here
+    // expecting it to be the crew bound — it would bind the owner too.
     scheduleMinutes: z.number().int().positive().default(240),
     notificationMode: WatchlistNotificationModeSchema.default("each"),
     // PB-14: when the row originates from the "Watch company" picker, the
@@ -288,6 +294,8 @@ export const WatchlistPatchSchema = z.object({
     config: WatchlistConfigSchema.optional(),
     negativeFilters: NegativeFiltersSchema.optional(),
     notificationMode: WatchlistNotificationModeSchema.optional(),
+    // Same role-aware floor as the POST schema above — enforced in
+    // `app/api/watchlists/[id]/route.ts` via `lib/watchlists/schedule-floor.ts`.
     scheduleMinutes: z.number().int().positive().optional(),
     active: z.boolean().optional(),
     track: WatchlistTrackSchema.optional(),

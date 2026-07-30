@@ -4,6 +4,7 @@ import { requireSession } from "@/lib/auth-guards";
 import { broadcastEvent } from "@/lib/events";
 import { WatchlistPostSchema, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig, resolveCreatePayload } from "@/lib/watchlists/hydrate";
+import { scheduleFloorRejection } from "@/lib/watchlists/schedule-floor";
 import { watchlistConfigKey } from "@/lib/company-directory";
 import { clampInt } from "@/lib/rate-limit/process-bucket";
 import { runWatchlist } from "@/scheduler/jobs/job-watcher";
@@ -27,6 +28,14 @@ export const runtime = "nodejs";
 // The owner is exempt: they own the box, the IP and the API key. `0` is a legal
 // value (crew may create none); module-level read, so changes need
 // `pm2 restart … --update-env`, same as every other tunable here.
+//
+// COUNT IS ONLY HALF THE CEILING. A watchlist's crawl RATE is the other half,
+// and until 2026-07-29 nothing bounded it for crew — `scheduleMinutes` was a
+// bare `positive()` int, so five watchlists at `scheduleMinutes: 1` were ~7,200
+// crawls/day, not ~30. The companion bound is
+// `lib/watchlists/schedule-floor.ts:scheduleFloorRejection`, applied on POST
+// (below) and on PATCH (`[id]/route.ts`). Raise either one and you raise the
+// product of the two.
 const CREW_WATCHLIST_LIMIT = clampInt(process.env.CREW_WATCHLIST_LIMIT, 5, 0, 1000);
 
 /**
@@ -155,6 +164,12 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) {
         return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
     }
+
+    // Cadence floor — the schema-adjacent check Zod cannot make, because it has
+    // no idea who is posting and the owner must stay able to set a fast cadence.
+    // Body-only (no query), so it runs ahead of the count + dedup reads below.
+    const floorRejection = scheduleFloorRejection(guard.session.user.role, parsed.data.scheduleMinutes);
+    if (floorRejection) return floorRejection;
 
     // PB-14: if the client passed a directoryKey, let the directory entry
     // override the submitted config (defense against stale clients).
