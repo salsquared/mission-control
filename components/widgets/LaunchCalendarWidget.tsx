@@ -235,7 +235,7 @@ export const LaunchCalendarWidget: React.FC<LaunchCalendarWidgetProps> = ({ laun
                     return (
                         <div key={day} className={`h-24 rounded-md p-2 flex flex-col items-start justify-start overflow-hidden transition-all ${isToday ? 'bg-cyan-500/10 border border-cyan-500/50' : 'bg-white/5 hover:bg-white/10'}`}>
                             <span className={`text-xs font-medium mb-1 ${isToday ? 'text-cyan-400' : 'text-white/70'}`}>{day}</span>
-                            <div className="flex flex-col gap-1 w-full overflow-y-auto scrollbar-none">
+                            <div className="flex flex-col gap-1 w-full overflow-y-auto no-scrollbar">
                                 {dayLaunches.map(launch => {
                                     const isTBD = launch.status.abbrev === 'TBD';
                                     const estimatedStr = isTBD ? ' (NET)' : '';

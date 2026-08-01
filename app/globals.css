@@ -265,3 +265,17 @@ html.light .custom-scrollbar::-webkit-scrollbar-thumb {
 html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
   background: rgba(0, 0, 0, 0.25);
 }
+
+/* Companion to .custom-scrollbar: scrolls, but paints no bar at all. For strips
+   whose overflow is already signposted by something else — a horizontal tab rail
+   with chips visibly cut off at the edge, a clamped text block. Reach for
+   .custom-scrollbar by default; this one only when the bar itself is the noise.
+   Both properties are load-bearing: `scrollbar-width` covers Firefox and modern
+   Chrome, the `::-webkit-scrollbar` rule covers Safari and older WebKit. */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

@@ -111,7 +111,7 @@ export const CrewCard: React.FC = () => {
             )}
 
             {/* Roster */}
-            <div className="flex-1 min-h-0 overflow-y-auto">
+            <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar">
                 <div className={`${COLS} text-[0.65rem] uppercase tracking-wide text-slate-500 pb-1 border-b border-white/5`}>
                     <span>Account</span>
                     <span className="text-right">AI today</span>
