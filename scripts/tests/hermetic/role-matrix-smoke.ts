@@ -128,6 +128,7 @@ const MANIFEST: RouteSpec[] = [
     { route: "space/launches", cls: "owner", group: "owner/other-dashes" },
     { route: "space/moon", cls: "owner", group: "owner/other-dashes" },
     { route: "space/satellites", cls: "owner", group: "owner/other-dashes" },
+    { route: "space/satellites/history", cls: "owner", group: "owner/other-dashes" },
     { route: "space/solar", cls: "owner", group: "owner/other-dashes" },
     { route: "research", cls: "owner", group: "owner/other-dashes" },
     { route: "research/hf", cls: "owner", group: "owner/other-dashes" },
@@ -241,7 +242,7 @@ const MANIFEST: RouteSpec[] = [
 ];
 
 /** §2.5's totals. Asserted so a route MOVED between classes also trips. */
-const EXPECTED = { owner: 28, crew: 39, unguarded: 2, total: 69 } as const;
+const EXPECTED = { owner: 29, crew: 39, unguarded: 2, total: 70 } as const;
 
 // Guard families. Membership, not identity — see the header note on why exact
 // names are deliberately not pinned.
@@ -424,7 +425,7 @@ function checkCounts(discovered: string[]): void {
     // §2.5's sub-group sizes, so a route drifting between (say) owner/ops and
     // owner/google is visible even though the class total is unchanged.
     const groups: Array<[string, number]> = [
-        ["owner/other-dashes", 16],
+        ["owner/other-dashes", 17],
         ["owner/ops", 8],
         ["owner/google", 4],
         ["crew/applications", 6],
