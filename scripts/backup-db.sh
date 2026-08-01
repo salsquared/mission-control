@@ -147,7 +147,33 @@ else
     echo "[BACKUP] resumes → empty, skipped"
 fi
 
-# ─── 3. Local 30-day retention ───────────────────────────────────────────
+# ─── 3. Satellite-count history sidecar ──────────────────────────────────
+# data/satellite-counts.db — the ONLY sidecar under data/ worth backing up.
+# The others (llm-cache, research-cache, the rate buckets, fetcher-health,
+# logs) are caches or short-retention telemetry that regenerate themselves.
+# This one cannot: Celestrak serves only CURRENT elements, so a lost day is
+# lost permanently. Hot-backed the same way as prod.db (it's WAL and both
+# tiers may be mid-write). Skipped silently until the first reading lands.
+# No new prune patterns needed — the mc-*.db rules in §4/§5 already match
+# mc-satcounts-*.db and its .age variant.
+SATCOUNTS_SRC="$REPO_ROOT/data/satellite-counts.db"
+if [ -f "$SATCOUNTS_SRC" ]; then
+    SATCOUNTS_DEST="$LOCAL_DIR/mc-satcounts-$TS.db"
+    if sqlite3 "$SATCOUNTS_SRC" ".backup '$SATCOUNTS_DEST'" 2>/dev/null; then
+        SATCOUNTS_DEST="$(maybe_encrypt "$SATCOUNTS_DEST")"
+        rclone_copy "$SATCOUNTS_DEST"
+        echo "[BACKUP] satcounts → ${SATCOUNTS_DEST##*/}"
+    else
+        # Warn only: a telemetry-adjacent sidecar must never fail the run that
+        # is protecting prod.db.
+        echo "[BACKUP] WARN: satellite-counts snapshot failed (skipping)" >&2
+        rm -f "$SATCOUNTS_DEST"
+    fi
+else
+    echo "[BACKUP] satcounts → absent, skipped"
+fi
+
+# ─── 4. Local 30-day retention ───────────────────────────────────────────
 # Also prune the .age variants — the original retention rules pre-date
 # RAH-13 and only matched plaintext names.
 find "$LOCAL_DIR" -name 'mc-*.db' -mtime +30 -delete
@@ -155,7 +181,7 @@ find "$LOCAL_DIR" -name 'mc-*.db.age' -mtime +30 -delete
 find "$LOCAL_DIR" -name 'mc-resumes-*.tar.gz' -mtime +30 -delete
 find "$LOCAL_DIR" -name 'mc-resumes-*.tar.gz.age' -mtime +30 -delete
 
-# ─── 4. Drive-side 30-day retention (best-effort) ────────────────────────
+# ─── 5. Drive-side 30-day retention (best-effort) ────────────────────────
 # Mirror the local prune so the Drive folder doesn't grow unbounded.
 # Conservative on purpose: scoped to the exact backup destination dir,
 # top-level only (--max-depth 1), and only the four artifact name patterns

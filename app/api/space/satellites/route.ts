@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { withCache, readCachedDataIgnoringExpiry } from '../../../../lib/cache';
 import { requireOwner } from '@/lib/auth-guards';
 import { loggedFetch } from '@/lib/external-fetch';
+import { recordSatelliteCount } from '@/lib/satellites/count-history';
 
 const UPSTREAM_HOST = 'celestrak.org';
 const CACHE_KEY = '/api/space/satellites';
@@ -39,6 +40,15 @@ async function getHandler() {
                 const lastKnown = await readCachedDataIgnoringExpiry(CACHE_KEY);
                 if (lastKnown) {
                     console.info('[EXTERNAL API] Celestrak: data unchanged, serving last-known payload');
+                    // Still a current reading: Celestrak's 403 says the live data
+                    // MATCHES this payload, so it's a valid sample for today's row
+                    // — and this branch is the common one, so skipping it would
+                    // leave holes in a series that can never be back-filled.
+                    await recordSatelliteCount({
+                        total: lastKnown.total_active,
+                        orbits: lastKnown.orbits,
+                        constellations: lastKnown.constellations,
+                    });
                     return NextResponse.json(lastKnown, { headers: { 'X-Cache': 'CELESTRAK-UNCHANGED' } });
                 }
                 const lastSuccessMatch = body.match(/at (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}) UTC/);
@@ -93,7 +103,7 @@ async function getHandler() {
             }
         }
 
-        return NextResponse.json({
+        const payload = {
             total_active: data.length,
             orbits,
             constellations: {
@@ -101,7 +111,15 @@ async function getHandler() {
                 oneweb,
             },
             updated_at: new Date().toISOString()
-        });
+        };
+
+        // Opportunistic collection: one row per UTC day, last reading of the day
+        // wins. No scheduler job and no extra Celestrak traffic — a fetch we were
+        // making anyway is also the sample. See lib/satellites/count-history.ts;
+        // it never throws, so a broken sidecar can't 500 a good response.
+        await recordSatelliteCount({ total: payload.total_active, orbits, constellations: payload.constellations });
+
+        return NextResponse.json(payload);
     } catch (error) {
         console.error("Error fetching satellite data:", error);
         return NextResponse.json({ error: "Failed to fetch satellite data" }, { status: 500 });
