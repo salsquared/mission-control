@@ -1,5 +1,5 @@
 /**
- * MB Phase 2a smoke — Track→App, Lever + Ashby fetchers, closed detection.
+ * MB Phase 2a smoke — Track→App against the live Lever + Ashby fetchers.
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/integration/watchlist-phase2-smoke.ts
  *
@@ -8,8 +8,18 @@
  *   2. Ashby fetcher against `posthog` (~14 jobs)
  *   3. POST /api/postings/[id]/track-as-application creates an Application,
  *      idempotent on re-call, posting transitions to status='tracked'
- *   4. Closed detection — simulated by manually backdating a posting's
- *      lastSeenAt + deleting it from the watchlist's externalId set
+ *
+ * CLOSED DETECTION MOVED OUT (design doc P5.1.3.2, docs/multi-user-crew.html).
+ * Piece 4 used to stage a close here — backdate a posting's lastSeenAt by 7h,
+ * mutate its externalId so the next crawl can't return it, re-run the
+ * watchlist, assert `closed >= 1` / status='closed' / removedAt set. Since
+ * 2026-05-25 that path is probe-gated (docs/archive/close-detection-probe.md):
+ * the flip needs a live GET of the posting's sourceUrl to return positive
+ * evidence of removal, so against a real Lever board the verdict was whatever
+ * the internet said that minute. The assertions now live in
+ * scripts/tests/hermetic/watchlist-closed-detection-smoke.ts, where
+ * MC_LIVENESS_BYPASS pins the verdict and the pre-push gate runs them on every
+ * push. Don't re-add them here — a live board can't make them deterministic.
  *
  * All scratch rows are deleted afterwards.
  */
@@ -104,7 +114,7 @@ async function main() {
             // watchlist was created, and the suite exited 0 reporting a skip.
             // `return` instead: the finally below still cleans up and `finish()`
             // exits 0 only when nothing actually failed.
-            console.warn("[SKIP] no fetcher reachable — can't run Track→App or closed tests");
+            console.warn("[SKIP] no fetcher reachable — can't run Track→App");
             return;
         }
 
@@ -141,44 +151,6 @@ async function main() {
                 if (body2.application?.id !== body.application.id) fail("Track→App: re-call returned different application id");
                 else pass("Track→App re-call returned the same application");
             }
-        }
-
-        // ─── 4) Closed-posting detection ────────────────────────────────────
-        // Stage: backdate one posting's lastSeenAt by 7h and mutate its
-        // externalId so it WON'T match what the next fetch returns. Then re-run
-        // the watchlist — it should land in status='closed'.
-        const lever = watchlistIds.find(async () => {
-            const w = await prisma.watchlist.findUnique({ where: { id: watchlistIds[0] } });
-            return w?.kind === "lever";
-        });
-        const targetWatchlistId = lever ?? watchlistIds[0];
-        // Pick any non-tracked posting from this watchlist
-        const closeCandidate = await prisma.jobPosting.findFirst({
-            where: { watchlistId: targetWatchlistId, status: "new" },
-        });
-        if (!closeCandidate) {
-            fail("no candidate posting for closed-detection test");
-        } else {
-            // Backdate + corrupt the externalId so the next run won't recognize it
-            const sevenHoursAgo = new Date(Date.now() - 7 * 60 * 60 * 1000);
-            await prisma.jobPosting.update({
-                where: { id: closeCandidate.id },
-                data: {
-                    externalId: `__SMOKE_DELETED__${randomBytes(8).toString("hex")}`,
-                    lastSeenAt: sevenHoursAgo,
-                },
-            });
-            const r = await fetch(`${BASE}/api/watchlists/${targetWatchlistId}/run`, { method: "POST", headers: { Cookie: cookie } });
-            const body = await r.json();
-            if (r.status !== 200) fail(`closed-detection re-run status ${r.status}`, body);
-            else if (body.closed < 1) fail(`closed-detection: expected ≥ 1 closed, got ${body.closed}`, body);
-            else pass(`closed-detection: ${body.closed} posting(s) marked closed on re-run`);
-
-            const after = await prisma.jobPosting.findUnique({ where: { id: closeCandidate.id } });
-            if (after?.status !== "closed") fail(`closed-detection: target posting status now ${after?.status}, expected closed`);
-            else pass("closed-detection: target posting is status=closed");
-            if (!after?.removedAt) fail("closed-detection: removedAt not set");
-            else pass("closed-detection: removedAt set");
         }
     } finally {
         for (const id of applicationIds) {
