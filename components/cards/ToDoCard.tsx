@@ -20,8 +20,8 @@ export interface ToDoCardProps {
     handleReload?: () => void;
 }
 
-// Rendered as a CardGrid item (see PlanningView), so the canonical card chrome
-// (bg-black/40 / rounded-lg / border / p-4) comes from CardGrid's wrapping Card.
+// Rendered as a CardCanvas item (see PlanningView), so the canonical card chrome
+// (bg-black/40 / rounded-lg / border / p-4) comes from CardCanvas's wrapping Card.
 // This inner Card supplies only the header slot + content — no wrapperClassName,
 // no manual inset — matching ApplicationsKanbanCard. The board's height cap lives
 // on the CardItem; the content is flex-1 so the board fills/scrolls within it.

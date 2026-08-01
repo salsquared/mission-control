@@ -427,7 +427,7 @@ const CanonRow: React.FC<{
 // ─── Per-canon version-history dropdown (popover-style) ─────────────────────
 // Mirrors GenerateResumeCard's PreviousResumesDropdown: a trigger button + a
 // portalled popover anchored to the trigger's bounding rect. The portal is
-// required because the enclosing CardGrid wrapper has `overflow-hidden` —
+// required because the enclosing CardCanvas wrapper has `overflow-hidden` —
 // an `absolute`-positioned popover would clip to the card. The query is lazy
 // (`enabled: open`) so we only fetch a canon's versions when its dropdown opens.
 

@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { CardGrid, CardItem } from "../grids/CardGrid";
+import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
@@ -68,10 +68,10 @@ export const AIView: React.FC = () => {
 
     const researchCards: CardItem[] = researchLoading ? [{ id: "loading-research", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-purple-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
         : [
-            { id: "ai-research-arxiv-yesterday", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} isRefreshing={qY.isFetching} errorMessage={qY.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
-            { id: "ai-research-arxiv-week", colSpan: 3, content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} isRefreshing={qW.isFetching} errorMessage={qW.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
-            { id: "ai-research-arxiv-review", colSpan: 3, content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} isRefreshing={qRev.isFetching} errorMessage={qRev.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
-            { id: "ai-research-arxiv-historical", colSpan: 3, content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} isRefreshing={qHist.isFetching} errorMessage={qHist.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> }
+            { id: "ai-research-arxiv-yesterday", colSpan: 3, height: "md", content: <ResearchPaperCard subject="Top AI Papers Yesterday" papers={arxivYesterday ?? []} onRefresh={() => refetchY()} isRefreshing={qY.isFetching} errorMessage={qY.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+            { id: "ai-research-arxiv-week", colSpan: 3, height: "md", content: <ResearchPaperCard subject="Top AI Papers Past Week" papers={arxivLastWeek ?? []} onRefresh={() => refetchW()} isRefreshing={qW.isFetching} errorMessage={qW.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+            { id: "ai-research-arxiv-review", colSpan: 3, height: "md", content: <ResearchPaperCard subject="Weekly Recommended Review" papers={arxivReview ?? []} onRefresh={() => refetchRev()} isRefreshing={qRev.isFetching} errorMessage={qRev.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> },
+            { id: "ai-research-arxiv-historical", colSpan: 3, height: "md", content: <ResearchPaperCard subject="Historical Paper of the Week" papers={arxivHistorical ?? []} onRefresh={() => refetchHist()} isRefreshing={qHist.isFetching} errorMessage={qHist.isError ? "arXiv is rate-limiting us. Try again in a minute." : undefined} /> }
         ];
 
     const leaderboardCategories = [
@@ -81,7 +81,7 @@ export const AIView: React.FC = () => {
     ];
 
     const leaderboardCards: CardItem[] = !llmLeaderboard ? [{ id: "loading-leaderboard", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-indigo-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
-        : [{ id: "ai-llm-leaderboard", colSpan: 3, content: (
+        : [{ id: "ai-llm-leaderboard", colSpan: 3, height: "lg", content: (
             <LLMLeaderboardCard
                 models={llmLeaderboard}
                 onRefresh={() => refetchLLM()}
@@ -93,21 +93,21 @@ export const AIView: React.FC = () => {
 
     return (
         <Scrollbar className="w-full h-full pb-8 relative">
-            <Section title="Company News" description="Direct feeds from AI companies" groups={buildCompanyGroups()}>
+            <Section title="Company News" description="Direct feeds from AI companies" groups={buildCompanyGroups()} groupLayout="packed">
                 {/* Hero sits between the section header and the per-category
                     groups — Section renders children before `groups`. */}
                 <div className="py-2">
                     <HeroNewsCarousel articles={heroArticles} loading={companyLoading && heroArticles.length === 0} />
                 </div>
                 {companyLoading && heroArticles.length > 0 && (
-                    <CardGrid items={[{ id: "loading-company-news", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-blue-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]} layout="grid" />
+                    <CardCanvas items={[{ id: "loading-company-news", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-blue-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]} />
                 )}
             </Section>
             <Section title="Chatbot Arena Leaderboard" description="Top models by Arena Elo rating">
-                <CardGrid items={leaderboardCards} layout="grid" />
+                <CardCanvas items={leaderboardCards} />
             </Section>
             <Section title="Research Papers" description="Latest publications and preprints">
-                <CardGrid items={researchCards} layout="grid" />
+                <CardCanvas items={researchCards} />
             </Section>
         </Scrollbar>
     );

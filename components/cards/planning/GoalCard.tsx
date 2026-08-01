@@ -23,10 +23,10 @@ export interface GoalCardProps {
     handleDeleteGoal: (id: string) => void;
 }
 
-// Rendered as a CardGrid item (see PlanningView), so the canonical card chrome
-// (bg-black/40 / rounded-lg / border / p-4) comes from CardGrid's wrapping Card.
+// Rendered as a CardCanvas item (see PlanningView), so the canonical card chrome
+// (bg-black/40 / rounded-lg / border / p-4) comes from CardCanvas's wrapping Card.
 // This inner Card supplies only the header slot + content — no wrapperClassName,
-// no manual inset — exactly like every other CardGrid card (e.g. PersonalInfoCard).
+// no manual inset — exactly like every other CardCanvas card (e.g. PersonalInfoCard).
 // The 35vh height cap lives on the CardItem; the list below is flex-1 min-h-0 so
 // it scrolls within that cap.
 export const GoalCard: React.FC<GoalCardProps> = ({

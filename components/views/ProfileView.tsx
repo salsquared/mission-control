@@ -5,7 +5,7 @@ import { useAccount } from "@/hooks/useAccount";
 import { Loader2, Mail } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
-import { CardGrid, type CardItem } from "../grids/CardGrid";
+import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { PersonalInfoCard } from "../cards/profile/PersonalInfoCard";
 import { WorkHistoryCard } from "../cards/profile/WorkHistoryCard";
 import { ProjectsCard } from "../cards/profile/ProjectsCard";
@@ -264,13 +264,13 @@ export const ProfileView: React.FC = () => {
     ];
 
     const historyCards: CardItem[] = [
-        { id: "profile-snapshots", colSpan: 1, hFit: true, content: <SnapshotsCard /> },
+        { id: "profile-snapshots", colSpan: 1, height: "md", content: <SnapshotsCard /> },
     ];
 
     // M-followup (post-split) — the monolithic ProfileIdentityCard split into
     // four focused cards. Each is full-width (colSpan=3) so the per-card
-    // chrome from CardGrid doesn't collapse two side-by-side; ProfileView
-    // grew its CardGrid items inline rather than thread props through one
+    // chrome from CardCanvas doesn't collapse two side-by-side; ProfileView
+    // grew its CardCanvas items inline rather than thread props through one
     // big card.
     const identityCards: CardItem[] = [
         {
@@ -357,19 +357,19 @@ export const ProfileView: React.FC = () => {
 
             <Section title="Resume">
                 <div className="mt-4">
-                    <CardGrid items={resumeCards} columns={2} />
+                    <CardCanvas items={resumeCards} columns={2} />
                 </div>
             </Section>
 
             <Section title="Identity" description="The building blocks the resume generator pulls from. Hover a bullet to lock 🔒 (always include) or exclude 🚫 (never include). Tags help the generator match the right bullets to a posting.">
                 <div className="mt-4">
-                    <CardGrid items={identityCards} />
+                    <CardCanvas items={identityCards} />
                 </div>
             </Section>
 
             <Section title="History" description="Versioned snapshots of your profile — capture one before a big edit so you can always look back at how the resume material was worded.">
                 <div className="mt-4">
-                    <CardGrid items={historyCards} columns={2} />
+                    <CardCanvas items={historyCards} columns={2} />
                 </div>
             </Section>
         </Scrollbar>

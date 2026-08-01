@@ -5,7 +5,7 @@ import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, Rotate
 import { signIn } from "next-auth/react";
 import { useAccount } from "@/hooks/useAccount";
 import { CalendarWidget } from "../widgets/CalendarWidget";
-import { CardGrid, CardItem } from "../grids/CardGrid";
+import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { Card } from "../ui/Card";
 import { Scrollbar } from "../ui/Scrollbar";
 import { useServerEvents } from "@/hooks/useServerEvents";
@@ -44,7 +44,7 @@ const TRACK_GLOW_RGB: Record<PostingsTrackKey, string> = {
 //     of the card before fading at the edges. A background-image (on the inner
 //     Card wrapper) so it layers over the card's bg-black/40 background-color.
 //   trackShadow   — a very faint colored drop-shadow. A box-shadow on the outer
-//     frame (CardGrid's motion.div) so its overflow-hidden doesn't clip it.
+//     frame (CardCanvas's motion.div) so its overflow-hidden doesn't clip it.
 // Both follow the active track (cyan career / amber side).
 function trackGradient(track: PostingsTrackKey): React.CSSProperties {
     const rgb = TRACK_GLOW_RGB[track];
@@ -240,9 +240,9 @@ export const ApplicationsView: React.FC = () => {
         );
     }
 
-    // Single card stack for the active track. In a 2-column CardGrid,
-    // colSpan:2 = full width and colSpan:1 = half; grid-flow-row-dense resolves
-    // the order to: Interviews (full) → Kanban (full) → [New Postings · Watchlists]
+    // Single card stack for the active track. In a 2-column CardCanvas,
+    // colSpan:2 = full width (colSpan === columns → `1 / -1`) and colSpan:1 =
+    // half. Packing preserves DOM order, so the order is simply: Interviews (full) → Kanban (full) → [New Postings · Watchlists]
     // → Account Status (full). The kanban + discovery cards carry key={activeTrack}
     // so flipping the switch remounts them (resets page / search / select state)
     // while the CardItem-keyed frame stays put.
@@ -250,7 +250,7 @@ export const ApplicationsView: React.FC = () => {
         {
             id: "calendar",
             colSpan: 2,
-            className: "max-h-[40vh]",
+            className: "h-[40vh]",
             content: (
                 <Card
                     title="Upcoming Interviews"
@@ -283,7 +283,7 @@ export const ApplicationsView: React.FC = () => {
         {
             id: "kanban",
             colSpan: 2,
-            className: "max-h-[50vh]",
+            className: "h-[50vh]",
             wrapperStyle: trackGradient(activeTrack),
             frameStyle: trackShadow(activeTrack),
             content: (
@@ -411,7 +411,7 @@ export const ApplicationsView: React.FC = () => {
                     })}
                 </div>
                 <div className="mt-4">
-                    <CardGrid items={pipelineCards} columns={2} />
+                    <CardCanvas items={pipelineCards} columns={2} />
                 </div>
             </Section>
             <AddApplicationModal

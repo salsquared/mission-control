@@ -603,7 +603,7 @@ const PreviousResumesDropdown: React.FC<{
     onClose: () => void;
     resumes: PreviousResumeRow[];
 }> = ({ open, onToggle, onClose, resumes }) => {
-    // The popover is portalled to <body> because the enclosing CardGrid
+    // The popover is portalled to <body> because the enclosing CardCanvas
     // wrapper has `overflow-hidden` (load-bearing for `rounded-lg` corner
     // clipping). An `absolute`-positioned popover gets clipped to the card.
     // Fixed positioning + portal lets it escape; we anchor to the trigger

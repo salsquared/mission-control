@@ -3,7 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { KanbanColumnDef } from "../widgets/KanbanWidget";
 import { TaskItem } from "../ui/TaskItem";
 import { Section } from "../Section";
-import { CardGrid, type CardItem } from "../grids/CardGrid";
+import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { GoalCard, LifeGoal } from "../cards/planning/GoalCard";
 import { ToDoCard } from "../cards/ToDoCard";
 import { Scrollbar } from "../ui/Scrollbar";
@@ -135,10 +135,16 @@ export const PlanningView: React.FC = () => {
         }
     };
 
-    // Each section holds a single full-width card, rendered through CardGrid so
-    // it inherits the canonical chrome + gutter exactly like every other dash.
+    // Each section holds a single full-width card, rendered through CardCanvas
+    // so it inherits the canonical chrome + gutter exactly like every other dash.
     // Height caps live here on the CardItem (not the card), mirroring
-    // ApplicationsView's kanban (`className: "max-h-[50vh]"`).
+    // ApplicationsView's kanban.
+    //
+    // These deliberately stay on CardCanvas's `height: "auto"` default rather
+    // than taking a height token: the max-h cap below already bounds the frame,
+    // and GoalCard/ToDoCard scroll via `flex-1 min-h-0`, which resolves against
+    // a max-height just fine. A token would replace a content-hugging card with
+    // a fixed-height one for no gain.
     const goalsCards: CardItem[] = [
         {
             id: "goals",
@@ -187,11 +193,11 @@ export const PlanningView: React.FC = () => {
     return (
         <Scrollbar className="w-full h-full pb-8">
             <Section title="Goals">
-                <CardGrid items={goalsCards} />
+                <CardCanvas items={goalsCards} />
             </Section>
 
             <Section title="To-Do">
-                <CardGrid items={todoCards} />
+                <CardCanvas items={todoCards} />
             </Section>
         </Scrollbar>
     );

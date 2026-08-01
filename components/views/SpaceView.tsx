@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef } from "react";
 import { useQuery, useQueries } from "@tanstack/react-query";
-import { CardGrid, CardItem } from "../grids/CardGrid";
+import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { Satellite, ThermometerSun, Loader2, Moon } from "lucide-react";
 import { ReloadButton } from "../ui/ReloadButton";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
@@ -149,7 +149,9 @@ export const SpaceView: React.FC = () => {
         {
             id: "space-calendar",
             colSpan: 2,
-            rowSpan: 2,
+            // Scrolls via a bare `overflow-y-auto` and self-bounds nowhere, so it
+            // needs an explicit height. Replaces the old rowSpan: 2.
+            height: "lg",
             content: (
                 <div className="flex flex-col overflow-y-auto custom-scrollbar pr-1">
                     <div className="flex items-center justify-between mb-2 text-blue-400">
@@ -374,17 +376,18 @@ export const SpaceView: React.FC = () => {
     return (
         <Scrollbar className="w-full h-full pb-8 space-y-6">
             <Section title="Space Data" description="Real-time metrics and tracking">
-                <CardGrid items={staticCards} layout="grid" className="grid-flow-row-dense" />
+                <CardCanvas items={staticCards} />
             </Section>
 
             <Section
                 title="Company News"
                 description="Direct feeds from space companies"
                 groups={companyGroups}
+                groupLayout="packed"
             />
 
             <Section title="Space News" description="Latest headlines from orbit and beyond">
-                <CardGrid items={outletCards} layout="masonry" />
+                <CardCanvas items={outletCards} />
             </Section>
         </Scrollbar>
     );

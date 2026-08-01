@@ -15,9 +15,10 @@ interface SectionProps {
     /** Optional grouped card items with subheader labels. Rendered after children. */
     groups?: SectionGroup[];
     /** Layout mode for grouped card canvases. Defaults to "grid".
-     *  Legacy spelling, mapped to CardCanvas's "rows" / "packed" below —
-     *  kept so callers don't all change in the same diff. */
-    groupLayout?: "grid" | "masonry";
+     *  Accepts CardCanvas's own spelling ("packed" / "rows") and the legacy
+     *  one ("masonry" / "grid"), mapped below — so callers can migrate without
+     *  having to say "masonry" when they mean packed. */
+    groupLayout?: "grid" | "masonry" | "packed" | "rows";
     /** Column cap for grouped canvases (OQ2a — a maximum, not a fixed count). */
     groupColumns?: number;
 }
@@ -55,11 +56,16 @@ export const Section: React.FC<SectionProps> = ({ title, description, children, 
                                     items={group.items}
                                     columns={groupColumns}
                                     // "grid" → rows keeps un-migrated sections
-                                    // visually unchanged; "masonry" → packed is
-                                    // the fix for SpaceView's company-news
-                                    // groups, which were flowing column-wise
-                                    // and silently dropping colSpan.
-                                    layout={groupLayout === "masonry" ? "packed" : "rows"}
+                                    // visually unchanged; "masonry"/"packed"
+                                    // pack. Legacy "masonry" callers were
+                                    // already trying to pack — they were just
+                                    // getting CSS multi-column, which flowed
+                                    // column-wise and dropped colSpan.
+                                    layout={
+                                        groupLayout === "masonry" || groupLayout === "packed"
+                                            ? "packed"
+                                            : "rows"
+                                    }
                                 />
                             </div>
                         )

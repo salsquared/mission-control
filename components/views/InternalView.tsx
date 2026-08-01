@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CardGrid, CardItem } from "../grids/CardGrid";
+import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { api, queryKeys } from "@/lib/api-client";
 import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, RefreshCw } from "lucide-react";
 import { Section } from "../Section";
@@ -546,7 +546,7 @@ export const InternalView: React.FC = () => {
     return (
         <Scrollbar className="w-full h-full pb-8">
             <Section title="System Diagnostics" description="Internal system vitals and status logs">
-                <CardGrid items={staticCards} />
+                <CardCanvas items={staticCards} />
             </Section>
         </Scrollbar>
     );
