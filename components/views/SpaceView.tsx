@@ -153,8 +153,10 @@ export const SpaceView: React.FC = () => {
             // count, or the span is withheld and this renders one wide.
             colSpan: 2,
             // Scrolls via a bare `overflow-y-auto` and self-bounds nowhere, so it
-            // needs an explicit height. Replaces the old rowSpan: 2.
-            height: "lg",
+            // needs an explicit height. Replaces the old rowSpan: 2, and sits a
+            // step above the "lg" it first migrated to — the launch list wants
+            // the extra rows.
+            height: "xl",
             content: (
                 <div className="flex flex-col overflow-y-auto custom-scrollbar pr-1">
                     <div className="flex items-center justify-between mb-2 text-blue-400">
