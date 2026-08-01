@@ -752,7 +752,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P0</span>
           <span class="task-title">Phase 0 — Prerequisites (manual checks + backup, no application code)</span>
         </summary>
@@ -774,7 +774,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P0.3</span>
               <span class="task-title">Backup: confirm encryption, take a pre-migration snapshot</span>
             </summary>
@@ -787,7 +787,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P1</span>
           <span class="task-title">Phase 1 — Identity foundation (the serial bottleneck)</span>
         </summary>
@@ -796,22 +796,22 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.1</span>
               <span class="task-title">Schema + migration</span>
             </summary>
             <div class="task-body">
               <p>Scope: <code>prisma/schema.prisma</code> + one new migration directory. <em>Parallel-safe</em> with P1.2 (disjoint files) and P4.1. <strong>No task dependencies — a Round-1 root</strong> (the old <em>Depends on P0.1</em> died with P0.1); P1.1.3's <code>migrate deploy</code> should still wait on P0.3's snapshot.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.1.1</span><span class="task-title">Add User.role and the AiUsage model</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.1.1</span><span class="task-title">Add User.role and the AiUsage model</span></summary>
                 <div class="task-body"><p><code>role String @default("crew")</code> on <code>User</code> (OQ4a). New <code>AiUsage { userId, day, count, @@unique([userId, day]) }</code> with <code>onDelete: Cascade</code> to match all 17 existing <code>User</code> relations, plus the <code>aiUsage AiUsage[]</code> back-relation.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.1.2</span><span class="task-title">Hand-add the owner promotion to the generated SQL</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.1.2</span><span class="task-title">Hand-add the owner promotion to the generated SQL</span></summary>
                 <div class="task-body"><p>Append <code>UPDATE "User" SET role = 'owner';</code> to the generated migration. Deterministic because each DB holds exactly one row today. Do <strong>not</strong> leave this to a separate script — a migration that can be applied without its backfill is a migration that will be.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.1.3</span><span class="task-title">Apply to both DBs, restart both schedulers</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.1.3</span><span class="task-title">Apply to both DBs, restart both schedulers</span></summary>
                 <div class="task-body"><p><code>npx prisma migrate deploy</code> once per tier with <code>DATABASE_URL</code> pointed at each — <code>file:./dev.db</code> and <code>file:./prod.db</code>, <strong>never</strong> <code>file:./prisma/dev.db</code> (Prisma resolves relative to <code>prisma/</code> and would create a phantom DB). Then <code>pm2 restart mission-control-scheduler-dev mission-control-scheduler-prod</code> so any <code>P2021</code>-disabled job re-arms (R8). <strong>Then verify the promotion on each DB</strong> — <code>SELECT role, count(*) FROM "User" GROUP BY role</code> must show exactly one <code>owner</code> in <em>both</em> <code>dev.db</code> and <code>prod.db</code>. Zero means the backfill did not run and <code>requireOwner()</code> will lock the owner out; this is the one place the migration's correctness is observable before the guards depend on it (R3).</p></div>
               </details>
             </div>
@@ -819,26 +819,26 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.2</span>
               <span class="task-title">lib/viewer.ts — resolveViewer() (MOST CONSTRAINED)</span>
             </summary>
             <div class="task-body">
               <p>Scope: <strong>new</strong> <code>lib/viewer.ts</code>. Sole owner of the file. <em>Parallel-safe</em> with P1.1 and P4.1. <strong>No dependencies — a Round-1 root, and the head of the critical path</strong> (the old <em>Depends on P0.1</em> died with P0.1, so nothing human sits in front of it).</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.2.1</span><span class="task-title">The strict path — one identity source, no memo</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.2.1</span><span class="task-title">The strict path — one identity source, no memo</span></summary>
                 <div class="task-body"><p><code>await headers()</code> → <code>cf-access-authenticated-user-email</code> → trim/lowercase → <code>prisma.user.findUnique({ where: { email }, select: { id, email, role } })</code>. <strong>No memoization of any kind</strong> (OQ1a + R2); open the file with the danger callout from §2.3 as a comment so the next reader cannot miss why. Unknown email → <code>null</code> + one loud <code>console.warn</code> naming it (OQ3a).</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.2.2</span><span class="task-title">The out-of-request-scope catch must yield null</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.2.2</span><span class="task-title">The out-of-request-scope catch must yield null</span></summary>
                 <div class="task-body"><p><code>headers()</code> throws outside a request scope (<code>route-auth-smoke.ts:8</code> documents it). The <code>catch</code> resolves to <strong><code>null</code></strong>, never to <code>resolveOwner()</code> — wiring it to an identity "so the smokes pass" reinstates the bypass OQ2 removed, on a path reachable from anything that imports a guard.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.2.3</span><span class="task-title">The two break-glass branches</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.2.3</span><span class="task-title">The two break-glass branches</span></summary>
                 <div class="task-body"><p>Separate explicit branches, evaluated <em>before</em> the strict path (so P4.2's JWT check is skipped on them): a dev-tier escape for the integration suites (OQ14a) and an on-box prod recovery escape. Each gated on its own env var (off by default) <strong>and</strong> a loopback remote-address check; the dev one additionally on <code>NODE_ENV !== 'production'</code> as a code condition. One <code>console.warn</code> per process when either fires. Documented commented-out in the <code>.example</code> files only — never in a loaded <code>.env</code>.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.2.4</span><span class="task-title">The __seedViewer test seam (BLOCKS the pre-push gate if skipped)</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.2.4</span><span class="task-title">The __seedViewer test seam (BLOCKS the pre-push gate if skipped)</span></summary>
                 <div class="task-body"><p>Export <code>__seedViewer(viewer)</code> / <code>__resetViewer()</code>, mirroring <code>lib/owner.ts</code>'s <code>__seedOwnerMemo</code> / <code>__resetOwnerMemo</code> — the seam nine of the affected smokes already import, so the pattern needs no invention and no review argument. <strong>This is not optional polish.</strong> Ten hermetic smokes call route handlers in-process (<code>require("@/app/api/…").GET(req)</code>); the moment P1.3.2 repoints the guards, every one of them hits <code>headers()</code> outside a request scope → catch → 401, and the pre-push gate goes red. <strong>The break-glass branches cannot cover them</strong> — an in-process call has no remote address, so the loopback check can never pass. Three constraints: the seam is a <em>test override</em>, never populated by a real request (so it is not R2's memo in disguise); it is <strong>inert unless explicitly seeded</strong> — no env var, no implicit activation; and <code>viewer-resolution-smoke.ts</code> asserts both that an unseeded resolver takes the strict path and that <code>__resetViewer()</code> restores it, so one smoke cannot leak a seeded identity into another. Keep the <code>__</code> prefix: it is the repo's existing "seam, not API" marker and makes the grep for accidental production use trivial.</p></div>
               </details>
             </div>
@@ -846,22 +846,22 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.3</span>
               <span class="task-title">lib/auth-guards.ts — requireOwner + repoint the three existing guards</span>
             </summary>
             <div class="task-body">
               <p>Scope: <code>lib/auth-guards.ts</code>, a <strong>code</strong> change to <code>lib/owner.ts</code> (P1.3.3), and a docstring edit to <code>lib/user-scope.ts</code>. <em>Depends on</em> P1.2 and P1.1 (needs <code>role</code> on the model).</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.3.1</span><span class="task-title">Add requireOwner() and requireOwnerOrService()</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.3.1</span><span class="task-title">Add requireOwner() and requireOwnerOrService()</span></summary>
                 <div class="task-body"><p><strong>The two guards do not share a return shape — each mirrors the guard it replaces.</strong> <code>requireOwner()</code> → <code>{ session } | { error }</code>, matching <code>requireSession()</code>, so no handler body changes. <code>requireOwnerOrService()</code> → <code>{ userId } | { error }</code>, matching <code>requireSessionOrService()</code> — <em>not</em> <code>{ session }</code>: all three handlers in <code>calendar/event</code> destructure <code>userId</code>, and giving it the other shape breaks every one of them. Both return <strong>403, not 401</strong>, for an authenticated non-owner (401 is reserved for "no verified identity" — §2.3). <code>requireOwnerOrService</code> keeps the Bearer branch byte-for-byte (<code>lib/auth-guards.ts:39-67</code>) and applies the owner check <strong>only on the session branch</strong> — Pulsar is not a viewer and has no role.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.3.2</span><span class="task-title">Repoint the three existing guards and add role to the session</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.3.2</span><span class="task-title">Repoint the three existing guards and add role to the session</span></summary>
                 <div class="task-body"><p><code>requireSession</code> / <code>requireLocalOrSession</code> / <code>requireSessionOrService</code> call <code>resolveViewer()</code> instead of <code>resolveOwner()</code>. Synthesized user becomes <code>{ id, email, role }</code> — purely additive, so the ~104 call sites and their <code>session.user.*</code> reads are untouched. Do <strong>not</strong> collapse <code>requireLocalOrSession</code> into <code>requireSession</code> (deferred cleanup: 29 call sites across 20 route files, zero behaviour change).</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.3.3</span><span class="task-title">Repoint resolveOwner() to role='owner' + narrow both docstrings</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.3.3</span><span class="task-title">Repoint resolveOwner() to role='owner' + narrow both docstrings</span></summary>
                 <div class="task-body"><p><code>lib/owner.ts</code> — <strong>a code change, not just a comment.</strong> Delete <em>both</em> resolution branches: the <code>OWNER_EMAIL</code> pin (<code>:65-83</code>) and the sole-row <code>findFirst({ orderBy: { id: 'asc' } })</code> fallback (<code>:85-96</code>). Replace with one <code>user.findFirst({ where: { role: 'owner' }, select: { id: true, email: true } })</code>. <strong>Keep two properties verbatim:</strong> a miss returns <code>null</code> and never falls through to a stray row (the security hardening from the 2026-06-24 audit, now anchored on the column instead of the env), and <code>null</code> is never cached, so a promotion "takes" without a restart. Widen <code>OwnerResolverClient</code>'s structural slice to match, and keep <code>__resetOwnerMemo()</code> — nine smokes use it. <em>Depends on</em> P1.1 for the column. Docstring: <code>resolveOwner()</code> is now "the owner's identity for contexts with no request" (scheduler + break-glass), no longer on the request path, and <code>OWNER_EMAIL</code> is gone — drop its resolution-order comment at <code>:14-22</code>. <code>lib/user-scope.ts</code>: fix the <strong>false</strong> comment at <code>:5</code> — <em>"the kiosk use-case — localhost / mc.local skip auth entirely"</em> — and mark <code>resolveOwnerUserId()</code> as having no production callers once P2.3 lands.</p></div>
               </details>
             </div>
@@ -869,23 +869,23 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.4</span>
               <span class="task-title">Foundation smokes</span>
             </summary>
             <div class="task-body">
               <p>Scope: <strong>new</strong> <code>scripts/tests/hermetic/viewer-resolution-smoke.ts</code> + edits to <strong>ten</strong> existing smokes (P1.4.2, P1.4.3). <em>Depends on</em> P1.2 — including <strong>P1.2.4's seam</strong>, without which most of this phase cannot be written — and P1.3. Auto-registers in the pre-push gate by glob.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.4.1</span><span class="task-title">viewer-resolution-smoke — the R2 regression + the 401/403 split</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.4.1</span><span class="task-title">viewer-resolution-smoke — the R2 regression + the 401/403 split</span></summary>
                 <div class="task-body"><p>Assert: two <em>different</em> header emails resolved back-to-back return two <em>different</em> viewers (the memo trap); no header → <strong>401</strong>; a verified email with no <code>User</code> row → <strong>403</strong> carrying that email, <em>not</em> 401 (the two are decided separately by OQ2a and OQ3a and the guards must not collapse them); an out-of-request-scope call → 401 and never an identity; each break-glass branch is inert with its env var unset. Plus the seam's own guarantees from P1.2.4: unseeded → the strict path runs; <code>__resetViewer()</code> restores it after a seed.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.4.2</span><span class="task-title">Role invariant in user-scoping-smoke</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.4.2</span><span class="task-title">Role invariant in user-scoping-smoke</span></summary>
                 <div class="task-body"><p>Extend the existing OWNER + STRANGER fixtures so the invariant is <strong>exactly one <code>role='owner'</code> row</strong> — zero (the migration's <code>UPDATE</code> never ran → the owner is locked out of their own app) and two (the wrong row promoted, or a second promoted later) both fail. Assert the resolver with it: with an <code>owner</code> row and a <code>crew</code> row present, <code>resolveOwner()</code> returns the owner <em>regardless of cuid order</em> — the heuristic it replaces would have returned whichever sorted first — and with zero owners it returns <code>null</code> rather than falling through to the crew row. <strong>No email comparison:</strong> <code>User.role</code> is the single source of truth and there is no <code>OWNER_EMAIL</code> to cross-check (OQ4's 2026-07-28 note). This is what converts OQ4a's lock-out risk into a test failure; the real DBs are checked separately at P1.1.3.</p>
                   <p><strong><code>user-scoping-smoke.ts</code> is also the tenth file affected by the seam change</strong> — count it here, not in P1.4.3's env-var list. Its <code>OWNER_EMAIL</code> at <code>:32</code> is a <em>local const</em>, not the env var, so it never pinned the resolver; but its route-driving phases at <code>:234-283</code> exercise <code>/api/settings</code> and <code>/api/tasks</code> through <code>requireLocalOrSession</code> with a synthetic <code>lanRequest()</code>, and those break exactly like the nine others once the guard resolves through <code>resolveViewer()</code>. They need <strong>P1.2.4's seam</strong>, seeded per phase to whichever fixture user the phase is acting as.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P1.4.3</span><span class="task-title">Repoint the nine OWNER_EMAIL-pinning smokes off the env seam</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P1.4.3</span><span class="task-title">Repoint the nine OWNER_EMAIL-pinning smokes off the env seam</span></summary>
                 <div class="task-body"><p><strong>Nine files that set <code>process.env.OWNER_EMAIL</code> and call <code>__resetOwnerMemo()</code>. They do not all break the same way, and the two groups need different fixes</strong> — treating them as one batch is how this task gets half-done. <em>Depends on</em> <strong>P1.2.4</strong>. (<code>user-scoping-smoke.ts</code> is a tenth affected file but not an env-pinner — it is handled in P1.4.2.)</p>
                   <p><strong>Group A — 4 smokes that drive route handlers through the guards</strong> (<code>resume-list</code>, <code>resume-from-application</code>, <code>scratchpad-synth</code>, <code>tagline-draft</code>). These call <code>require("@/app/api/…").GET(req)</code> in-process, so after P1.3.2 they go through <code>resolveViewer()</code> → <code>headers()</code> throws → 401. Repointing the fixture's role is <strong>not enough</strong>: they need <code>__seedViewer({ id, email, role: 'owner' })</code> around each phase, reset after. This group is the reason P1.2.4 exists.</p>
                   <p><strong>Group B — 4 smokes that only pin the resolver</strong> (<code>scratchpad-patch</code>, <code>tagline-patch</code>, <code>watchlist-dedup-board</code>, <code>bullet-tag-suggest</code>). They never enter a guard, so the seam is unnecessary: <strong>create the fixture user with <code>role: 'owner'</code></strong> and drop the env pin. Keep the <code>__resetOwnerMemo()</code> call — it is what lets the acting user change between phases.</p>
@@ -899,7 +899,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P2</span>
           <span class="task-title">Phase 2 — Role gating + per-user isolation</span>
         </summary>
@@ -908,26 +908,26 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.4</span>
               <span class="task-title">SSE per-user fan-out (runs FIRST in this phase — serial barrier)</span>
             </summary>
             <div class="task-body">
               <p>Scope: <code>lib/events.ts</code>, <code>app/api/events/route.ts</code>, <strong>34 broadcast-site files</strong> (not the ~20 an earlier draft estimated — a 70% undercount, and the file count is what drives both the effort and the collisions), <code>hooks/useServerEvents.ts</code> (type alias only), <code>events-broadcast-regression-smoke.ts</code>. <em>Depends on</em> P1.3. <strong>Blocks</strong> P2.1, P2.3, P2.5, P2.6.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.4.1</span><span class="task-title">Discriminated union + per-subscriber registry</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.4.1</span><span class="task-title">Discriminated union + per-subscriber registry</span></summary>
                 <div class="task-body"><p>Split <code>ModelName</code> into user-scoped (14) and global (<code>Cache</code>, <code>FinanceTick</code>) sets; <code>ServerEvent = UserServerEvent (userId required) | GlobalServerEvent</code> (OQ8a). <code>subscribeToEvents(viewerId, listener)</code>; the registry holds <code>{ viewerId, listener }</code> entries — <strong>keep the existing per-listener <code>try/catch</code></strong> (<code>lib/events.ts:22-32</code>) so one dead client still cannot blackhole the loop.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.4.2</span><span class="task-title">Migrate all 68 call sites (tsc-driven)</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.4.2</span><span class="task-title">Migrate all 68 call sites (tsc-driven)</span></summary>
                 <div class="task-body"><p><code>tsc --noEmit</code> enumerates them across the 34 files. Every route has its <code>userId</code> from the guard; <code>lib/applications/ingest.ts:569</code>, <code>lib/postings/track-as-application.ts</code>, <code>lib/applications/close-from-posting.ts:60</code> already thread it. <strong>Normalize all <em>three</em> userId-through-<code>id</code> smuggles</strong>, not just the one an earlier draft named: <code>scheduler/jobs/job-watcher.ts:804</code>, <code>app/api/notifications/route.ts:109</code>, and <code>app/api/notifications/test/route.ts:76</code>. Each moves the userId off the <code>id</code> field onto the real <code>userId</code> field — free, because no consumer reads <code>id</code> — but they must move together, or the two left behind keep an <code>id</code> that lies about what it holds.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.4.3</span><span class="task-title">Absorb the 5 contended owner-only guard swaps</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.4.3</span><span class="task-title">Absorb the 5 contended owner-only guard swaps</span></summary>
                 <div class="task-body"><p>While in these files anyway, swap their guard to <code>requireOwner</code> (<code>requireOwnerOrService</code>, returning <code>{ userId }</code>, for <code>calendar/event</code>): <code>applications/backfill</code>, <code>calendar/event</code>, <code>notifications/test</code>, <code>research/saved</code>, and <strong><code>applications/events/adopt</code></strong> — which broadcasts at <code>app/api/applications/events/adopt/route.ts:109</code> and was <strong>double-assigned</strong> to P2.1.3 by an earlier draft that counted only four. <strong>Five</strong> owner-only routes carry <code>broadcastEvent</code> calls, and folding all five here is what makes P2.1 fully file-disjoint from P2.4; leaving one behind reintroduces exactly the collision this sub-task exists to remove.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.4.4</span><span class="task-title">Cross-user isolation assertion</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.4.4</span><span class="task-title">Cross-user isolation assertion</span></summary>
                 <div class="task-body"><p>Extend <code>events-broadcast-regression-smoke.ts</code>: two subscribers with different viewer ids each receive only their own user-scoped events, and both receive global ones. Keep the existing Bug-G throwing-listener regression intact.</p></div>
               </details>
             </div>
@@ -935,22 +935,22 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.1</span>
               <span class="task-title">Swap the remaining 21 owner-only routes to requireOwner</span>
             </summary>
             <div class="task-body">
               <p>Scope: <strong>21</strong> route files, import + call swap only. <em>Depends on</em> P2.4 (which took the other <strong>5</strong>). <em>Parallel-safe</em> with P2.3, P2.5, P2.6. Arithmetic: 21 + 5 = 26 owner-only routes, unchanged.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.1.1</span><span class="task-title">15 other-dash routes</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.1.1</span><span class="task-title">15 other-dash routes</span></summary>
                 <div class="task-body"><p><code>ai</code>, <code>ai/llmleaderboard</code>, <code>company-news</code>, <code>finance</code>, <code>finance/history</code>, <code>space</code>×5, <code>research</code>, <code>research/hf</code>, <code>research/historical</code>, <code>research/review</code>, <code>research/import</code>. (<code>research/saved</code> is in P2.4.3.)</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.1.2</span><span class="task-title">5 ops routes</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.1.2</span><span class="task-title">5 ops routes</span></summary>
                 <div class="task-body"><p><code>system</code>, <code>system/cache/invalidate</code>, <code>system/logs</code>, <code>system/logs/historical</code>, <code>system/fetcher-health</code>. <code>system/logs</code> is the sharpest — the ring buffer carries prod Prisma query parameters, i.e. every user's data.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.1.3</span><span class="task-title">1 remaining Google-dependent route</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.1.3</span><span class="task-title">1 remaining Google-dependent route</span></summary>
                 <div class="task-body"><p><code>applications/events/gcal-candidates</code> — calls <code>getGoogleAuthClient</code> directly and unguarded, so it would throw for a crew viewer with no <code>Account</code> row. <strong><code>applications/events/adopt</code> is <em>not</em> here</strong>: it broadcasts (<code>:109</code>), so it belongs to P2.4.3 along with the other four contended files. An earlier draft listed it in both places — taking it twice means two agents editing one file in the same round.</p></div>
               </details>
             </div>
@@ -958,18 +958,18 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.2</span>
               <span class="task-title">Role-matrix hermetic smoke over all 67 routes</span>
             </summary>
             <div class="task-body">
               <p>Scope: <strong>new</strong> <code>scripts/tests/hermetic/role-matrix-smoke.ts</code> (or extend <code>route-auth-smoke.ts</code>'s <code>ROUTES</code> array from 19 to 67 with a <code>role</code> field). <em>Depends on</em> P2.1 and P2.4.3.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.2.1</span><span class="task-title">Assert the declared class matches the guard in use</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.2.1</span><span class="task-title">Assert the declared class matches the guard in use</span></summary>
                 <div class="task-body"><p>Structural, same technique as the existing smoke: import present, awaited, error-wired. 26 owner-only + 39 crew-allowed + 2 deliberately unguarded = 67. <strong>Expect two distinct rejection codes, and assert the right one per case</strong> — a crew viewer on an owner-only route is <strong>403</strong> (authenticated, not permitted); a request with no verified identity is <strong>401</strong> (§2.3, OQ2a vs OQ3a). A smoke that accepts "either 4xx" would pass while the guards had them backwards, which is the exact confusion this doc had to correct.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.2.2</span><span class="task-title">Fail on an unclassified route</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.2.2</span><span class="task-title">Fail on an unclassified route</span></summary>
                 <div class="task-body"><p>Glob <code>app/api/**/route.ts</code> and fail if any file is absent from the manifest. <strong>This is what gives the guard approach the one virtue a middleware manifest would have had</strong> — a new route with no role decision cannot reach <code>main</code> (R1).</p></div>
               </details>
             </div>
@@ -977,34 +977,34 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.3</span>
               <span class="task-title">Per-user config bleed — the findGlobalSetting cluster</span>
             </summary>
             <div class="task-body">
               <p>Scope: <code>app/api/postings/route.ts</code>, <code>scheduler/jobs/{job-watcher,posting-digest,classify-pending-employment-types}.ts</code>, <code>lib/notifications/dispatch.ts</code>, <code>lib/repositories/settings.ts</code>. <em>Depends on</em> P2.4 (shares <code>job-watcher.ts</code>). <em>Parallel-safe</em> with P2.1, P2.5, P2.6. <strong>R9 — the likeliest task to be forgotten, because it lives in the scheduler rather than a route.</strong></p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.3.1</span><span class="task-title">job-watcher:227 — the ingestion drop (highest severity)</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.3.1</span><span class="task-title">job-watcher:227 — the ingestion drop (highest severity)</span></summary>
                 <div class="task-body"><p><code>findGlobalSettingForUser(watchlist.userId)</code>. Today the owner's filters drop crew postings at <code>:258-264</code> <em>before any DB write</em>, so the loss leaves no row to notice. Add an assertion that two users' filters do not cross-apply.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.3.2</span><span class="task-title">postings route:173 — crew feed read filter</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.3.2</span><span class="task-title">postings route:173 — crew feed read filter</span></summary>
                 <div class="task-body"><p><code>findGlobalSettingForUser(userId)</code>; the viewer is already resolved at <code>:62</code>.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.3.3</span><span class="task-title">posting-digest:46 — move the read inside the loop (permanent loss, not just a culled digest)</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.3.3</span><span class="task-title">posting-digest:46 — move the read inside the loop (permanent loss, not just a culled digest)</span></summary>
                 <div class="task-body"><p>It is currently hoisted above <code>for (const w of watchlists)</code>; <code>w.userId</code> is already selected at <code>:37</code>. <strong>Severity is higher than "wrong contents":</strong> <code>:161-167</code> advances <code>lastDigestAt</code> even on a <code>culledOnly</code> run, so a posting filtered out by <em>another user's</em> config falls behind the watermark and is <strong>never digested at all</strong> — not deferred, lost. Assert both halves: a user's digest contains only their own filter's survivors, <strong>and one user's filters must not advance another user's <code>lastDigestAt</code></strong>.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.3.4</span><span class="task-title">classify-pending:74 — delete the gate (OQ11a)</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.3.4</span><span class="task-title">classify-pending:74 — delete the gate (OQ11a)</span></summary>
                 <div class="task-body"><p>Remove the <code>findGlobalSetting()</code> read, the <code>matchesNegativeFilters</code> skip, the <code>filteredIds</code> set and its log line, plus the now-unused imports. The <code>pending</code> select is <strong>unchanged</strong>. Update the stale comment asserting <em>"a global match means the posting is hidden on every watchlist"</em>.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.3.5</span><span class="task-title">dispatch.ts:96 — quiet hours read the notification's own user</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.3.5</span><span class="task-title">dispatch.ts:96 — quiet hours read the notification's own user</span></summary>
                 <div class="task-body"><p><code>where: { userId }</code> instead of <code>where: { id: "global" }</code>. Strictly a correctness fix — no new delivery wiring, per the standing hold on the notification system.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.3.6</span><span class="task-title">Retire the zero-arg accessor</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.3.6</span><span class="task-title">Retire the zero-arg accessor</span></summary>
                 <div class="task-body"><p>With all four callers gone, mark <code>findGlobalSetting()</code> — and therefore <code>resolveOwnerUserId()</code> — as having <strong>no <em>reachable</em> production callers</strong>. The qualifier is exact, not hedging: <code>resolveOwnerUserId()</code> keeps one textual reference, <code>resolveScopedUserId</code>'s fallback at <code>lib/user-scope.ts:104</code>, which is dead because the guards always synthesize a session and the function returns on the session branch first. Say "unreachable", not "unreferenced" — a later reader greps, finds the call, and concludes the note is wrong. Keep both functions and their smoke coverage; deletion is separate cleanup.</p></div>
               </details>
             </div>
@@ -1012,22 +1012,22 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.5</span>
               <span class="task-title">Per-user Gemini daily cap</span>
             </summary>
             <div class="task-body">
               <p>Scope: <strong>new</strong> <code>lib/ai/quota.ts</code>, <strong>new</strong> <code>ai-quota-smoke.ts</code>, <strong>7</strong> LLM-bearing crew route files. <em>Depends on</em> P1.1 (<code>AiUsage</code>) and P2.4 (shares <code>resumes</code>, <code>resumes/specialize</code>, <code>profile/import</code>). <em>Parallel-safe</em> with P2.1, P2.3, P2.6. Bounds the <em>interactive</em> path only — the scheduler's classification calls are deliberately outside the cap (§2.9's callout, R6).</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.5.1</span><span class="task-title">consumeAiCredit(userId, role)</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.5.1</span><span class="task-title">consumeAiCredit(userId, role)</span></summary>
                 <div class="task-body"><p>Upsert-and-increment on <code>@@unique([userId, day])</code>. Reuse <code>utcDateBucket()</code> from <code>lib/notifications/dispatch.ts:56</code> — do not re-derive a date bucket. Owner exempt; crew limited by <code>CREW_AI_DAILY_LIMIT</code> (default 20). Returns <code>{ ok, used, limit }</code>.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.5.2</span><span class="task-title">Wire the 7 routes</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.5.2</span><span class="task-title">Wire the 7 routes</span></summary>
                 <div class="task-body"><p><code>resumes</code>, <code>resumes/specialize</code>, <code>profile/bullets/assist</code>, <code>profile/tagline/draft</code>, <code>profile/import</code>, <code>discovery/suggest</code>, <code>watchlists/[id]/run</code>. Check at the top, before any work; 429 with <code>{ used, limit }</code> on refusal. <strong><code>canons/[id]/preview</code> is <em>not</em> on this list</strong> — its own file header states it renders the stored selection verbatim, makes no AI call, and never persists. Charging a credit for it would bill crew for a free operation and would be the first thing they notice as wrong. §2.9's prose list of seven is the correct one; the "8" in an earlier draft counted this route in error.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.5.3</span><span class="task-title">Quota smoke</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.5.3</span><span class="task-title">Quota smoke</span></summary>
                 <div class="task-body"><p>Owner unlimited; crew refused at N+1; the day bucket rolls over; two crew members have independent counters.</p></div>
               </details>
             </div>
@@ -1035,14 +1035,14 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.6</span>
               <span class="task-title">Per-crew watchlist cap</span>
             </summary>
             <div class="task-body">
               <p>Scope: <code>app/api/watchlists/route.ts</code> (POST only). <em>Depends on</em> P2.4 (shares the file). <em>Parallel-safe</em> with P2.1, P2.3, P2.5.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P2.6.1</span><span class="task-title">Count-and-reject on create</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P2.6.1</span><span class="task-title">Count-and-reject on create</span></summary>
                 <div class="task-body"><p>Owner exempt; crew capped at <code>CREW_WATCHLIST_LIMIT</code> (default 5). 400 naming the limit so the UI can state it plainly. Bounds R7 — <code>defaultLoadDue</code> has no ceiling today (<code>job-watcher.ts:916-921</code>).</p></div>
               </details>
             </div>
@@ -1052,40 +1052,40 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P3</span>
           <span class="task-title">Phase 3 — Frontend</span>
         </summary>
         <div class="task-body">
           <p><em>Depends on</em> P1.3. Eight tasks, all file-disjoint — but they do <strong>not</strong> all fan out after P3.1, and an earlier draft's "after P3.1 they fan out completely" contradicted this doc's own DAG. Two have further dependencies: <strong>P3.3</strong> needs P3.2's <code>dashesForRole()</code> to have something to gate on, and <strong>P3.6</strong> needs P2.5's 429 shape to render. So Phase 3 splits across two rounds — P3.2 ∥ P3.4 ∥ P3.5 ∥ P3.7 first, then P3.3 ∥ P3.6 (§5.3's round table).</p>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.1</span><span class="task-title">role on /api/account + useAccount()</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.1</span><span class="task-title">role on /api/account + useAccount()</span></summary>
             <div class="task-body"><p>Scope: <code>app/api/account/route.ts</code>, <code>hooks/useAccount.ts</code>. <em>Depends on</em> P1.3. Zero extra queries — <code>role</code> is already in the guard's synthesized session. <strong>Blocks</strong> P3.3, P3.4, P3.5, P3.7, P3.8.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.2</span><span class="task-title">dashesForRole() in the dash registry</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.2</span><span class="task-title">dashesForRole() in the dash registry</span></summary>
             <div class="task-body"><p>Scope: <code>components/dashboard/dashes.tsx</code> (sole owner). <strong>Depends on nothing</strong> — it is a pure function over a static array, so it can be written before P3.1 lands and is <em>Parallel-safe</em> with it. (It <strong>blocks P3.3</strong>, which has nothing to gate on until <code>dashesForRole()</code> exists — that edge, not a dependency of its own, is why P3.2 appears in the DAG.) Crew set = <code>applications</code>, <code>profile</code>, <code>planning</code> (OQ5a). Filtering needs no downstream machinery: <code>useDashCarousel</code> already drops ids absent from <code>baseDashes</code> (<code>:80</code>) and <code>syncAvailableDashes</code> purges them from the persisted order — <em>when</em> it is handed the array is P3.3's problem.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.3</span><span class="task-title">Gate the shell on role resolution (NOT an early return)</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.3</span><span class="task-title">Gate the shell on role resolution (NOT an early return)</span></summary>
             <div class="task-body"><p>Scope: <code>components/Dashboard.tsx</code> <strong>and <code>components/dashboard/useDashCarousel.ts</code></strong>. <em>Depends on</em> P3.1, P3.2. Implements OQ9a.</p>
               <div class="callout danger"><strong>The obvious implementation reproduces the bug OQ9 rejected.</strong> <code>Dashboard.tsx:22</code> calls <code>useDashCarousel(BASE_DASHES)</code> unconditionally, and <code>useDashCarousel.ts:62-90</code> syncs + restores inside a <strong>one-shot <code>useEffect(…, [])</code></strong> closed over the <em>first</em> render's <code>baseDashes</code>. Hooks cannot be called conditionally, so adding a spinner-returning <code>if</code> <em>after</em> line 22 lets the effect run against the unfiltered set and then hides the damage — which is precisely OQ9c, the option rejected as "actively broken for the owner". Pick one of two real shapes: <strong>(i) preferred</strong> — move the <code>useDashCarousel</code> call into a child component that <code>Dashboard</code> mounts only once <code>role</code> is known, so the hook's first render already sees the final array; <strong>(ii)</strong> give the hook a <code>ready: boolean</code> and include it in the effect's deps so the one-shot fires on the first <em>ready</em> render. (i) keeps the hook dumb and puts readiness at the boundary that owns it.</div>
               <p><strong>Second trap in the same file:</strong> <code>useDashCarousel.ts:73</code> reads <code>baseDashes[0].id</code> with no empty-array guard, so passing <code>[]</code> during the unknown-role window throws. Either add the guard or — better, and implied by shape (i) — ensure the hook simply does not run yet. <strong>Never pass <code>[]</code> as a "loading" value.</strong></p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.4</span><span class="task-title">Hide the Library entry point for crew</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.4</span><span class="task-title">Hide the Library entry point for crew</span></summary>
             <div class="task-body"><p>Scope: <code>DesktopShell.tsx</code>, <code>MobileShell.tsx</code>, <code>components/overlays/LaunchpadOverlay.tsx</code>. <em>Depends on</em> P3.1. <em>Parallel-safe</em> with P3.3 (disjoint files). <strong>The reason is the backing route:</strong> <code>research/saved</code> is owner-only, so for crew the panel is empty behind a 403. Do <em>not</em> repeat the earlier draft's rationale that <code>getTopic()</code> maps "both crew dashes" to <code>'General'</code> — the crew set is three dashes (OQ5a) and <code>getTopic('planning')</code> returns <code>'Planning'</code>. The conclusion holds; that reason does not. <strong>Leave the AI Companion alone</strong> — it is a mock and flag-off (§2.10).</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.5</span><span class="task-title">Hide the Connect-Google affordance for crew</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.5</span><span class="task-title">Hide the Connect-Google affordance for crew</span></summary>
             <div class="task-body"><p>Scope: <code>ProfileView.tsx</code>, <code>ApplicationsView.tsx</code>, <code>components/widgets/CalendarWidget.tsx</code>. <em>Depends on</em> P3.1. <em>Parallel-safe</em> with P3.2, P3.4, P3.7, P3.8. Condition on <code>role === 'crew'</code>, <strong>not</strong> on <code>googleConnected</code> — required by OQ6a so the UI does not invite crew into a scope grant that is an explicit non-goal. <strong>Coordinate with P3.7:</strong> both touch <code>ApplicationsView.tsx</code> and <code>CalendarWidget.tsx</code>, so run them as one agent's work or serialize them — they are listed apart because they answer different questions (this one hides an <em>invitation</em>; P3.7 disables <em>calls</em>), not because the files are disjoint.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.6</span><span class="task-title">Surface the quota 429</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.6</span><span class="task-title">Surface the quota 429</span></summary>
             <div class="task-body"><p>Scope: the resume / profile mutation error handlers. <em>Depends on</em> P2.5 (it renders that task's <code>{ used, limit }</code> body — so it is <strong>not</strong> a Round-4 peer of the other Phase 3 tasks). <em>Parallel-safe</em> with P3.3. Render "you've used N of M generations today" rather than a generic failure.</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.7</span><span class="task-title">Disable the three crew-visible owner-only controls</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.7</span><span class="task-title">Disable the three crew-visible owner-only controls</span></summary>
             <div class="task-body"><p>Scope: <code>components/views/ApplicationsView.tsx</code>, <code>components/widgets/CalendarWidget.tsx</code>, <code>components/cards/ToDoCard.tsx</code>. <em>Depends on</em> P3.1. <strong>Shares two files with P3.5</strong> — same agent or serialized. Hiding the Connect button (P3.5) covers one of four crew-visible controls that call owner-only routes; these are the other three:</p>
               <ul>
                 <li><strong>"Scan Inbox"</strong> — <code>ApplicationsView.tsx:179</code> → <code>/api/applications/backfill</code> (owner-only). It lives inside the Account Status card at <code>:311-318</code>, the same card P3.5 edits. Hide on <code>role === 'crew'</code>; crew otherwise get a 403 and an error toast.</li>
@@ -1095,7 +1095,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
               <p>Verification is behavioural, not visual: with a crew viewer, no request to an owner-only route may leave the client, and the log ring buffer must stay clean over a 10-minute idle window (P5.5).</p></div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P3.8</span><span class="task-title">Terminal state for an unprovisioned identity</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P3.8</span><span class="task-title">Terminal state for an unprovisioned identity</span></summary>
             <div class="task-body"><p>Scope: <code>hooks/useAccount.ts</code> consumers / the shell's loading branch. <em>Depends on</em> P3.1. <em>Parallel-safe</em> with P3.2-P3.7. OQ3a's two-step provisioning <strong>guarantees</strong> a window where an Access-passed person has no <code>User</code> row — P5.3 widens the policy, P5.4 creates the rows — and the doc's own rollout puts real people in it. Today that person gets an <strong>infinite spinner</strong>: the page shell is unguarded and <code>useAccount()</code> runs with <code>retry: false</code>, so the 403 resolves to a permanent loading state with no text. Render an explicit "this account is not provisioned yet" panel on that error, <strong>naming the signed-in email</strong> so the person can tell the owner exactly which address to add. Distinguish it from a 401 (which means the edge/JWT is misconfigured, not the account) — the two codes are separated for exactly this reason (§2.3).</p></div>
           </details>
         </div>
@@ -1114,15 +1114,15 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
             <div class="task-body">
               <p>Scope: <code>package.json</code>, <code>~/.config/caddy/Caddyfile</code>, <code>launch-mc.sh</code>. <em>Depended on</em> <strong>P0.2</strong>, which is <strong>answered — this task is unblocked</strong>. <em>Parallel-safe</em> with all of P1-P3.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.1.1</span><span class="task-title">Bind prod to loopback</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.1.1</span><span class="task-title">Bind prod to loopback</span></summary>
                 <div class="task-body"><p><code>next start -p 3101 -H 127.0.0.1</code> in <code>package.json:8</code>. Confirm PM2's <code>args: "run start -- -p 3101"</code> still composes (the <code>--</code> passthrough duplicates <code>-p</code>; harmless, but verify).</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.1.2</span><span class="task-title">Retire the mc.local prod vhost</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.1.2</span><span class="task-title">Retire the mc.local prod vhost</span></summary>
                 <div class="task-body"><p>Edit <code>~/.config/caddy/Caddyfile</code> — <strong>the single real file</strong>; <code>/opt/homebrew/etc/Caddyfile</code> is a <em>symlink</em> to it (verify with <code>ls -la</code> before touching either path). Load-bearing: Caddy proxies <code>mc.local:443 → 127.0.0.1:3101</code>, so P4.1.1's bind alone would not close the LAN path. Reload at cutover.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.1.3</span><span class="task-title">Repoint the launcher, delete its stale comment</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.1.3</span><span class="task-title">Repoint the launcher, delete its stale comment</span></summary>
                 <div class="task-body"><p><code>launch-mc.sh:33-37</code> — both <code>APP_URL</code> branches (<code>https://mc.local</code> and the <code>http://localhost:$PORT</code> fallback) die; point at <code>https://mc.salsquared.xyz</code>. Delete the <code>:31</code> comment instructing the reader to set <code>NEXTAUTH_URL=https://mc.local</code> — already false; the real env is <code>https://mc.salsquared.xyz</code>, which is why retiring the vhost does <em>not</em> break the Google connect redirect. Leave the ~11 fetcher User-Agent <code>mc.local</code> strings alone — outbound politeness labels.</p></div>
               </details>
               <details class="task">
@@ -1136,23 +1136,23 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
             </div>
           </details>
           <details class="task">
-            <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Layer 2 — verify Cf-Access-Jwt-Assertion</span></summary>
+            <summary><input type="checkbox" checked><span class="task-id">P4.2</span><span class="task-title">Layer 2 — verify Cf-Access-Jwt-Assertion</span></summary>
             <div class="task-body">
               <p>Scope: <strong>new</strong> <code>lib/access-jwt.ts</code>, <strong>new</strong> <code>access-jwt-smoke.ts</code>, one call added inside <code>lib/viewer.ts</code>. <em>Depends on</em> P1.2 (shares <code>lib/viewer.ts</code>). <em>Parallel-safe</em> with P4.1 and all of P2/P3.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.2.1</span><span class="task-title">JWKS fetch + cache + verify</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.2.1</span><span class="task-title">JWKS fetch + cache + verify</span></summary>
                 <div class="task-body"><p>Team JWKS at <code>/cdn-cgi/access/certs</code>, module-memory cache with a TTL and refresh-on-unknown-<code>kid</code> so key rotation needs no restart. RS256 signature, <code>iss</code>, per-app <code>aud</code>, <code>exp</code>/<code>nbf</code>.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.2.2</span><span class="task-title">Email-claim cross-check + fail-closed contract</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.2.2</span><span class="task-title">Email-claim cross-check + fail-closed contract</span></summary>
                 <div class="task-body"><p>The verified token's <code>email</code> must equal the header; a mismatch means tampering — reject. Document <strong>fail-closed</strong> in the module docstring: unlike every cache and rate bucket in this repo, an unavailable JWKS must 401, never admit (R4d).</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.2.3</span><span class="task-title">Branch order: break-glass first, else strict</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.2.3</span><span class="task-title">Branch order: break-glass first, else strict</span></summary>
                 <div class="task-body"><p>A loopback break-glass request carries no JWT, so verification is skipped on those branches only. Backwards, the escape becomes dead code and the integration suites fail with a misleading JWT error.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P4.2.4</span><span class="task-title">Env + smoke</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P4.2.4</span><span class="task-title">Env + smoke</span></summary>
                 <div class="task-body"><p>Team domain + per-app AUD (prod and dev differ) in both <code>.env.*.example</code>. Smoke: a forged header with no valid JWT → no viewer; an expired token → no viewer; a header/claim mismatch → no viewer.</p>
                   <p><strong>Confirm the AUD before wiring it into a fail-closed verifier.</strong> The post-migration values are recorded in §2.7 (<code>mc</code> → <code>2ed7bc0e…cfb4b10f</code>, <code>mc-dev</code> → <code>3f95011a…46a37c96</code>, team <code>salsquared.cloudflareaccess.com</code>), read from the public Access login redirect. Re-read them at implementation time — <code>curl -sI https://mc.salsquared.xyz/</code> and take the <code>kid</code> query parameter of the <code>Location</code> header, or list the apps via the Access API — because a wrong AUD in a fail-closed verifier locks out every user on that hostname rather than failing loudly at startup. Assert the pair in the smoke so a rotation surfaces in the pre-push gate instead of in production.</p></div>
               </details>
@@ -1174,11 +1174,11 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
             <div class="task-body">
               <p><em>Depends on</em> all of P2, P3, P4.2, P1.4.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P5.1.1</span><span class="task-title">tsc + full hermetic suite</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P5.1.1</span><span class="task-title">tsc + full hermetic suite</span></summary>
                 <div class="task-body"><p><code>npx tsc --noEmit</code>, then <code>npm run test:hermetic</code>. The four new smokes auto-register by glob — no list to maintain.</p></div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P5.1.2</span><span class="task-title">Regenerate apis.html</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P5.1.2</span><span class="task-title">Regenerate apis.html</span></summary>
                 <div class="task-body"><p><code>npm run gen:api-docs</code> and commit. <code>api-docs-smoke.ts</code> runs the generator in <code>--check</code> mode and <strong>fails the push if stale</strong>. No new routes, so no new <code>meta.ts</code> — but <code>requireOwner</code> now renders as an auth chip on 26 routes, which is itself the audit artifact.</p></div>
               </details>
               <details class="task">
@@ -1197,7 +1197,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
                 </div>
               </details>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P5.1.4</span><span class="task-title">Security review before deploy</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P5.1.4</span><span class="task-title">Security review before deploy</span></summary>
                 <div class="task-body"><p>Route to <code>security-auditor</code>, not only the default review gate — this change touches authn/authz, adds two deliberate bypass branches, and its failure mode is total (R1, R4c). <strong>✓ Done 2026-07-29 — GO, conditional.</strong> All nine stated invariants confirmed by code reading plus smoke execution: no viewer memo, 401/403 never collapsed, JWT fail-closed on every branch, every crew-allowed handler scoping by <code>session.user.id</code>, 195/195 role matrix, no IDOR (cross-user hits 404, not 403 — no id-existence oracle).</p></div>
               </details>
               <details class="task">
@@ -1223,7 +1223,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
             <div class="task-body">
               <p><em>Depends on</em> P5.3.</p>
               <details class="task">
-                <summary><input type="checkbox"><span class="task-id">P5.4.1</span><span class="task-title">scripts/manage-crew.ts — add / list / remove</span></summary>
+                <summary><input type="checkbox" checked><span class="task-id">P5.4.1</span><span class="task-title">scripts/manage-crew.ts — add / list / remove</span></summary>
                 <div class="task-body"><p>Genuinely new work: no production <code>user.create</code> path exists (only the NextAuth adapter and test fixtures). <code>remove</code> must delete the <code>User</code> row (all 17 relations cascade) <strong>and</strong> first collect that person's <code>GeneratedResume</code> ids so their files at <code>data/resumes/&lt;id&gt;.&lt;ext&gt;</code> can be swept — the filesystem does not cascade.</p></div>
               </details>
               <details class="task">
