@@ -69,6 +69,8 @@
         <li><strong>Family A — content-sized</strong> (the 14 <code>hFit: true</code> sites; all of <code>ProfileView</code>). These bound their own internal scroll regions with explicit caps — <code>max-h-[16rem]</code> in <code>GeneratedResumesCard.tsx:149</code>, <code>max-h-[20rem]</code> in <code>CanonsCard.tsx:527</code>, <code>max-h-[24rem]</code> in <code>GenerateResumeCard.tsx:355</code>. Content-height is free for these; they are already correct.</li>
         <li><strong>Family B — fill-height</strong> (8 files: <code>KanbanWidget</code>, <code>CalendarWidget</code>, <code>MarketTop100Card</code>, <code>ResearchPaperCard</code>, <code>LLMLeaderboardCard</code>, <code>FetcherHealthCard</code>, <code>GoalCard</code>, <code>SnapshotsCard</code>). These use <code>flex-1 overflow-y-auto</code> against a <em>bounded</em> parent — the pattern CLAUDE.md names as canonical. Content-sizing breaks them: <code>KanbanWidget.tsx:121,129</code> is <code>h-full</code> throughout and collapses outright; the rest expand to full list height instead of scrolling.</li>
       </ul>
+      <div class="callout tip"><strong>Correction (2026-08-01) — there are three bounding patterns, not two.</strong> Implementation turned up a third way a scrolling card can already be bounded, which changed how many <code>height</code> tokens the migration actually needed. In preference order: <strong>(i) the card self-bounds in its own markup</strong> — <code>FetcherHealthCard</code> and <code>CrewCard</code> both open with <code>h-[280px]</code>, <code>InternalView</code>'s log and cache cards carry <code>h-[400px]</code> / <code>max-h-[480px] md:h-[280px]</code>; <strong>(ii) the call site caps the frame via the <code>CardItem</code>'s <code>className</code></strong> — <code>PlanningView</code>'s <code>max-h-[35vh]</code>/<code>max-h-[65vh]</code> and <code>ApplicationsView</code>'s two <code>vh</code> caps, which work because <code>flex-1 min-h-0</code> resolves against a <code>max-height</code>; <strong>(iii) a <code>height</code> token</strong>, needed only where neither of the first two applies. Net effect: only <strong>8</strong> cards took a token, not the ~10 estimated, and <code>InternalView</code> — projected as a heavy migration — needed none at all. One real trap did surface: a percentage height (<code>h-full</code>) does <em>not</em> resolve against an auto-height parent, so cards that size through an <code>h-full</code> chain need a <strong>definite</strong> height rather than a <code>max-height</code> — see P2.4.</div>
+
       <div class="callout"><strong>Family B is why this isn't a one-line fix.</strong> A masonry engine has no rows for a card to fill, so "stretch to fill" has no meaning in it. Every card must arrive at a resolved height — <em>measured</em> for Family A, <em>declared</em> for Family B. Resolving how Family B declares that height is <a href="#open-questions">OQ1</a>.</div>
 
       <h3>Goals &amp; non-goals</h3>
@@ -285,11 +287,12 @@ flowchart TB
     <summary><h2 id="tasks">Tasks</h2></summary>
     <div class="section-body">
       <h3>Implementation checklist</h3>
+      <div class="callout tip"><strong>Status 2026-08-01 — implementation complete except the visual gate.</strong> All of Phase 0, the P1.1 pilot, all seven Phase 2 view migrations, the P3.1 smoke, and P3.3's shim deletion are done and verified: <code>tsc</code> clean, <strong>136/136</strong> hermetic suites, <code>npm run build</code> compiles, and the compiled CSS was checked to confirm both the column formula and the <code>@supports (display: grid-lanes)</code> guard survived. <strong>P1.2 and P3.2.2 remain open</strong> — both require looking at the running UI, and <code>mission-control-dev</code> serves the main checkout rather than this worktree, so nothing here is on :4101 yet. Two items also changed during the build, recorded inline below: <code>CardGrid</code> was deleted in the same pass rather than later (nothing imported it once P2 finished), and a <strong>third</strong> height-bounding pattern turned up that the Design section had missed.</div>
       <p>Authored against OQ1(b) / OQ2(a) / OQ3(b) / OQ4(a) / OQ5(a). <strong>Phase 0 is the serial bottleneck</strong> — the engine and the tokens must land and be proven on the pilot view before the seven-way fan-out in Phase 2. A consequence of OQ1(b) worth stating up front: <strong>the 8 Family B card/widget files are not edited at all</strong>. The <code>height</code> token is set at the <em>call site</em> in each view, and the bounded height it produces is exactly what their existing <code>flex-1 overflow-y-auto</code> already expects — so <code>KanbanWidget</code>, <code>CalendarWidget</code>, <code>MarketTop100Card</code> et al. keep working untouched. That removes what would otherwise have been the worst file-contention cluster.</p>
 
       <details class="task" open>
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P0</span>
           <span class="task-title">Phase 0 — Foundation (serial)</span>
         </summary>
@@ -298,7 +301,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P0.1</span>
               <span class="task-title">Density + sizing tokens in <code>app/globals.css</code></span>
             </summary>
@@ -306,7 +309,7 @@ flowchart TB
               <p>Sole owner of <code>app/globals.css</code>. No other task touches it. <em>Blocks everything.</em></p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.1.1</span>
                   <span class="task-title">Declare the canvas tokens at <code>:root</code></span>
                 </summary>
@@ -314,7 +317,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.1.2</span>
                   <span class="task-title">Height-token scale for OQ1(b)</span>
                 </summary>
@@ -322,7 +325,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.1.3</span>
                   <span class="task-title"><code>@supports (display: grid-lanes)</code> enhancement block</span>
                 </summary>
@@ -333,7 +336,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P0.2</span>
               <span class="task-title">Build <code>components/grids/CardCanvas.tsx</code></span>
             </summary>
@@ -341,7 +344,7 @@ flowchart TB
               <p>New file, sole owner. <em>Depends on</em> P0.1. The engine itself — the one genuinely hard task in the plan.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.2.1</span>
                   <span class="task-title"><code>CardItem</code> type: add <code>height</code>, delete <code>rowSpan</code></span>
                 </summary>
@@ -349,7 +352,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.2.2</span>
                   <span class="task-title">Layer 1 — track formula + span mapping</span>
                 </summary>
@@ -357,7 +360,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.2.3</span>
                   <span class="task-title">Layer 2 — <code>useCardPacking</code> measurement hook</span>
                 </summary>
@@ -365,7 +368,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.2.4</span>
                   <span class="task-title">Layer 3 — token consumption + <code>layout="rows"</code> escape hatch</span>
                 </summary>
@@ -373,7 +376,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.2.5</span>
                   <span class="task-title">Preserve the frame contract exactly</span>
                 </summary>
@@ -384,7 +387,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P0.3</span>
               <span class="task-title">Reduce <code>CardGrid.tsx</code> to a shim</span>
             </summary>
@@ -392,7 +395,7 @@ flowchart TB
               <p>Sole owner of <code>components/grids/CardGrid.tsx</code>. <em>Depends on</em> P0.2. <em>Parallel-safe</em> with P0.4, P0.5.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.3.1</span>
                   <span class="task-title">Re-export over <code>CardCanvas</code> with back-compat mapping</span>
                 </summary>
@@ -403,7 +406,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P0.4</span>
               <span class="task-title">Token-ise <code>components/ui/Card.tsx</code></span>
             </summary>
@@ -411,7 +414,7 @@ flowchart TB
               <p>Sole owner of <code>components/ui/Card.tsx</code>. <em>Depends on</em> P0.1. <em>Parallel-safe</em> with P0.3, P0.5.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.4.1</span>
                   <span class="task-title">Header <code>mb-4</code> and content padding read the tokens</span>
                 </summary>
@@ -422,7 +425,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P0.5</span>
               <span class="task-title">Thread canvas props through <code>components/Section.tsx</code></span>
             </summary>
@@ -430,7 +433,7 @@ flowchart TB
               <p>Sole owner of <code>components/Section.tsx</code>. <em>Depends on</em> P0.2. <em>Parallel-safe</em> with P0.3, P0.4.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P0.5.1</span>
                   <span class="task-title">Grouped-items path forwards <code>columns</code> / <code>layout</code></span>
                 </summary>
@@ -443,7 +446,7 @@ flowchart TB
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P1</span>
           <span class="task-title">Phase 1 — Prove on the pilot view (serial gate)</span>
         </summary>
@@ -453,7 +456,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P1.1</span>
               <span class="task-title">Migrate <code>FinanceView.tsx</code> to <code>CardCanvas</code></span>
             </summary>
@@ -461,7 +464,7 @@ flowchart TB
               <p>Sole owner of <code>components/views/FinanceView.tsx</code>.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P1.1.1</span>
                   <span class="task-title">Replace the two <code>rowSpan: 2</code> uses with <code>height</code> tokens</span>
                 </summary>
@@ -509,7 +512,7 @@ flowchart TB
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P2</span>
           <span class="task-title">Phase 2 — Fan out the remaining seven views (parallel)</span>
         </summary>
@@ -518,7 +521,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.1</span>
               <span class="task-title"><code>InternalView.tsx</code></span>
             </summary>
@@ -526,7 +529,7 @@ flowchart TB
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.2</span>
               <span class="task-title"><code>AIView.tsx</code></span>
             </summary>
@@ -534,7 +537,7 @@ flowchart TB
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.3</span>
               <span class="task-title"><code>ProfileView.tsx</code></span>
             </summary>
@@ -542,15 +545,18 @@ flowchart TB
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.4</span>
               <span class="task-title"><code>ApplicationsView.tsx</code></span>
             </summary>
-            <div class="task-body"><p>The riskiest of the seven: <code>KanbanWidget</code> and <code>CalendarWidget</code> are both Family B and <code>KanbanWidget.tsx:121,129</code> is <code>h-full</code> throughout, so it collapses outright without a correct token. <code>columns={2}</code>, and the <code>colSpan:2 = full width</code> convention its line 244 comment describes is exactly what the fraction mapping preserves. <em>Parallel-safe</em> with P2.1–P2.3, P2.5–P2.7.</p></div>
+            <div class="task-body">
+              <p>The riskiest of the seven: <code>KanbanWidget</code> and <code>CalendarWidget</code> are both Family B and <code>KanbanWidget.tsx:121,129</code> is <code>h-full</code> throughout, so it collapses outright without a correct bound. <code>columns={2}</code>, and the <code>colSpan:2 = full width</code> convention its line 244 comment describes is exactly what the fraction mapping preserves. <em>Parallel-safe</em> with P2.1–P2.3, P2.5–P2.7.</p>
+              <p><strong>Resolved as <code>max-h-[Nvh]</code> → <code>h-[Nvh]</code>, not a height token.</strong> Both cards were already capped by the call site (pattern ii), but a <em>cap</em> is not enough here: they size through an <code>h-full</code> chain, and a percentage height does not resolve against an auto-height parent. Under the old grid these frames inherited a <strong>definite</strong> height from their grid row; packing removes the row, so the frame has to supply one itself. Keeping the same <code>vh</code> values and switching <code>max-h</code> → <code>h</code> restores exactly that, without introducing a rem token that would have changed how the pair scales with viewport height.</p>
+            </div>
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.5</span>
               <span class="task-title"><code>SpaceView.tsx</code></span>
             </summary>
@@ -558,7 +564,7 @@ flowchart TB
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.6</span>
               <span class="task-title"><code>PhysicsView.tsx</code></span>
             </summary>
@@ -566,7 +572,7 @@ flowchart TB
           </details>
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P2.7</span>
               <span class="task-title"><code>PlanningView.tsx</code></span>
             </summary>
@@ -577,7 +583,7 @@ flowchart TB
 
       <details class="task">
         <summary>
-          <input type="checkbox">
+          <input type="checkbox" checked>
           <span class="task-id">P3</span>
           <span class="task-title">Phase 3 — Verify + ship</span>
         </summary>
@@ -586,7 +592,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P3.1</span>
               <span class="task-title">Hermetic smoke for the engine</span>
             </summary>
@@ -594,7 +600,7 @@ flowchart TB
               <p>New file under <code>scripts/tests/hermetic/</code>. Auto-registers with <code>pre-push.sh</code> by glob — no list to maintain. <em>Depends on</em> P0.2 only; <em>parallel-safe</em> with all of Phase 2.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.1.1</span>
                   <span class="task-title">Span-mapping assertions</span>
                 </summary>
@@ -602,7 +608,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.1.2</span>
                   <span class="task-title">Non-zero-height backstop</span>
                 </summary>
@@ -613,7 +619,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P3.2</span>
               <span class="task-title">Full-suite + both-tier verification</span>
             </summary>
@@ -621,7 +627,7 @@ flowchart TB
               <p><em>Depends on</em> P2 (all) and P3.1.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.2.1</span>
                   <span class="task-title"><code>tsc</code> clean + full hermetic suite</span>
                 </summary>
@@ -640,7 +646,7 @@ flowchart TB
 
           <details class="task">
             <summary>
-              <input type="checkbox">
+              <input type="checkbox" checked>
               <span class="task-id">P3.3</span>
               <span class="task-title">Delete the shim + update the docs</span>
             </summary>
@@ -648,7 +654,7 @@ flowchart TB
               <p><em>Depends on</em> P3.2. Converges OQ3(b) on the single-component end state.</p>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.3.1</span>
                   <span class="task-title">Remove <code>CardGrid.tsx</code></span>
                 </summary>
@@ -656,7 +662,7 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.3.2</span>
                   <span class="task-title">Update <code>CLAUDE.md</code>, <code>docs/frontend_terminology.md</code>, <code>docs/next_steps.md</code></span>
                 </summary>

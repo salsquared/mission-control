@@ -115,7 +115,7 @@ graph TB
           <tr><td><strong>Dashboard</strong></td><td><code>components/Dashboard.tsx</code> + <code>components/dashboard/*</code></td><td>Thin shell selecting <code>DesktopShell</code>/<code>MobileShell</code> via <code>useEffectiveMobileLayout</code>; both consume one <code>useDashCarousel</code> state. The dash registry (<code>BASE_DASHES</code>) lives in <code>components/dashboard/dashes.tsx</code>. Renders the slide carousel of dashes, global overlays (Launchpad, Library, AI Companion), and bottom nav</td></tr>
           <tr><td><strong>Views</strong></td><td><code>components/views/*</code></td><td>One per "dash" — owns data fetching for its section</td></tr>
           <tr><td><strong>Sections</strong></td><td><code>components/Section.tsx</code></td><td>Thematic groupings inside a view, optional sub-headered groups</td></tr>
-          <tr><td><strong>Grids</strong></td><td><code>components/grids/CardGrid.tsx</code></td><td>Layout-only container; supports CSS-grid or CSS-columns masonry</td></tr>
+          <tr><td><strong>Grids</strong></td><td><code>components/grids/CardCanvas.tsx</code></td><td>Layout-only container: container-driven fluid columns + content packing (<a href="./card-canvas.html">design</a>)</td></tr>
           <tr><td><strong>Cards</strong></td><td><code>components/cards/*</code></td><td>Bounded content units; receive data as props</td></tr>
           <tr><td><strong>Widgets</strong></td><td><code>components/widgets/*</code></td><td>Stand-alone data/UX components (Kanban, Calendar, Graph, LaunchCalendar)</td></tr>
           <tr><td><strong>Windows / Overlays</strong></td><td><code>components/Window.tsx</code>, <code>components/overlays/*</code></td><td>Floating/sliding UI that escapes the grid</td></tr>
@@ -123,7 +123,7 @@ graph TB
           <tr><td><strong>State providers</strong></td><td><code>components/providers/*</code></td><td>NextAuth <code>SessionProvider</code>, <code>QueryProvider</code> (TanStack), <code>CacheInvalidationListener</code>, <code>ThemeProvider</code>, unified Zustand store (<code>useAppStore</code>)</td></tr>
         </tbody>
       </table>
-      <p>A read-through of any feature touches at least four of these layers (e.g., FinanceView → CardGrid → AssetPriceCard → <code>/api/finance</code> → <code>withCache</code> → CoinGecko + Prisma).</p>
+      <p>A read-through of any feature touches at least four of these layers (e.g., FinanceView → CardCanvas → AssetPriceCard → <code>/api/finance</code> → <code>withCache</code> → CoinGecko + Prisma).</p>
     </div>
   </details>
 

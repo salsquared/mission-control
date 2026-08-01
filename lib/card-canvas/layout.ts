@@ -60,20 +60,6 @@ export function rowSpanFor(heightPx: number, gapPx: number, rowPx: number): numb
 }
 
 /**
- * Legacy `rowSpan` → height token, for the deprecated CardGrid shim.
- *
- * Necessarily approximate: `rowSpan: 2` meant "twice whatever the tallest card
- * in this row happened to be", which has no meaning under masonry (there are no
- * shared rows to be twice of). Each real call site gets a deliberately-chosen
- * token as it migrates; this only has to keep un-migrated views from
- * collapsing in the meantime.
- */
-export function heightForRowSpan(rowSpan: number | undefined): CardHeight | undefined {
-    if (!rowSpan || !Number.isFinite(rowSpan) || rowSpan <= 1) return undefined;
-    return rowSpan >= 3 ? "xl" : "lg";
-}
-
-/**
  * Resolve a CSS length that may be authored in px or rem.
  *
  * `--cc-row` is an engine internal authored in px today, but a future density

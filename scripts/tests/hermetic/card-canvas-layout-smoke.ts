@@ -29,7 +29,6 @@
  *      height/gap/quantum combination.
  */
 import {
-    heightForRowSpan,
     readPx,
     resolveGridColumn,
     rowSpanFor,
@@ -125,20 +124,7 @@ eq("zero row quantum → 1 row", rowSpanFor(100, 16, 0), 1);
 eq("NaN height → 1 row", rowSpanFor(NaN, 16, 4), 1);
 eq("NaN gap treated as 0", rowSpanFor(40, NaN, 4), 10);
 
-// ── 5. Legacy rowSpan → height token (the CardGrid shim's mapping) ──────────
-eq("rowSpan undefined → auto (no token)", heightForRowSpan(undefined), undefined);
-eq("rowSpan 1 → auto (no token)", heightForRowSpan(1), undefined);
-eq("rowSpan 2 → lg", heightForRowSpan(2), "lg");
-eq("rowSpan 3 → xl", heightForRowSpan(3), "xl");
-eq("rowSpan 9 → xl (saturates)", heightForRowSpan(9), "xl");
-// Every un-migrated rowSpan card must get SOME bound, or it collapses.
-ok(
-    "every rowSpan >= 2 yields a bounding token",
-    [2, 3, 4, 5, 6].every((n) => heightForRowSpan(n) !== undefined),
-    "an un-migrated multi-row card would fall back to content height"
-);
-
-// ── 6. Length parsing (--cc-row may be authored px or rem) ──────────────────
+// ── 5. Length parsing (--cc-row may be authored px or rem) ──────────────────
 eq("px parsed", readPx("4px", 99), 4);
 eq("bare number parsed", readPx("4", 99), 4);
 eq("rem resolved against root font size", readPx("0.5rem", 99, 16), 8);
@@ -147,7 +133,7 @@ eq("empty falls back", readPx("", 4), 4);
 eq("garbage falls back", readPx("potato", 4), 4);
 eq("whitespace tolerated", readPx("  8px  ", 99), 8);
 
-// ── 7. Track counting off a resolved grid-template-columns ─────────────────
+// ── 6. Track counting off a resolved grid-template-columns ─────────────────
 eq("three resolved tracks", trackCount("320px 320px 320px"), 3);
 eq("one resolved track", trackCount("1024px"), 1);
 eq("'none' → 1", trackCount("none"), 1);
