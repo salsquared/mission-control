@@ -46,7 +46,7 @@ const SECTION_ORDER = ['Auth', 'Realtime / Events', 'Planning', 'Job Tracker',
 interface SchemaRef { local: string; module: string | null } // module = resolved import specifier
 interface MethodInfo {
   method: Method;
-  guard: string | null;        // requireSession | requireLocalOrSession | getServerSession | null
+  guard: string | null;        // requireSession | requireOwner | getServerSession | null
   cache: { ttlSeconds: number | null; upstreamHost: string | null } | null;
   schemas: SchemaRef[];        // Zod schemas .parse/.safeParse'd in this method's body
 }
@@ -188,7 +188,7 @@ function analyzeFile(file: string): RouteInfo {
     const visit = (n: ts.Node) => {
       if (ts.isCallExpression(n)) {
         // guard: any identifier imported from lib/auth-guards that's invoked
-        // (requireSession, requireLocalOrSession, requireSessionOrService, …),
+        // (requireSession, requireOwner, requireSessionOrService, …),
         // plus the inline getServerSession escape hatch.
         if (ts.isIdentifier(n.expression)) {
           const g = n.expression.text;

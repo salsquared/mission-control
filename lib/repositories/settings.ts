@@ -5,7 +5,6 @@ import type { GlobalSetting } from '@prisma/client';
 // Re-exported below for backward compat with server callers that still import
 // it from here.
 import { normalizeNegativeFilterForDedup } from '@/lib/postings/negative-filters';
-import { resolveOwnerUserId } from '@/lib/user-scope';
 
 // Negative filters are stored on a single `globalNegativeFilters` JSON
 // column (legacy name kept to avoid a prisma migration). One shared list
@@ -47,40 +46,28 @@ export type UpsertResult =
 //
 // THIS is the accessor every caller wants — including the scheduler, which has
 // no session but always has a row (`watchlist.userId`) naming whose config
-// applies. See `findGlobalSetting()` below for why the zero-arg variant is no
-// longer called from anywhere.
+// applies. Pass the userId whose config you mean; there is deliberately no
+// zero-argument variant.
 export function findGlobalSettingForUser(userId: string): Promise<GlobalSetting | null> {
     return prisma.globalSetting.findUnique({ where: { userId } });
 }
 
-// The owner's settings row, resolved without a session.
+// A zero-argument `findGlobalSetting()` USED TO LIVE HERE and is deliberately
+// gone (P2.3 fixed its callers; P1.3.2 removed the function).
 //
-// NO REACHABLE PRODUCTION CALLERS as of P2.3 (docs/multi-user-crew.html §2.6).
-// It had four — job-watcher, posting-digest, classify-pending-employment-types
-// and the /api/postings feed — and every one of them applied the OWNER's
-// negative filters to other people's data: the job-watcher read dropped crew
-// postings before any DB write (silent, permanent loss), and posting-digest's
-// `culledOnly` watermark advance pushed a posting culled by someone else's
-// config past `lastDigestAt` so it was never digested at all. Three now call
-// `findGlobalSettingForUser()` with the owning user's id; the fourth (the
-// cross-user dedup sweep, which has no single correct user) had its filter gate
-// deleted outright (OQ11a).
+// It resolved "the owner's settings row" with no session, and its four callers
+// — job-watcher, posting-digest, classify-pending-employment-types and the
+// /api/postings feed — each applied the OWNER's negative filters to other
+// people's data. The job-watcher read dropped crew postings before any DB write
+// (silent, permanent loss), and posting-digest's `culledOnly` watermark advance
+// pushed a posting culled by someone else's config past `lastDigestAt` so it was
+// never digested at all. Three now call `findGlobalSettingForUser()` with the
+// owning user's id; the fourth (the cross-user dedup sweep, which has no single
+// correct user) had its filter gate deleted outright (OQ11a).
 //
-// Its only remaining references are `scripts/tests/hermetic/user-scoping-smoke.ts`
-// and this file. Kept — not deleted — because deletion would also strip
-// `lib/user-scope.ts:resolveOwnerUserId()` of its last caller, and that is
-// deferred cleanup rather than part of a scoping fix. Do NOT reach for this in
-// new code: pass the userId whose config you mean. For "who is the owner" in a
-// request-less context use `lib/owner.ts:resolveOwner()`, which reads the
-// authoritative `User.role` column.
-export async function findGlobalSetting(): Promise<GlobalSetting | null> {
-    const ownerId = await resolveOwnerUserId();
-    if (ownerId) {
-        const row = await prisma.globalSetting.findUnique({ where: { userId: ownerId } });
-        if (row) return row;
-    }
-    return prisma.globalSetting.findUnique({ where: { id: 'global' } });
-}
+// It is not coming back: a settings read with no user in hand is exactly the
+// shape of bug above. For "who is the owner" in a request-less context use
+// `lib/owner.ts:resolveOwner()`, which reads the authoritative `User.role`.
 
 // Atomic conditional update keyed on the version column. Returns the new
 // version on success, or the current server-side version on conflict so the

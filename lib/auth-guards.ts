@@ -33,7 +33,6 @@ import { resolveViewer, type Role, type Viewer, type ViewerResult } from './view
 // RETURN SHAPES ARE LOAD-BEARING and deliberately NOT uniform — each guard
 // mirrors the one it replaces so no handler body changes:
 //   requireSession / requireOwner              → { session } | { error }
-//   requireLocalOrSession                      → { ok, session } | { error }
 //   requireSessionOrService / requireOwnerOrService → { userId } | { error }
 // The synthesized user gained `role`, which is purely ADDITIVE: the ~104 call
 // sites and their `session.user.{id,email}` reads are untouched.
@@ -219,22 +218,13 @@ export async function requireOwnerOrService(req: Request, config: ServiceTokenCo
   return { userId: result.viewer.id } as const;
 }
 
-// Historically "LAN request OR session"; the LAN exemption is gone (there is no
-// trusted network any more) so this is now `requireSession` plus a vestigial
-// `ok: true` in the success shape. As of P2.1 that is read by **10 call sites
-// across 3 route files** — `/api/settings`, `/api/tasks`, `/api/goals`, the
-// three crew-allowed routes §2.5 predicts survive here; the other 17 former
-// callers moved to `requireOwner`. (An earlier comment said "29 call sites
-// across 20 route files", which was true before that swap.) It is kept as a
-// separate export deliberately: collapsing it into `requireSession` is a
-// pure-rename change with zero behavioural difference, and doing it inside the
-// auth rewrite would bury the diff in a security-sensitive one. Now a 3-file
-// change rather than 20 — deferred cleanup, see the design doc's P1.3.2.
+// `requireLocalOrSession` USED TO LIVE HERE and is deliberately gone (P1.3.2).
+// It was historically "LAN request OR session"; once the LAN stopped being a
+// trust boundary it decayed into `requireSession` plus a vestigial `ok: true`
+// and an unread `_req`, kept only so its call sites would not have to change.
+// Its 13 remaining call sites — `/api/settings`, `/api/tasks`, `/api/goals` —
+// now call `requireSession()` directly. Nothing ever read the `ok` field.
 //
-// The `_req` parameter is likewise vestigial (nothing reads the request any
-// more) and kept only so the call sites don't have to change.
-export async function requireLocalOrSession(_req: Request) {
-  const result = await resolveViewer();
-  if (!result.ok) return { error: denyViewer(result) } as const;
-  return { ok: true as const, session: sessionFor(result.viewer) } as const;
-}
+// Removing it is not cosmetic: a guard NAMED for a LAN exemption that no longer
+// exists invites someone to believe this origin still trusts the network it is
+// reached over. It does not. Do not reintroduce it.

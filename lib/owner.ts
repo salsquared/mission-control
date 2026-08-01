@@ -30,9 +30,12 @@
 //   2. `null` is never cached, so an owner row appearing later (a fresh machine,
 //      a backfill that had not run yet) "takes" without a process restart.
 //
-// Distinct from `lib/user-scope.ts:resolveOwnerUserId` (allowlist-and-heuristic,
-// id only, deprecated). This helper returns `{ id, email }` because its callers
-// need both claims.
+// This is now the ONLY owner resolver. `lib/user-scope.ts` used to carry a
+// second one (`resolveOwnerUserId`, an allowlist → sole-user → legacy-singleton
+// chain returning just an id); it was deleted in P1.3.2 because none of its
+// steps read the authoritative `User.role` column, so with crew rows in the
+// table it could resolve to someone who is not the owner. Do not add a third.
+// This helper returns `{ id, email }` because its callers need both claims.
 
 import { prisma } from '@/lib/prisma';
 

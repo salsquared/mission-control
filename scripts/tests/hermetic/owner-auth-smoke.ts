@@ -29,7 +29,6 @@
  *   3.  Memo hit skips the DB (a second call doesn't re-query the stub).
  *   4.  Memo re-resolves after a null result (a promotion takes without a restart).
  *   5.  requireSession() → { session: { user: { id, email, role } } }.
- *   6.  requireLocalOrSession() → { ok, session }.
  *   7.  requireSessionOrService() service-token branch still works (byte-for-byte).
  *   8.  requireSessionOrService() session branch → { userId }.
  *   9.  requireOwner() → { session } for an owner, 403 for a crew viewer.
@@ -213,7 +212,6 @@ async function main() {
         requireOwner,
         requireOwnerOrService,
         requireSessionOrService,
-        requireLocalOrSession,
     } = await import("@/lib/auth-guards");
 
     process.env.SERVICE_TOKEN_PULSAR = "test-token-owner-auth-smoke";
@@ -234,19 +232,6 @@ async function main() {
                 fail("requireSession session must carry the viewer's role (additive, P1.3.2)", guard.session);
             } else {
                 pass("requireSession() → { session: { user: { id, email, role } } }");
-            }
-        }
-
-        // ── 6. requireLocalOrSession() — always { ok, session } ─────────────
-        {
-            const req = new Request("https://mc.salsquared.xyz/api/profile");
-            const guard = await requireLocalOrSession(req);
-            if ("error" in guard) {
-                fail("requireLocalOrSession should return ok+session for a resolved viewer", guard);
-            } else if (!guard.ok || guard.session.user.id !== OWNER.id || guard.session.user.email !== OWNER.email) {
-                fail("requireLocalOrSession must return { ok, session: viewer }", guard);
-            } else {
-                pass("requireLocalOrSession() → { ok: true, session } for a resolved viewer");
             }
         }
 
@@ -352,12 +337,10 @@ async function main() {
         {
             __resetViewer();
             const s = await requireSession();
-            const l = await requireLocalOrSession(new Request("https://mc.salsquared.xyz/api/profile"));
             const o = await requireOwner();
             const svc = await requireSessionOrService(new Request("https://mc.salsquared.xyz/api/calendar/event"), SERVICE_CONFIG);
             const statuses = {
                 requireSession: denyStatusOf(s),
-                requireLocalOrSession: denyStatusOf(l),
                 requireOwner: denyStatusOf(o),
                 requireSessionOrService: denyStatusOf(svc),
             };

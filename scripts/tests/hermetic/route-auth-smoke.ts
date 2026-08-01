@@ -31,9 +31,13 @@ interface RouteSpec {
     label: string;
     file: string;
     /**
-     * "session"          = requireSession        (crew-allowed)
-     * "local-or-session" = requireLocalOrSession (crew-allowed)
-     * "owner"            = requireOwner          (owner-only, 403s crew)
+     * "session" = requireSession (crew-allowed)
+     * "owner"   = requireOwner   (owner-only, 403s crew)
+     *
+     * There used to be a third, "local-or-session" (requireLocalOrSession) —
+     * a vestigial alias of requireSession named for a LAN exemption that no
+     * longer exists. It was collapsed into requireSession (P1.3.2); no route
+     * ever declared it here.
      *
      * The multi-user owner/crew work (docs/multi-user-crew.html P2.1/P2.4)
      * moved 26 routes onto requireOwner. Note scripts/tests/hermetic/
@@ -41,7 +45,7 @@ interface RouteSpec {
      * stays because it additionally asserts the WRONG guard is absent, which a
      * classification manifest does not catch.
      */
-    guard: "session" | "local-or-session" | "owner";
+    guard: "session" | "owner";
 }
 
 const ROUTES: RouteSpec[] = [
@@ -81,7 +85,6 @@ function assertGuarded(spec: RouteSpec) {
     const src = fs.readFileSync(abs, "utf8");
     const GUARD_FN = {
         "session": "requireSession",
-        "local-or-session": "requireLocalOrSession",
         "owner": "requireOwner",
     } as const;
     const expectedFn = GUARD_FN[spec.guard];
@@ -107,13 +110,11 @@ function assertGuarded(spec: RouteSpec) {
     }
     pass(`${spec.label}: ${expectedFn} called with proper return wiring`);
 
-    // 3. Sanity: it's NOT also using the WRONG guard (e.g. session-required
-    // routes shouldn't also be wrapped in requireLocalOrSession).
-    // For an owner-only route the sharpest regression is silently DOWNGRADING
-    // it to a crew-allowed guard, so both crew-allowed guards are wrong there.
-    const wrongFns = spec.guard === "owner"
-        ? ["requireSession", "requireLocalOrSession"]
-        : [GUARD_FN[spec.guard] === "requireSession" ? "requireLocalOrSession" : "requireSession", "requireOwner"];
+    // 3. Sanity: it's NOT also using the WRONG guard. For an owner-only route
+    // the sharpest regression is silently DOWNGRADING it to the crew-allowed
+    // guard; for a crew route it is accidentally locking crew out with
+    // requireOwner. Either way the opposite family is the offender.
+    const wrongFns = spec.guard === "owner" ? ["requireSession"] : ["requireOwner"];
     const offenders = wrongFns.filter((fn) => new RegExp(`\\bawait\\s+${fn}\\s*\\(`).test(src));
     if (offenders.length > 0) {
         fail(`${spec.label}: also calls ${offenders.join(", ")} — guards conflict`);

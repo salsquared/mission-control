@@ -105,16 +105,17 @@ Wrap any route that hits an external API (or does expensive work) in `withCache`
 
 **`lib/access-jwt.ts` verifies `Cf-Access-Jwt-Assertion`** against the team JWKS via `jose` (`createRemoteJWKSet` + `jwtVerify`): RS256 signature, `iss`, THIS hostname's `aud`, `exp`/`nbf`, plus an email-claim ↔ identity-header cross-check. **Fail-closed — the one module in this repo that must not degrade**: where every cache and rate bucket here falls back to "do it directly", an unreachable JWKS / unset env / malformed token here is a 401, never "trust the header". Corollary: a wrong `CF_ACCESS_AUD` is a total lockout of that hostname (owner included), with break-glass the only way back. `CF_ACCESS_TEAM_DOMAIN` is shared; **`CF_ACCESS_AUD` differs per tier** and rotates when an Access app is *recreated* (not edited) — re-reading it (`curl -sI https://mc.salsquared.xyz/` → `Location: …?kid=<AUD>`) is part of any app rebuild, and `scripts/tests/hermetic/access-jwt-smoke.ts` asserts both values so a rotation surfaces in the pre-push gate.
 
-**Six guards in `lib/auth-guards.ts`**, all resolving through `resolveViewer()`. Return shapes are load-bearing and deliberately non-uniform — each mirrors the guard it replaced, so no handler body changed:
+**Five guards in `lib/auth-guards.ts`**, all resolving through `resolveViewer()`. Return shapes are load-bearing and deliberately non-uniform — each mirrors the guard it replaced, so no handler body changed:
 
 | Guard | Returns | Admits |
 | --- | --- | --- |
 | `requireSession()` | `{ session }` \| `{ error }` | any provisioned viewer |
 | `requireOwner()` | `{ session }` \| `{ error }` | owner only (crew → 403) |
-| `requireLocalOrSession(req)` | `{ ok, session }` \| `{ error }` | any provisioned viewer — the LAN exemption is **gone**; the name, the vestigial `ok`, and the unread `_req` survive only because 29 call sites still read them |
 | `requireSessionOrService(req, cfg)` | `{ userId }` \| `{ error }` | viewer or service token |
 | `requireOwnerOrService(req, cfg)` | `{ userId }` \| `{ error }` | owner or service token (owner check applies to the session branch only) |
 | `requireServiceToken(req, cfg)` | `{ userId }` \| `{ error }` | Pulsar's bearer token — unchanged; a machine has no role |
+
+A sixth guard, `requireLocalOrSession(req)`, was **deleted (P1.3.2)**. Once the LAN stopped being a trust boundary it was `requireSession` plus a vestigial `ok: true` and an unread `_req`; its 13 call sites (`/api/settings`, `/api/tasks`, `/api/goals`) now call `requireSession()` and nothing ever read `ok`. Don't reintroduce it — a guard *named* for a LAN exemption invites the belief that this origin still trusts the network it's reached over. It does not.
 
 Session user is `{ id, email, role }`; `role` is purely additive. Today: **28 owner-only routes** (27 `requireOwner` + `calendar/event`'s `requireOwnerOrService`), 39 crew-allowed, and 2 deliberately unguarded (`auth/[...nextauth]`; `gmail/webhook`, which is OIDC-verified instead) — 69 total, all visible in `docs/apis.html`. **Every crew-allowed handler MUST scope its queries by `session.user.id`** — `requireSession` no longer implies "the owner".
 

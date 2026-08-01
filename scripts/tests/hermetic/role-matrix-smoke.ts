@@ -42,11 +42,13 @@
  *   awaits a guard from that family and never from the owner family. Neither
  *   half is hand-waved; together they give "route → guard → admits crew".
  *
- * ASSERT BY GUARD FAMILY, NOT BY EXACT GUARD NAME. `requireLocalOrSession` is a
- * vestigial alias of `requireSession` whose collapse is explicitly deferred
- * (lib/auth-guards.ts:215, design-doc P1.3.2). Pinning exact names would turn
- * that zero-behaviour rename into a red gate, so the manifest records the CLASS
- * and the check accepts any guard in the matching family. The one exception is
+ * ASSERT BY GUARD FAMILY, NOT BY EXACT GUARD NAME. The crew family has held
+ * three members and now holds two — `requireLocalOrSession` was a vestigial
+ * alias of `requireSession` and was collapsed into it (P1.3.2). Pinning exact
+ * names would have turned that zero-behaviour rename into a red gate, so the
+ * manifest records the CLASS and the check accepts any guard in the matching
+ * family; that is what let the collapse land here as a deletion and nothing
+ * more. Keep it that way for the next one. The one exception is
  * spelled out in check 7: `calendar/event` is the sole route on the
  * `requireOwnerOrService` carve-out, and that is asserted by name.
  *
@@ -72,7 +74,6 @@ import {
     requireOwnerOrService,
     requireSession,
     requireSessionOrService,
-    requireLocalOrSession,
     type ServiceTokenConfig,
 } from "@/lib/auth-guards";
 import { __seedViewer, __resetViewer, type Viewer } from "@/lib/viewer";
@@ -92,7 +93,7 @@ function section(title: string) { console.log(`\n── ${title}`); }
 //   'owner'     — owner-only. Crew gets 403. Guard family: requireOwner /
 //                 requireOwnerOrService.
 //   'crew'      — any provisioned viewer. Guard family: requireSession /
-//                 requireLocalOrSession / requireSessionOrService. The handler
+//                 requireSessionOrService. The handler
 //                 is then responsible for scoping by session.user.id (§2.4's
 //                 second invariant, covered by user-scoping-smoke.ts).
 //   'unguarded' — deliberately carries no auth-guard because a different,
@@ -245,7 +246,7 @@ const EXPECTED = { owner: 28, crew: 39, unguarded: 2, total: 69 } as const;
 // Guard families. Membership, not identity — see the header note on why exact
 // names are deliberately not pinned.
 const OWNER_GUARDS = ["requireOwner", "requireOwnerOrService"] as const;
-const CREW_GUARDS = ["requireSession", "requireSessionOrService", "requireLocalOrSession"] as const;
+const CREW_GUARDS = ["requireSession", "requireSessionOrService"] as const;
 const ALL_GUARDS = [...OWNER_GUARDS, ...CREW_GUARDS] as readonly string[];
 
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"] as const;
@@ -369,8 +370,8 @@ function checkManifestCoversEveryRoute(discovered: string[]): void {
                 `        FIX: add an entry to MANIFEST in ${path.relative(REPO_ROOT, __filename)}:\n` +
                 `            { route: "${route}", cls: "owner" | "crew" | "unguarded", group: "…" },\n` +
                 `        'owner' = owner-only (crew gets 403; use requireOwner / requireOwnerOrService).\n` +
-                `        'crew'  = any provisioned viewer (requireSession / requireLocalOrSession /\n` +
-                `                  requireSessionOrService) — and the handler MUST scope by session.user.id.\n` +
+                `        'crew'  = any provisioned viewer (requireSession / requireSessionOrService)\n` +
+                `                  — and the handler MUST scope by session.user.id.\n` +
                 `        'unguarded' = a named non-auth-guard gate authenticates the caller; declare it\n` +
                 `                  in \`sentinel\` so check 7 asserts the gate still exists.\n` +
                 `        If you are unsure: the rule in §2.5 is that a route is owner-only if it serves a\n` +
@@ -506,14 +507,12 @@ async function checkGuardBehaviour(): Promise<void> {
         __resetViewer();
         await expectDenied("requireOwner()            [no identity]", await requireOwner(), "401:no-verified-identity");
         await expectDenied("requireSession()          [no identity]", await requireSession(), "401:no-verified-identity");
-        await expectDenied("requireLocalOrSession()   [no identity]", await requireLocalOrSession(plainReq), "401:no-verified-identity");
         await expectDenied("requireSessionOrService() [no identity]", await requireSessionOrService(plainReq, SMOKE_SERVICE_CONFIG), "401:no-verified-identity");
         await expectDenied("requireOwnerOrService()   [no identity]", await requireOwnerOrService(svcRequest(false), SMOKE_SERVICE_CONFIG), "401:no-verified-identity");
 
         // --- Authenticated crew: admitted by the crew family… --------------
         __seedViewer(CREW_VIEWER);
         expectAdmitted("requireSession()          [crew]", await requireSession(), "session");
-        expectAdmitted("requireLocalOrSession()   [crew]", await requireLocalOrSession(plainReq), "session");
         expectAdmitted("requireSessionOrService() [crew]", await requireSessionOrService(plainReq, SMOKE_SERVICE_CONFIG), "userId");
 
         // --- …and rejected 403 (NOT 401) by the owner family. --------------
@@ -658,7 +657,7 @@ function checkGuardFamilyMatchesClass(): void {
 
         const wanted = spec.cls === "owner" ? OWNER_GUARDS : CREW_GUARDS;
         const forbidden = spec.cls === "owner" ? CREW_GUARDS : OWNER_GUARDS;
-        const family = spec.cls === "owner" ? "owner (requireOwner/requireOwnerOrService)" : "crew (requireSession/requireLocalOrSession/requireSessionOrService)";
+        const family = spec.cls === "owner" ? "owner (requireOwner/requireOwnerOrService)" : "crew (requireSession/requireSessionOrService)";
 
         const used = awaited.filter((g) => (wanted as readonly string[]).includes(g));
         const wrong = awaited.filter((g) => (forbidden as readonly string[]).includes(g));

@@ -106,7 +106,7 @@
 
 <div class="api-route" id="/api/goals">
   <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/goals</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
   <p class="api-purpose">CRUD for LifeGoal rows.</p>
   <p class="api-notes">Each mutation broadcasts { model: 'Goal', action: 'upsert'|'delete' }.</p>
   <p class="api-schema-label">POST body — <code>GoalPostSchema</code></p><pre><code class="language-json">{
@@ -167,7 +167,7 @@
 
 <div class="api-route" id="/api/tasks">
   <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><span class="api-method patch">PATCH</span><span class="api-method delete">DELETE</span><code class="api-path">/api/tasks</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
   <p class="api-purpose">CRUD over the user's task list; the Task table is the sole source of truth.</p>
   <p class="api-notes">Mutations broadcast { model: 'Task', action: 'upsert'|'delete' }. POST with isGoal auto-creates a child task.</p>
   <p class="api-schema-label">POST body — <code>TaskPostSchema</code></p><pre><code class="language-json">{
@@ -3091,7 +3091,7 @@
     <div class="section-body">
 <div class="api-route" id="/api/settings">
   <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/settings</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireLocalOrSession</span></div>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
   <p class="api-purpose">Reads and writes the single-row GlobalSetting table that backs cross-device prefs (dark mode, view hues, dash order/titles), with optimistic-concurrency versioning on writes.</p>
   <p class="api-notes">POST requires an If-Match header carrying the last-seen version; a mismatch returns 409 with the current version.</p>
   <p class="api-schema-label">POST body — <code>SettingsPostSchema</code></p><pre><code class="language-json">{

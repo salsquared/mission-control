@@ -2,7 +2,6 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
-import { NextAuthProvider } from "@/components/providers/SessionProvider";
 import { QueryProvider } from "@/components/providers/QueryProvider";
 import { ToastHost } from "@/components/ui/ToastHost";
 
@@ -55,14 +54,19 @@ export default function RootLayout({
             }
           `}} />
         )}
-        <NextAuthProvider>
-          <QueryProvider>
-            <ThemeProvider>
-              {children}
-              <ToastHost />
-            </ThemeProvider>
-          </QueryProvider>
-        </NextAuthProvider>
+        {/* No NextAuthProvider. It existed only to serve `useSession`, which has
+            no callers — identity comes from `useAccount()` / `/api/account`,
+            resolved at the origin from the Cloudflare-Access-verified header.
+            Worse than merely unused: it polled `/api/auth/session` every 5
+            minutes, and on prod that path sits behind its own owner-only Access
+            application which answers a cross-origin 302 that `fetch` cannot
+            follow — so it logged a `CLIENT_FETCH_ERROR` on a timer forever. */}
+        <QueryProvider>
+          <ThemeProvider>
+            {children}
+            <ToastHost />
+          </ThemeProvider>
+        </QueryProvider>
       </body>
     </html>
   );

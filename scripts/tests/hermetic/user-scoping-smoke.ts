@@ -36,12 +36,12 @@
  */
 const TMP_DB = `/tmp/user-scoping-smoke-${process.pid}-${Date.now()}.db`;
 process.env.DATABASE_URL = `file:${TMP_DB}`;
-// `lib/user-scope.ts:resolveOwnerUserId()` (deprecated, but still the resolver
-// behind the zero-arg findGlobalSetting() the scheduler path uses) walks the
-// allowlist first. Two users exist in the fixture DB, so its sole-user
-// heuristic can't apply — the allowlist has to pick. NOTE this is user-scope's
-// legacy chain, NOT `lib/owner.ts:resolveOwner()`, which since P1.3.3 reads the
-// authoritative User.role column and consults no env var at all.
+// The allowlist address for the fixture owner. `lib/user-scope.ts` no longer
+// has an owner-resolution chain at all — its allowlist → sole-user → legacy
+// -singleton fallback was DELETED in P1.3.2, because none of those steps reads
+// the authoritative `User.role` column and with crew rows present the chain
+// could resolve to someone who is not the owner. Ownership is now answered only
+// by `lib/owner.ts:resolveOwner()` (the role column, no env var).
 const OWNER_ADDRESS = "owner@user-scoping-smoke.invalid";
 process.env.ALLOWED_SIGNIN_EMAILS = OWNER_ADDRESS;
 process.env.EMAIL_ENABLED = "0";
@@ -165,7 +165,6 @@ async function main() {
     const goalsRepo = await import("@/lib/repositories/goals");
     const papersRepo = await import("@/lib/repositories/saved-papers");
     const settingsRepo = await import("@/lib/repositories/settings");
-    const { resolveOwnerUserId, _resetOwnerCache } = await import("@/lib/user-scope");
 
     // The crew id deliberately sorts BEFORE the owner id. The retired
     // `findFirst({ orderBy: { id: 'asc' } })` heuristic would have resolved this
@@ -256,10 +255,9 @@ async function main() {
         else pass("GlobalSetting: version mismatch surfaces currentVersion (per user)");
 
         // ── 3. /api/settings If-Match contract through the REAL handlers ────
-        _resetOwnerCache();
-        const resolved = await resolveOwnerUserId();
-        if (resolved !== OWNER) fail(`owner resolution picked ${resolved} (expected ${OWNER} via allowlist)`);
-        else pass("user-scope: allowlist resolves the owner among multiple users");
+        // (An owner-resolution assertion used to sit here, covering
+        // `user-scope.ts:resolveOwnerUserId()`. That function is gone — see the
+        // header. `lib/owner.ts:resolveOwner()` is covered by owner-auth-smoke.)
 
         // Act as the OWNER for the route-driven phases. These call the handlers
         // in-process, where `headers()` throws, so `resolveViewer()` would 401
@@ -301,11 +299,14 @@ async function main() {
             fail("route write should land on the owner's row only", { ownerFinal, strangerFinal });
         } else pass("route write landed on the owner's row; stranger row untouched");
 
-        // findGlobalSetting() (zero-arg, scheduler/postings path) → owner row.
-        const schedulerView = await settingsRepo.findGlobalSetting();
-        if (schedulerView?.userId !== OWNER || schedulerView.version !== 4) {
-            fail("zero-arg findGlobalSetting should resolve the owner's row", schedulerView);
-        } else pass("findGlobalSetting() (scheduler path) resolves the owner's row");
+        // The zero-arg findGlobalSetting() that used to be asserted here is
+        // gone (P1.3.2) — a settings read with no user in hand is the exact
+        // shape of the cross-user bug P2.3 fixed. The per-user accessor is
+        // asserted immediately above.
+        const ownerVersioned = await settingsRepo.findGlobalSettingForUser(OWNER);
+        if (ownerVersioned?.version !== 4) {
+            fail("owner's row should be at version 4 after the route writes", ownerVersioned);
+        } else pass("findGlobalSettingForUser(owner) reflects the route writes");
 
         // ── 4. /api/tasks through the real handlers, as the owner ───────────
         const tasksRoute = await import("@/app/api/tasks/route");

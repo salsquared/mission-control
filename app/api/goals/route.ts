@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { requireLocalOrSession } from '@/lib/auth-guards';
+import { requireSession } from '@/lib/auth-guards';
 import { resolveScopedUserId } from '@/lib/user-scope';
 import { broadcastEvent } from '@/lib/events';
 import { findAllGoals, createGoal, updateGoal, deleteGoal } from '@/lib/repositories/goals';
@@ -11,7 +11,7 @@ const NO_USER = () =>
     NextResponse.json({ error: 'No user account resolvable for this request' }, { status: 401 });
 
 export async function GET(req: Request) {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireSession();
     if ('error' in guard) return guard.error;
     const userId = await resolveScopedUserId(guard);
     if (!userId) return NO_USER();
@@ -25,7 +25,7 @@ export async function GET(req: Request) {
 }
 
 export async function POST(req: Request) {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireSession();
     if ('error' in guard) return guard.error;
     const userId = await resolveScopedUserId(guard);
     if (!userId) return NO_USER();
@@ -46,7 +46,7 @@ export async function POST(req: Request) {
 }
 
 export async function PATCH(req: Request) {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireSession();
     if ('error' in guard) return guard.error;
     const userId = await resolveScopedUserId(guard);
     if (!userId) return NO_USER();
@@ -68,7 +68,7 @@ export async function PATCH(req: Request) {
 }
 
 export async function DELETE(req: Request) {
-    const guard = await requireLocalOrSession(req);
+    const guard = await requireSession();
     if ('error' in guard) return guard.error;
     const userId = await resolveScopedUserId(guard);
     if (!userId) return NO_USER();
