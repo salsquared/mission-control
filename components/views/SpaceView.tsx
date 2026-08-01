@@ -8,6 +8,7 @@ import { ReloadButton } from "../ui/ReloadButton";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
 import { NextLaunchCard } from "../cards/space/NextLaunchCard";
 import { LaunchCalendarWidget } from "../widgets/LaunchCalendarWidget";
+import { GraphWidget } from "../widgets/GraphWidget";
 import { Calendar } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
@@ -38,6 +39,53 @@ const MOON_GLYPHS: Record<string, string> = {
     'Waning Gibbous':   '\u{1F316}',
     'Last Quarter':     '\u{1F317}',
     'Waning Crescent':  '\u{1F318}',
+};
+
+/** One day of the satellite-count series, in GraphWidget's generic x/y shape.
+ *  The five orbit buckets partition `value`, so they stack to the total line. */
+interface SatPoint {
+    label: string;
+    value: number;
+    LEO: number;
+    MEO: number;
+    GEO: number;
+    SSO: number;
+    other: number;
+}
+
+// Bottom band first. Ordered biggest-to-smallest population so the thin bands
+// (MEO, other) sit at the top where they aren't crushed between two fat ones.
+// Single source of truth for band color: the chart reads it, and so do the dots
+// on the orbit columns below the chart, which ARE the chart's legend.
+const ORBIT_BANDS = [
+    { key: 'LEO', color: '#a855f7', label: 'LEO' },
+    { key: 'SSO', color: '#38bdf8', label: 'SSO' },
+    { key: 'GEO', color: '#34d399', label: 'GEO' },
+    { key: 'MEO', color: '#fbbf24', label: 'MEO' },
+    { key: 'other', color: '#94a3b8', label: 'Other' },
+] as const;
+
+const ORBIT_COLOR: Record<string, string> = Object.fromEntries(
+    ORBIT_BANDS.map(band => [band.key, band.color]),
+);
+
+/** The colored dot that ties an orbit column to its band in the chart above. */
+const OrbitDot: React.FC<{ orbit: string }> = ({ orbit }) => (
+    <span
+        className="inline-block w-1.5 h-1.5 rounded-full shrink-0"
+        style={{ backgroundColor: ORBIT_COLOR[orbit] }}
+    />
+);
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+// "2026-08-01" → "Aug 1". Formatted by string split rather than a Date: the
+// series is keyed on UTC calendar days, and new Date("2026-08-01") is UTC
+// midnight, which toLocaleDateString renders as the PREVIOUS day everywhere
+// west of Greenwich — every point would be labelled a day early.
+const formatUtcDay = (isoDate: string) => {
+    const [, month, day] = isoDate.split('-');
+    return `${MONTH_ABBR[Number(month) - 1] ?? month} ${Number(day)}`;
 };
 
 const getMoonIcon = (phase: string) => (
@@ -90,9 +138,46 @@ export const SpaceView: React.FC = () => {
         // the lockout — react-query default of 3 retries means 4× the hits per mount.
         retry: false,
     });
+    // Local SQLite read of the daily count series — cheap, and independent of the
+    // Celestrak proxy above, so a Celestrak lockout still leaves the trend line up.
+    const { data: satHistoryData } = useQuery<{
+        history: { date: string; total: number; leo: number; meo: number; geo: number; sso: number; other: number }[];
+    }>({
+        queryKey: ['space', 'satellites', 'history'],
+        queryFn: () => fetcher('/api/space/satellites/history'),
+    });
     const { data: solarData, refetch: refetchSolar } = useQuery<any>({ queryKey: ['space', 'solar'], queryFn: () => fetcher('/api/space/solar') });
     const { data: moonData, refetch: refetchMoon } = useQuery<any>({ queryKey: ['space', 'moon'], queryFn: () => fetcher('/api/space/moon') });
     const { newsMap: companyNewsMap } = useSpaceCompanyNews(SPACE_COMPANIES);
+
+    const recordedSatHistory: SatPoint[] = (satHistoryData?.history ?? []).map(point => ({
+        label: formatUtcDay(point.date),
+        value: point.total,
+        LEO: point.leo,
+        MEO: point.meo,
+        GEO: point.geo,
+        SSO: point.sso,
+        other: point.other,
+    }));
+
+    // With no stored day yet, chart the live count so the sparkline shows the
+    // current figure from the first load rather than an empty frame. This is
+    // reachable beyond just day one: /api/space/satellites records only when its
+    // handler actually runs, so a response served straight from the 6h cache can
+    // legitimately arrive before any row exists.
+    const liveSatTotal = satellitesData?.total_active;
+    const satHistory: SatPoint[] =
+        recordedSatHistory.length === 0 && Number.isFinite(liveSatTotal)
+            ? [{
+                label: formatUtcDay(new Date().toISOString().slice(0, 10)),
+                value: liveSatTotal,
+                LEO: satellitesData?.orbits?.LEO ?? 0,
+                MEO: satellitesData?.orbits?.MEO ?? 0,
+                GEO: satellitesData?.orbits?.GEO ?? 0,
+                SSO: satellitesData?.orbits?.SSO ?? 0,
+                other: satellitesData?.orbits?.other ?? 0,
+            }]
+            : recordedSatHistory;
 
     const launches: Launch[] = Array.isArray(launchData) ? launchData : [];
     const loading = !spaceNewsRaw && !launchData;
@@ -148,9 +233,10 @@ export const SpaceView: React.FC = () => {
         },
         {
             id: "space-calendar",
-            // Two tracks of three — the width it had before the CardCanvas
-            // migration. Needs the canvas to have reported its real track
-            // count, or the span is withheld and this renders one wide.
+            // Full width of the 2-track main canvas — which is two thirds of the
+            // section, the width this card has had since before the CardCanvas
+            // migration. `colSpan` is read RELATIVE to `columns`, so 2 of 2 maps
+            // to 1 / -1 rather than to a literal two tracks.
             colSpan: 2,
             // Scrolls via a bare `overflow-y-auto` and self-bounds nowhere, so it
             // needs an explicit height. Replaces the old rowSpan: 2, and sits a
@@ -186,29 +272,49 @@ export const SpaceView: React.FC = () => {
                         <>
                             <div className="text-xl font-bold text-white py-1">TOTAL: {satellitesData.total_active.toLocaleString()}</div>
 
+                            <GraphWidget
+                                variant="sparkline"
+                                data={satHistory}
+                                xKey="label"
+                                yKey="value"
+                                // White reads as "the total" against five colored
+                                // bands, where the purple theme color would just
+                                // look like a sixth one.
+                                color="#ffffff"
+                                stackKeys={[...ORBIT_BANDS]}
+                                // LEO is ~160x MEO, so on a linear axis the small
+                                // orbits are a sub-pixel sliver. Log makes every
+                                // band readable — at the cost of the stack, which
+                                // log necessarily unpacks into separate lines (see
+                                // the prop's docs). Other graphs stay linear.
+                                scale="log"
+                                axes
+                                heightClass="h-48"
+                            />
+
                             <div className="w-full mt-3 grid grid-cols-5 gap-1.5 text-center h-full">
                                 <div className="flex flex-col">
-                                    <div className="text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1">LEO</div>
+                                    <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1"><OrbitDot orbit="LEO" />LEO</div>
                                     <div className="text-xl text-white font-bold pt-1.5">{satellitesData.orbits.LEO.toLocaleString()}</div>
                                     <div className="text-[9px] text-muted-foreground opacity-80 mt-auto pt-2 leading-tight">160 - 2k km</div>
                                 </div>
                                 <div className="flex flex-col">
-                                    <div className="text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1">MEO</div>
+                                    <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1"><OrbitDot orbit="MEO" />MEO</div>
                                     <div className="text-xl text-white font-bold pt-1.5">{satellitesData.orbits.MEO.toLocaleString()}</div>
                                     <div className="text-[9px] text-muted-foreground opacity-80 mt-auto pt-2 leading-tight">2k - 35k km</div>
                                 </div>
                                 <div className="flex flex-col">
-                                    <div className="text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1">GEO</div>
+                                    <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1"><OrbitDot orbit="GEO" />GEO</div>
                                     <div className="text-xl text-white font-bold pt-1.5">{satellitesData.orbits.GEO.toLocaleString()}</div>
                                     <div className="text-[9px] text-muted-foreground opacity-80 mt-auto pt-2 leading-tight">35k km</div>
                                 </div>
                                 <div className="flex flex-col">
-                                    <div className="text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1">SSO</div>
+                                    <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1"><OrbitDot orbit="SSO" />SSO</div>
                                     <div className="text-xl text-white font-bold pt-1.5">{satellitesData.orbits.SSO.toLocaleString()}</div>
                                     <div className="text-[9px] text-muted-foreground opacity-80 mt-auto pt-2 leading-tight">500 - 1k km</div>
                                 </div>
                                 <div className="flex flex-col">
-                                    <div className="text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1">Other</div>
+                                    <div className="flex items-center justify-center gap-1 text-xs text-muted-foreground uppercase font-bold border-b border-white/10 pb-1"><OrbitDot orbit="other" />Other</div>
                                     <div className="text-xl text-white font-bold pt-1.5">{satellitesData.orbits.other?.toLocaleString() || 0}</div>
                                     <div className="text-[9px] text-muted-foreground opacity-80 mt-auto pt-2 leading-tight">Var.</div>
                                 </div>
@@ -383,10 +489,31 @@ export const SpaceView: React.FC = () => {
     const companyGroups = buildCompanyGroups();
     const outletCards = buildOutletCards();
 
+    // TWO DETERMINISTIC STACKS, not one packed canvas. CardCanvas does not
+    // bin-pack — it is native CSS grid auto-placement over fine row quanta, so
+    // which COLUMN a card lands in falls out of measured heights and cannot be
+    // pinned from the item list. In one canvas, Solar sat under Active Sats only
+    // while launch-info + sats stayed shorter than the xl calendar, and Lunar
+    // tucked under the calendar only while column 1 stayed taller than it —
+    // opposite conditions, so any content change flipped one or the other (the
+    // taller orbit chart flipped the first). Splitting into a 1-track rail and a
+    // 2-track main column makes both pairings structural: they hold at any height.
+    const RAIL_CARD_IDS = new Set(["space-launch-info", "space-2", "space-3"]);
+    const railCards = staticCards.filter(card => RAIL_CARD_IDS.has(card.id));
+    const mainCards = staticCards.filter(card => !RAIL_CARD_IDS.has(card.id));
+
     return (
         <Scrollbar className="w-full h-full pb-8 space-y-6">
             <Section title="Space Data" description="Real-time metrics and tracking">
-                <CardCanvas items={staticCards} />
+                {/* One 3-track frame holding the two canvases. The gap is
+                    --cc-gap, the same token the canvases use internally, so the
+                    seam between them is indistinguishable from the gaps inside
+                    each. `items-start` keeps the shorter stack from being
+                    stretched to the taller one's height. */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 items-start" style={{ gap: "var(--cc-gap)" }}>
+                    <CardCanvas items={railCards} columns={1} />
+                    <CardCanvas items={mainCards} columns={2} className="lg:col-span-2" />
+                </div>
             </Section>
 
             <Section
