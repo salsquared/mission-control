@@ -8,7 +8,7 @@
  * both and rely on the user to lock/exclude later).
  */
 import { makeBullet } from "@/lib/profile/bullets";
-import { isValidUrl } from "@/lib/profile/links";
+import { normalizeUrl } from "@/lib/profile/links";
 import type { Bullet } from "@/lib/profile/types";
 import type {
     ExtractedProfile,
@@ -144,6 +144,21 @@ export interface MergeResult {
 
 function norm(s: string | null | undefined): string {
     return (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+// Drop non-URL entries and rewrite the survivors' `url` to its canonical
+// scheme-bearing form. Used on all three link sources in mergeHeader (incoming,
+// existing, already-accumulated) so everything compared and written is in one
+// form.
+function normalizeLinks(
+    links: { label: string; url: string }[] | null | undefined
+): { label: string; url: string }[] {
+    const out: { label: string; url: string }[] = [];
+    for (const l of links ?? []) {
+        const url = normalizeUrl(l.url);
+        if (url) out.push({ ...l, url });
+    }
+    return out;
 }
 
 function parseDate(s: string | null): Date | null {
@@ -370,20 +385,26 @@ function mergeHeader(acc: Accumulator, existing: ExistingProfileForMerge, incomi
             counts.headerFieldsFilled++;
         }
     }
-    // Drop incoming links whose `url` isn't actually a URL — the LLM extraction
-    // schema in import-llm.ts uses `z.string()` (not `z.string().url()`), so
-    // section-header text like {label:"Github", url:"Github"} occasionally
-    // sneaks through and renders as a broken link in the resume header.
-    const validIncoming = (incoming.links ?? []).filter(l => isValidUrl(l.url));
+    // Drop incoming links whose `url` isn't actually a URL, and canonicalize
+    // the survivors to a scheme-bearing form — the LLM extraction schema in
+    // import-llm.ts uses `z.string()` (not `z.string().url()`), so section-header
+    // text like {label:"Github", url:"Github"} occasionally sneaks through and
+    // renders as a broken link in the resume header, and a scheme-less
+    // "github.com/u" (how a resume actually writes it) would otherwise be
+    // written verbatim through the repository — past the Zod layer the PATCH
+    // route enforces — leaving a row that fails ProfileLinkSchema on every
+    // read. Normalizing before `norm()` also makes the dedupe key agree:
+    // "github.com/u" and "https://github.com/u" are one link, not two.
+    const validIncoming = normalizeLinks(incoming.links);
     if (validIncoming.length > 0) {
         const have = new Map<string, { label: string; url: string }>();
-        // Also filter existing/acc entries so the next import implicitly cleans
-        // up legacy corruption from before this filter existed.
-        for (const l of existing.links ?? []) {
-            if (isValidUrl(l.url)) have.set(norm(l.url), l);
+        // Also normalize/filter existing/acc entries so the next import
+        // implicitly cleans up legacy corruption from before this filter existed.
+        for (const l of normalizeLinks(existing.links)) {
+            have.set(norm(l.url), l);
         }
-        for (const l of acc.headerPatch.links ?? []) {
-            if (isValidUrl(l.url)) have.set(norm(l.url), l);
+        for (const l of normalizeLinks(acc.headerPatch.links)) {
+            have.set(norm(l.url), l);
         }
         let added = 0;
         for (const l of validIncoming) {

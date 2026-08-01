@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma';
 import type { Profile, WorkRole, Project, Education } from '@prisma/client';
 import { parseBullets, serializeBullets, normalizeBullet } from '@/lib/profile/bullets';
+import { normalizeUrl } from '@/lib/profile/links';
 import {
     LANGUAGE_PROFICIENCIES,
     type Bullet,
@@ -70,12 +71,26 @@ export type HydratedProfile = Omit<Profile, 'links' | 'skills' | 'hobbies' | 'la
     education: HydratedEducation[];
 };
 
+// Normalizing on READ (not just on write) is what makes legacy rows self-heal:
+// the resume-import path wrote scheme-less URLs straight through the repository
+// for a while, bypassing the Zod layer, and every one of those rows fails
+// `ProfileLinkSchema` on GET /api/profile and renders as a relative href in the
+// generated resume. Both surfaces read through here — the API route and the
+// resume pipeline load via findOrCreateProfile — so one map fixes both with no
+// migration. Entries that aren't URLs at all (the {url:"Github"} corruption)
+// drop out here rather than reaching a caller.
 function parseLinks(raw: string | null): ProfileLink[] | null {
     if (!raw) return null;
     try {
         const parsed = JSON.parse(raw);
         if (!Array.isArray(parsed)) return null;
-        return parsed.filter((x) => x && typeof x.label === 'string' && typeof x.url === 'string');
+        return parsed
+            .filter((x) => x && typeof x.label === 'string' && typeof x.url === 'string')
+            .map((x) => {
+                const url = normalizeUrl(x.url);
+                return url ? { ...x, url } : null;
+            })
+            .filter((x): x is ProfileLink => x !== null);
     } catch {
         return null;
     }

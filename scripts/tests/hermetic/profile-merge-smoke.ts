@@ -6,9 +6,11 @@
  * The merge function is the load-bearing piece of M7.4 (story S7.3). Each
  * test exercises one merge-key or dedup behavior in isolation.
  */
+import { z } from "zod";
 import { mergeImports, type ExistingProfileForMerge } from "@/lib/profile/merge";
 import type { ExtractedProfile } from "@/lib/profile/import-llm";
 import { makeBullet } from "@/lib/profile/bullets";
+import { ProfileLinkSchema } from "@/lib/schemas/profile";
 
 let passes = 0;
 let fails = 0;
@@ -474,9 +476,14 @@ function emptyIncoming(): ExtractedProfile {
     if (links.length !== 2) fail(`expected 2 valid links, got ${links.length}`, links);
     else pass("header links: bogus section-header values filtered out");
     const urls = new Set(links.map(l => l.url));
-    if (!urls.has("https://github.com/u") || !urls.has("example.com/portfolio")) {
+    // The scheme-less entry is kept but PROMOTED to https:// — storing it raw
+    // is what broke ProfileLinkSchema (z.string().url() needs a scheme) and
+    // emitted a relative href in the rendered resume.
+    if (!urls.has("https://github.com/u") || !urls.has("https://example.com/portfolio")) {
         fail("header links: valid URLs not preserved", links);
-    } else pass("header links: real URLs preserved (with and without scheme)");
+    } else pass("header links: real URLs preserved, scheme-less one normalized");
+    if (urls.has("example.com/portfolio")) fail("header links: scheme-less URL stored raw");
+    else pass("header links: no scheme-less URL survives the merge");
 }
 
 // ─── Header links: existing corrupt entries dropped on next import ──────
@@ -499,6 +506,55 @@ function emptyIncoming(): ExtractedProfile {
     else pass("header links: legacy bogus entry stripped, real one kept");
     if (links.some(l => l.url === "Github")) fail("header links: legacy 'Github' string still present");
     else pass("header links: legacy 'Github' string removed");
+}
+
+// ─── Header links: merge output satisfies the wire contract ─────────────
+// The bug this locks down: merge.ts's output is written by the import route
+// through updateProfileHeader() — a REPOSITORY call, so it never passes the
+// Zod layer that PATCH /api/profile enforces. A scheme-less URL therefore
+// landed in the DB and failed ProfileLinkSchema on every subsequent read
+// ("Response shape mismatch for /api/profile" from lib/api-client.ts). Assert
+// the merged links against the very schema the response is checked with.
+{
+    const existing = emptyExisting();
+    existing.links = [{ label: "Old", url: "old-portfolio.com/me" }];  // legacy scheme-less row
+    const incoming = emptyIncoming();
+    incoming.header = {
+        headline: null, location: null, email: null, phone: null,
+        links: [
+            { label: "GitHub", url: "github.com/smoketester" },   // scheme-less (the reported case)
+            { label: "Mail", url: "mailto:me@example.com" },      // non-http scheme, kept verbatim
+        ],
+    };
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    const links = r.headerPatch?.links ?? [];
+    const parsed = z.array(ProfileLinkSchema).safeParse(links);
+    if (!parsed.success) fail("header links: merged output fails ProfileLinkSchema", parsed.error.issues);
+    else pass("header links: merged output satisfies ProfileLinkSchema");
+    const urls = new Set(links.map(l => l.url));
+    if (!urls.has("https://github.com/smoketester")) fail("header links: scheme-less incoming not promoted", links);
+    else pass("header links: scheme-less incoming promoted to https://");
+    if (!urls.has("https://old-portfolio.com/me")) fail("header links: scheme-less existing not promoted", links);
+    else pass("header links: scheme-less existing row promoted on write-back");
+    if (!urls.has("mailto:me@example.com")) fail("header links: non-http scheme not preserved", links);
+    else pass("header links: non-http scheme preserved verbatim");
+}
+
+// ─── Header links: normalization collapses the dedupe key ───────────────
+// Before normalization, norm("github.com/u") and norm("https://github.com/u")
+// differed, so the same link arrived twice and both were stored.
+{
+    const existing = emptyExisting();
+    existing.links = [{ label: "GitHub", url: "github.com/u" }];
+    const incoming = emptyIncoming();
+    incoming.header = {
+        headline: null, location: null, email: null, phone: null,
+        links: [{ label: "GitHub", url: "https://github.com/u" }],
+    };
+    const r = mergeImports(existing, [{ filename: "a.pdf", tree: incoming }]);
+    const links = r.headerPatch?.links ?? [];
+    if (links.length > 1) fail("header links: scheme-less and scheme-bearing dupes both stored", links);
+    else pass("header links: scheme variants of one URL dedupe to a single entry");
 }
 
 console.log(`\n${passes}/${passes + fails} steps passed`);
