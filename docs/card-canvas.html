@@ -1,0 +1,765 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CardCanvas — container management &amp; ordering</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>CardCanvas</h1>
+  <p class="subtitle">Replace <code>CardGrid</code>'s fixed-breakpoint stretch-to-row-height grid with a container-driven, content-packed card engine — reclaiming the vertical dead space every short card currently pays for, and making column count respond to available width instead of viewport width.</p>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#context">Context &amp; problem</a></li>
+      <li><a href="#design">Design</a></li>
+      <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#open-questions">Open Questions</a></li>
+      <li><a href="#tasks">Tasks</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="context">Context &amp; problem</h2></summary>
+    <div class="section-body">
+
+      <h3>Problem</h3>
+      <p>Every dash renders its cards through <code>components/grids/CardGrid.tsx</code> (76 lines), used by all 8 views plus <code>Section.tsx:48</code>. Four distinct defects in that file produce the wasted space:</p>
+
+      <table>
+        <thead><tr><th>#</th><th>Defect</th><th>Site</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><strong>Row-height stretch.</strong> Items default to <code>h-full</code>; CSS Grid sizes a row to its <em>tallest</em> card, so every shorter sibling is stretched with its content pinned to the top and dead space below.</td>
+            <td><code>CardGrid.tsx:61</code></td>
+            <td>The dominant waste. <code>hFit</code> is the opt-out but appears at only 14 sites against 47 span-prop usages — waste is the default.</td>
+          </tr>
+          <tr>
+            <td>2</td>
+            <td><strong>Viewport breakpoints, not container-aware.</strong> Hard ladder <code>grid-cols-1 md:grid-cols-2 lg:grid-cols-3</code>, capped at 3 columns off <em>viewport</em> width.</td>
+            <td><code>CardGrid.tsx:42–46</code></td>
+            <td>On a wide display, 3 over-wide columns instead of 4–5 sensible ones. Ignores the shell's own chrome, so the breakpoint fires at the wrong moment on mobile.</td>
+          </tr>
+          <tr>
+            <td>3</td>
+            <td><strong>Masonry mode silently drops spans.</strong> Emits the class <code>column-span-all</code>, which is not a Tailwind utility and is defined nowhere in the repo — the string appears at exactly one place, its own emission site.</td>
+            <td><code>CardGrid.tsx:60</code></td>
+            <td><code>colSpan</code> is a no-op in masonry. Combined with multi-column's column-wise flow (DOM order ≠ visual order), masonry can't be used anywhere ordering matters.</td>
+          </tr>
+          <tr>
+            <td>4</td>
+            <td><strong>Chrome cost is scattered literals.</strong> <code>gap-4</code> + <code>p-4</code> + Card's header <code>mb-4</code>, hardcoded.</td>
+            <td><code>CardGrid.tsx:42,68</code>, <code>Card.tsx:46</code></td>
+            <td>No single density knob; tuning breathing room means editing three files.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>The two card families</h3>
+      <p>The constraint that shapes the whole design: <strong>the cards have already split into two families, and <code>hFit</code> is the existing marker.</strong> This is why "just make everything content-height" is wrong.</p>
+      <ul>
+        <li><strong>Family A — content-sized</strong> (the 14 <code>hFit: true</code> sites; all of <code>ProfileView</code>). These bound their own internal scroll regions with explicit caps — <code>max-h-[16rem]</code> in <code>GeneratedResumesCard.tsx:149</code>, <code>max-h-[20rem]</code> in <code>CanonsCard.tsx:527</code>, <code>max-h-[24rem]</code> in <code>GenerateResumeCard.tsx:355</code>. Content-height is free for these; they are already correct.</li>
+        <li><strong>Family B — fill-height</strong> (8 files: <code>KanbanWidget</code>, <code>CalendarWidget</code>, <code>MarketTop100Card</code>, <code>ResearchPaperCard</code>, <code>LLMLeaderboardCard</code>, <code>FetcherHealthCard</code>, <code>GoalCard</code>, <code>SnapshotsCard</code>). These use <code>flex-1 overflow-y-auto</code> against a <em>bounded</em> parent — the pattern CLAUDE.md names as canonical. Content-sizing breaks them: <code>KanbanWidget.tsx:121,129</code> is <code>h-full</code> throughout and collapses outright; the rest expand to full list height instead of scrolling.</li>
+      </ul>
+      <div class="callout"><strong>Family B is why this isn't a one-line fix.</strong> A masonry engine has no rows for a card to fill, so "stretch to fill" has no meaning in it. Every card must arrive at a resolved height — <em>measured</em> for Family A, <em>declared</em> for Family B. Resolving how Family B declares that height is <a href="#open-questions">OQ1</a>.</div>
+
+      <h3>Goals &amp; non-goals</h3>
+      <ul>
+        <li><strong>Goal:</strong> eliminate the stretch dead space — a card's height is its content's height (Family A) or an explicit declared height (Family B), never "whatever the tallest neighbour happened to be".</li>
+        <li><strong>Goal:</strong> column count derives from <em>container</em> width, with no <code>md:</code>/<code>lg:</code> ladder, scaling past 3 columns on wide displays.</li>
+        <li><strong>Goal:</strong> <code>colSpan</code> keeps working under packed layout (it does not today — defect 3).</li>
+        <li><strong>Goal:</strong> one density knob via CSS custom properties, following the <code>--section-gutter</code> pattern already established at <code>MobileShell.tsx:202</code>.</li>
+        <li><strong>Goal:</strong> layout must degrade correctly with JS disabled or pre-hydration — <strong>JS refines, it is never load-bearing</strong>.</li>
+        <li><strong>Non-goal:</strong> drag-to-reorder / user-persisted card ordering. Ordering here means <em>layout</em> order (DOM order preserved under packing). Persisted per-user arrangement is a separate feature on the Zustand store — deferred.</li>
+        <li><strong>Non-goal:</strong> redesigning card <em>contents</em>. This changes the container and its ordering, not what any card renders.</li>
+        <li><strong>Non-goal:</strong> touching <code>lib/cache.ts</code>, any API route, or any data path. Pure presentation.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="design">Design</h2></summary>
+    <div class="section-body">
+
+      <h3>Approach</h3>
+      <p>A new engine, <code>components/grids/CardCanvas.tsx</code>, built as <strong>three independent layers</strong>. Each layer is useful alone and degrades to the one below it, which is what keeps JS off the critical path.</p>
+
+      <pre class="mermaid">
+flowchart TB
+  subgraph L3["Layer 3 — density tokens (CSS vars)"]
+    tok["--cc-gap / --cc-pad<br/>--cc-card-min / --cc-row"]
+  end
+  subgraph L1["Layer 1 — fluid tracks (pure CSS)"]
+    ram["repeat(auto-fill, minmax(max(...), 1fr))<br/>column count from CONTAINER width"]
+  end
+  subgraph L2["Layer 2 — packing (JS refinement)"]
+    ro["ResizeObserver measures each card"]
+    span["sets grid-row-end: span N"]
+    ro --> span
+  end
+  tok --> ram
+  ram -->|"no JS: align-items start"| base(["fluid grid, content-height,<br/>row gaps remain"])
+  ram --> ro
+  span --> packed(["true masonry, DOM order kept,<br/>colSpan preserved"])
+  ram -->|"@supports display: grid-lanes"| native(["native masonry, JS skipped"])
+      </pre>
+
+      <h4>Layer 1 — fluid tracks, capped, with zero breakpoints</h4>
+      <p>The <code>md:</code>/<code>lg:</code> ladder is deleted outright and replaced with one declaration:</p>
+      <pre><code class="language-css">grid-template-columns: repeat(
+  auto-fill,
+  minmax(
+    max(var(--cc-card-min), (100% - (var(--cc-max-cols) - 1) * var(--cc-gap)) / var(--cc-max-cols)),
+    1fr
+  )
+);</code></pre>
+      <p>The inner <code>max()</code> is the load-bearing trick. A plain <code>minmax(20rem, 1fr)</code> grows columns without limit on a wide display; taking the <code>max</code> against <em>one <code>--cc-max-cols</code>-th of the container</em> means a track can never be narrower than that share, so the track count can never exceed <code>--cc-max-cols</code>. Below that width it falls back to <code>--cc-card-min</code> and reflows fluidly. <strong>This caps the column count in pure CSS, with no measurement and no breakpoints</strong> — and because it is expressed in <code>100%</code> of the grid element, it responds to <em>container</em> width, which is what makes it correct inside <code>DesktopShell</code>, <code>MobileShell</code>, and any future split pane alike.</p>
+      <p>Span mapping is likewise static — resolvable at render from the declared props, no JS:</p>
+      <ul>
+        <li><code>colSpan === columns</code> (i.e. the caller meant "full width") → <code>grid-column: 1 / -1</code>. This covers the majority case: 6 of 9 <code>InternalView</code> cards, all 4 <code>PhysicsView</code> cards, both <code>PlanningView</code> cards.</li>
+        <li>otherwise → <code>grid-column: span N</code>, which CSS Grid already clamps to the available track count.</li>
+      </ul>
+      <div class="callout tip"><strong>Why <code>colSpan</code> must be read relative to <code>columns</code>.</strong> Today <code>colSpan</code> is a raw track count against a fixed 3- or 2-column grid, so <code>colSpan: 2</code> means <em>two-thirds width</em> in <code>AIView</code> but <em>full width</em> in <code>ApplicationsView</code> (<code>columns={2}</code>, see <code>ApplicationsView.tsx:244</code>'s own comment saying exactly this). Interpreting it as the fraction <code>colSpan / columns</code> preserves both intents under a variable track count.</div>
+
+      <h4>Layer 2 — packing</h4>
+      <p>True masonry via the row-span technique: the canvas sets a fine <code>grid-auto-rows: var(--cc-row)</code> with <code>row-gap: 0</code>, and each card is given <code>grid-row-end: span ceil((h + gap) / row)</code> where <code>h</code> is its measured content height. The visual row gap is baked into the span rather than applied by the grid.</p>
+      <p>Chosen over CSS multi-column (today's <code>layout="masonry"</code>) because it is the only packing approach that keeps all three properties at once:</p>
+      <table>
+        <thead><tr><th>Property</th><th>Multi-column (today)</th><th>Row-span trick</th><th>Native <code>grid-lanes</code></th></tr></thead>
+        <tbody>
+          <tr><td>Packs out vertical gaps</td><td>yes</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Preserves left-to-right DOM order</td><td><strong>no</strong> — flows down column 1 first</td><td>yes</td><td>yes</td></tr>
+          <tr><td><code>colSpan</code> honoured</td><td><strong>no</strong> — dead class, defect 3</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Browser support</td><td>universal</td><td>universal</td><td><strong>Safari 26 only</strong></td></tr>
+        </tbody>
+      </table>
+      <p>A <code>ResizeObserver</code> per card feeds the measurement; a single observer instance on the canvas watches all children, so cost is one observer per section, not per card. Measurement targets the inner content element — not the <code>motion.div</code> frame, whose <code>overflow-hidden</code> (<code>CardGrid.tsx:54</code>) would otherwise clip the value it is meant to report.</p>
+      <div class="callout"><strong>JS is a refinement, never a dependency.</strong> With no JS — pre-hydration, or if the observer never fires — Layer 1 alone still yields a fluid, container-driven grid with <code>align-items: start</code>, i.e. content-height cards with row gaps left in. That is already strictly better than today's stretch. Layer 2 only closes the remaining gaps. This is deliberate: a layout that blanks or collapses when JS is late is not acceptable for the app shell.</div>
+
+      <h4>Layer 3 — density tokens</h4>
+      <p><code>--cc-gap</code>, <code>--cc-pad</code>, <code>--cc-card-min</code>, <code>--cc-row</code>, <code>--cc-max-cols</code>, declared in <code>app/globals.css</code> and overridable per shell exactly as <code>--section-gutter</code> already is at <code>MobileShell.tsx:202</code>. The hardcoded <code>gap-4</code> / <code>p-4</code> / <code>mb-4</code> literals become <code>var()</code> reads, so density is one knob rather than a three-file edit. Values are <a href="#open-questions">OQ5</a>.</p>
+
+      <h4>Touch list</h4>
+      <table>
+        <thead><tr><th>File</th><th>Change</th></tr></thead>
+        <tbody>
+          <tr><td><code>components/grids/CardCanvas.tsx</code></td><td><strong>new</strong> — the engine (tracks, span mapping, measurement hook).</td></tr>
+          <tr><td><code>components/grids/CardGrid.tsx</code></td><td>Becomes a shim or is reimplemented in place — <a href="#open-questions">OQ3</a>.</td></tr>
+          <tr><td><code>app/globals.css</code></td><td>Density tokens + the <code>@supports (display: grid-lanes)</code> block.</td></tr>
+          <tr><td><code>components/ui/Card.tsx</code></td><td><code>p-4</code>/<code>mb-4</code> → token reads. Height mode plumbed to the content container.</td></tr>
+          <tr><td><code>components/Section.tsx</code></td><td>Passes canvas props through for grouped items (line 48).</td></tr>
+          <tr><td>8 view files</td><td>Only if <a href="#open-questions">OQ1</a>/<a href="#open-questions">OQ3</a> require per-card annotation. Family B's 8 card/widget files may need a declared height.</td></tr>
+          <tr><td><code>scripts/tests/hermetic/</code></td><td>New smoke asserting span mapping + that no card resolves to zero height.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Alternatives considered</h3>
+      <ul>
+        <li><strong>Pure-CSS only (no measurement).</strong> Layer 1 + <code>align-items: start</code>, stop there. Kills the interior stretch and the breakpoint ladder for ~10 lines and no JS at all. Rejected as the <em>endpoint</em> because it leaves the between-row gaps — the second half of the reclaimed space — but it is retained as the <strong>degradation target</strong>, which is what makes Layer 2 safe to add.</li>
+        <li><strong>Native <code>display: grid-lanes</code> as the primary mechanism.</strong> Shipped in Safari 26; Chrome and Firefox still behind flags as of early 2026, and the property was renamed from the earlier <code>grid-template-rows: masonry</code> spelling. Rejected as primary — it would leave two of three engines unpacked — but adopted as a progressive-enhancement layer behind <code>@supports</code>, where it costs one CSS block and lets the JS bail out entirely.</li>
+        <li><strong>A JS masonry library</strong> (Masonry, Muuri, react-masonry-css). Rejected: a new runtime dependency for ~40 lines of arithmetic, most of them absolutely-positioning items — which would break the existing <code>framer-motion</code> frames, the <code>hover:z-10</code> lift at <code>CardGrid.tsx:54</code>, and the portalled popovers that <code>CanonsCard.tsx:430</code> and <code>GenerateResumeCard.tsx:606</code> already work around <code>overflow-hidden</code> for.</li>
+        <li><strong>Container queries (<code>@container</code>) for the column count.</strong> Tailwind v4 supports these natively with no plugin, and they were the obvious candidate for "make it reactive". Rejected in favour of <code>auto-fill</code> + <code>max()</code>: container queries would reintroduce a <em>breakpoint ladder</em>, merely one keyed to the container instead of the viewport, whereas the <code>max()</code> formula is continuous and needs no thresholds at all. Container queries stay available for <em>intra-card</em> layout later — a genuinely different problem.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="risks">Risks &amp; rollback</h2></summary>
+    <div class="section-body">
+
+      <h3>Risks &amp; mitigations</h3>
+      <table>
+        <thead><tr><th>Risk</th><th>Likelihood</th><th>Mitigation</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Family B cards collapse to zero height.</strong> <code>KanbanWidget</code>'s <code>h-full</code> chain resolves against an auto-height parent and vanishes.</td>
+            <td>high if unhandled</td>
+            <td>The central reason for <a href="#open-questions">OQ1</a>. Backstop regardless of which option wins: a hermetic smoke asserting every card resolves to a non-zero height, plus a <code>--cc-min-card-h</code> floor so a mis-annotated card degrades to short rather than invisible.</td>
+          </tr>
+          <tr>
+            <td><strong>Measurement feedback loop.</strong> Setting a row span changes the card's width (span mapping) → reflows content → changes height → re-fires the observer.</td>
+            <td>medium</td>
+            <td>Observe only <em>block</em> size; write spans in a <code>requestAnimationFrame</code> batch; skip the write when the computed span is unchanged. The observer writes to a property the observed element's height cannot depend on.</td>
+          </tr>
+          <tr>
+            <td><strong><code>ResizeObserver loop completed with undelivered notifications</code></strong> console error — which, per CLAUDE.md's Logger section, lands in the in-app log viewer via the patched <code>console.error</code> and would look like a real fault.</td>
+            <td>medium</td>
+            <td>Same rAF batching. Explicitly assert a clean console in the hermetic smoke, since this repo's log viewer makes noisy warnings unusually costly.</td>
+          </tr>
+          <tr>
+            <td><strong>Cumulative layout shift on first paint</strong> — cards land at content height, then jump when spans are applied.</td>
+            <td>medium</td>
+            <td>Layer 1 already places cards at their final <em>width</em> and near-final height, so the shift is vertical-only and small. Apply the first span batch synchronously in <code>useLayoutEffect</code>, before paint.</td>
+          </tr>
+          <tr>
+            <td><strong>Ordering regressions.</strong> Dense packing can visually reorder cards relative to DOM order (today's <code>grid-flow-row-dense</code>, <code>CardGrid.tsx:42</code>, already can).</td>
+            <td>low</td>
+            <td>The row-span technique preserves DOM order by construction. <code>dense</code> becomes opt-in per canvas rather than always-on, so a section that cares about reading order gets it.</td>
+          </tr>
+          <tr>
+            <td><strong>Portalled popovers clipped.</strong> <code>CanonsCard.tsx:430</code> and <code>GenerateResumeCard.tsx:606</code> already portal to <code>&lt;body&gt;</code> specifically to escape the frame's <code>overflow-hidden</code>.</td>
+            <td>low</td>
+            <td>Keep the frame's <code>overflow-hidden</code> and the <code>hover:z-10</code> lift byte-identical; both workarounds keep working untouched. Verify both overlays open correctly as an explicit check.</td>
+          </tr>
+          <tr>
+            <td><strong>Turbopack (dev) vs webpack (prod) CSS divergence</strong> — CLAUDE.md flags that CSS hashing and prerender behaviour differ subtly between the two.</td>
+            <td>low</td>
+            <td>The new CSS is plain custom properties and standard grid, no Tailwind JIT arbitrary-value edge cases. Run <code>npm run build</code> and confirm against the prod tier on :3101 before merging, not just dev on :4101.</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Rollback</h3>
+      <p>Cheap by construction, and the mechanism depends on <a href="#open-questions">OQ3</a>. If <code>CardGrid</code> keeps its public <code>CardItem</code> API (options a/b), reverting is a one-file revert of the shim — no view touched, no data touched. This change writes no schema, no migration, and no route, so there is nothing to un-migrate and no DB tier to bring current; the entire blast radius is presentation.</p>
+      <p>Full back-out: <code>git revert</code> the merge, <code>npm run build</code>, <code>pm2 restart mission-control</code>. The worktree (<code>worktree-card-canvas</code>) keeps <code>main</code> clean until the change is proven on the dev tier, so the pre-merge state is always one branch switch away.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="open-questions">Open Questions</h2></summary>
+    <div class="section-body">
+      <h3>Unresolved decisions</h3>
+      <p>Five genuine forks. <strong>OQ1 was the blocking one</strong> — it decided whether 8 card files need edits, which in turn sized the whole task list.</p>
+      <div class="callout tip"><strong>All five resolved 2026-08-01.</strong> OQ1 → (b), OQ2 → (a), OQ3 → (b), OQ4 → (a), OQ5 → (a). The Tasks section below is authored against these decisions. Options are kept under each question as the record of what was weighed.</div>
+
+      <div class="callout tip"><strong>OQ1 — How does a Family B (fill-height) card declare its height once there are no grid rows to fill?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Reinterpret <code>rowSpan</code> as a height multiplier.</strong> Keep the existing prop; <code>rowSpan: 2</code> stops meaning "span 2 grid rows" and starts meaning "2 × a base height unit" (e.g. <code>2 × 14rem = 28rem</code>). Only <code>FinanceView.tsx:92,113</code> uses it today, so no call site changes. <em>Pros:</em> zero view edits; the two existing users keep working. <em>Cons:</em> the prop name becomes a lie — <code>rowSpan</code> that doesn't span rows is exactly the kind of drift that makes a component hard to reason about later, and it silently gives every Family B card the same height whether or not that suits it.</li>
+          <li><strong>(b)</strong> <strong>New explicit <code>height</code> prop with named tokens.</strong> Add <code>height?: "auto" | "sm" | "md" | "lg" | "xl"</code> to <code>CardItem</code>, defaulting to <code>"auto"</code> (content-measured). The 8 Family B cards get an explicit token at their call sites; <code>rowSpan</code> is deleted. <em>Pros:</em> says what it means; each card gets the height that actually suits it; the token set keeps heights consistent instead of 8 arbitrary pixel values; <code>auto</code>-by-default means Family A needs no annotation at all. <em>Cons:</em> touches the ~10 call sites that render Family B cards, and someone adding a new scrolling card must remember to set it — mitigated by the non-zero-height smoke.</li>
+          <li><strong>(c)</strong> <strong>Auto-detect at runtime.</strong> Measure whether a card's subtree contains a <code>flex-1</code>/<code>overflow-y-auto</code> descendant and switch that card to fill mode automatically. <em>Pros:</em> no API change and no call-site edits at all. <em>Cons:</em> magic — layout silently depends on a CSS class deep in a child's markup, so an unrelated refactor inside a card changes its outer height with no visible cause; and it can't decide <em>how tall</em>, only <em>that</em> it's bounded, so it still needs a default. Fragile in exactly the way the two-families problem is already subtle.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — add <code>height?: "auto" | "sm" | "md" | "lg" | "xl"</code> to <code>CardItem</code> (default <code>"auto"</code>) and delete <code>rowSpan</code>. The two families are a real distinction the code currently expresses only accidentally via <code>hFit</code>, and (b) is the only option that makes it explicit and per-card; (a) preserved call sites at the cost of a prop whose name no longer describes what it does, and (c) bought zero edits by making a card's outer height depend on invisible descendant markup. The <code>auto</code> default means Family A needs no annotation at all, so the edit cost falls only on the ~10 Family B call sites.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ2 — Does the <code>columns</code> prop become a maximum, or stay an exact column count?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong><code>columns</code> becomes a cap.</strong> It feeds <code>--cc-max-cols</code>; the grid uses as many tracks as fit up to that number and fewer when narrow. <code>ApplicationsView</code>'s <code>columns={2}</code> stays at most 2 wide; the default-3 views stay at most 3. <em>Pros:</em> preserves every view's designed information hierarchy (a kanban board spread to 5 tracks would be wrong) while still reflowing down fluidly; one-line migration. <em>Cons:</em> ultrawide displays still stop at 3 columns for most views, so part of the horizontal-space win needs a per-view opt-in to a higher cap.</li>
+          <li><strong>(b)</strong> <strong>Drop <code>columns</code>; derive purely from <code>--cc-card-min</code>.</strong> Column count is whatever fits at the minimum card width, uncapped. <em>Pros:</em> maximum space reclamation on wide displays; genuinely one continuous rule with no per-view knob. <em>Cons:</em> destroys deliberate 2-column compositions — <code>ApplicationsView</code>'s calendar/kanban pairing and <code>ProfileView</code>'s <code>columns={2}</code> sections become 4- or 5-up on a wide screen, which is a layout regression, not a win.</li>
+          <li><strong>(c)</strong> <strong>Cap by default, with an explicit <code>maxColumns</code> override.</strong> As (a), plus views that genuinely benefit from more tracks (the news grids in <code>SpaceView</code> and <code>AIView</code>, which are uniform small cards) pass a higher number. <em>Pros:</em> safe default plus the ultrawide win exactly where it helps. <em>Cons:</em> two props that mean nearly the same thing, which invites confusion about which one to reach for.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — <code>columns</code> feeds <code>--cc-max-cols</code> and acts as a cap. It is a strictly-safe reinterpretation of every existing call site, and the news-grid case that motivated (c) is served later by simply passing a larger <code>columns</code> value rather than adding a second prop that would need explaining. <em>(Taken as the stated default when the other four were resolved; ship-first, revisit if ultrawide still feels sparse.)</em></p>
+      </div>
+
+      <div class="callout tip"><strong>OQ3 — How does the new engine reach the 8 views?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Reimplement <code>CardGrid</code> in place.</strong> Keep the filename, the export, and the <code>CardItem</code> API; swap the internals. No view imports change. <em>Pros:</em> smallest diff; every view gets the improvement at once; rollback is a one-file revert. <em>Cons:</em> no side-by-side comparison — the change lands everywhere simultaneously, so a regression in one view can't be isolated by toggling that view alone.</li>
+          <li><strong>(b)</strong> <strong>New <code>CardCanvas</code>; <code>CardGrid</code> becomes a thin shim over it.</strong> Both names work; views migrate to <code>CardCanvas</code> one at a time to opt into new props like <code>height</code>. <em>Pros:</em> gradual, per-view migration; the shim keeps un-migrated views on today's exact behaviour; a bad view reverts independently. <em>Cons:</em> two components coexist during migration, and a half-migrated repo is a state someone has to hold in their head.</li>
+          <li><strong>(c)</strong> <strong>New <code>CardCanvas</code>, migrate all 8 views at once, delete <code>CardGrid</code>.</strong> <em>Pros:</em> ends clean with one component and no shim debt. <em>Cons:</em> largest single diff, touching all 8 views plus ~47 span-prop call sites in one change — the hardest version to review and the hardest to bisect if something looks wrong.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — build <code>CardCanvas</code> and make <code>CardGrid</code> a shim over it. It is the only option that lets the engine be proven on one view against the running dev tier before the other seven move, which matters because the failure mode here is visual and per-view rather than something <code>tsc</code> or a smoke will catch. The shim is deleted in the final task (P3.3), so (b) converges on (c)'s clean end state without (c)'s reviewability cost.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ4 — Is content-packing the default for every section, or opt-in per canvas?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Packed by default.</strong> Every canvas packs; a section opts out with <code>layout="rows"</code> to get today's aligned-row behaviour. <em>Pros:</em> the space win applies everywhere without per-view work, which is the stated goal; the existing <code>layout="masonry"</code> call site in <code>SpaceView.tsx:387</code> just becomes the default and its broken <code>colSpan</code> handling is fixed for free. <em>Cons:</em> sections whose cards are deliberately equal-height lose their tidy alignment, and staggered card bottoms can read as visually noisier on dense dashes like <code>InternalView</code>.</li>
+          <li><strong>(b)</strong> <strong>Opt-in per canvas.</strong> Default stays aligned rows; sections pass <code>layout="packed"</code>. <em>Pros:</em> nothing changes visually until each section is deliberately opted in, so the rollout is incremental and every change is intentional. <em>Cons:</em> the wasted space this doc exists to reclaim persists everywhere until someone goes view by view — the default stays the bad one, which is how the current <code>hFit</code> situation arose in the first place (14 opt-ins against 47 sites).</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — pack by default, with an explicit <code>layout="rows"</code> escape hatch. The <code>hFit</code> precedent is the direct evidence: an opt-in space-saving flag reached only 14 of 47 eligible sites, so leaving the wasteful behaviour as the default predictably means it stays. Making the good behaviour the default and the exception explicit inverts that, and it fixes <code>SpaceView</code>'s silently-broken <code>layout="masonry"</code> (defect 3) as a side effect.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ5 — What are the density token values, and is density user-facing?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Tokenise at today's values; change nothing visually.</strong> <code>--cc-gap: 1rem</code>, <code>--cc-pad: 1rem</code> — exactly the current <code>gap-4</code>/<code>p-4</code>. All space reclaimed comes from packing alone. <em>Pros:</em> isolates the change; any visual difference is provably from the layout engine, not from restyling, which makes the diff far easier to judge. <em>Cons:</em> leaves the per-card chrome savings on the table in this pass.</li>
+          <li><strong>(b)</strong> <strong>Tokenise and tighten now.</strong> Ship at <code>--cc-gap: 0.75rem</code>, <code>--cc-pad: 0.75rem</code>. <em>Pros:</em> visibly denser immediately, compounding with the packing win. <em>Cons:</em> conflates two changes in one diff — if the result feels wrong it's ambiguous whether the packing or the tightening caused it; and <code>0.75rem</code> is off the power-of-2 spacing steps this project prefers.</li>
+          <li><strong>(c)</strong> <strong>Tokenise and expose a comfortable/compact toggle</strong> persisted in the Zustand store alongside <code>isDarkMode</code> and <code>viewHues</code>. <em>Pros:</em> makes density a user choice rather than a guess. <em>Cons:</em> a settings surface, a store field, and a sync path for what is currently a two-value CSS variable — clearly a v2 given the preference for a minimal first cut.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — tokenise at today's values (<code>--cc-gap: 1rem</code>, <code>--cc-pad: 1rem</code>) and tune separately once the packing is visible. Keeping the engine change and the density change in separate diffs is what makes the result attributable to one of them; the tokens are the enabling work either way, so (b) stays a one-line follow-up and (c) a later feature on top of the same variables.</p>
+      </div>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="tasks">Tasks</h2></summary>
+    <div class="section-body">
+      <h3>Implementation checklist</h3>
+      <p>Authored against OQ1(b) / OQ2(a) / OQ3(b) / OQ4(a) / OQ5(a). <strong>Phase 0 is the serial bottleneck</strong> — the engine and the tokens must land and be proven on the pilot view before the seven-way fan-out in Phase 2. A consequence of OQ1(b) worth stating up front: <strong>the 8 Family B card/widget files are not edited at all</strong>. The <code>height</code> token is set at the <em>call site</em> in each view, and the bounded height it produces is exactly what their existing <code>flex-1 overflow-y-auto</code> already expects — so <code>KanbanWidget</code>, <code>CalendarWidget</code>, <code>MarketTop100Card</code> et al. keep working untouched. That removes what would otherwise have been the worst file-contention cluster.</p>
+
+      <details class="task" open>
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P0</span>
+          <span class="task-title">Phase 0 — Foundation (serial)</span>
+        </summary>
+        <div class="task-body">
+          <p>The substrate: tokens, engine, shim, and the two shared components. Everything in Phase 1 and 2 depends on this, and the files here are shared, so this phase does <strong>not</strong> fan out.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.1</span>
+              <span class="task-title">Density + sizing tokens in <code>app/globals.css</code></span>
+            </summary>
+            <div class="task-body">
+              <p>Sole owner of <code>app/globals.css</code>. No other task touches it. <em>Blocks everything.</em></p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.1.1</span>
+                  <span class="task-title">Declare the canvas tokens at <code>:root</code></span>
+                </summary>
+                <div class="task-body"><p><code>--cc-gap: 1rem</code>, <code>--cc-pad: 1rem</code> (OQ5a — identical to today's <code>gap-4</code>/<code>p-4</code>), plus <code>--cc-card-min: 22rem</code>, <code>--cc-row: 4px</code>, <code>--cc-max-cols: 3</code>, <code>--cc-min-card-h: 6rem</code> (the zero-height backstop).</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.1.2</span>
+                  <span class="task-title">Height-token scale for OQ1(b)</span>
+                </summary>
+                <div class="task-body"><p><code>--cc-h-sm: 16rem</code>, <code>--cc-h-md: 24rem</code>, <code>--cc-h-lg: 32rem</code>, <code>--cc-h-xl: 40rem</code>. Power-of-2-derived rem steps, per the project's spacing convention.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.1.3</span>
+                  <span class="task-title"><code>@supports (display: grid-lanes)</code> enhancement block</span>
+                </summary>
+                <div class="task-body"><p>Native masonry where available (Safari 26). Sets a <code>--cc-native-lanes: 1</code> flag the engine reads to skip JS measurement entirely.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.2</span>
+              <span class="task-title">Build <code>components/grids/CardCanvas.tsx</code></span>
+            </summary>
+            <div class="task-body">
+              <p>New file, sole owner. <em>Depends on</em> P0.1. The engine itself — the one genuinely hard task in the plan.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.2.1</span>
+                  <span class="task-title"><code>CardItem</code> type: add <code>height</code>, delete <code>rowSpan</code></span>
+                </summary>
+                <div class="task-body"><p><code>height?: "auto" | "sm" | "md" | "lg" | "xl"</code>, default <code>"auto"</code>. Keep <code>colSpan</code>, <code>hFit</code>, <code>className</code>, <code>wrapperStyle</code>, <code>frameStyle</code> byte-identical so the shim is a pure pass-through. <code>hFit</code> becomes a no-op alias for <code>height: "auto"</code>, retained for API compatibility.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.2.2</span>
+                  <span class="task-title">Layer 1 — track formula + span mapping</span>
+                </summary>
+                <div class="task-body"><p>The <code>repeat(auto-fill, minmax(max(…), 1fr))</code> declaration with <code>--cc-max-cols</code> fed from the <code>columns</code> prop (OQ2a). Span mapping by fraction: <code>colSpan === columns</code> → <code>grid-column: 1 / -1</code>, else <code>span N</code>. Verify the identity <code>X + g = (W + g) / N</code> holds so the cap is exact.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.2.3</span>
+                  <span class="task-title">Layer 2 — <code>useCardPacking</code> measurement hook</span>
+                </summary>
+                <div class="task-body"><p>One <code>ResizeObserver</code> per canvas (not per card), observing <code>contentBoxSize</code> block size only. Writes <code>grid-row-end: span ceil((h + gap) / row)</code> in a <code>requestAnimationFrame</code> batch, skipping the write when the computed span is unchanged. First pass in <code>useLayoutEffect</code> so it lands before paint. Measures the inner content element, never the <code>overflow-hidden</code> frame.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.2.4</span>
+                  <span class="task-title">Layer 3 — token consumption + <code>layout="rows"</code> escape hatch</span>
+                </summary>
+                <div class="task-body"><p>Packed is the default (OQ4a); <code>layout="rows"</code> restores aligned-row behaviour. Cards with an explicit <code>height</code> token are excluded from measurement and get a fixed height + span. Apply <code>--cc-min-card-h</code> as a floor on every card.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.2.5</span>
+                  <span class="task-title">Preserve the frame contract exactly</span>
+                </summary>
+                <div class="task-body"><p>Keep the <code>motion.div</code>, <code>overflow-hidden</code>, <code>break-inside-avoid</code>, and <code>group z-0 hover:z-10</code> from <code>CardGrid.tsx:54</code> unchanged — the portal workarounds in <code>CanonsCard.tsx:430</code> and <code>GenerateResumeCard.tsx:606</code> depend on this staying as-is.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.3</span>
+              <span class="task-title">Reduce <code>CardGrid.tsx</code> to a shim</span>
+            </summary>
+            <div class="task-body">
+              <p>Sole owner of <code>components/grids/CardGrid.tsx</code>. <em>Depends on</em> P0.2. <em>Parallel-safe</em> with P0.4, P0.5.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.3.1</span>
+                  <span class="task-title">Re-export over <code>CardCanvas</code> with back-compat mapping</span>
+                </summary>
+                <div class="task-body"><p>Translate legacy <code>rowSpan: N</code> → the nearest <code>height</code> token so un-migrated views keep working mid-migration, and default <code>layout="rows"</code> so <strong>nothing changes visually until a view is deliberately migrated</strong>. Re-export <code>CardItem</code> so no import breaks. Mark deprecated in a comment naming P3.3 as its removal.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.4</span>
+              <span class="task-title">Token-ise <code>components/ui/Card.tsx</code></span>
+            </summary>
+            <div class="task-body">
+              <p>Sole owner of <code>components/ui/Card.tsx</code>. <em>Depends on</em> P0.1. <em>Parallel-safe</em> with P0.3, P0.5.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.4.1</span>
+                  <span class="task-title">Header <code>mb-4</code> and content padding read the tokens</span>
+                </summary>
+                <div class="task-body"><p><code>Card.tsx:46</code>'s <code>mb-4</code> → <code>var(--cc-pad)</code>. Leave the <code>flex-1 flex flex-col min-h-0 min-w-0</code> content container (line 70) untouched — that is exactly what makes Family B's internal scrolling work once the card has a bounded height.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P0.5</span>
+              <span class="task-title">Thread canvas props through <code>components/Section.tsx</code></span>
+            </summary>
+            <div class="task-body">
+              <p>Sole owner of <code>components/Section.tsx</code>. <em>Depends on</em> P0.2. <em>Parallel-safe</em> with P0.3, P0.4.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P0.5.1</span>
+                  <span class="task-title">Grouped-items path forwards <code>columns</code> / <code>layout</code></span>
+                </summary>
+                <div class="task-body"><p>Line 48's <code>&lt;CardGrid items={group.items} layout={groupLayout} /&gt;</code> becomes a <code>CardCanvas</code> render. <code>groupLayout="masonry"</code> maps to the new packed default — this is where <code>SpaceView</code>'s company-news groups get their fix.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P1</span>
+          <span class="task-title">Phase 1 — Prove on the pilot view (serial gate)</span>
+        </summary>
+        <div class="task-body">
+          <p><em>Depends on</em> P0. One view, verified on the running dev tier, before seven agents fan out against an unproven engine. <strong><code>FinanceView</code> is the pilot</strong> — 3 cards makes it small, it holds 2 of the repo's 3 <code>rowSpan</code> sites so it exercises the height token immediately, and it contains both families (<code>MarketTop100Card</code> is Family B; <code>AssetPriceCard</code>/<code>GraphWidget</code> carries its own <code>min-h-[220px]</code>).</p>
+          <div class="callout"><strong>Correction (2026-08-01).</strong> An earlier draft of this section claimed <code>FinanceView</code> was the <em>only</em> <code>rowSpan</code> user. It is not — <code>SpaceView.tsx:152</code> (<code>space-calendar</code>) is a third site, handled in P2.5. The pilot choice is unaffected; the shim's <code>rowSpan</code> → height mapping covers <code>SpaceView</code> until then.</div>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.1</span>
+              <span class="task-title">Migrate <code>FinanceView.tsx</code> to <code>CardCanvas</code></span>
+            </summary>
+            <div class="task-body">
+              <p>Sole owner of <code>components/views/FinanceView.tsx</code>.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P1.1.1</span>
+                  <span class="task-title">Replace the two <code>rowSpan: 2</code> uses with <code>height</code> tokens</span>
+                </summary>
+                <div class="task-body"><p><code>fin-1</code> (<code>FinanceView.tsx:92</code>) and <code>fin-2</code> (line 113). <code>fin-2</code> is Family B and needs a real bound; <code>fin-3</code> stays <code>auto</code>.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P1.1.2</span>
+                  <span class="task-title">Confirm the chart still sizes correctly</span>
+                </summary>
+                <div class="task-body"><p><code>GraphWidget.tsx:33</code> is <code>flex-1 w-full min-h-[220px]</code> feeding a <code>ResponsiveContainer height="100%"</code> — verify it fills the token height rather than collapsing to the 220px floor.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P1.2</span>
+              <span class="task-title">Verify the pilot before fan-out</span>
+            </summary>
+            <div class="task-body">
+              <p><em>Depends on</em> P1.1. This is the go/no-go gate for Phase 2.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P1.2.1</span>
+                  <span class="task-title">Dev tier + clean console</span>
+                </summary>
+                <div class="task-body"><p><code>pm2 restart mission-control-dev</code>, load :4101. Assert <strong>no <code>ResizeObserver loop completed with undelivered notifications</code></strong> — per CLAUDE.md's Logger section the patched <code>console.error</code> puts that straight into the in-app log viewer, where it would read as a real fault.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P1.2.2</span>
+                  <span class="task-title">Prod-build parity check</span>
+                </summary>
+                <div class="task-body"><p><code>npm run build</code> + prod tier on :3101 — dev is Turbopack, prod is webpack, and CLAUDE.md flags that CSS hashing and prerender behaviour differ subtly between them.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P2</span>
+          <span class="task-title">Phase 2 — Fan out the remaining seven views (parallel)</span>
+        </summary>
+        <div class="task-body">
+          <p><em>Depends on</em> P1.2. Each task owns exactly one view file and touches nothing else, so all seven dispatch to concurrent agents in a single round. Per-task work is the same shape: swap <code>CardGrid</code> → <code>CardCanvas</code>, set <code>height</code> tokens on that view's Family B cards, leave Family A on the <code>auto</code> default.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.1</span>
+              <span class="task-title"><code>InternalView.tsx</code></span>
+            </summary>
+            <div class="task-body"><p>9 cards, 6 of them <code>colSpan: 3</code> → <code>1 / -1</code>. <code>FetcherHealthCard</code> is Family B. The densest dash, so the best read on whether staggered bottoms look noisy (the OQ4a trade-off). <em>Parallel-safe</em> with P2.2–P2.7.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.2</span>
+              <span class="task-title"><code>AIView.tsx</code></span>
+            </summary>
+            <div class="task-body"><p><code>LLMLeaderboardCard</code> + the 4 <code>ResearchPaperCard</code>s are Family B; the <code>NewsCyclingCard</code> grid is already <code>hFit</code> (Family A) and is the clearest packing win in the app. <em>Parallel-safe</em> with P2.1, P2.3–P2.7.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.3</span>
+              <span class="task-title"><code>ProfileView.tsx</code></span>
+            </summary>
+            <div class="task-body"><p>Heaviest call-site count (14 span props) but the easiest migration — every card is already <code>hFit: true</code>, so they all take the <code>auto</code> default and only <code>SnapshotsCard</code> needs a token. Note lines 360/372 use <code>columns={2}</code>, which under OQ2a is now a cap. <em>Parallel-safe</em> with P2.1, P2.2, P2.4–P2.7.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.4</span>
+              <span class="task-title"><code>ApplicationsView.tsx</code></span>
+            </summary>
+            <div class="task-body"><p>The riskiest of the seven: <code>KanbanWidget</code> and <code>CalendarWidget</code> are both Family B and <code>KanbanWidget.tsx:121,129</code> is <code>h-full</code> throughout, so it collapses outright without a correct token. <code>columns={2}</code>, and the <code>colSpan:2 = full width</code> convention its line 244 comment describes is exactly what the fraction mapping preserves. <em>Parallel-safe</em> with P2.1–P2.3, P2.5–P2.7.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.5</span>
+              <span class="task-title"><code>SpaceView.tsx</code></span>
+            </summary>
+            <div class="task-body"><p>The only <code>layout="masonry"</code> caller (line 387). Dropping to the packed default fixes defect 3 and restores left-to-right ordering the multi-column flow currently breaks. Also carries the repo's <strong>last remaining <code>rowSpan</code></strong> (<code>space-calendar</code>, line 152) — replace it with a height token, since that card scrolls via a bare <code>overflow-y-auto</code> and so needs a bound. <em>Parallel-safe</em> with P2.1–P2.4, P2.6, P2.7.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.6</span>
+              <span class="task-title"><code>PhysicsView.tsx</code></span>
+            </summary>
+            <div class="task-body"><p>4 <code>ResearchPaperCard</code>s, all <code>colSpan: 3</code>, all Family B — the most uniform view, so effectively a token-setting exercise. <em>Parallel-safe</em> with P2.1–P2.5, P2.7.</p></div>
+          </details>
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P2.7</span>
+              <span class="task-title"><code>PlanningView.tsx</code></span>
+            </summary>
+            <div class="task-body"><p>2 cards, both <code>colSpan: 3</code>; <code>GoalCard</code> is Family B. Smallest of the seven. <em>Parallel-safe</em> with P2.1–P2.6.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox">
+          <span class="task-id">P3</span>
+          <span class="task-title">Phase 3 — Verify + ship</span>
+        </summary>
+        <div class="task-body">
+          <p>P3.1 has no dependency on Phase 2 and starts as early as P0.2 lands, so it runs alongside the fan-out rather than after it.</p>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P3.1</span>
+              <span class="task-title">Hermetic smoke for the engine</span>
+            </summary>
+            <div class="task-body">
+              <p>New file under <code>scripts/tests/hermetic/</code>. Auto-registers with <code>pre-push.sh</code> by glob — no list to maintain. <em>Depends on</em> P0.2 only; <em>parallel-safe</em> with all of Phase 2.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P3.1.1</span>
+                  <span class="task-title">Span-mapping assertions</span>
+                </summary>
+                <div class="task-body"><p><code>colSpan === columns</code> → <code>1 / -1</code> for both the <code>columns={3}</code> and <code>columns={2}</code> cases, and the fraction mapping in between. Pure function, no DOM needed.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P3.1.2</span>
+                  <span class="task-title">Non-zero-height backstop</span>
+                </summary>
+                <div class="task-body"><p>The named mitigation for the OQ1(b) trade-off — a new scrolling card whose author forgot the token must fail the push, not ship invisible. Assert every resolved card height <code>&gt;= --cc-min-card-h</code>.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P3.2</span>
+              <span class="task-title">Full-suite + both-tier verification</span>
+            </summary>
+            <div class="task-body">
+              <p><em>Depends on</em> P2 (all) and P3.1.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P3.2.1</span>
+                  <span class="task-title"><code>tsc</code> clean + full hermetic suite</span>
+                </summary>
+                <div class="task-body"><p>Deleting <code>rowSpan</code> (OQ1b) means <code>tsc</code> is the mechanical check that every call site migrated — a missed one is a type error, not a silent visual bug.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P3.2.2</span>
+                  <span class="task-title">Walk all 8 dashes on both tiers</span>
+                </summary>
+                <div class="task-body"><p>Explicitly re-check the two portalled popovers (<code>CanonsCard</code>, <code>GenerateResumeCard</code>) open unclipped, and that mobile still reads correctly under <code>MobileShell</code>'s <code>0.5rem</code> gutter override.</p></div>
+              </details>
+            </div>
+          </details>
+
+          <details class="task">
+            <summary>
+              <input type="checkbox">
+              <span class="task-id">P3.3</span>
+              <span class="task-title">Delete the shim + update the docs</span>
+            </summary>
+            <div class="task-body">
+              <p><em>Depends on</em> P3.2. Converges OQ3(b) on the single-component end state.</p>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P3.3.1</span>
+                  <span class="task-title">Remove <code>CardGrid.tsx</code></span>
+                </summary>
+                <div class="task-body"><p>Only once every view imports <code>CardCanvas</code> directly. Grep for stragglers first.</p></div>
+              </details>
+              <details class="task">
+                <summary>
+                  <input type="checkbox">
+                  <span class="task-id">P3.3.2</span>
+                  <span class="task-title">Update <code>CLAUDE.md</code>, <code>docs/frontend_terminology.md</code>, <code>docs/next_steps.md</code></span>
+                </summary>
+                <div class="task-body"><p>CLAUDE.md's "Component hierarchy" section names <code>CardGrid</code> as the owner of canonical card chrome and prescribes the exact class string — that guidance moves to <code>CardCanvas</code> and the tokens, or it will actively mislead the next session.</p></div>
+              </details>
+            </div>
+          </details>
+        </div>
+      </details>
+
+      <h3>Parallelization &amp; critical path</h3>
+      <p>Edges read "must finish before"; siblings with no edge between them fan out to parallel agents.</p>
+      <pre class="mermaid">
+flowchart LR
+  P01["P0.1 tokens<br/>globals.css"] --> P02["P0.2 CardCanvas<br/>THE ENGINE"]
+  P01 --> P04["P0.4 Card.tsx"]
+  P02 --> P03["P0.3 CardGrid shim"]
+  P02 --> P05["P0.5 Section.tsx"]
+  P02 --> P31["P3.1 hermetic smoke"]
+  P03 --> P11["P1.1 FinanceView<br/>PILOT"]
+  P04 --> P11
+  P05 --> P11
+  P11 --> P12{"P1.2 verify<br/>GO / NO-GO"}
+  P12 --> FAN["P2.1 .. P2.7<br/>7 views, parallel"]
+  FAN --> P32["P3.2 full verify"]
+  P31 --> P32
+  P32 --> P33["P3.3 delete shim<br/>+ docs"]
+      </pre>
+
+      <p><strong>File contention</strong> — every file below has exactly one owning task, which is what makes the Phase 2 fan-out safe.</p>
+      <table>
+        <thead><tr><th>File / module</th><th>Tasks touching it</th><th>Parallel?</th></tr></thead>
+        <tbody>
+          <tr><td><code>app/globals.css</code></td><td>P0.1</td><td>sole owner — but blocks all; land first</td></tr>
+          <tr><td><code>components/grids/CardCanvas.tsx</code></td><td>P0.2</td><td>sole owner — serial bottleneck</td></tr>
+          <tr><td><code>components/grids/CardGrid.tsx</code></td><td>P0.3, P3.3.1</td><td>serialize — created then deleted</td></tr>
+          <tr><td><code>components/ui/Card.tsx</code></td><td>P0.4</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>components/Section.tsx</code></td><td>P0.5</td><td>sole owner — parallel-safe</td></tr>
+          <tr><td><code>components/views/FinanceView.tsx</code></td><td>P1.1</td><td>sole owner — the pilot</td></tr>
+          <tr><td>the other 7 <code>components/views/*.tsx</code></td><td>one task each (P2.1–P2.7)</td><td><strong>fully parallel — 7 agents</strong></td></tr>
+          <tr><td>the 8 Family B card/widget files</td><td><strong>none</strong></td><td>untouched by design (OQ1b)</td></tr>
+          <tr><td><code>scripts/tests/hermetic/</code></td><td>P3.1</td><td>new file — parallel-safe with all of P2</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong>Rounds &amp; critical path.</strong> <em>Round 1:</em> P0.1 alone (blocks everything). <em>Round 2:</em> P0.2 ∥ P0.4. <em>Round 3:</em> P0.3 ∥ P0.5 ∥ <strong>P3.1</strong> — the smoke starts here and runs concurrently with everything downstream. <em>Round 4:</em> P1.1 → P1.2, serial and deliberately un-parallelised: this is the <strong>go/no-go gate</strong>, and dispatching seven agents against an unproven engine is the main way this plan could waste effort. <em>Round 5:</em> P2.1–P2.7, seven agents at once — the widest point. <em>Round 6:</em> P3.2. <em>Round 7:</em> P3.3.</p>
+      <p><em>Critical path:</em> <code>P0.1 → P0.2 → P0.3 → P1.1 → P1.2 → P2.x → P3.2 → P3.3</code>. <strong>P0.2 is the most-constrained node</strong> — it is the only task with real algorithmic content (the measurement hook and the track formula), everything downstream waits on it, and it cannot be split without two agents editing one file. Schedule it first and give it the most care; the seven-way fan-out in Round 5 is wide but mechanical, and is not where the risk lives.</p>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
