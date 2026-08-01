@@ -1,5 +1,7 @@
 import React from "react";
-import { CardGrid, CardItem } from "./grids/CardGrid";
+import { CardCanvas, type CardItem } from "./grids/CardCanvas";
+
+export type { CardItem };
 
 export interface SectionGroup {
     label: string;
@@ -12,11 +14,15 @@ interface SectionProps {
     children?: React.ReactNode;
     /** Optional grouped card items with subheader labels. Rendered after children. */
     groups?: SectionGroup[];
-    /** Layout mode for grouped CardGrids. Defaults to "grid". */
+    /** Layout mode for grouped card canvases. Defaults to "grid".
+     *  Legacy spelling, mapped to CardCanvas's "rows" / "packed" below —
+     *  kept so callers don't all change in the same diff. */
     groupLayout?: "grid" | "masonry";
+    /** Column cap for grouped canvases (OQ2a — a maximum, not a fixed count). */
+    groupColumns?: number;
 }
 
-export const Section: React.FC<SectionProps> = ({ title, description, children, groups, groupLayout = "grid" }) => {
+export const Section: React.FC<SectionProps> = ({ title, description, children, groups, groupLayout = "grid", groupColumns = 3 }) => {
     // Horizontal inset lives on this outer container (not the header / children
     // individually) so the whole section — header + cards — gets a consistent
     // gutter. It sits INSIDE each view's scroll container, so the scrollbar
@@ -45,7 +51,16 @@ export const Section: React.FC<SectionProps> = ({ title, description, children, 
                                         {group.label}
                                     </span>
                                 </div>
-                                <CardGrid items={group.items} layout={groupLayout} />
+                                <CardCanvas
+                                    items={group.items}
+                                    columns={groupColumns}
+                                    // "grid" → rows keeps un-migrated sections
+                                    // visually unchanged; "masonry" → packed is
+                                    // the fix for SpaceView's company-news
+                                    // groups, which were flowing column-wise
+                                    // and silently dropping colSpan.
+                                    layout={groupLayout === "masonry" ? "packed" : "rows"}
+                                />
                             </div>
                         )
                     ))}

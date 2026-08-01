@@ -122,6 +122,35 @@
   --ring: oklch(0.6 0.2 var(--theme-hue));
   --radius: 0.75rem;
 
+  /* ── CardCanvas layout engine ────────────────────────────────────────────
+     Density + sizing tokens for components/grids/CardCanvas.tsx. Design doc:
+     docs/card-canvas.html. Deliberately set to TODAY's values (--cc-gap and
+     --cc-pad == the old gap-4 / p-4) so the visual delta from the new engine
+     is attributable to packing alone, not to a simultaneous restyle — see
+     OQ5(a). Tightening these is a one-line follow-up once packing is visible. */
+  --cc-gap: 1rem;
+  --cc-pad: 1rem;
+  /* Track floor. Below this the grid drops a column rather than squeezing. */
+  --cc-card-min: 22rem;
+  /* Masonry quantum: every card's height rounds UP to a multiple of this, so
+     smaller = tighter packing but more grid rows for the engine to lay out.
+     4px is visually indistinguishable from true masonry at our card sizes. */
+  --cc-row: 4px;
+  /* Column CAP, not a fixed count (OQ2a) — the <CardCanvas columns> prop
+     overrides this per canvas. */
+  --cc-max-cols: 3;
+  /* Zero-height backstop: a card that somehow resolves to nothing still shows
+     up as short rather than invisible. Paired with the P3.1.2 hermetic smoke. */
+  --cc-min-card-h: 6rem;
+
+  /* Height tokens for fill-height ("Family B") cards — the ones using
+     `flex-1 overflow-y-auto`, which need a BOUNDED parent to scroll against.
+     Content-sized cards take the `auto` default and never set these. */
+  --cc-h-sm: 16rem;
+  --cc-h-md: 24rem;
+  --cc-h-lg: 32rem;
+  --cc-h-xl: 40rem;
+
   --chart-1: oklch(0.6 0.2 var(--theme-hue));
   --chart-2: oklch(0.7 0.15 180deg);
   --chart-3: oklch(0.5 0.2 300deg);
@@ -232,6 +261,111 @@ html.light {
 
   html.light .text-muted-foreground {
     color: #6b7280 !important;
+  }
+}
+
+/* ══ CardCanvas ═══════════════════════════════════════════════════════════
+   The card layout engine. Design doc: docs/card-canvas.html.
+   Replaces CardGrid's `grid-cols-1 md:grid-cols-2 lg:grid-cols-3` ladder.
+
+   THE COLUMN FORMULA, innermost-out:
+
+     calc((100% - (N - 1) * gap) / N)   one N-th of the container, gaps removed
+     max(--cc-card-min, ^)              never narrower than that share, so the
+                                        track count can never EXCEED N
+     min(100%, ^)                       never wider than the container, so a
+                                        container narrower than --cc-card-min
+                                        yields one full-width column instead
+                                        of overflowing
+
+   Why the max() caps the count: let X be that share and g the gap. Then
+   X + g == (W + g) / N exactly, and auto-fill fits floor((W + g) / (X + g))
+   tracks == N. So the cap is exact, not approximate — and it is expressed in
+   `100%` of the GRID, which means it responds to container width, not viewport
+   width. That is the whole "reactive" win, and it needs no breakpoints and no
+   JavaScript. */
+.card-canvas {
+  display: grid;
+  gap: var(--cc-gap);
+  grid-template-columns: repeat(
+    auto-fill,
+    minmax(
+      min(
+        100%,
+        max(
+          var(--cc-card-min),
+          calc((100% - (var(--cc-max-cols) - 1) * var(--cc-gap)) / var(--cc-max-cols))
+        )
+      ),
+      1fr
+    )
+  );
+}
+
+/* Packed (default, OQ4a). Row gap moves OUT of the grid and INTO each card's
+   row span — see CardCanvas.tsx's spanFor(). `align-items: start` is what
+   kills the stretch waste this whole change exists to reclaim: a grid item no
+   longer inherits its row's height, so a short card stops paying for a tall
+   neighbour.
+
+   It is also what makes the measurement loop-free. The item's height stays
+   `auto` (its content) regardless of how many rows it spans, so writing
+   grid-row-end back cannot feed into the height we measured to compute it. */
+.card-canvas[data-layout="packed"] {
+  grid-auto-rows: var(--cc-row);
+  row-gap: 0;
+  align-items: start;
+}
+
+/* Pre-hydration and no-JS resting state. Cards sit at content height with
+   ordinary row gaps — already strictly better than the old stretch, and never
+   overflowing, because until JS reports the real column count CardCanvas emits
+   only full-width or single-track spans (never an intermediate `span 2`, which
+   would manufacture an implicit column on a narrow grid). */
+.card-canvas[data-layout="packed"]:not([data-packed="on"]) {
+  grid-auto-rows: auto;
+  row-gap: var(--cc-gap);
+}
+
+/* Opt-out: today's aligned-row behaviour, for sections that want tidy
+   equal-height rows. Also what the deprecated CardGrid shim defaults to, so
+   an un-migrated view is visually unchanged. */
+.card-canvas[data-layout="rows"] {
+  align-items: stretch;
+}
+
+.card-canvas > * {
+  min-height: var(--cc-min-card-h);
+}
+
+/* Card inner padding + header gap, tokenised out of the old hardcoded
+   `p-4` / `mb-4`. Density is now one knob instead of a three-file edit. */
+.cc-pad { padding: var(--cc-pad); }
+.cc-mb { margin-bottom: var(--cc-pad); }
+
+.cc-h-sm { height: var(--cc-h-sm); }
+.cc-h-md { height: var(--cc-h-md); }
+.cc-h-lg { height: var(--cc-h-lg); }
+.cc-h-xl { height: var(--cc-h-xl); }
+
+/* Native masonry (CSS grid level 3). Shipped in Safari 26; Chrome and Firefox
+   are still behind flags as of 2026, which is why this is an enhancement and
+   not the mechanism. CardCanvas checks CSS.supports() for the same condition
+   and skips measuring entirely when it holds — the browser does it better. */
+@supports (display: grid-lanes) {
+  .card-canvas[data-layout="packed"] {
+    display: grid-lanes;
+    grid-auto-rows: auto;
+    row-gap: var(--cc-gap);
+  }
+  .card-canvas[data-layout="packed"] > * {
+    grid-row-end: auto !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-canvas > * {
+    transition: none;
   }
 }
 

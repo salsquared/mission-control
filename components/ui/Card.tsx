@@ -43,7 +43,9 @@ export const Card: React.FC<CardProps> = ({
     return (
         <div className={cn("flex flex-col h-full w-full", wrapperClassName)} style={wrapperStyle}>
             {showHeader && (
-                <div className={cn("flex items-center justify-between shrink-0", collapsed ? "mb-0" : "mb-4", iconColorClass)}>
+                // Header gap reads --cc-pad (see globals.css) rather than a
+                // hardcoded mb-4, so canvas density is a single knob.
+                <div className={cn("flex items-center justify-between shrink-0", collapsed ? "mb-0" : "cc-mb", iconColorClass)}>
                     {collapsible ? (
                         <button
                             type="button"
