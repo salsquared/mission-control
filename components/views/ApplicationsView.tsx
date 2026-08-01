@@ -33,30 +33,14 @@ const TRACKS: ReadonlyArray<{
     { id: "side", label: "Side", icon: Briefcase, activeClass: "bg-amber-500/20 text-amber-200 border-amber-400/40" },
 ] as const;
 
-// Track-colored glow rgb — cyan-400 (career) / amber-500 (side).
-const TRACK_GLOW_RGB: Record<PostingsTrackKey, string> = {
-    career: "34, 211, 238",
-    side: "245, 158, 11",
-};
-
-// Track-colored accent for the three switchable cards, in two layers:
-//   trackGradient — a large radial wash blooming from center that covers most
-//     of the card before fading at the edges. A background-image (on the inner
-//     Card wrapper) so it layers over the card's bg-black/40 background-color.
-//   trackShadow   — a very faint colored drop-shadow. A box-shadow on the outer
-//     frame (CardCanvas's motion.div) so its overflow-hidden doesn't clip it.
-// Both follow the active track (cyan career / amber side).
-function trackGradient(track: PostingsTrackKey): React.CSSProperties {
-    const rgb = TRACK_GLOW_RGB[track];
-    return {
-        backgroundImage: `radial-gradient(ellipse at center, rgba(${rgb}, 0.18) 0%, rgba(${rgb}, 0.08) 55%, transparent 100%)`,
-    };
-}
-function trackShadow(track: PostingsTrackKey): React.CSSProperties {
-    return {
-        boxShadow: `0 0 16px -6px rgba(${TRACK_GLOW_RGB[track]}, 0.28)`,
-    };
-}
+// The Kanban / New Postings / Watchlists cards deliberately carry NO per-track
+// accent. They previously took a radial `trackGradient` wash plus a colored
+// `trackShadow`, both keyed to the active track; those are gone in favour of
+// CardCanvas's canonical chrome, which every other card on every other dash
+// already uses. The track is still legible from the switcher above and from the
+// cards' own contents, so the glow was decoration, not signal. Re-adding it
+// means reintroducing the one place in the app where a card overrides its
+// background and frame shadow — do that only deliberately.
 
 export const ApplicationsView: React.FC = () => {
     // Edge-trusted: a verified viewer is always present past Cloudflare Access,
@@ -284,8 +268,6 @@ export const ApplicationsView: React.FC = () => {
             id: "kanban",
             colSpan: 2,
             className: "h-[50vh]",
-            wrapperStyle: trackGradient(activeTrack),
-            frameStyle: trackShadow(activeTrack),
             content: (
                 <ApplicationsKanbanCard
                     key={activeTrack}
@@ -302,15 +284,11 @@ export const ApplicationsView: React.FC = () => {
         {
             id: "new-postings",
             colSpan: 1,
-            wrapperStyle: trackGradient(activeTrack),
-            frameStyle: trackShadow(activeTrack),
             content: <NewPostingsCard key={activeTrack} track={activeTrack} />
         },
         {
             id: "watchlists",
             colSpan: 1,
-            wrapperStyle: trackGradient(activeTrack),
-            frameStyle: trackShadow(activeTrack),
             content: <WatchlistsCard key={activeTrack} track={activeTrack} />
         },
         {

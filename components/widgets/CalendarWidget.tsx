@@ -304,12 +304,26 @@ export const CalendarWidget: React.FC<CalendarWidgetProps> = ({ isAdding, setIsA
                     </div>
                 )}
 
+                {/* Both zero-states center on BOTH axes, not just horizontally.
+                    `text-center` alone left them pinned to the top of the scroll
+                    region with a tall void beneath, which is what a fixed-height
+                    mount makes obvious.
+
+                    `h-full` and `py-10` are both load-bearing because the two
+                    mount sites size differently. ApplicationsView's card is
+                    `h-[40vh]` — definite, so `h-full` resolves and the flex
+                    centering takes over (the padding just insets harmlessly).
+                    ToDoCard's is `max-h-[65vh]` — auto until it hits the cap, and
+                    a percentage height does not resolve against an auto-height
+                    parent, so there `h-full` is inert and `py-10` keeps the old
+                    spacing. Content-hugging there means there is no void to
+                    center in anyway. Dropping either class regresses one site. */}
                 {loading && sortedEvents.length === 0 ? (
-                    <div className="flex justify-center items-center py-10">
+                    <div className="flex h-full items-center justify-center py-10">
                         <Loader2 className="w-6 h-6 animate-spin text-blue-500/50" />
                     </div>
                 ) : sortedEvents.length === 0 ? (
-                    <div className="text-center text-sm text-slate-500 py-10">No upcoming pipeline events.</div>
+                    <div className="flex h-full items-center justify-center py-10 text-center text-sm text-slate-500">No upcoming pipeline events.</div>
                 ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         {sortedEvents.map((ev) => {
