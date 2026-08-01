@@ -128,7 +128,10 @@ export const CardCanvas: React.FC<CardCanvasProps> = ({
         }
     }, []);
 
-    const measure = useCallback(() => {
+    // `writeSpans` gates ONLY the row-span pass. The column count is measured
+    // unconditionally — see the note in the effect below for why separating
+    // the two matters.
+    const measure = useCallback((writeSpans: boolean) => {
         const grid = gridRef.current;
         if (!grid) return;
 
@@ -139,6 +142,8 @@ export const CardCanvas: React.FC<CardCanvasProps> = ({
         // truth, so the two can never drift out of agreement.
         const n = trackCount(cs.gridTemplateColumns);
         setCols((prev) => (prev === n ? prev : n));
+
+        if (!writeSpans) return;
 
         const rootPx = parseFloat(getComputedStyle(document.documentElement).fontSize);
         const rowPx = readPx(cs.getPropertyValue("--cc-row"), 4, rootPx);
@@ -164,17 +169,31 @@ export const CardCanvas: React.FC<CardCanvasProps> = ({
     }, []);
 
     useLayoutEffect(() => {
-        if (layout !== "packed") {
-            // Rows mode: drop any spans a previous packed render left behind.
+        const grid = gridRef.current;
+        if (!grid) return;
+
+        // MEASURING THE COLUMN COUNT AND WRITING ROW SPANS ARE TWO DIFFERENT
+        // JOBS, and only the second one is "packing".
+        //
+        // `resolveGridColumn` withholds every intermediate span until the real
+        // track count is known (cols > 0), because a `span 2` in a one-track
+        // grid manufactures an implicit column and overflows. So the track
+        // count is needed in EVERY mode — rows, packed, and native-lanes alike.
+        // Skipping it along with the packing work silently collapses each
+        // multi-column card to a single track: exactly the regression that made
+        // SpaceView's Launch Calendar render one column wide instead of two on
+        // Safari 26 (the only engine that currently has `display: grid-lanes`),
+        // and it did the same in `layout="rows"`.
+        const packs = layout === "packed" && !supportsNativeLanes();
+
+        if (!packs) {
+            // Not packing here — drop any spans a previous packed render left
+            // behind, and let the CSS fall back to real row gaps. The column
+            // measurement below still runs.
             for (const el of frames.current.values()) el.style.gridRowEnd = "";
             lastSpan.current.clear();
             setPackedOn(false);
-            return;
         }
-        if (supportsNativeLanes()) return;
-
-        const grid = gridRef.current;
-        if (!grid) return;
 
         // Batch every write into a rAF OUTSIDE the observer callback. Writing
         // synchronously from inside it is what produces "ResizeObserver loop
@@ -185,17 +204,19 @@ export const CardCanvas: React.FC<CardCanvasProps> = ({
             if (raf.current != null) return;
             raf.current = requestAnimationFrame(() => {
                 raf.current = null;
-                measure();
+                measure(packs);
             });
         };
 
         // First pass synchronously, before paint, so cards land at their final
         // position rather than visibly jumping once spans are applied.
-        measure();
+        measure(packs);
 
+        // The grid itself is observed in every mode: its width is what changes
+        // the track count. Individual card heights only matter when packing.
         const ro = new ResizeObserver(schedule);
         ro.observe(grid);
-        for (const el of frames.current.values()) ro.observe(el);
+        if (packs) for (const el of frames.current.values()) ro.observe(el);
 
         return () => {
             ro.disconnect();

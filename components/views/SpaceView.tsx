@@ -148,6 +148,9 @@ export const SpaceView: React.FC = () => {
         },
         {
             id: "space-calendar",
+            // Two tracks of three — the width it had before the CardCanvas
+            // migration. Needs the canvas to have reported its real track
+            // count, or the span is withheld and this renders one wide.
             colSpan: 2,
             // Scrolls via a bare `overflow-y-auto` and self-bounds nowhere, so it
             // needs an explicit height. Replaces the old rowSpan: 2.

@@ -73,6 +73,18 @@ ok(
 eq("cols unknown: full-width still emitted", resolveGridColumn(3, 3, 0), "1 / -1");
 eq("cols unknown: intermediate span withheld", resolveGridColumn(2, 3, 0), undefined);
 eq("cols unknown: colSpan 2 of 4 withheld", resolveGridColumn(2, 4, 0), undefined);
+// REGRESSION (2026-08-01): these two lines are a CONTRACT ON THE COMPONENT, not
+// just on this function. Because an unknown track count withholds the span, any
+// render path in CardCanvas that fails to establish `cols` silently collapses
+// every multi-column card to ONE track. That shipped: the effect skipped its
+// whole measure pass when native `display: grid-lanes` was available (and in
+// `layout="rows"`), so SpaceView's colSpan-2 Launch Calendar rendered one column
+// wide on Safari 26. Measuring the track count is NOT part of the packing work
+// and must never be skipped alongside it.
+eq("cols unknown: colSpan 2 of 3 is WITHHELD (component must supply cols)",
+   resolveGridColumn(2, 3, 0), undefined);
+eq("cols known: the same card spans 2", resolveGridColumn(2, 3, 3), "span 2");
+
 // Narrow grid: one real track. An intermediate span here would overflow.
 eq("1 real track: intermediate span withheld", resolveGridColumn(2, 3, 1), undefined);
 eq("1 real track: full-width still fine", resolveGridColumn(3, 3, 1), "1 / -1");
