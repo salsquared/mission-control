@@ -12,6 +12,7 @@ import { useAccount } from "@/hooks/useAccount";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
 import { FetcherHealthCard } from "../cards/FetcherHealthCard";
+import { CrewCard } from "../cards/CrewCard";
 
 // Soft cap on the in-memory log buffer. The SSE stream pushes one entry per
 // server-side console.* call, so under load this fills quickly. Lowered from
@@ -389,6 +390,14 @@ export const InternalView: React.FC = () => {
             id: "fetcher-health",
             colSpan: 3,
             content: <FetcherHealthCard />,
+        },
+        {
+            // Owner-only crew roster (P7). Lives here because internal-systems
+            // is already owner-gated at the route and excluded from
+            // CREW_DASH_IDS — no new access-control surface is introduced.
+            id: "crew",
+            colSpan: 3,
+            content: <CrewCard />,
         },
         {
             id: "internal-3",

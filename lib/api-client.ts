@@ -36,6 +36,7 @@ import {
     SettingsPostSchema,
 } from './schemas/settings';
 import { SystemTelemetryResponseSchema, FetcherHealthResponseSchema } from './schemas/system';
+import { CrewListResponseSchema, CrewCreateResponseSchema, CrewDeleteResponseSchema } from './schemas/crew';
 import {
     CacheInvalidatePostSchema,
     CacheInvalidateResponseSchema,
@@ -184,6 +185,9 @@ export const queryKeys = {
     // process-stable, connection state flips only on a manual connect/disconnect).
     account: ['account'] as const,
     tasks: ['tasks'] as const,
+    // Owner-only crew roster (P7). Not on a refetch cadence — it changes only
+    // when the owner adds or removes someone, and both mutations invalidate it.
+    crew: ['crew'] as const,
     goals: ['goals'] as const,
     applications: ['applications'] as const,
     settings: ['settings'] as const,
@@ -457,6 +461,21 @@ export const api = {
             const body = SettingsPostResponseSchema.parse(await res.json());
             return { ok: true, version: body.version };
         },
+    },
+
+    // Owner-only crew management (P7). `remove` sends the typed email in the
+    // body: the server re-checks it against the target row before deleting, so
+    // a stale list cannot delete the wrong person.
+    crew: {
+        list: () => jsonFetch('/api/crew', CrewListResponseSchema),
+        add: (email: string) =>
+            jsonFetch('/api/crew', CrewCreateResponseSchema, jsonBody('POST', { email })),
+        remove: (id: string, confirmEmail: string) =>
+            jsonFetch(`/api/crew/${encodeURIComponent(id)}`, CrewDeleteResponseSchema, {
+                method: 'DELETE',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ confirmEmail }),
+            }),
     },
 
     system: {

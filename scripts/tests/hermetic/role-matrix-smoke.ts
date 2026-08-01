@@ -1,6 +1,6 @@
 /**
  * Role-matrix smoke — every route in `app/api/**` carries a role decision.
- * P2.2 of docs/multi-user-crew.html; the manifest below is §2.5's 67-route table.
+ * P2.2 of docs/multi-user-crew.html; the manifest below is §2.5's 69-route table.
  *
  *   npx tsx scripts/tests/hermetic/role-matrix-smoke.ts
  *
@@ -135,7 +135,7 @@ const MANIFEST: RouteSpec[] = [
     { route: "research/import", cls: "owner", group: "owner/other-dashes" },
     { route: "research/saved", cls: "owner", group: "owner/other-dashes" },
 
-    // ---- Owner-only — ops (6) --------------------------------------------
+    // ---- Owner-only — ops (8) --------------------------------------------
     // system/logs is the sharpest of these: lib/logger.ts monkey-patches
     // console.* into a ring buffer, and in prod that includes the Prisma
     // $allOperations query log WITH PARAMETER VALUES — i.e. every user's data.
@@ -146,6 +146,16 @@ const MANIFEST: RouteSpec[] = [
     { route: "system/logs/historical", cls: "owner", group: "owner/ops" },
     { route: "system/fetcher-health", cls: "owner", group: "owner/ops" },
     { route: "notifications/test", cls: "owner", group: "owner/ops" },
+
+    // The crew-management surface (P7). Owner-only for two separate reasons,
+    // and losing EITHER guard would be its own incident: the GET enumerates
+    // every account's email plus what they have been spending (the cross-user
+    // visibility §3.2 gives the owner and denies crew), and the POST/DELETE are
+    // the account-creation and account-destruction surfaces themselves. A crew
+    // viewer reaching DELETE could remove every other crew member; reaching
+    // POST could provision an accomplice.
+    { route: "crew", cls: "owner", group: "owner/ops" },
+    { route: "crew/[id]", cls: "owner", group: "owner/ops" },
 
     // ---- Owner-only — needs the owner's Google tokens directly (4) --------
     // These reach Gmail/Calendar through the owner's refresh token. Crew has no
@@ -230,7 +240,7 @@ const MANIFEST: RouteSpec[] = [
 ];
 
 /** §2.5's totals. Asserted so a route MOVED between classes also trips. */
-const EXPECTED = { owner: 26, crew: 39, unguarded: 2, total: 67 } as const;
+const EXPECTED = { owner: 28, crew: 39, unguarded: 2, total: 69 } as const;
 
 // Guard families. Membership, not identity — see the header note on why exact
 // names are deliberately not pinned.
@@ -395,7 +405,7 @@ function checkManifestCoversEveryRoute(discovered: string[]): void {
 // ---------------------------------------------------------------------------
 
 function checkCounts(discovered: string[]): void {
-    section("2. Class counts — 26 owner + 39 crew + 2 unguarded = 67 (§2.5)");
+    section("2. Class counts — 28 owner + 39 crew + 2 unguarded = 69 (§2.5)");
 
     const byClass = (cls: RouteClass) => MANIFEST.filter((r) => r.cls === cls).length;
     const cases: Array<[string, number, number]> = [
@@ -414,7 +424,7 @@ function checkCounts(discovered: string[]): void {
     // owner/google is visible even though the class total is unchanged.
     const groups: Array<[string, number]> = [
         ["owner/other-dashes", 16],
-        ["owner/ops", 6],
+        ["owner/ops", 8],
         ["owner/google", 4],
         ["crew/applications", 6],
         ["crew/postings", 8],

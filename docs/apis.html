@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-07-30 · 67/67 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-08-01 · 69/69 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -33,6 +33,7 @@
       <li><a href="#sec-Internal-Systems">Internal Systems</a></li>
       <li><a href="#sec-Account">Account</a></li>
       <li><a href="#sec-Canons">Canons</a></li>
+      <li><a href="#sec-Crew">Crew</a></li>
     </ol>
   </details>
 
@@ -3839,6 +3840,57 @@
   }
 }</code></pre>
   <p class="api-src"><code>app/api/canons/[id]/selection/route.ts</code></p>
+</div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="sec-Crew">Crew</h2></summary>
+    <div class="section-body">
+<div class="api-route" id="/api/crew">
+  <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/crew</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span></div>
+  <p class="api-purpose">Owner-only crew roster — lists every account with its current AI/watchlist/application usage, and provisions a new role="crew" account by email.</p>
+  <p class="api-notes">Second production user.create path; shares lib/crew/core.ts with scripts/manage-crew.ts so neither can mint an owner. POST accepts an email ONLY — there is no role parameter by design. Counters are three grouped queries, not per-row.</p>
+  <p class="api-schema-label">POST body — <code>CrewCreateSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "email": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    }
+  },
+  "required": [
+    "email"
+  ],
+  "additionalProperties": false
+}</code></pre>
+  <p class="api-src"><code>app/api/crew/route.ts</code></p>
+</div>
+
+<div class="api-route" id="/api/crew/{id}">
+  <div class="api-route-head"><span class="api-method delete">DELETE</span><code class="api-path">/api/crew/{id}</code></div>
+  <div class="api-chips"><span class="api-chip auth">requireOwner</span></div>
+  <p class="api-purpose">Owner-only removal of a crew account — deletes the User row, cascades all 18 relations, and sweeps that person's resume files off disk.</p>
+  <p class="api-notes">Irreversible, no soft-delete. Requires a confirmEmail in the body that MUST match the target row's email, so a stale list cannot delete the wrong person. Refuses role="owner" via lib/crew/core.ts. Orphaned files are reported, not raised — the row is already gone.</p>
+  <p class="api-schema-label">DELETE body — <code>CrewDeleteSchema</code></p><pre><code class="language-json">{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "confirmEmail": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 320
+    }
+  },
+  "required": [
+    "confirmEmail"
+  ],
+  "additionalProperties": false
+}</code></pre>
+  <p class="api-src"><code>app/api/crew/[id]/route.ts</code></p>
 </div>
     </div>
   </details>

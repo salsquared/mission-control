@@ -754,6 +754,35 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
         <div class="callout warn"><strong>R11's ordering gets sharper under (b), not softer.</strong> Under (a), widening Access before P5.2's deploy would have served <em>the listed crew</em> an owner session on the pre-multi-user build. Under (b) it would serve that session to <em>anyone with a Google account</em>. "Never before P5.2" was already absolute; this makes the blast radius of breaking it unbounded rather than merely severe.</div>
         <p><strong>The three costs are paid in this order, and the order is not negotiable</strong> (tasks P5.3.1 → P5.3.2 → P5.3.3): throttle the warn <em>in code</em> first, then restore the second barrier with a path-scoped Access app on <code>/api/auth/*</code>, and only then widen the main policy. Doing the Cloudflare half first opens both a log-flush vector and a single-point-of-failure window, for however long the code half takes to land.</p>
       </div>
+
+      <div class="callout tip"><strong>OQ16 — Where does the owner-only crew-management surface live?</strong></div>
+      <div class="oq-detail">
+        <p class="note"><strong>Raised 2026-07-31.</strong> OQ15b makes provisioning a single command, but that command is still a terminal on the box. The owner asked for a UI. This OQ decides only <em>placement</em>; OQ17 and OQ18 decide capability and content, because they are independent decisions and bundling them would hide two forks inside one.</p>
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>A section on the existing <code>internal-systems</code> dash.</strong> <em>Pros:</em> that dash is <em>already</em> owner-only at the route guard, already excluded from <code>CREW_DASH_IDS</code>, and already the ops surface (live logs, system stats, fetcher health) — so the crew card inherits a boundary that is enforced and smoke-tested rather than introducing a new one. <em>Cons:</em> it is one more card on a dash that is already dense.</li>
+          <li><strong>(b)</strong> <strong>A dedicated owner-only dash.</strong> <em>Pros:</em> conceptually clean, room to grow. <em>Cons:</em> a 9th dash for a page opened a handful of times a year, and it needs a new <code>BASE_DASHES</code> entry, a hue, a title, and its own <code>CREW_DASH_IDS</code> exclusion — four places to get the role gating right instead of zero.</li>
+          <li><strong>(c)</strong> <strong>A section inside <code>ProfileView</code>.</strong> <em>Cons:</em> Profile is a <strong>crew-visible</strong> dash, so the section would have to be conditionally hidden by role — reintroducing exactly the "hiding a dash is not access control" shape CLAUDE.md warns about. Enforcement would still be server-side, but the surface is meaningfully easier to get wrong.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(a)</strong> — <code>internal-systems</code>. It is the only option that adds <em>zero</em> new access-control surface, which is the right property for the page that manages accounts. The card therefore carries no role check of its own, deliberately: <code>/api/crew</code> is guarded by <code>requireOwner()</code> and the role matrix asserts a crew viewer gets 403, so a conditional render would only be a second, weaker copy of a boundary already enforced where it counts.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ17 — Can the UI remove a crew member, or does removal stay CLI-only?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Add + list only; removal stays behind <code>manage-crew.ts remove --confirm-delete</code>.</strong> <em>Pros:</em> the single most destructive operation in the codebase keeps the friction of a deliberate terminal command; strictly less code and no DELETE route to guard. <em>Cons:</em> churn is bidirectional — the owner who expects to add people expects to remove them, and sending them to a terminal for half the job undercuts the point of the UI.</li>
+          <li><strong>(b)</strong> <strong>Full CRUD, with a type-the-email confirmation.</strong> <em>Pros:</em> the UI is actually complete; the typed email is a direct analogue of <code>--confirm-delete</code>, and being <em>server-verified</em> it is stronger than the CLI flag — the flag only proves the human meant "delete", the typed email proves they meant "delete <em>this person</em>". <em>Cons:</em> an irreversible cascading delete sits one dialog away in a browser; needs its own route, guard and smoke.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong> — full CRUD. The deciding argument is that the confirmation is checked <em>on the server against the target row</em>, not merely collected in the browser: <code>DELETE /api/crew/[id]</code> refuses unless <code>confirmEmail</code> matches that row's email. The failure mode worth engineering against is not "deletes nobody" — it is <strong>"deletes somebody else"</strong>, via a stale roster, a race, or a mis-wired button, and an id-plus-typed-email pair is exactly what makes that unrepresentable. Owner removal is refused by <code>lib/crew/core.ts</code> for both surfaces, and the UI shows no remove affordance on that row at all, since a button that always fails is worse than its absence.</p>
+      </div>
+
+      <div class="callout tip"><strong>OQ18 — What does each roster row show?</strong></div>
+      <div class="oq-detail">
+        <ul class="oq-options">
+          <li><strong>(a)</strong> <strong>Identity only — email and role.</strong> <em>Pros:</em> one query, answers "who has an account". <em>Cons:</em> answers only that.</li>
+          <li><strong>(b)</strong> <strong>Identity plus usage counters</strong> — AI credits used today, watchlist count, application count. <em>Pros:</em> the two capped resources are precisely what a crew member spends <em>of the owner's</em> (the Gemini key via <code>lib/ai/quota.ts</code>, and the single outbound IP via the scheduler's crawls), so this makes the page answer "what is this costing me", not just "who is here". <em>Cons:</em> more queries.</li>
+        </ul>
+        <p><strong>✓ Decided:</strong> <strong>(b)</strong>. The counters are three <em>grouped</em> queries over the whole roster, not per-row — the N+1 shape would be invisible at four accounts and slow at forty. <code>aiUsedToday</code> is the current UTC bucket only, matching the exact window the 429 enforces, so the number shown equals the number that person is hitting. Two things are deliberately <em>absent</em>: the owner shows <code>exempt</code> rather than a count (they are never metered at all, so any number would be a fabrication), and there is <strong>no "added on" column</strong> — <code>User</code> has no <code>createdAt</code>, and deriving a date from the cuid's embedded timestamp would render a guess as a fact. Provisioning dates would be a migration, not a serializer change.</p>
+      </div>
     </div>
   </details>
 
@@ -1264,6 +1293,34 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P5.5</span><span class="task-title">Regression pass</span></summary>
             <div class="task-body"><p><em>Depends on</em> P5.4. <strong>Owner:</strong> all 8 dashes, Library and the log tail present, Gmail ingest still landing events, and the carousel restores to the last-viewed dash on a cold load (the OQ9a/P3.3 regression — check with a non-first dash such as <code>rocketry</code> selected). <strong>Crew:</strong> 3 dashes only; a direct hit on an owner-only route 403s (not 401); applications / postings / resumes are their own; Connect-Google, Scan Inbox and the Gcal link-mode are all absent on <em>both</em> dashes that mount <code>CalendarWidget</code>; the quota message renders at the limit. <strong>Owner-facing check that only shows up over time:</strong> leave a crew session idle for 10 minutes and confirm the log ring buffer stays clean — a recurring caught <code>console.warn</code> means P3.7's 5-minute interval is still armed.</p></div>
+          </details>
+        </div>
+      </details>
+
+      <details class="task">
+        <summary>
+          <input type="checkbox" checked>
+          <span class="task-id">P7</span>
+          <span class="task-title">Phase 7 — Owner-only crew management UI (OQ16a / OQ17b / OQ18b)</span>
+        </summary>
+        <div class="task-body">
+          <p><strong>Added 2026-07-31, and DONE.</strong> A shippable sub-deliverable rather than a step in the go-live sequence: it depends on none of Phase 5 and Phase 5 depends on none of it. It is <em>useful</em> only once crew exist (P5.4.2), but it is <em>buildable</em> immediately — and building it before P5.2 means it ships in that same build rather than needing a second one.</p>
+          <div class="callout warn"><strong>This phase creates the codebase's SECOND <code>user.create</code> path.</strong> <code>scripts/manage-crew.ts</code> carried a header stating it was the only one, and that statement was load-bearing — it is why the account-creation invariants were only ever written once. Two independently-authored provisioning surfaces would drift, and the thing they would drift on is precisely the set of rules that keeps provisioning safe. So the logic was extracted <em>first</em> (P7.1) and both surfaces became shells over it; the UI was never allowed to grow its own copy.</div>
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P7.1</span><span class="task-title">Extract the shared core to lib/crew/core.ts (do this FIRST)</span></summary>
+            <div class="task-body"><p>Move the provisioning logic and its four invariants — crew-only writes, the owner-removal refusal, the by-hand file sweep, and <code>lib/viewer.ts</code>-identical email normalization — out of the CLI into <code>lib/crew/core.ts</code>, leaving <code>scripts/manage-crew.ts</code> as argv + tier resolution + presentation, re-exporting the moved names so its 67-assertion smoke runs <strong>unchanged</strong> against the moved code (that is the proof the extraction is behaviour-preserving). The core must touch no <code>__dirname</code>, <code>cwd</code>, <code>argv</code> or <code>env</code>: the two sweep directories arrive via the injected <code>Ops</code>. <strong>That constraint is the whole point</strong> — the CLI roots them at <code>__dirname</code> (a CLI must not follow the shell's cwd), but inside a Next bundle that same expression points at build output, so a route reusing it would sweep a directory containing no resume files and report success. <code>lib/crew/ops.ts</code> roots them at <code>process.cwd()</code>, matching where <code>lib/resumes/storage.ts:14</code> actually writes them.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P7.2</span><span class="task-title">Routes — GET/POST /api/crew, DELETE /api/crew/[id]</span></summary>
+            <div class="task-body"><p>All <code>requireOwner()</code>. <code>GET</code> returns the roster with OQ18b's counters as three grouped queries. <code>POST</code> takes an email and nothing else — <code>CrewCreateSchema</code> is <code>.strict()</code>, so a <code>role</code> field is <em>rejected</em> rather than ignored, and there is no role parameter for it to have honoured anyway. <code>DELETE</code> carries OQ17b's server-side confirmation. Both need a sibling <code>meta.ts</code> (never in <code>route.ts</code> — Next validates a route module's named exports) and a regenerated <code>apis.html</code>, which the pre-push gate enforces.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P7.3</span><span class="task-title">CrewCard on the internal-systems dash</span></summary>
+            <div class="task-body"><p>Roster + add form + type-the-email removal modal, wired into <code>InternalView</code>'s card grid. Carries <strong>no role check of its own</strong> (OQ16a). Surfaces the exactly-one-owner invariant rather than hiding it: any <code>ownerCount</code> that is not 1 renders as a visible alert, because zero 403s the owner out of their own app and two silently hands the scheduler a non-owner.</p></div>
+          </details>
+          <details class="task">
+            <summary><input type="checkbox" checked><span class="task-id">P7.4</span><span class="task-title">Smokes + the count reconciliation</span></summary>
+            <div class="task-body"><p>New <code>crew-routes-smoke.ts</code> (21) covering what the role matrix does not: the confirm-email cross-check accepts a correct human answer (case/whitespace-insensitive) but never a <em>different real account's</em> email; the owner survives a refused removal; <code>.strict()</code> rejects both a <code>role</code> field and an invented <code>force</code> flag. Register both routes in <code>role-matrix-smoke.ts</code> — it fails on an unclassified route, and its hardcoded class counts move <strong>26/67 → 28/69</strong>, which must be reconciled in the same push across <code>CLAUDE.md</code>, <code>docs/architecture.html</code> and this doc's §2.5. <strong>Also widen <code>manage-crew-smoke.ts</code>'s static owner-write scan to BOTH files</strong> — pointed at the CLI alone it now finds zero <code>data:</code> payloads, and it demands a non-empty match precisely so that reads as a failure rather than a silent pass. Strip comments before scanning: the assertion is about code, and prose describing the rule reads identically to code breaking it.</p></div>
           </details>
         </div>
       </details>

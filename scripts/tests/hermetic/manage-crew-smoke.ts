@@ -306,22 +306,48 @@ async function main(): Promise<void> {
                 "add: the rejected --role=owner run created no row at all",
             );
 
-            // (c) no write-shaped owner literal anywhere in the script. Two
-            //     complementary passes: every `role:` inside a Prisma `data:`
-            //     payload must be 'crew', and every `owner` literal must be a
-            //     `where:` READ filter rather than something being written.
-            const src = readFileSync(join(REPO_ROOT, "scripts", "manage-crew.ts"), "utf8");
+            // (c) no write-shaped owner literal anywhere in the provisioning
+            //     code. Two complementary passes: every `role:` inside a Prisma
+            //     `data:` payload must be 'crew', and every `owner` literal must
+            //     be a `where:` READ filter rather than something being written.
+            //
+            //     SCANS BOTH FILES since the P7 extraction. The logic moved to
+            //     `lib/crew/core.ts` (so the CLI and the owner-only crew UI
+            //     cannot drift on these invariants) and the CLI became a shell.
+            //     A single-file scan would now find zero `data:` payloads and,
+            //     because the assertion demands `length > 0`, fail loudly rather
+            //     than silently pass on an empty set — which is how this was
+            //     caught. Keep BOTH paths listed: dropping either one re-opens
+            //     an unscanned account-creation surface.
+            const SCANNED = [
+                join(REPO_ROOT, "scripts", "manage-crew.ts"),
+                join(REPO_ROOT, "lib", "crew", "core.ts"),
+            ];
+            //     COMMENTS ARE STRIPPED FIRST. This assertion is about what the
+            //     code WRITES, but it is a text scan, so prose describing the
+            //     rule ("`remove` refuses role: 'owner'") reads identically to
+            //     code breaking it. That brittleness was always here — any
+            //     comment in manage-crew.ts mentioning the literal would have
+            //     tripped it — and it fired the moment core.ts documented its
+            //     own invariants. Stripping block comments and whole-line `//`
+            //     comments makes the check mean what its name says. Deliberately
+            //     NOT stripping trailing `//` on a code line: that would risk
+            //     eating real code after a `://`, and a trailing comment is a
+            //     poor hiding place for a privilege escalation anyway.
+            const stripComments = (s: string) =>
+                s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+            const src = SCANNED.map((f) => stripComments(readFileSync(f, "utf8"))).join("\n");
             const writes = src.match(/data:\s*\{[^}]*\brole:\s*["']\w+["']/g) ?? [];
             check(
                 writes.length > 0 && writes.every((m) => /role:\s*["']crew["']/.test(m)),
-                "add: every `role:` written in a Prisma data payload is 'crew'",
+                "add: every `role:` written in a Prisma data payload is 'crew' (both CLI and core)",
                 writes,
             );
             const ownerLiterals = src.match(/\brole:\s*["']owner["']/g) ?? [];
             const ownerReadFilters = src.match(/where:\s*\{\s*role:\s*["']owner["']\s*\}/g) ?? [];
             check(
                 ownerLiterals.length === ownerReadFilters.length,
-                "add: every `role: \"owner\"` in manage-crew.ts is a where-clause read, never a write",
+                "add: every `role: \"owner\"` in the provisioning code is a where-clause read, never a write",
                 { ownerLiterals, ownerReadFilters },
             );
 
