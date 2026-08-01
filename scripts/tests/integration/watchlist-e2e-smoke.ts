@@ -31,7 +31,12 @@ function fail(msg: string, detail?: unknown) {
 }
 
 async function main() {
-    const user = await prisma.user.findFirst();
+    // Pinned to the OWNER deliberately. The dev break-glass resolves every
+    // request to the owner, so a fixture created as anyone else disagrees with
+    // the identity the handlers will see. An unpinned findFirst() returns an
+    // arbitrary row, and dev.db has held crew rows since 2026-08-01 — it still
+    // happens to return the owner by insertion order, which is luck, not design.
+    const user = await prisma.user.findFirst({ where: { role: "owner" } });
     if (!user) {
         console.error("No user in dev.db — log in first.");
         process.exit(1);
