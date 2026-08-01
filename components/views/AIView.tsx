@@ -5,6 +5,8 @@ import { Loader2 } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
 import { NewsCyclingCard } from "../cards/NewsCyclingCard";
+import { HeroNewsCarousel } from "../cards/HeroNewsCarousel";
+import { selectLatestArticles } from "@/lib/news/latest";
 import { ResearchPaperCard } from "../cards/ResearchPaperCard";
 import { LLMLeaderboardCard, LLMModelInfo } from "../cards/ai/LLMLeaderboardCard";
 import { COMPANIES as COMPANY_REGISTRY } from "../../lib/companies/manifest";
@@ -32,12 +34,10 @@ function useCompanyNews(companies: typeof AI_COMPANIES) {
 export const AIView: React.FC = () => {
     const [llmCategory, setLlmCategory] = useState("text");
 
-    const qHN = useQuery<any[]>({ queryKey: ['ai', 'hn'], queryFn: () => fetcher('/api/ai') });
     const qY = useQuery<any[]>({ queryKey: ['research', 'ai', 'yesterday'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=yesterday&limit=5') });
     const qW = useQuery<any[]>({ queryKey: ['research', 'ai', 'week'], queryFn: () => fetcher('/api/research?topic=ai&timeframe=week&limit=5') });
     const qRev = useQuery<any[]>({ queryKey: ['research', 'ai', 'review'], queryFn: () => fetcher('/api/research/review?topic=ai') });
     const qHist = useQuery<any[]>({ queryKey: ['research', 'ai', 'historical'], queryFn: () => fetcher('/api/research/historical?topic=ai') });
-    const { data: hackerNews } = qHN;
     const { data: arxivYesterday, refetch: refetchY } = qY;
     const { data: arxivLastWeek, refetch: refetchW } = qW;
     const { data: arxivReview, refetch: refetchRev } = qRev;
@@ -46,9 +46,14 @@ export const AIView: React.FC = () => {
 
     const { newsMap: companyNews, isLoading: companyLoading } = useCompanyNews(AI_COMPANIES);
 
+    // Hero: the 10 newest stories across every AI feed, deduped. Computed inline
+    // rather than memoized — `useCompanyNews` rebuilds `newsMap` on every render,
+    // so any dep array cheap enough to be worth it would go stale on a refetch,
+    // and sorting a few hundred already-fetched articles is not a hot path.
+    const heroArticles = selectLatestArticles(companyNews, 10);
+
     // Spinner only while every query is still pending. Once any settle (data
     // OR error), surface the cards so failed ones expose a manual refresh.
-    const newsLoading = qHN.isPending;
     const researchLoading = qY.isPending && qW.isPending && qRev.isPending && qHist.isPending;
 
     const buildCompanyGroups = () => {
@@ -60,10 +65,6 @@ export const AIView: React.FC = () => {
             return items.length > 0 ? { label: category, items } : null;
         }).filter(Boolean) as { label: string; items: CardItem[] }[];
     };
-
-    const hnCards: CardItem[] = newsLoading ? [{ id: "loading-news", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-emerald-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
-        : (hackerNews ?? []).length > 0 ? [{ id: "ai-news-hn", colSpan: 1, hFit: true, content: <NewsCyclingCard source="Hacker News" articles={hackerNews!} /> }]
-        : [];
 
     const researchCards: CardItem[] = researchLoading ? [{ id: "loading-research", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-purple-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]
         : [
@@ -92,11 +93,15 @@ export const AIView: React.FC = () => {
 
     return (
         <Scrollbar className="w-full h-full pb-8 relative">
-            <Section title="AI News" description="Latest autonomous developments">
-                <CardGrid items={hnCards} layout="masonry" />
-            </Section>
             <Section title="Company News" description="Direct feeds from AI companies" groups={buildCompanyGroups()}>
-                {companyLoading && <CardGrid items={[{ id: "loading-company-news", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-blue-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]} layout="grid" />}
+                {/* Hero sits between the section header and the per-category
+                    groups — Section renders children before `groups`. */}
+                <div className="py-2">
+                    <HeroNewsCarousel articles={heroArticles} loading={companyLoading && heroArticles.length === 0} />
+                </div>
+                {companyLoading && heroArticles.length > 0 && (
+                    <CardGrid items={[{ id: "loading-company-news", colSpan: 3, content: <div className="flex items-center justify-center py-8 text-blue-500"><Loader2 className="w-8 h-8 animate-spin" /></div> }]} layout="grid" />
+                )}
             </Section>
             <Section title="Chatbot Arena Leaderboard" description="Top models by Arena Elo rating">
                 <CardGrid items={leaderboardCards} layout="grid" />
