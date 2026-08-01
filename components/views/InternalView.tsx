@@ -7,8 +7,9 @@ import { api, queryKeys } from "@/lib/api-client";
 import { Activity, Settings, Server, Palette, Cpu, User, LogOut, LogIn, RefreshCw } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
-import { signIn, signOut } from "next-auth/react";
 import { useAccount } from "@/hooks/useAccount";
+import { useSignOut } from "@/hooks/useSignOut";
+import { useConnectGoogle } from "@/hooks/useConnectGoogle";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useSettingsStore } from "@/components/providers/settingsStore";
 import { FetcherHealthCard } from "../cards/FetcherHealthCard";
@@ -48,9 +49,30 @@ const formatLogMessage = (message: string) => {
 
 export const InternalView: React.FC = () => {
     // Owner identity + Google-connection state (edge-trusted; replaces the prior
-    // useSession). signIn/signOut are kept purely as Google token management
-    // (Connect/Reconnect/Disconnect), NOT as the access gate.
+    // useSession).
+    //
+    // Two DIFFERENT axes live on this card, and conflating them is what broke
+    // both of its buttons:
+    //   - Google TOKEN management (Connect / Reconnect) — arms the Gmail +
+    //     Calendar refresh token. `connectGoogle` below.
+    //   - Ending the SESSION (Sign out) — clears the Cloudflare Access cookie,
+    //     via the shared `useSignOut()`, identical to the Launchpad's account
+    //     panel so the two controls cannot drift.
+    //
+    // NEITHER goes through the next-auth React client any more, for one shared
+    // reason: every one of its helpers is FETCH-based, and on prod `/api/auth/*`
+    // sits behind its own owner-only Access application which answers a
+    // cross-origin 302 to the Cloudflare login page. `fetch` cannot follow that,
+    // so the call throws and next-auth logs `CLIENT_FETCH_ERROR … "Load failed"`.
+    // The old `signOut()` here made two such fetches (two console errors) and
+    // then reloaded the page, which is why "Disconnect" appeared to do nothing.
     const { user, googleConnected } = useAccount();
+    const { signOut, signingOut } = useSignOut();
+
+    // Connect / Reconnect Google — a navigation, not `signIn("google")`. Shared
+    // with the Profile and Applications banners; see `hooks/useConnectGoogle.ts`
+    // for why the fetch-based client cannot work from behind the edge.
+    const connectGoogle = useConnectGoogle();
     const { data: sysMetrics } = useQuery({
         queryKey: queryKeys.system,
         queryFn: () => api.system.get(),
@@ -515,22 +537,28 @@ export const InternalView: React.FC = () => {
                                     </span>
                                 </div>
                             </div>
-                            {/* Google token management — NOT the access gate. Connect
-                                (or Reconnect on stale scopes) arms the Gmail/Calendar
-                                refresh token; Disconnect clears the NextAuth session. */}
+                            {/* Arms the Gmail/Calendar refresh token. There is
+                                deliberately no "Disconnect" counterpart: nothing in
+                                this codebase revokes the token or deletes the
+                                `Account` row, so a button here would be claiming a
+                                capability that does not exist. */}
                             <button
-                                onClick={() => signIn("google")}
+                                onClick={connectGoogle}
                                 className="flex items-center justify-center gap-2 px-4 py-2 border border-blue-600 bg-blue-600/20 text-blue-400 hover:bg-blue-600 hover:text-white text-sm rounded-xl font-medium transition-colors w-full"
                             >
                                 <LogIn className="w-4 h-4" />
                                 {googleConnected ? "Reconnect Google" : "Connect Google"}
                             </button>
+                            {/* Ends the SESSION (the Cloudflare Access cookie) — the
+                                same action as the Launchpad's account panel, sharing
+                                one implementation so they cannot drift. */}
                             <button
-                                onClick={() => signOut()}
-                                className="flex items-center justify-center gap-2 px-4 py-2 border border-slate-700 bg-slate-800 text-sm rounded-xl font-medium hover:bg-slate-700 transition-colors w-full"
+                                onClick={signOut}
+                                disabled={signingOut}
+                                className="flex items-center justify-center gap-2 px-4 py-2 border border-slate-700 bg-slate-800 text-sm rounded-xl font-medium hover:bg-slate-700 transition-colors w-full disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 <LogOut className="w-4 h-4" />
-                                Disconnect
+                                {signingOut ? "Signing out…" : "Sign out"}
                             </button>
                         </div>
                     </div>
@@ -541,6 +569,7 @@ export const InternalView: React.FC = () => {
         sysMetrics, visibleSysLogs, visibleHistoricalLogs, logSourceFilter, loadingOlder,
         user, googleConnected, isDarkMode, viewHues, views, autoResearch, aiCompanionEnabled,
         loadOlderLogs, setViewHue, toggleTheme, setAutoResearch, setAiCompanionEnabled,
+        signOut, signingOut, connectGoogle,
     ]);
 
     return (

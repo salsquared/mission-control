@@ -2,8 +2,8 @@ import React, { useState, useCallback, useRef, useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Section } from "../Section";
 import { Loader2, Mail, RefreshCw, Calendar as CalendarIcon, Plus, Inbox, RotateCw, Pencil, Briefcase } from "lucide-react";
-import { signIn } from "next-auth/react";
 import { useAccount } from "@/hooks/useAccount";
+import { useConnectGoogle } from "@/hooks/useConnectGoogle";
 import { CalendarWidget } from "../widgets/CalendarWidget";
 import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { Card } from "../ui/Card";
@@ -48,6 +48,8 @@ export const ApplicationsView: React.FC = () => {
     // access wall. `googleConnected` drives only the non-blocking reconnect
     // affordance in the Account Status card — and only for the owner.
     const { user, role, googleConnected, isLoading: accountLoading } = useAccount();
+    // Navigation, not next-auth's fetch-based `signIn` — see the hook for why.
+    const connectGoogle = useConnectGoogle();
 
     // Google-backed controls are OWNER-ONLY (docs/multi-user-crew.html P3.5 +
     // P3.7, decided in OQ6a): crew never connect Google, so every route below
@@ -320,7 +322,7 @@ export const ApplicationsView: React.FC = () => {
                             </div>
                             {isOwner && !googleConnected && (
                                 <button
-                                    onClick={() => signIn("google")}
+                                    onClick={connectGoogle}
                                     className="shrink-0 px-3 py-1.5 bg-blue-500/10 hover:bg-blue-500/20 active:scale-95 border border-blue-500/20 rounded-lg text-xs font-semibold text-blue-300 transition-all"
                                     title="Reconnect Google to enable inbox scanning and calendar sync"
                                 >

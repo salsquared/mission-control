@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import { motion, type PanInfo } from "framer-motion";
 import { DashConfig } from "../dashboard/dashes";
+import { AccountPanel } from "../dashboard/AccountPanel";
 import { useThemeStore } from "@/components/providers/themeStore";
 import { useAppStore, type MobileLayoutPreference } from "@/components/providers/state";
 import { Edit2, Check, GripHorizontal, Library, MessageSquare, X } from "lucide-react";
@@ -324,6 +325,7 @@ export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({
                         {dashGrid}
                         {moreRows}
                         {layoutControl}
+                        <AccountPanel className="mt-5" />
                     </div>
                 </motion.div>
             </>
@@ -357,6 +359,12 @@ export const LaunchpadOverlay: React.FC<LaunchpadOverlayProps> = ({
             </div>
 
             {dashGrid}
+
+            {/* Pushed to the bottom of the canvas with `mt-auto` so it reads as
+                a footer rather than crowding the dash grid. When the grid is
+                tall enough to scroll there is no free space to absorb and the
+                margin collapses to the `pt-8` separation. */}
+            <AccountPanel className="mt-auto pt-8" />
         </motion.div>
     );
 };

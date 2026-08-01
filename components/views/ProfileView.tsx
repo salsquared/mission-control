@@ -1,7 +1,7 @@
 import React, { useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { signIn } from "next-auth/react";
 import { useAccount } from "@/hooks/useAccount";
+import { useConnectGoogle } from "@/hooks/useConnectGoogle";
 import { Loader2, Mail } from "lucide-react";
 import { Section } from "../Section";
 import { Scrollbar } from "../ui/Scrollbar";
@@ -33,6 +33,8 @@ export const ProfileView: React.FC = () => {
     // Access, so there's no "signed out" wall. `googleConnected` drives only a
     // NON-blocking reconnect banner (token missing / scopes stale).
     const { user, role, googleConnected, isLoading: accountLoading } = useAccount();
+    // Navigation, not next-auth's fetch-based `signIn` — see the hook for why.
+    const connectGoogle = useConnectGoogle();
 
     // The reconnect banner is OWNER-ONLY (docs/multi-user-crew.html P3.5,
     // decided in OQ6a: crew never connect Google in v1).
@@ -347,7 +349,7 @@ export const ProfileView: React.FC = () => {
                         <p className="text-xs text-slate-400 mt-1 leading-relaxed">Google isn't connected (or the access token needs refreshing). Reconnect to enable inbox scanning and calendar sync — your profile works either way.</p>
                     </div>
                     <button
-                        onClick={() => signIn('google')}
+                        onClick={connectGoogle}
                         className="shrink-0 flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 active:scale-95 text-white rounded-xl transition-all text-sm font-semibold"
                     >
                         Connect
