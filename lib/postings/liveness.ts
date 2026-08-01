@@ -151,10 +151,19 @@ const ASHBY_CLOSED_MARKERS = [
 // Stable structural strings present on a live Ashby posting page. Used to gate
 // "alive" — a 200 that has neither a closed marker nor any of these (e.g. a
 // consent / error interstitial) falls to "unknown" rather than "alive".
+//
+// `window.__appdata` was the first entry here until 2026-08-01 and had ZERO
+// discriminating power: jobs.ashbyhq.com answers every path with 200, and the
+// ~7KB not-found shell embeds the blob too (all fields null). So EVERY removed
+// Ashby posting probed "alive" forever — measured on prod.db, ashby had closed
+// 1 of 373 postings (0.3%) against greenhouse 43.8% and lever 35.6%. Removing
+// it leaves `"islisted":true` as the real alive signal (the not-found shell has
+// no isListed key at all). The two id/class markers below fire on neither the
+// canonical jobs.ashbyhq.com page nor the shell — they are kept only for
+// embedded / rendered board variants, and cost nothing as extra OR arms.
 const ASHBY_ALIVE_MARKERS = [
-    "window.__appdata", // the embedded SPA state blob (lowercased)
     "\"islisted\":true",
-    "ashby_jb_posting", // posting widget container id seen on live pages
+    "ashby_jb_posting", // posting widget container id (embedded board variant)
     "application-form",
 ];
 const WORKDAY_CLOSED_MARKERS = [
@@ -491,6 +500,60 @@ async function probeLever(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, POLITE_UA, undefined, onRateLimit);
 }
 
+/**
+ * Ashby's "I don't know this posting" shell (2026-08-01).
+ *
+ * jobs.ashbyhq.com answers EVERY path with HTTP 200 — there is no 404 to read.
+ * A live posting is SERVER-RENDERED (~49KB) with `window.__appData.organization`
+ * and `.posting` both hydrated plus `"isListed":true`. Anything Ashby cannot
+ * resolve gets a ~7KB shell whose blob has `organization`, `posting` AND
+ * `jobBoard` all null. Verified 2026-08-01 against three live fetches: a live
+ * posting, a posting under an org that no longer exists (cosmos), and a bogus
+ * posting id under an org that DOES exist. The last two are byte-identical
+ * (modulo the per-response CSP nonce) — which is what makes this check cover
+ * the real case, a posting removed from a still-active board, and not just
+ * whole boards disappearing.
+ *
+ * WHY THIS CANNOT MASS-FALSE-CLOSE. Four conditions must hold at once, and a
+ * live posting body fails three of them:
+ *   1. the `window.__appData` anchor is present  — proves this is the Ashby SPA
+ *      shell and not an interstitial / CDN error page that happens to be short;
+ *   2. organization / posting / jobBoard are ALL null. Only the first two
+ *      discriminate today (`jobBoard` is null on the live page too, so it is a
+ *      shape assertion, not evidence — do not "simplify" it into a signal). It
+ *      is required anyway because an extra conjunct can only make closing
+ *      HARDER, and if Ashby ever starts hydrating jobBoard for boards it can
+ *      resolve, this check tightens itself instead of silently over-closing;
+ *   3. NO hydrated Ashby entity appears anywhere in the body — the negative
+ *      interlock. `"organization":{` / `"posting":{` on a live page trips this
+ *      even if a description blob elsewhere contained a stray null literal;
+ *   4. no `"isListed":true` anywhere — never conclude "removed" from a body
+ *      that also carries a positive liveness claim.
+ *
+ * Residual risk, stated honestly: if Ashby ever stopped server-rendering the
+ * posting into the shell, live and dead pages would become indistinguishable
+ * from HTML alone and this WOULD over-close. No body heuristic can defend
+ * against that (it is exactly why clearcompany is left unprobed — see the note
+ * on probeGeneric). What contains it is the two-strike rule in job-watcher:
+ * one "closed" only stamps pendingClosedAt, so a transient shape change costs
+ * nothing, and the 0.3%→expected close-rate jump would be visible immediately.
+ */
+function isAshbyNotFoundShell(bodyLower: string): boolean {
+    if (!bodyLower.includes("window.__appdata")) return false;
+    // Positive: the three documented nulls (blob is minified, but tolerate
+    // whitespace the same way the workday CXS flag checks do).
+    const allNull = /"organization"\s*:\s*null/.test(bodyLower)
+        && /"posting"\s*:\s*null/.test(bodyLower)
+        && /"jobboard"\s*:\s*null/.test(bodyLower);
+    if (!allNull) return false;
+    // Negative interlock: any hydrated entity, or any positive listing claim,
+    // means this is NOT the not-found shell — fall through to "unknown".
+    if (/"organization"\s*:\s*\{/.test(bodyLower)) return false;
+    if (/"posting"\s*:\s*\{/.test(bodyLower)) return false;
+    if (/"islisted"\s*:\s*true/.test(bodyLower)) return false;
+    return true;
+}
+
 async function probeAshby(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, POLITE_UA, ({ finalUrl, bodyLower }) => {
         // Redirected to the bare board root (no posting-id segment) → closed.
@@ -509,6 +572,9 @@ async function probeAshby(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
         // includes `"islisted":true`). The flag is whitespace-insensitive in
         // the minified blob, so match both compact forms.
         if (bodyLower.includes("\"islisted\":false") || bodyLower.includes("\"islisted\": false")) return "closed";
+        // Ashby never 404s — the not-found shell IS the removal signal. See
+        // isAshbyNotFoundShell for why this cannot mass-false-close.
+        if (isAshbyNotFoundShell(bodyLower)) return "closed";
         for (const m of ASHBY_CLOSED_MARKERS) {
             if (bodyLower.includes(m)) return "closed";
         }
@@ -682,6 +748,27 @@ async function probeWorkday(p: ProbeInput, timeoutMs: number, onRateLimit?: Rate
     }, onRateLimit);
 }
 
+/**
+ * Status-only probe for the kinds whose "removed" state is a real 404/410.
+ *
+ * KNOWN BLIND SPOT — clearcompany (investigated 2026-08-01, deliberately NOT
+ * "fixed"). It shares Ashby's "200 for everything" shape: prod.db has 245
+ * clearcompany postings, 82 of them unseen by the fetcher for >6h (the oldest
+ * for 64 days) and ZERO ever closed, with no pendingClosedAt ever stamped. But
+ * the resemblance ends there. Fetching a known-LIVE posting, a long-stale one,
+ * and a bogus job id from the same tenant returned three BYTE-IDENTICAL 11KB
+ * bodies — an empty client-rendered shell that does not contain the job id, the
+ * title, or any posting field at all. So unlike Ashby there is no discriminator
+ * in the response to key on: any body heuristic here would either close nothing
+ * (today's behavior) or close all 245 including the live ones. Leaving it
+ * status-only is the safe branch, and its cost is bounded — stale rows linger
+ * rather than anything false-closing.
+ *
+ * Fixing it properly means probing whatever XHR the SPA uses for posting data,
+ * i.e. a new structured (tier-4) probe like probeGreenhouse / probeLever /
+ * probeWorkday's CXS path — a design change, not a marker tweak. Do not "solve"
+ * it by adding body markers.
+ */
 async function probeGeneric(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, POLITE_UA, undefined, onRateLimit);
 }
