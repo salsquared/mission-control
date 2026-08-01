@@ -26,18 +26,42 @@
  *      short-circuit in consumeAiCredit is what makes 0 mean 0).
  *   7. THE 429 CONTRACT (task P3.6 renders this body) — status, `code`,
  *      `stage`, `used`, `limit`, and a positive Retry-After.
+ *   8. THE GATE IS WIRED INTO ALL SEVEN ROUTES, not just importable:
+ *      (a) STRUCTURALLY, off a manifest of the 7 that is checked against a
+ *          filesystem sweep for `consumeAiCredit`, so an 8th quota-wired route
+ *          (or a route that silently drops the gate) cannot land unrecorded.
+ *          Each is asserted to await the credit, RETURN the shared refusal, and
+ *          — the part that matters — to do so AFTER its own auth / validation /
+ *          ownership gates. That order is not cosmetic: `consumeAiCredit`
+ *          MUTATES, so a credit taken before a 400/404 bills a crew member for
+ *          a call that never reached Gemini.
+ *      (b) BEHAVIOURALLY on the five routes reachable without a DB fixture —
+ *          each driven at `CREW_AI_DAILY_LIMIT=0` as a crew viewer and asserted
+ *          to answer the shared 429 before any Gemini-touching work. The other
+ *          two (`profile/bullets/assist`, `watchlists/[id]/run`) sit behind a
+ *          Profile-with-entities / Watchlist row respectively; their gate order
+ *          is what (a)'s `mustPrecede` patterns pin.
  *
  * Genuinely hermetic: no network, no PM2, no Gemini, no server. The DB is a
  * THROWAWAY SQLite file in /tmp (DATABASE_URL pinned before any import; tables
  * created with raw DDL mirroring
  * prisma/migrations/20260728053644_add_user_role_and_ai_usage). dev.db /
  * prod.db are never touched, and no AI module beyond lib/ai/quota.ts is loaded.
+ * The route drives never reach Gemini: the quota refusal returns first, which
+ * is the property being asserted.
  */
 const TMP_DB = `/tmp/ai-quota-smoke-${process.pid}-${Date.now()}.db`;
 process.env.DATABASE_URL = `file:${TMP_DB}`;
 process.env.EMAIL_ENABLED = "0";
+// The route drives below act through the `__seedViewer` seam and must not
+// inherit a break-glass escape from the shell the pre-push hook runs in (P5.1.3)
+// — one would resolve an OWNER viewer, and the owner is quota-exempt, so every
+// 429 assertion would silently become a 200-shaped failure.
+delete process.env.MC_DEV_LOOPBACK_OWNER;
+delete process.env.MC_PROD_LOOPBACK_OWNER;
 
-import { unlinkSync } from "node:fs";
+import { readFileSync, readdirSync, unlinkSync } from "node:fs";
+import path from "node:path";
 
 let passes = 0;
 let fails = 0;
@@ -81,6 +105,163 @@ const DDL = [
     // UNIQUE constraint") and the fail-open branch would silently pass tests.
     `CREATE UNIQUE INDEX "AiUsage_userId_day_key" ON "AiUsage"("userId", "day")`,
 ];
+
+// ---------------------------------------------------------------------------
+// The quota-wired route manifest (docs/multi-user-crew.html §2.9 / P2.5.2).
+//
+// Seven crew-reachable LLM routes take a credit. The list is asserted against a
+// filesystem sweep below, so it cannot drift silently in either direction: a
+// new route that calls consumeAiCredit fails until it is recorded here, and a
+// route that DROPS the call fails until it is removed.
+//
+// `mustPrecede` encodes CLAUDE.md's ordering rule per route — "at the TOP of the
+// handler, after auth / validation / ownership, before any Gemini-touching
+// work". Each pattern is a gate whose source position must come BEFORE the
+// credit consume. They are per-route rather than generic because what counts as
+// "ownership" differs: a body schema on one route, a watchlist lookup on
+// another. The guard call itself is checked separately for every route.
+// ---------------------------------------------------------------------------
+
+interface QuotaRouteSpec {
+    /** Path under app/api — the file is `app/api/<route>/route.ts`. */
+    route: string;
+    /** Gates that MUST run before the (mutating) credit consume. */
+    mustPrecede: Array<{ pattern: RegExp; why: string }>;
+    /** Whether §11 drives this route end-to-end, and if not, why not. */
+    drive: "behavioural" | { structuralOnly: string };
+}
+
+const QUOTA_ROUTES: QuotaRouteSpec[] = [
+    {
+        route: "resumes",
+        mustPrecede: [
+            { pattern: /ResumePostBodySchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
+            { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
+        ],
+        drive: "behavioural",
+    },
+    {
+        route: "resumes/specialize",
+        mustPrecede: [
+            { pattern: /BodySchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
+            { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
+        ],
+        drive: "behavioural",
+    },
+    {
+        route: "profile/bullets/assist",
+        mustPrecede: [
+            { pattern: /BulletAssistBodySchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
+            { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
+            { pattern: /loadParent\(/, why: "the cross-user 404 must come first — a foreign parentId must not cost the caller a credit" },
+        ],
+        // Reaching the credit needs a Profile with a work-role/project entity
+        // carrying a bullet; the gate ORDER is what mustPrecede pins instead.
+        drive: { structuralOnly: "needs a Profile + entity + bullet fixture to get past loadParent()" },
+    },
+    {
+        route: "profile/tagline/draft",
+        mustPrecede: [
+            { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
+        ],
+        drive: "behavioural",
+    },
+    {
+        route: "profile/import",
+        mustPrecede: [
+            { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
+            { pattern: /req\.formData\(\)/, why: "the four multipart 400s must come first — a malformed upload must not cost a credit" },
+        ],
+        drive: "behavioural",
+    },
+    {
+        route: "discovery/suggest",
+        mustPrecede: [
+            { pattern: /RequestSchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
+        ],
+        drive: "behavioural",
+    },
+    {
+        route: "watchlists/[id]/run",
+        mustPrecede: [
+            { pattern: /prisma\.watchlist\.findFirst/, why: "the ownership 404 must come first — a foreign watchlist id must not cost a credit" },
+        ],
+        // Reaching the credit needs a Watchlist row owned by the caller; this
+        // file's DDL is deliberately User + AiUsage only.
+        drive: { structuralOnly: "needs a Watchlist row to get past the ownership check" },
+    },
+];
+
+const REPO_ROOT = path.resolve(__dirname, "..", "..", "..");
+const API_ROOT = path.join(REPO_ROOT, "app", "api");
+
+function section(title: string) { console.log(`\n── ${title}`); }
+
+/** Every `route.ts` under app/api, as manifest keys (mirrors role-matrix-smoke). */
+function discoverRoutes(dir: string, out: string[] = []): string[] {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const p = path.join(dir, entry.name);
+        if (entry.isDirectory()) discoverRoutes(p, out);
+        else if (entry.name === "route.ts") out.push(path.relative(API_ROOT, path.dirname(p)));
+    }
+    return out;
+}
+
+function readRoute(route: string): string {
+    return readFileSync(path.join(API_ROOT, route, "route.ts"), "utf8");
+}
+
+/**
+ * Strip comments before an ordering scan. Without this, the long design
+ * rationale each of these routes carries ABOVE its credit call — several
+ * paragraphs naming `consumeAiCredit` in prose — would be found first and the
+ * position comparison would read a comment as the call.
+ */
+function stripComments(src: string): string {
+    return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
+}
+
+/** Source offset of the first match, or -1. */
+function at(src: string, re: RegExp): number {
+    const m = re.exec(src);
+    return m ? m.index : -1;
+}
+
+/**
+ * The wiring rule for one quota-gated route, as a pure predicate over its
+ * (comment-stripped) source so it can be pointed at synthetic regressions and
+ * PROVED to reject them — see the teeth check in §10. Returns null when the
+ * route is wired correctly, else how it is not.
+ */
+function quotaWiringViolation(src: string, spec: QuotaRouteSpec): string | null {
+    if (!/import\s*{[^}]*\bconsumeAiCredit\b[^}]*}\s*from\s*['"]@\/lib\/ai\/quota['"]/.test(src)) {
+        return "does not import consumeAiCredit from @/lib/ai/quota";
+    }
+    const guardAt = at(src, /await\s+require(?:Session|Owner)(?:OrService)?\s*\(/);
+    const creditAt = at(src, /await\s+consumeAiCredit\s*\(/);
+    if (guardAt < 0) return "awaits no auth guard";
+    if (creditAt < 0) return "never awaits consumeAiCredit — the gate is not wired in";
+    if (creditAt < guardAt) {
+        return "consumes a credit BEFORE the auth guard — an unauthenticated caller would move the counter";
+    }
+    // The refusal must be RETURNED, not merely computed: a `credit.ok` that is
+    // ignored is the exact shape of a gate that meters and then admits anyway.
+    if (!/if\s*\(\s*!\s*(\w+)\.ok\s*\)\s*return\s+aiQuotaExceededResponse\(\s*\1\s*\)/.test(src)) {
+        return "the refusal is not returned (expected `if (!credit.ok) return aiQuotaExceededResponse(credit)`)";
+    }
+    const late = spec.mustPrecede.filter(g => {
+        const gateAt = at(src, g.pattern);
+        return gateAt < 0 || gateAt > creditAt;
+    });
+    if (late.length > 0) {
+        return (
+            `the credit is consumed before ${late.map(g => String(g.pattern)).join(", ")} — ` +
+            late.map(g => g.why).join("; ") +
+            ". consumeAiCredit MUTATES, so a rejection after it bills a crew member for a call that never ran."
+        );
+    }
+    return null;
+}
 
 async function main() {
     // Dynamic imports: DATABASE_URL must be pinned before lib/prisma loads.
@@ -278,6 +459,158 @@ async function main() {
         const orphans = await prisma.aiUsage.count({ where: { userId: CREW_B } });
         if (orphans !== 0) fail(`AiUsage rows survived their user (${orphans} orphans)`);
         else pass("AiUsage cascades on user delete (no orphaned counters)");
+
+        // ── 10. …and into ALL SEVEN of them, structurally ───────────────────
+        // §8 proves ONE route is wired. That is the assertion that catches "the
+        // module exists and nobody calls it" — but it says nothing about the
+        // other six, and a seven-route wiring task fails route-by-route, not
+        // all-or-nothing. This check closes that: the manifest is reconciled
+        // against the filesystem (so it cannot go stale in either direction) and
+        // each route is asserted to await the credit, RETURN the shared refusal,
+        // and do both AFTER its own auth / validation / ownership gates.
+        section("10. All 7 quota-wired routes — manifest ⇄ filesystem, and the gate order in each");
+
+        const declared = new Set(QUOTA_ROUTES.map(r => r.route));
+        const onDisk = discoverRoutes(API_ROOT)
+            .filter(r => /\bconsumeAiCredit\s*\(/.test(stripComments(readRoute(r))))
+            .sort();
+        const undeclared = onDisk.filter(r => !declared.has(r));
+        const missing = QUOTA_ROUTES.map(r => r.route).filter(r => !onDisk.includes(r));
+
+        if (undeclared.length > 0) {
+            fail(
+                `quota-wired route(s) not in QUOTA_ROUTES: ${undeclared.join(", ")}. ` +
+                `Add an entry (with its mustPrecede gates) so the ordering rule is asserted for it too.`,
+            );
+        } else if (missing.length > 0) {
+            fail(
+                `QUOTA_ROUTES declares ${missing.join(", ")} but the file no longer calls consumeAiCredit. ` +
+                `Either the gate was dropped (a crew member can now spend unmetered on that route) or the ` +
+                `route moved — reconcile the manifest with §2.9's list.`,
+            );
+        } else if (QUOTA_ROUTES.length !== 7) {
+            fail(`§2.9 wires SEVEN routes; the manifest holds ${QUOTA_ROUTES.length}`);
+        } else {
+            pass(`all 7 quota-wired routes accounted for, and no 8th exists on disk: ${onDisk.join(", ")}`);
+        }
+
+        for (const spec of QUOTA_ROUTES) {
+            const violation = quotaWiringViolation(stripComments(readRoute(spec.route)), spec);
+            if (violation) {
+                fail(`/api/${spec.route}: ${violation}`);
+                continue;
+            }
+            const how = spec.drive === "behavioural" ? "driven" : `structural-only (${spec.drive.structuralOnly})`;
+            pass(`/api/${spec.route}: guard → ${spec.mustPrecede.length} gate(s) → consumeAiCredit → returned refusal · ${how}`);
+        }
+
+        // Teeth. A structural check that has never been shown to reject
+        // anything is a check nobody has proved CAN reject. Each mutation below
+        // is a real regression shape, applied to a synthetic handler rather than
+        // to a production file, and each must be caught.
+        const SPEC: QuotaRouteSpec = {
+            route: "synthetic",
+            mustPrecede: [{ pattern: /BodySchema\.safeParse/, why: "a 400 must not burn a credit" }],
+            drive: { structuralOnly: "synthetic" },
+        };
+        const GOOD = `
+            import { consumeAiCredit, aiQuotaExceededResponse } from "@/lib/ai/quota";
+            export async function POST(req) {
+                const guard = await requireSession();
+                if ('error' in guard) return guard.error;
+                const parsed = BodySchema.safeParse(await req.json());
+                if (!parsed.success) return NextResponse.json({}, { status: 400 });
+                const credit = await consumeAiCredit(userId, guard.session.user.role);
+                if (!credit.ok) return aiQuotaExceededResponse(credit);
+            }`;
+        const MUTANTS: Array<[string, string]> = [
+            ["credit taken before the guard", GOOD.replace(/const guard = await requireSession\(\);/, "const credit0 = await consumeAiCredit(userId, 'crew');\n const guard = await requireSession();")],
+            ["credit taken before validation", GOOD.replace(/const parsed = BodySchema\.safeParse\(await req\.json\(\)\);/, "").replace("}\n            }", "const parsed = BodySchema.safeParse(await req.json());\n}")],
+            ["refusal computed but not returned", GOOD.replace("if (!credit.ok) return aiQuotaExceededResponse(credit);", "if (!credit.ok) console.warn(aiQuotaExceededResponse(credit));")],
+            ["gate removed entirely", GOOD.replace(/const credit = await consumeAiCredit[^\n]*\n/, "")],
+        ];
+        if (quotaWiringViolation(GOOD, SPEC) !== null) {
+            fail("the structural check rejects a CORRECTLY wired handler — it would fail on any refactor", quotaWiringViolation(GOOD, SPEC));
+        } else {
+            const missed = MUTANTS.filter(([, src]) => quotaWiringViolation(src, SPEC) === null).map(([name]) => name);
+            if (missed.length > 0) fail(`the structural check has no teeth against: ${missed.join("; ")}`);
+            else pass(`structural check has teeth: accepts the correct shape, rejects all ${MUTANTS.length} regression shapes`);
+        }
+
+        // ── 11. …and behaviourally on the routes reachable without a fixture ─
+        // Each is driven for real at CREW_AI_DAILY_LIMIT=0 as a crew viewer. The
+        // 429 has to come out of the handler itself, before the Gemini call the
+        // route exists to make — which is why these are safe to run in the
+        // pre-push gate at all.
+        section("11. Behavioural — crew at limit 0 gets the shared 429 from each reachable route");
+
+        const ROUTE_USER = "crew-route-drive-ai-quota-smoke";
+        await prisma.user.create({ data: { id: ROUTE_USER, email: "route-drive@ai-quota-smoke.invalid", role: "crew" } });
+        process.env.CREW_AI_DAILY_LIMIT = "0";
+
+        // A tiny plain-text "resume" — profile/import rejects an empty parts
+        // list with a 400 before the credit, so the file has to be real.
+        const uploadForm = new FormData();
+        uploadForm.append("files", new File(["Jane Doe — Security Officer"], "resume.txt", { type: "text/plain" }));
+
+        const jsonPost = (route: string, payload: unknown) =>
+            new Request(`http://ai-quota-smoke.invalid/api/${route}`, {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+
+        const DRIVES: Array<{ route: string; req: () => Request }> = [
+            // A `posting.text` body is the Gemini-touching branch — the verbatim
+            // canon re-render deliberately does NOT pay a credit (see the route).
+            { route: "resumes", req: () => jsonPost("resumes", { posting: { text: "Security Officer — patrol, access control, incident reports." } }) },
+            // Ids only have to be cuid-SHAPED: the credit is taken before the
+            // canon/application lookups, which is the ordering being proved.
+            { route: "resumes/specialize", req: () => jsonPost("resumes/specialize", { canonId: "clh0000000000000000000000", applicationId: "clh1111111111111111111111" }) },
+            { route: "discovery/suggest", req: () => jsonPost("discovery/suggest", { topic: "ai" }) },
+            {
+                route: "profile/import",
+                req: () => new Request("http://ai-quota-smoke.invalid/api/profile/import", { method: "POST", body: uploadForm }),
+            },
+        ];
+
+        try {
+            __seedViewer({ id: ROUTE_USER, email: "route-drive@ai-quota-smoke.invalid", role: "crew" });
+            for (const d of DRIVES) {
+                const mod = await import(`@/app/api/${d.route}/route`);
+                const r = mustRespond(await mod.POST(d.req() as never), `${d.route} POST`);
+                const b = await r.json();
+                if (r.status !== 429) {
+                    fail(`POST /api/${d.route}: crew at limit 0 should get 429, got ${r.status}`, b);
+                } else if (b.code !== "AI_QUOTA_EXCEEDED" || b.stage !== "ai-quota") {
+                    fail(`POST /api/${d.route}: 429 must carry the SHARED quota body, not the route's own rate-limit 429`, b);
+                } else if (b.limit !== 0 || b.used !== 0) {
+                    fail(`POST /api/${d.route}: 429 body should report { used: 0, limit: 0 }`, b);
+                } else {
+                    pass(`POST /api/${d.route}: crew over quota → 429 AI_QUOTA_EXCEEDED (wired, no Gemini reached)`);
+                }
+            }
+        } finally {
+            __resetViewer();
+        }
+
+        // limit 0 short-circuits before the upsert (§6), so five refused route
+        // calls must leave the counter table untouched for this user.
+        const driveRows = await prisma.aiUsage.count({ where: { userId: ROUTE_USER } });
+        if (driveRows !== 0) fail(`the refused route drives wrote ${driveRows} AiUsage row(s) at limit 0`);
+        else pass("the refused route drives wrote no AiUsage rows (limit 0 short-circuits before the upsert)");
+
+        // Manifest ⇄ drives: every route the manifest calls `behavioural` is
+        // actually driven — here, or (for tagline/draft) in §8 above.
+        const drivenHere = new Set(DRIVES.map(d => d.route));
+        drivenHere.add("profile/tagline/draft"); // §8
+        const claimed = QUOTA_ROUTES.filter(r => r.drive === "behavioural").map(r => r.route);
+        const unproven = claimed.filter(r => !drivenHere.has(r));
+        if (unproven.length > 0) {
+            fail(`QUOTA_ROUTES marks ${unproven.join(", ")} as behaviourally covered, but no drive exists for it`);
+        } else {
+            pass(`${claimed.length} of 7 routes are covered behaviourally; the other 2 are structural-only by declaration`);
+        }
     } finally {
         delete process.env.CREW_AI_DAILY_LIMIT;
         try { await prisma.$disconnect(); } catch { /* best-effort */ }

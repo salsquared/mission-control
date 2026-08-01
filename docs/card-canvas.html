@@ -499,11 +499,12 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P1.2.2</span>
                   <span class="task-title">Prod-build parity check</span>
                 </summary>
-                <div class="task-body"><p><code>npm run build</code> + prod tier on :3101 — dev is Turbopack, prod is webpack, and CLAUDE.md flags that CSS hashing and prerender behaviour differ subtly between them.</p></div>
+                <div class="task-body"><p><code>npm run build</code> + prod tier on :3101 — dev is Turbopack, prod is webpack, and CLAUDE.md flags that CSS hashing and prerender behaviour differ subtly between them.</p>
+                  <div class="callout"><strong>Done 2026-08-01.</strong> Prod is on the webpack build and was walked alongside dev in the P3.2.2 pass. CLAUDE.md's warning that CSS hashing and prerender behaviour differ between Turbopack (dev) and webpack (prod) is the reason this is a separate box from the dev check — both tiers were exercised.</div></div>
               </details>
             </div>
           </details>
@@ -635,11 +636,12 @@ flowchart TB
               </details>
               <details class="task">
                 <summary>
-                  <input type="checkbox">
+                  <input type="checkbox" checked>
                   <span class="task-id">P3.2.2</span>
                   <span class="task-title">Walk all 8 dashes on both tiers</span>
                 </summary>
-                <div class="task-body"><p>Explicitly re-check the two portalled popovers (<code>CanonsCard</code>, <code>GenerateResumeCard</code>) open unclipped, and that mobile still reads correctly under <code>MobileShell</code>'s <code>0.5rem</code> gutter override.</p></div>
+                <div class="task-body"><p>Explicitly re-check the two portalled popovers (<code>CanonsCard</code>, <code>GenerateResumeCard</code>) open unclipped, and that mobile still reads correctly under <code>MobileShell</code>'s <code>0.5rem</code> gutter override.</p>
+                  <div class="callout"><strong>Done 2026-08-01 — owner walked all 8 dashes on both tiers.</strong> Prod :3101 has been rebuilt several times since the merge and is current, so this was a genuine two-tier pass rather than a dev-only one. Note the two sibling checks in P1.2 are NOT covered by this walk and remain open: P1.2.1's specific console assertion (no <code>ResizeObserver loop completed with undelivered notifications</code>) and P1.1.2's FinanceView chart-sizing check.</div></div>
               </details>
             </div>
           </details>
