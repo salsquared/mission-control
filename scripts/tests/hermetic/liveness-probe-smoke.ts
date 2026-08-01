@@ -22,14 +22,26 @@
  *
  * Pure logic — no DB writes, no real network.
  */
+import { unlinkSync } from "node:fs";
 import {
     probePostingLiveness,
     probeBatch,
     PROBE_PROFILES,
+    _resetWorkdayCxsBreakerForTests,
     type LivenessResult,
     type ProbeInput,
     type WatchlistKind,
 } from "@/lib/postings/liveness";
+
+// Probes now record their outcome to the fetcher-health store (classified by
+// VERDICT — see recordProbeOutcome in lib/postings/liveness.ts). Point that
+// store at a throwaway file BEFORE the first probe runs, so the pre-push gate
+// never writes fixture rows into the real data/fetcher-health.db. The store
+// reads this env var lazily at init, so setting it here — after the hoisted
+// imports, before main() — is early enough.
+const TMP_HEALTH_DB = `/tmp/liveness-probe-smoke-health-${process.pid}-${Date.now()}.db`;
+process.env.FETCHER_HEALTH_PATH = TMP_HEALTH_DB;
+delete process.env.MC_SCHEDULER_TIER; // deterministic: web-process semantics
 
 let passes = 0;
 let fails = 0;
@@ -748,6 +760,175 @@ async function testBatch429AbortsSerial() {
     stub.restore();
 }
 
+async function testBatch403AbortsSerial() {
+    // 2026-07-31 regression. Workday backs us off with 403, NOT 429 — so this
+    // path used to fall through to the silent `!res.ok → unknown` and the
+    // batch never aborted. Measured effect: 31 back-off aborts in 24h against
+    // 5,558 failed Workday probes, i.e. we kept hammering a source that was
+    // already refusing us, which got the shared IP blocked hard enough to
+    // stall Axiom Space's actual CRAWL for 15 days.
+    const kind: WatchlistKind = "linkedin"; // serial mode → exact fetch count
+    const inputs: ProbeInput[] = Array.from({ length: 5 }, (_, i) => ({
+        externalId: `e${i}`,
+        sourceUrl: `https://www.linkedin.com/jobs/view/test-403-${i}`,
+    }));
+    let serveCount = 0;
+    const stub = installFetchMock([{
+        matches: () => true,
+        respond: () => {
+            const i = serveCount++;
+            return i === 0 ? respondStatus(403) : respondStatus(404);
+        },
+    }]);
+    const results = await probeBatch(inputs, kind, { profile: { perHitDelayMs: 10 } });
+    if (stub.callCount() === 1) {
+        pass("probeBatch 403-abort (serial): 1 fetch only — remaining probes short-circuited");
+    } else {
+        fail(`probeBatch 403-abort (serial): expected 1 fetch, got ${stub.callCount()}`);
+    }
+    // Critical: a refusal must never be read as closure evidence, or every
+    // throttled posting mass-false-closes.
+    const anyClosed = [...results.values()].some(v => v === "closed");
+    if (!anyClosed) {
+        pass("probeBatch 403-abort (serial): no 'closed' verdict from a refused probe");
+    } else {
+        fail("probeBatch 403-abort (serial): a 403 produced a 'closed' verdict — false-close risk");
+    }
+    stub.restore();
+}
+
+async function testBackoffStatusesNeverClose() {
+    // 403 / 429 / 500 / 503 are refusals, not evidence about the posting.
+    for (const status of [403, 429, 500, 503]) {
+        const stub = installFetchMock([{ matches: () => true, respond: () => respondStatus(status) }]);
+        const r = await probePostingLiveness(
+            { externalId: "x", sourceUrl: `https://example.com/smartrecruiters/x-${status}` },
+            "smartrecruiters",
+        );
+        await expectResult(r, "unknown", `refusal ${status} → unknown (never closed)`);
+        stub.restore();
+    }
+}
+
+async function testProbeHealthRecordedByVerdict() {
+    // The Fetcher Health card counted a probe's raw HTTP status, so a 404 —
+    // which is a SUCCESSFUL close-detection, the whole point of the gate — was
+    // scored as a fetcher error. That is what made the card read ~30% unhealthy
+    // while 45 of 48 watchlists were fetching fine. Assert the classification
+    // is by verdict: alive/closed → ok, unknown → error.
+    const health = await import("@/lib/fetcher-health/store");
+    // Settle store init first so subsequent records insert synchronously.
+    await health._statsForTests();
+
+    const readFor = async (host: string) => {
+        const { health: byHost } = await health.readFetcherHealth(
+            Date.now(), health.currentTier(), health.currentSource(), "1d",
+        );
+        return byHost[host] ?? { ok: 0, error: 0, fallback: 0, broken: 0 };
+    };
+
+    // 404 → closed verdict → must record `ok`, not `error`.
+    let stub = installFetchMock([{ matches: () => true, respond: () => respondStatus(404) }]);
+    await probePostingLiveness({ externalId: "c", sourceUrl: "https://verdict-closed.example/x" }, "smartrecruiters");
+    stub.restore();
+    let e = await readFor("verdict-closed.example");
+    if (e.ok === 1 && e.error === 0) {
+        pass("probe health: 404 (successful close-detection) records ok, not error");
+    } else {
+        fail(`probe health: 404 should record ok=1 error=0, got ok=${e.ok} error=${e.error}`);
+    }
+
+    // 200 + alive → ok.
+    stub = installFetchMock([{ matches: () => true, respond: () => respondStatus(200, "ok") }]);
+    await probePostingLiveness({ externalId: "a", sourceUrl: "https://verdict-alive.example/x" }, "smartrecruiters");
+    stub.restore();
+    e = await readFor("verdict-alive.example");
+    if (e.ok === 1 && e.error === 0) {
+        pass("probe health: 200/alive records ok");
+    } else {
+        fail(`probe health: 200 should record ok=1 error=0, got ok=${e.ok} error=${e.error}`);
+    }
+
+    // 403 → inconclusive → genuinely an error.
+    stub = installFetchMock([{ matches: () => true, respond: () => respondStatus(403) }]);
+    await probePostingLiveness({ externalId: "u", sourceUrl: "https://verdict-refused.example/x" }, "smartrecruiters");
+    stub.restore();
+    e = await readFor("verdict-refused.example");
+    if (e.error === 1 && e.ok === 0) {
+        pass("probe health: 403 (inconclusive) records error");
+    } else {
+        fail(`probe health: 403 should record ok=0 error=1, got ok=${e.ok} error=${e.error}`);
+    }
+}
+
+async function testWorkdayCxsBreakerTripsAndSkips() {
+    // Boeing/Maxar (wd1) serve 403 S22 "permission denied" on the CXS DETAIL
+    // endpoint permanently — 0 alive out of 2,298 probes in 24h, still 403 at
+    // concurrency 1 with browser headers. Their jobs-LIST endpoint is fine, so
+    // only close-detection is blocked. After N consecutive refusals we must
+    // stop spending requests entirely, or a low-volume tenant's Fetcher Health
+    // row is dominated by unwinnable probes forever.
+    _resetWorkdayCxsBreakerForTests();
+    const src = (n: number) =>
+        `https://boeing.wd1.myworkdayjobs.com/en-US/EXTERNAL_CAREERS/job/Somewhere/Engineer-${n}_R${n}`;
+
+    // All CXS hits 403; the HTML fallback would 200 with a bare SPA shell.
+    const stub = installFetchMock([{
+        matches: () => true,
+        respond: (u) => u.includes("/wday/cxs/")
+            ? respondStatus(403, `{"errorCode":"S22","httpStatus":403,"message":"permission denied"}`)
+            : respond200(`<html><body><div id="root"></div></body></html>`),
+    }]);
+
+    // Trip the breaker: WORKDAY_CXS_TRIP_AFTER (3) consecutive refusals.
+    for (let i = 0; i < 3; i++) {
+        await probePostingLiveness({ externalId: `e${i}`, sourceUrl: src(i) }, "workday");
+    }
+    const afterTrip = stub.callCount();
+
+    // A refusal must NOT be followed by an HTML fallback to the same host:
+    // 3 probes → exactly 3 requests, not 6.
+    if (afterTrip === 3) {
+        pass("workday CXS breaker: refusal skips the same-host HTML fallback (3 probes → 3 requests)");
+    } else {
+        fail(`workday CXS breaker: expected 3 requests for 3 refused probes, got ${afterTrip}`);
+    }
+
+    // Breaker is now open — further probes must issue ZERO network calls.
+    const r = await probePostingLiveness({ externalId: "e9", sourceUrl: src(9) }, "workday");
+    if (stub.callCount() === afterTrip) {
+        pass("workday CXS breaker: open breaker spends no requests at all");
+    } else {
+        fail(`workday CXS breaker: expected no new requests, got ${stub.callCount() - afterTrip}`);
+    }
+    await expectResult(r, "unknown", "workday CXS breaker: skipped probe → unknown (never closed)");
+    stub.restore();
+    _resetWorkdayCxsBreakerForTests();
+}
+
+async function testWorkdayCxsBreakerResetsOnSuccess() {
+    // A tenant that answers must never accumulate toward the breaker.
+    _resetWorkdayCxsBreakerForTests();
+    const stub = installFetchMock([{
+        matches: (u) => u.includes("/wday/cxs/"),
+        respond: () => respond200(`{"jobPostingInfo":{"posted":true}}`),
+    }]);
+    let last: LivenessResult = "unknown";
+    for (let i = 0; i < 5; i++) {
+        last = await probePostingLiveness({
+            externalId: `ok${i}`,
+            sourceUrl: `https://blueorigin.wd5.myworkdayjobs.com/en-US/BlueOrigin/job/Somewhere/Eng-${i}_R${i}`,
+        }, "workday");
+    }
+    stub.restore();
+    if (last === "alive" && stub.callCount() === 5) {
+        pass("workday CXS breaker: healthy tenant never trips (5 probes → 5 requests, alive)");
+    } else {
+        fail(`workday CXS breaker: healthy tenant misbehaved — verdict=${last} requests=${stub.callCount()}`);
+    }
+    _resetWorkdayCxsBreakerForTests();
+}
+
 async function testUnsafeRedirectReturnsUnknown() {
     // Defense-in-depth: a source that 302s to an internal address (localhost,
     // RFC1918) must NOT produce a "closed" verdict via 404 on the internal
@@ -819,15 +1000,34 @@ async function main() {
     await testBatchEmptyInput();
     await testBatch429AbortsParallel();
     await testBatch429AbortsSerial();
+    await testBatch403AbortsSerial();
+    await testBackoffStatusesNeverClose();
+    await testProbeHealthRecordedByVerdict();
+    await testWorkdayCxsBreakerTripsAndSkips();
+    await testWorkdayCxsBreakerResetsOnSuccess();
     await testUnsafeRedirectReturnsUnknown();
     await testNoFalseCloseOnError();
+
+    await cleanupTempHealthDb();
 
     console.log(`\n${passes}/${passes + fails} steps passed`);
     if (fails > 0) process.exit(1);
     console.log("All checks passed.");
 }
 
-main().catch((e) => {
+/** Close the throwaway health store and remove its files (incl. WAL sidecars). */
+async function cleanupTempHealthDb() {
+    try {
+        const health = await import("@/lib/fetcher-health/store");
+        await health._resetFetcherHealthForTests(); // close before unlinking
+    } catch { /* store may never have initialized */ }
+    for (const suffix of ["", "-wal", "-shm"]) {
+        try { unlinkSync(`${TMP_HEALTH_DB}${suffix}`); } catch { /* may not exist */ }
+    }
+}
+
+main().catch(async (e) => {
+    await cleanupTempHealthDb();
     console.error("Unhandled error:", e);
     process.exit(1);
 });

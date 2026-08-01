@@ -76,6 +76,11 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
     const out: RawPosting[] = [];
     let partial = false;
     let skipped = 0;
+    // Did we stop because the listing ran out (complete view) or because we hit
+    // the maxPages cap (incomplete view)? Only a drained listing makes
+    // absence-from-fetch trustworthy closure evidence — see the `!drained`
+    // check after the loop.
+    let drained = false;
     // Throttle per-job warn logs so a chronically misbehaving source doesn't
     // spam PM2 logs. We log the first few in full and rely on the summary at
     // the end for the rest.
@@ -147,9 +152,18 @@ export async function fetchWorkday(config: WorkdayConfig): Promise<FetcherResult
             // `out.length >= total` check would always break after page 1.
             // Use the raw page length (not `out.length` delta) so a page full
             // of skipped malformed entries still counts as a "full" page.
-            if (parsed.data.jobPostings.length < PAGE_SIZE) break;
-            if (page === 0 && typeof parsed.data.total === "number" && parsed.data.total > 0 && out.length >= parsed.data.total) break;
+            if (parsed.data.jobPostings.length < PAGE_SIZE) { drained = true; break; }
+            if (page === 0 && typeof parsed.data.total === "number" && parsed.data.total > 0 && out.length >= parsed.data.total) { drained = true; break; }
         }
+        // Exited by exhausting `maxPages` rather than draining the listing: the
+        // un-fetched tail is unknown territory, so absence-from-fetch is NOT
+        // closure evidence. Flag partial so job-watcher's SAFETY 2 skips
+        // close-detection this run (same contract as a mid-crawl pagination
+        // break above). Without this, a tenant with more postings than
+        // maxPages*PAGE_SIZE capacity looked like a COMPLETE crawl, and every
+        // posting past the cap was a false-close candidate — the exact failure
+        // mode the probe gate was built to stop, arriving one layer earlier.
+        if (!drained) partial = true;
     } catch (e) {
         recordFetchOutcome(hostOf(endpoint), "error");
         const msg = e instanceof Error ? e.message : String(e);

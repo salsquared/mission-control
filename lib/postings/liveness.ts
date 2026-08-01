@@ -17,16 +17,46 @@
  * re-architecting anything. Grep for `[liveness] kind=<x> unknown` in
  * production logs to spot recurring miss patterns.
  */
-import { loggedFetch } from "@/lib/external-fetch";
+import { loggedFetch, hostOf } from "@/lib/external-fetch";
+import { recordFetchOutcome } from "@/lib/fetcher-health/store";
 import { assertExternalHttpUrl, assertSafeResponseUrl, UnsafeURLError } from "@/lib/security/url-guard";
 import type { WATCHLIST_KINDS } from "@/lib/schemas/watchlists";
 
 /**
- * Optional callback fired when a probe sees HTTP 429. `probeBatch` wires this
- * to a shared abort flag so subsequent probes in the batch short-circuit
- * instead of hammering a host that's already telegraphing back-off.
+ * Optional callback fired when a probe sees a REFUSAL from the source — 429,
+ * 403, or 5xx (see BACKOFF_STATUSES). `probeBatch` wires this to a shared abort
+ * flag so subsequent probes in the batch short-circuit instead of hammering a
+ * host that's already telegraphing back-off.
+ *
+ * Named for the 429 case it originally handled; kept as-is because external
+ * callers (scripts/tests/debug/recover-false-closed.ts, the close-detection
+ * audit probe) pass `onRateLimit` by name.
  */
 type RateLimitCallback = () => void;
+
+/**
+ * Statuses treated as "the source is refusing us", not as evidence about the
+ * posting. All three abort the rest of the batch.
+ *
+ *   429 — the textbook signal, but Workday essentially never sends it.
+ *   403 — what Workday ACTUALLY returns when backing us off. Until 2026-07-31
+ *         this fell through to the silent `!res.ok → unknown` below, so the
+ *         abort flag never tripped and we kept hammering the full 500-probe
+ *         tick. Only 31 back-off aborts fired in 24h against 5,558 failed
+ *         Workday probes.
+ *   5xx — the same refusal one layer down. Observed live: a Workday tenant
+ *         degrades 200 → 403 → 500 as probe pressure accumulates.
+ *
+ * IMPORTANT — 403 is deliberately NOT mapped to "closed". Live testing found
+ * Workday's 403 to be deterministic per-posting at concurrency 1 (which looks
+ * like "this posting is gone") *and* to spread to known-live postings as load
+ * accumulates (which looks like throttling). The evidence does not separate
+ * those, and guessing "closed" would re-introduce exactly the mass false-close
+ * this probe gate exists to prevent. Ambiguity resolves to "unknown" — the row
+ * is left alone and re-probed on a later tick.
+ */
+const BACKOFF_STATUSES = (status: number): boolean =>
+    status === 429 || status === 403 || status >= 500;
 
 export type WatchlistKind = (typeof WATCHLIST_KINDS)[number];
 export type LivenessResult = "alive" | "closed" | "unknown";
@@ -57,7 +87,19 @@ export interface ProbeProfile {
 export const PROBE_PROFILES: Record<WatchlistKind, ProbeProfile> = {
     linkedin:        { concurrency: 1, perHitDelayMs: 1500, maxPerTick:  30, timeoutMs: 8000 },
     indeed:          { concurrency: 1, perHitDelayMs: 1500, maxPerTick:  30, timeoutMs: 8000 },
-    workday:         { concurrency: 6, perHitDelayMs:    0, maxPerTick: 500, timeoutMs: 5000 },
+    // 2026-07-31: was { concurrency: 6, maxPerTick: 500, timeoutMs: 5000 } —
+    // far too hot. Measured over 24h, that profile issued 11.5k probe GETs at
+    // *nine times* the volume of the actual job-listing crawls (1.1k POSTs) and
+    // returned 5,558 `unknown` vs 427 `alive`: ~93% waste. Workday answers a
+    // hammered tenant with 403 (and, under sustained load, 500) rather than
+    // 429, so the batch's back-off never tripped — see the status handling in
+    // probeViaHttpStatus. The collateral damage was real: Axiom Space's own
+    // CRAWL was 429-blocked for 15 days while its endpoint served 200s to a
+    // cold request. Lower concurrency + a much smaller per-tick cap keeps the
+    // shared IP in good standing; the C3 rolling cursor still reaches every
+    // posting, just over more ticks. The longer timeout reflects the observed
+    // p99 on the CXS detail endpoint (5s was clipping healthy responses).
+    workday:         { concurrency: 2, perHitDelayMs:    0, maxPerTick:  60, timeoutMs: 8000 },
     greenhouse:      { concurrency: 8, perHitDelayMs:    0, maxPerTick: 200, timeoutMs: 4000 },
     lever:           { concurrency: 6, perHitDelayMs:    0, maxPerTick: 100, timeoutMs: 4000 },
     ashby:           { concurrency: 4, perHitDelayMs:  200, maxPerTick: 100, timeoutMs: 5000 },
@@ -192,7 +234,11 @@ async function fetchWithGuardedRedirects(
     for (let hop = 0; ; hop++) {
         let res: Response;
         try {
-            res = await loggedFetch(current, { method: "GET", redirect: "manual", signal, headers });
+            // record: false — the outcome is recorded ONCE per probe by
+            // recordProbeOutcome (below), classified by VERDICT rather than by
+            // raw HTTP status. Letting loggedFetch record here counted every
+            // redirect hop separately AND scored a 404 as a fetcher error.
+            res = await loggedFetch(current, { method: "GET", redirect: "manual", signal, headers }, { record: false });
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             console.warn(`[liveness] fetch threw for ${current}: ${msg}`);
@@ -267,14 +313,14 @@ async function probeViaHttpStatus(
             }
             throw e;
         }
-        if (res.status === 429) {
-            // Source asking us to back off — telegraph upward so the batch
-            // can abort subsequent probes instead of hammering harder.
+        if (BACKOFF_STATUSES(res.status)) {
+            // Source refusing us (429 / 403 / 5xx) — telegraph upward so the
+            // batch aborts subsequent probes instead of hammering harder.
+            // Never closure evidence: see the note on BACKOFF_STATUSES.
             onRateLimit?.();
             return "rate-limited" as const;
         }
         if (res.status === 404 || res.status === 410) return "closed" as LivenessResult;
-        if (res.status >= 500) return "unknown" as LivenessResult;
         if (!res.ok) return "unknown" as LivenessResult;
 
         // 2xx — let the optional extra check inspect body / final URL.
@@ -286,9 +332,27 @@ async function probeViaHttpStatus(
         }
         return "alive" as LivenessResult;
     });
-    if (result === "timeout") return "unknown";
-    if (result === "rate-limited") return "unknown";
-    return result;
+    const verdict: LivenessResult = result === "timeout" || result === "rate-limited" ? "unknown" : result;
+    recordProbeOutcome(url, verdict);
+    return verdict;
+}
+
+/**
+ * Fetcher-health attribution for ONE probe attempt.
+ *
+ * A probe that reaches a verdict is a SUCCESSFUL upstream touch — including
+ * "closed", which is a 404/410 and is the whole point of the probe gate.
+ * Recording the raw HTTP status (what loggedFetch does by default) meant every
+ * correctly-detected closed posting landed on the Fetcher Health card as a
+ * fetcher ERROR: Greenhouse's 146 "errors" over 24h were ~120 successful
+ * close-detections, and the card read ~30% unhealthy while 45 of 48 watchlists
+ * were fetching fine. Only an INCONCLUSIVE probe (refused, timed out, or
+ * ambiguous) is a real error.
+ *
+ * Best-effort like every other recordFetchOutcome caller — never throws.
+ */
+function recordProbeOutcome(url: string, verdict: LivenessResult): void {
+    recordFetchOutcome(hostOf(url), verdict === "unknown" ? "error" : "ok");
 }
 
 // ─── OQ4b — positive-evidence redirect classification ─────────────────────
@@ -485,10 +549,81 @@ function deriveWorkdayCxsUrl(sourceUrl: string): string | null {
     return `https://${u.host}/wday/cxs/${encodeURIComponent(tenant)}/${encodeURIComponent(site)}/${jobPath}`;
 }
 
+/**
+ * Per-tenant CXS availability breaker (2026-07-31).
+ *
+ * Some Workday tenants serve `403 {"errorCode":"S22","message":"permission
+ * denied"}` on the CXS job-DETAIL endpoint permanently — their jobs-LIST
+ * endpoint answers 200 fine, so the crawl works and only close-detection is
+ * blocked. Measured over 24h: boeing (wd1) returned 0 `alive` from 2,298
+ * probes, maxar (wd1) 54 from 862; both still 403 at concurrency 1 with full
+ * browser headers, so it is tenant/DC configuration, not our request rate.
+ *
+ * Without a breaker those probes are unwinnable-but-eternal: every tick pays
+ * requests that cannot produce a verdict, and — because a low-volume tenant
+ * like Maxar only crawls ~3 pages — those failures dominate its Fetcher Health
+ * row forever. After WORKDAY_CXS_TRIP_AFTER consecutive refusals a tenant's
+ * CXS is skipped entirely (no network at all) for WORKDAY_CXS_COOLDOWN_MS,
+ * then one probe is allowed through to re-test. Any alive/closed verdict
+ * resets the breaker, so a tenant that re-enables the endpoint recovers on its
+ * own.
+ *
+ * Per-process and in-memory on purpose: it is a cost/politeness optimization,
+ * never an authorization or correctness boundary, and a restart simply re-
+ * learns within one tick. Deliberately NOT a shared cross-tier file — unlike
+ * the arXiv cooldown, being wrong here costs a handful of requests, not an IP
+ * ban, and each process converges independently within a single tick.
+ */
+interface CxsBreakerState { consecutiveRefusals: number; blockedUntil: number }
+const WORKDAY_CXS_BREAKER = new Map<string, CxsBreakerState>();
+const WORKDAY_CXS_TRIP_AFTER = 3;
+const WORKDAY_CXS_COOLDOWN_MS = 6 * 60 * 60 * 1000;
+
+/** Test seam — the breaker is module state, so smokes must be able to clear it. */
+export function _resetWorkdayCxsBreakerForTests(): void {
+    WORKDAY_CXS_BREAKER.clear();
+}
+
+function cxsBreakerOpen(host: string): boolean {
+    const s = WORKDAY_CXS_BREAKER.get(host);
+    return s != null && s.blockedUntil > Date.now();
+}
+
+function noteCxsRefusal(host: string): void {
+    const s = WORKDAY_CXS_BREAKER.get(host) ?? { consecutiveRefusals: 0, blockedUntil: 0 };
+    s.consecutiveRefusals++;
+    if (s.consecutiveRefusals >= WORKDAY_CXS_TRIP_AFTER) {
+        s.blockedUntil = Date.now() + WORKDAY_CXS_COOLDOWN_MS;
+        s.consecutiveRefusals = 0; // re-arm: the post-cooldown probe gets a clean count
+        console.warn(
+            `[liveness] workday CXS detail endpoint refusing for ${host} — skipping its probes for ` +
+            `${Math.round(WORKDAY_CXS_COOLDOWN_MS / 60000)}m. Close-detection is paused for this tenant; ` +
+            `its job-listing crawl is unaffected.`,
+        );
+    }
+    WORKDAY_CXS_BREAKER.set(host, s);
+}
+
+function noteCxsSuccess(host: string): void {
+    WORKDAY_CXS_BREAKER.delete(host);
+}
+
 async function probeWorkday(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
     // C2 — prefer the structured CXS JSON endpoint over the HTML scrape.
     const cxsUrl = deriveWorkdayCxsUrl(p.sourceUrl);
+    const cxsHost = cxsUrl ? hostOf(cxsUrl) : "";
+    if (cxsUrl && cxsBreakerOpen(cxsHost)) {
+        // Tenant's detail endpoint is known-refusing — no verdict is reachable
+        // and the HTML fallback below can't help (see the note there), so spend
+        // nothing at all this tick.
+        return "unknown";
+    }
     if (cxsUrl) {
+        // Track refusal separately from the batch-level abort: a refusal means
+        // "this host is saying no", which is also the signal to skip the HTML
+        // fallback below rather than immediately hitting the SAME host again.
+        let refused = false;
+        const noteRefusal = () => { refused = true; onRateLimit?.(); };
         const r = await probeViaHttpStatus(cxsUrl, timeoutMs, LINKEDIN_UA, ({ bodyLower }) => {
             // 200 from CXS — read the tier-4 flags. `posted:false` (record
             // exists but the posting was taken down) is the unambiguous removal
@@ -503,13 +638,29 @@ async function probeWorkday(p: ProbeInput, timeoutMs: number, onRateLimit?: Rate
             // 200 but no recognizable flag (shape drift) → don't conclude from
             // CXS; signal ambiguity and let the HTML fallback below try.
             return "unknown";
-        }, onRateLimit);
+        }, noteRefusal);
         // 404/410 on CXS → posting removed (closed). 200 with a flag → trust it.
-        // "unknown" → CXS was inconclusive (shape drift / blocked): fall back
-        // to the HTML probe rather than concluding from a half-read payload.
-        if (r === "closed" || r === "alive") return r;
+        // "unknown" → CXS was inconclusive (shape drift): fall back to the HTML
+        // probe rather than concluding from a half-read payload.
+        if (r === "closed" || r === "alive") { noteCxsSuccess(cxsHost); return r; }
+        if (refused) {
+            // The host just refused us. Immediately hitting the SAME host again
+            // for the HTML fallback is precisely the hammering that got this
+            // IP blocked, and that fallback cannot succeed anyway (below).
+            noteCxsRefusal(cxsHost);
+            return "unknown";
+        }
     }
-    // HTML fallback (CXS unavailable / inconclusive / non-canonical URL).
+    // HTML fallback — reached only for a NON-canonical sourceUrl or genuine CXS
+    // shape drift, never after a refusal.
+    //
+    // Caveat worth knowing before trusting this path: modern Workday tenants
+    // serve the posting page as a client-rendered SPA. Boeing's is 6.5 KB whose
+    // only structural hook is `id="root"` — none of WORKDAY_ALIVE_MARKERS and
+    // none of WORKDAY_CLOSED_MARKERS can ever appear in it, so this probe
+    // resolves "unknown" on those tenants no matter what. The markers below are
+    // kept for server-rendered tenants (and are harmless), but do NOT assume
+    // this fallback provides real coverage for the CXS-blocked ones.
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, LINKEDIN_UA /* Workday + Cloudflare hates non-browser UAs */, ({ finalUrl, bodyLower }) => {
         // OQ4b — redirected off the /job/ path (this includes Workday auth
         // gates, which used to be treated as closure evidence). Closed only
@@ -659,7 +810,12 @@ export async function probeBatch(
     let rateLimitedAborted = false;
     const onRateLimit = () => {
         if (!rateLimitedAborted) {
-            console.warn(`[liveness] kind=${kind} got HTTP 429 — aborting remaining ${inScope.length - out.size} probes for this batch`);
+            // `out` was pre-seeded with the overflow verdicts above, so
+            // `inScope.length - out.size` under-counts by exactly the overflow
+            // and went NEGATIVE on big backlogs ("aborting remaining -2542
+            // probes"). Subtract only the in-scope results resolved so far.
+            const resolvedInScope = out.size - overflow.length;
+            console.warn(`[liveness] kind=${kind} refused (429/403/5xx) — aborting remaining ${inScope.length - resolvedInScope} probes for this batch`);
             rateLimitedAborted = true;
         }
     };
