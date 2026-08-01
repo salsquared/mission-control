@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CardGrid, CardItem } from "../grids/CardGrid";
+import { CardCanvas, type CardItem } from "../grids/CardCanvas";
 import { useServerEvents } from "@/hooks/useServerEvents";
 import { Bitcoin, Wallet } from "lucide-react";
 import { AssetPriceCard } from "../cards/finance/AssetPriceCard";
@@ -89,7 +89,11 @@ export const FinanceView: React.FC = () => {
         {
             id: "fin-1",
             colSpan: 2,
-            rowSpan: 2,
+            // Fixed height, not content height: GraphWidget's chart is a
+            // recharts ResponsiveContainer at height="100%", so it needs a
+            // bounded parent to size against — content-sizing would drop it to
+            // its min-h-[220px] floor.
+            height: "lg",
             content: (
                 <AssetPriceCard
                     title="Bitcoin"
@@ -110,7 +114,11 @@ export const FinanceView: React.FC = () => {
         {
             id: "fin-2",
             colSpan: 1,
-            rowSpan: 2,
+            // Family B: MarketTop100Card is `flex-1 overflow-y-auto`, which
+            // needs a bounded parent or the top-100 list expands to full
+            // length instead of scrolling. Matched to fin-1 so the pair still
+            // reads as a row.
+            height: "lg",
             content: (
                 <MarketTop100Card
                     top100={top100}
@@ -146,7 +154,7 @@ export const FinanceView: React.FC = () => {
     return (
         <Scrollbar className="w-full h-full pb-8">
             <Section title="Market Overview" description="Real-time cryptocurrency statistics">
-                <CardGrid items={staticCards} />
+                <CardCanvas items={staticCards} />
             </Section>
         </Scrollbar>
     );
