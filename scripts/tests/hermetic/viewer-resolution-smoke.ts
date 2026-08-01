@@ -540,6 +540,91 @@ async function main() {
             );
         }
 
+        // ════════════════════════════════════════════════════════════════════
+        // §6 — THE 403 WARN IS THROTTLED, THE 403 ITSELF IS NOT (P5.3.1/OQ15b).
+        //      Once the Cloudflare edge admits any Google-authenticated
+        //      identity, this path is reachable by anyone with a Google
+        //      account. An unthrottled warn would let them flush the 500-deep
+        //      ring buffer and take the live log tail with it. The warn must
+        //      still fire for a REAL pending crew member — it is the owner's
+        //      provisioning cue — so "silence it" is not an acceptable fix.
+        // ════════════════════════════════════════════════════════════════════
+        {
+            const { client } = stubClient(ROWS);
+            const realWarn = console.warn;
+            let warned: string[] = [];
+            const captureWarn = () => { warned = []; console.warn = (...a: unknown[]) => { warned.push(a.join(' ')); }; };
+
+            try {
+                // (a) A real pending crew member's FIRST 403 still names them.
+                __resetViewer();
+                captureWarn();
+                const ghost = await resolveViewer({
+                    readHeaders: async () => await accessHeaders(GHOST_EMAIL_FIX), client,
+                });
+                console.warn = realWarn;
+                check('throttle: an unprovisioned identity still 403s', denyStatus(ghost) === 403, ghost);
+                check(
+                    'throttle: the FIRST 403 for an email warns, naming it and the provisioning command',
+                    warned.length === 1 && warned[0].includes(GHOST_EMAIL_FIX) && warned[0].includes('manage-crew.ts add'),
+                    warned,
+                );
+
+                // (b) The SAME email refreshing is deduped — one cue, not a flood.
+                captureWarn();
+                for (let i = 0; i < 25; i++) {
+                    await resolveViewer({ readHeaders: async () => await accessHeaders(GHOST_EMAIL_FIX), client });
+                }
+                console.warn = realWarn;
+                check(
+                    `throttle: 25 repeats from the same email emit 0 further warns (got ${warned.length})`,
+                    warned.length === 0,
+                    warned,
+                );
+
+                // (c) THE ONE THAT MATTERS. Per-email dedup alone is defeated by
+                //     rotating the address, so the global per-window budget is
+                //     what actually bounds a flood. 40 distinct emails must not
+                //     produce 40 warns.
+                __resetViewer();
+                captureWarn();
+                const denials: number[] = [];
+                for (let i = 0; i < 40; i++) {
+                    const r = await resolveViewer({
+                        readHeaders: async () => await accessHeaders(`flood-${i}@viewer-smoke.invalid`), client,
+                    });
+                    denials.push(denyStatus(r) ?? 0);
+                }
+                console.warn = realWarn;
+                check(
+                    `throttle: 40 DISTINCT unprovisioned emails are bounded well under 40 warns (got ${warned.length})`,
+                    warned.length > 0 && warned.length <= 12,
+                    warned.length,
+                );
+                // The security property: suppressing a log line must never
+                // change the verdict. Every one of the 40 is still denied 403.
+                check(
+                    'throttle: ALL 40 still receive 403 — throttling the warn never softens the denial',
+                    denials.length === 40 && denials.every((s) => s === 403),
+                    denials.filter((s) => s !== 403),
+                );
+
+                // (d) `__resetViewer()` clears the throttle, so one smoke's
+                //     flood fixture cannot mute the warn a later smoke asserts.
+                __resetViewer();
+                captureWarn();
+                await resolveViewer({ readHeaders: async () => await accessHeaders(GHOST_EMAIL_FIX), client });
+                console.warn = realWarn;
+                check(
+                    'throttle: __resetViewer() clears the throttle state (no cross-smoke muting)',
+                    warned.length === 1 && warned[0].includes(GHOST_EMAIL_FIX),
+                    warned,
+                );
+            } finally {
+                console.warn = realWarn;
+            }
+        }
+
         // The JWKS came from the local stub and nothing else was contacted.
         check(
             `no network beyond the stubbed JWKS (fetched: ${fetched.length})`,

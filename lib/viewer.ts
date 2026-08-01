@@ -22,11 +22,19 @@
 //
 // The ONLY module-level mutable state permitted in this file is:
 //   1. `seededViewer` — the explicit `__seedViewer()` test seam (P1.2.4), which
-//      no production code path ever writes; and
+//      no production code path ever writes;
 //   2. the two `…BreakGlassWarned` booleans, which hold a boolean, never an
 //      identity, and exist purely to keep a per-request warning from flooding
-//      the 500-deep log ring buffer.
-// Neither is ever populated by a real request's identity.
+//      the 500-deep log ring buffer; and
+//   3. the `unprovisionedWarn*` counters + `unprovisionedWarnedEmails` Set
+//      (P5.3.1), which throttle the 403 warn below.
+// NONE of these is ever consulted to decide WHO the caller is — they gate
+// LOGGING only, and `resolveViewer()` reaches the same verdict whether they are
+// full or empty. Item 3 is the one that most resembles the memo trap above, so
+// be precise about the difference: it stores an email that has ALREADY been
+// denied, and its only power is to make the next denial quieter. It can never
+// turn a 403 into a 200. If you ever find yourself reading it before the
+// `findUnique`, you have reintroduced the bypass this file exists to prevent.
 //
 // ============================================================================
 //
@@ -147,6 +155,79 @@ let seededViewer: Viewer | null = null;
 let devBreakGlassWarned = false;
 let prodBreakGlassWarned = false;
 
+// ---------------------------------------------------------------------------
+// P5.3.1 — throttle for the "verified identity, no User row" (403) warn.
+//
+// WHY THIS EXISTS. That warn names the email and tells the owner which
+// `manage-crew.ts add` to run, so it must stay VISIBLE for a real crew member's
+// first visit — it is the entire provisioning cue. But it fires on every such
+// request, and OQ15b opens the Cloudflare edge to any Google-authenticated
+// identity, which makes the 403 path reachable by anyone with a Google account.
+// Unthrottled, holding down refresh flushes the 500-deep ring buffer
+// (`lib/logger.ts`) and takes the live log tail with it — destroying exactly the
+// evidence an operator would want during an incident.
+//
+// THE SHAPE. Two layers, because either alone leaves a hole:
+//   * per-email dedup, so one person refreshing warns once, not once per poll;
+//   * a GLOBAL per-window budget, because per-email dedup alone is defeated by
+//     rotating the address — the flooder just supplies a fresh email each time.
+// Beyond the budget we count instead of logging, and emit ONE summary line when
+// the window rolls. Worst case is therefore ~11 lines/minute no matter what the
+// caller does, while a genuine first-visit 403 is essentially always inside a
+// 10-per-minute budget.
+//
+// The Set is bounded WITHOUT an explicit cap: it is only ever added to on a
+// warn we actually emitted, and those are capped at MAX_PER_WINDOW, so it holds
+// at most that many entries and is replaced wholesale each window.
+const UNPROVISIONED_WARN_WINDOW_MS = 60_000;
+const UNPROVISIONED_WARN_MAX_PER_WINDOW = 10;
+
+let unprovisionedWindowStart = 0;
+let unprovisionedWarnCount = 0;
+let unprovisionedSuppressed = 0;
+let unprovisionedWarnedEmails = new Set<string>();
+
+/**
+ * Should the 403 branch log for this email right now?
+ *
+ * Pure logging policy — it never influences the returned `ViewerResult`. The
+ * window-roll summary is emitted lazily, on the first call after the window
+ * expires, so if traffic stops entirely the final summary never prints; that is
+ * an accepted trade (no timers in a request path) and costs only a tally line.
+ */
+function shouldWarnUnprovisioned(email: string): boolean {
+    const now = Date.now();
+
+    if (now - unprovisionedWindowStart >= UNPROVISIONED_WARN_WINDOW_MS) {
+        if (unprovisionedSuppressed > 0) {
+            console.warn(
+                `[VIEWER] suppressed ${unprovisionedSuppressed} further unprovisioned-identity ` +
+                `warning(s) in the preceding ${UNPROVISIONED_WARN_WINDOW_MS / 1000}s. If this ` +
+                `number is large the 403 path is being probed, not tripped by a pending hire.`,
+            );
+        }
+        unprovisionedWindowStart = now;
+        unprovisionedWarnCount = 0;
+        unprovisionedSuppressed = 0;
+        unprovisionedWarnedEmails = new Set();
+    }
+
+    // Already named this address in this window — the operator has the cue.
+    if (unprovisionedWarnedEmails.has(email)) {
+        unprovisionedSuppressed++;
+        return false;
+    }
+    // Budget spent. Count it so the summary can report the true volume.
+    if (unprovisionedWarnCount >= UNPROVISIONED_WARN_MAX_PER_WINDOW) {
+        unprovisionedSuppressed++;
+        return false;
+    }
+
+    unprovisionedWarnedEmails.add(email);
+    unprovisionedWarnCount++;
+    return true;
+}
+
 /**
  * Resolve the viewer for the current request.
  *
@@ -241,18 +322,27 @@ export async function resolveViewer(deps: ViewerResolverDeps = {}): Promise<View
         // OQ3a — verified identity, no User row (or a row with no email, which
         // is not a usable viewer). This is the deliberate two-step provisioning:
         // Access lets them past the edge, but this instance has no account for
-        // them. ONE loud warn naming the email, because it is the owner's cue to
-        // run `scripts/manage-crew.ts add <email> --tier=<dev|prod>`. The tier
+        // them. A loud warn naming the email, because it is the owner's cue to
+        // run `scripts/manage-crew.ts add <email> --tier=<dev|prod>` — THROTTLED
+        // since P5.3.1 (see `shouldWarnUnprovisioned` above): once per email per
+        // minute, and at most 10 distinct emails per minute, because OQ15b makes
+        // this path reachable by anyone with a Google account. The first 403 for
+        // a real pending crew member is always inside that budget; a flood is
+        // bounded to a tally line. The tier
         // flag is REQUIRED by that script (it refuses to guess which SQLite file
         // to write), so it must appear here — a copy-pasteable command that
         // exits 2 is worse than no command at all. `process.env.NODE_ENV` is the
         // best tier hint available in-process; it is only a hint, hence the
         // explicit flag rather than a silent default.
-        const tierHint = process.env.NODE_ENV === 'production' ? 'prod' : 'dev';
-        console.warn(
-            `[VIEWER] Access-verified identity with no User row: ${email} — denying (403). ` +
-            `Provision with: npx tsx scripts/manage-crew.ts add ${email} --tier=${tierHint}`,
-        );
+        if (shouldWarnUnprovisioned(email)) {
+            const tierHint = process.env.NODE_ENV === 'production' ? 'prod' : 'dev';
+            console.warn(
+                `[VIEWER] Access-verified identity with no User row: ${email} — denying (403). ` +
+                `Provision with: npx tsx scripts/manage-crew.ts add ${email} --tier=${tierHint}`,
+            );
+        }
+        // The 403 itself is NEVER throttled — only its log line. Suppressing the
+        // warn must not change what the caller is told.
         return { ok: false, status: 403, email };
     }
 
@@ -484,4 +574,11 @@ export function __seedViewer(viewer: Viewer | null): void {
  */
 export function __resetViewer(): void {
     seededViewer = null;
+    // P5.3.1 — also drop the 403-warn throttle state, so one smoke's flood
+    // fixture cannot mute the warn a later smoke is asserting on. Same reason
+    // `lib/watchlists/schedule-floor.ts` exports `__resetScheduleFloorWarnLatch`.
+    unprovisionedWindowStart = 0;
+    unprovisionedWarnCount = 0;
+    unprovisionedSuppressed = 0;
+    unprovisionedWarnedEmails = new Set();
 }
