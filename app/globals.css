@@ -413,3 +413,31 @@ html.light .custom-scrollbar::-webkit-scrollbar-thumb:hover {
 .no-scrollbar::-webkit-scrollbar {
   display: none;
 }
+
+/* Wrap-around marquee for labels too wide for their container (launch-calendar
+   pills). The track holds two identical copies separated by a gap; shifting it
+   by exactly one copy-plus-gap lands copy 2 where copy 1 started, so the reset
+   to translateX(0) is invisible — text loops Pac-Man style rather than
+   ping-ponging back. Both custom properties are set inline by the component,
+   which measures the overflow: --marquee-shift is that copy-plus-gap distance
+   and --marquee-duration derives from it at a constant px/sec, so long labels
+   scroll for longer rather than faster. Applied only when the text actually
+   overflows; a label that fits is a plain static span. */
+@keyframes mc-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(calc(-1 * var(--marquee-shift, 0px)));
+  }
+}
+
+.marquee-track {
+  animation: mc-marquee var(--marquee-duration, 8s) linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track {
+    animation: none;
+  }
+}

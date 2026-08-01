@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { Launch } from "../views/SpaceView";
 import { motion, AnimatePresence } from "framer-motion";
 import { ChevronLeft, ChevronRight, Loader2, X } from "lucide-react";
@@ -7,6 +7,25 @@ import { fetcher } from "@/lib/fetcher-client";
 interface LaunchCalendarWidgetProps {
     launches: Launch[];
 }
+
+// Chinese launches are matched by vehicle family first, then by provider: the
+// state fleet is recognisable by name (Long March / CZ), but the commercial
+// startups' vehicles are not, so the operator is the reliable tell for those.
+// Deliberately no "casc" token — CASC and CASIC both spell out "China" in the
+// provider name LL2 returns, and the abbreviation is the one prone to collide.
+const CHINESE_ROCKET_TOKENS = [
+    "long march", "chang zheng", "cz-", "kuaizhou", "jielong", "smart dragon",
+    "ceres", "pallas", "hyperbola", "zhuque", "tianlong", "gravity-",
+    "kinetica", "lijian", "kaituozhe", "nebula-",
+];
+const CHINESE_PROVIDER_TOKENS = [
+    "china", "expace", "landspace", "ispace", "i-space", "galactic energy",
+    "space pioneer", "orienspace", "cas space", "deep blue",
+];
+
+const isChineseLaunch = (lowerName: string, lowerProvider: string) =>
+    CHINESE_ROCKET_TOKENS.some(token => lowerName.includes(token)) ||
+    CHINESE_PROVIDER_TOKENS.some(token => lowerProvider.includes(token));
 
 const getRocketColor = (name: string, provider?: string) => {
     const lowerName = name.toLowerCase();
@@ -17,7 +36,7 @@ const getRocketColor = (name: string, provider?: string) => {
     if (lowerName.includes("sls") || lowerName.includes("space launch system")) return "bg-orange-500";
     if (lowerName.includes("neutron")) return "bg-yellow-500";
     if (lowerName.includes("electron")) return "bg-cyan-500";
-    if (lowerName.includes("vulcan")) return "bg-red-500";
+    if (lowerName.includes("vulcan")) return "bg-fuchsia-500";
 
     // Russian
     if (lowerName.includes("soyuz") || lowerName.includes("progress") || lowerName.includes("proton") || lowerName.includes("angara") || lowerProvider.includes("roscosmos")) return "bg-amber-600";
@@ -25,29 +44,18 @@ const getRocketColor = (name: string, provider?: string) => {
     // European
     if (lowerName.includes("ariane") || lowerName.includes("vega") || lowerProvider.includes("esa") || lowerProvider.includes("arianespace")) return "bg-indigo-500";
 
+    // Chinese — checked after the families above so a Western vehicle can never
+    // be captured by the broader provider tokens.
+    if (isChineseLaunch(lowerName, lowerProvider)) return "bg-red-500";
+
     return "bg-gray-500";
 };
 
-const getRocketLabel = (name: string, provider?: string) => {
-    const lowerName = name.toLowerCase();
-    const lowerProvider = provider ? provider.toLowerCase() : "";
-
-    if (lowerName.includes("falcon")) return "Falcon 9";
-    if (lowerName.includes("starship")) return "Starship";
-    if (lowerName.includes("sls") || lowerName.includes("space launch system")) return "SLS";
-    if (lowerName.includes("neutron")) return "Neutron";
-    if (lowerName.includes("electron")) return "Electron";
-    if (lowerName.includes("vulcan")) return "Vulcan";
-
-    // Russian
-    if (lowerName.includes("soyuz") || lowerName.includes("progress") || lowerName.includes("proton") || lowerName.includes("angara") || lowerProvider.includes("roscosmos")) return "Roscosmos";
-
-    // European
-    if (lowerName.includes("ariane") || lowerName.includes("vega") || lowerProvider.includes("esa") || lowerProvider.includes("arianespace")) return "ESA";
-
-    // For other rockets, extract the first meaningful part of the name
-    return name.split(" | ")[0].split(" ")[0] || name;
-};
+// The full vehicle designation: everything before LL2's " | " mission separator
+// ("Long March 8A | Satellite Internet Group 03" -> "Long March 8A"). Nothing is
+// abbreviated here — a name too wide for its pill scrolls instead (MarqueeLabel),
+// so the vehicle is never left as a stub the reader has to guess at.
+const getRocketLabel = (name: string) => name.split(" | ")[0].trim() || name;
 
 const getLaunchStatusInfo = (launch: Launch) => {
     const launchTime = new Date(launch.net).getTime();
@@ -74,6 +82,67 @@ const getLaunchStatusInfo = (launch: Launch) => {
 
     // Otherwise, upcoming
     return { name: launch.status.name, colorClass: 'border-blue-500/50 text-blue-400 bg-blue-500/10' };
+};
+
+const MARQUEE_GAP_PX = 16;
+const MARQUEE_SPEED_PX_PER_SEC = 10;
+
+/**
+ * A pill label that scrolls only when it doesn't fit. Overflowing text loops
+ * continuously in one direction — the second copy takes over exactly where the
+ * first left off (Pac-Man wrap), rather than reversing like a ping-pong ticker.
+ * A label that fits renders as a single static span with no animation at all.
+ */
+const MarqueeLabel: React.FC<{ label: string; suffix: string }> = ({ label, suffix }) => {
+    const viewportRef = useRef<HTMLDivElement>(null);
+    const textRef = useRef<HTMLSpanElement>(null);
+    const [shiftPx, setShiftPx] = useState(0);
+
+    useEffect(() => {
+        const viewport = viewportRef.current;
+        const text = textRef.current;
+        if (!viewport || !text) return;
+
+        const measure = () => {
+            // The track is `w-max` and the gap lives on the flex container, so
+            // this copy always reports its natural text width — even mid-scroll,
+            // and even once the second copy exists. The measurement can't feed
+            // back into itself and oscillate.
+            const textWidth = text.getBoundingClientRect().width;
+            // 1px of slack: a label that merely rounds over shouldn't animate.
+            setShiftPx(textWidth > viewport.clientWidth + 1 ? textWidth + MARQUEE_GAP_PX : 0);
+        };
+
+        measure();
+        const observer = new ResizeObserver(measure);
+        observer.observe(viewport); // card / grid resize narrows the pill
+        observer.observe(text);     // webfont swap re-widths the label
+        return () => observer.disconnect();
+    }, [label, suffix]);
+
+    const scrolling = shiftPx > 0;
+    // Duration from distance at a fixed px/sec, so every pill scrolls at the
+    // same speed and a longer name simply takes longer to come round.
+    const trackStyle = {
+        gap: `${MARQUEE_GAP_PX}px`,
+        "--marquee-shift": `${shiftPx}px`,
+        "--marquee-duration": `${(shiftPx / MARQUEE_SPEED_PX_PER_SEC).toFixed(2)}s`,
+    } as React.CSSProperties & Record<string, string>;
+
+    const content = (
+        <>
+            <span className="font-semibold">{label}</span>{suffix}
+        </>
+    );
+
+    return (
+        <div ref={viewportRef} className="w-full overflow-hidden">
+            <div className={`flex w-max ${scrolling ? "marquee-track" : ""}`} style={scrolling ? trackStyle : undefined}>
+                <span ref={textRef} className="whitespace-nowrap">{content}</span>
+                {scrolling && <span className="whitespace-nowrap" aria-hidden>{content}</span>}
+            </div>
+        </div>
+    );
 };
 
 export const LaunchCalendarWidget: React.FC<LaunchCalendarWidgetProps> = ({ launches }) => {
@@ -209,9 +278,10 @@ export const LaunchCalendarWidget: React.FC<LaunchCalendarWidgetProps> = ({ laun
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-orange-500"></div><span className="text-muted-foreground">SLS</span></div>
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-yellow-500"></div><span className="text-muted-foreground">Neutron</span></div>
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-cyan-500"></div><span className="text-muted-foreground">Electron</span></div>
-                    <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-red-500"></div><span className="text-muted-foreground">Vulcan</span></div>
+                    <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-fuchsia-500"></div><span className="text-muted-foreground">Vulcan</span></div>
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-amber-600"></div><span className="text-muted-foreground">Roscosmos</span></div>
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-indigo-500"></div><span className="text-muted-foreground">ESA</span></div>
+                    <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-red-500"></div><span className="text-muted-foreground">China</span></div>
                     <div className="flex items-center gap-1.5"><div className="w-2.5 h-2.5 rounded-full bg-gray-500"></div><span className="text-muted-foreground">Other</span></div>
                 </div>
             </div>
@@ -244,9 +314,9 @@ export const LaunchCalendarWidget: React.FC<LaunchCalendarWidgetProps> = ({ laun
                                             key={launch.id}
                                             title={`${launch.name}\nProvider: ${launch.launch_service_provider?.name || 'Unknown'}\nDate: ${new Date(launch.net).toLocaleString()}`}
                                             onClick={() => setSelectedLaunch(launch)}
-                                            className={`text-[10px] w-full px-1.5 py-1 rounded-sm text-white/90 truncate cursor-pointer hover:brightness-110 active:scale-95 transition-all ${getRocketColor(launch.name, launch.launch_service_provider?.name)} shadow-sm`}
+                                            className={`text-[10px] w-full shrink-0 h-4 leading-4 px-1.5 rounded-sm text-white/90 overflow-hidden cursor-pointer hover:brightness-110 active:scale-95 transition-all ${getRocketColor(launch.name, launch.launch_service_provider?.name)} shadow-sm`}
                                         >
-                                            <span className="font-semibold">{getRocketLabel(launch.name, launch.launch_service_provider?.name)}</span>{estimatedStr}
+                                            <MarqueeLabel label={getRocketLabel(launch.name)} suffix={estimatedStr} />
                                         </div>
                                     )
                                 })}
