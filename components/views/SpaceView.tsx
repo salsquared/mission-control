@@ -264,6 +264,11 @@ export const SpaceView: React.FC = () => {
         {
             id: "space-4",
             hFit: true,
+            // Two tracks of three, like the Launch Calendar. The weekly strip
+            // below is an overflow-x-auto row of ~50px day tiles; at one track
+            // only three or four fit before it scrolls, so the extra width is
+            // what actually shows the cycle.
+            colSpan: 2,
             content: (
                 <div className="flex flex-col">
                     <div className="flex items-center justify-between mb-2 text-slate-300">

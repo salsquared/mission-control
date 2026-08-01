@@ -85,8 +85,16 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
             action={onReload && <ReloadButton onReload={onReload} title="Reload Next Launch" />}
         >
             {nextLaunch ? (
-                <div className="flex flex-row w-full">
-                    <div className="w-4/7 flex flex-col justify-center py-4 pr-4">
+                // Stacked, not side by side: the countdown on top, highlights
+                // underneath. This was a 4/7 + 3/7 row split with a vertical
+                // rule, which at one track wide squeezed the T- clock and the
+                // highlight dates into two cramped columns. Each block now gets
+                // the full card width and the rule turns horizontal. pb-4/pt-4
+                // keeps the same 2rem of breathing room around the divider that
+                // pr-4/pl-4 gave it, minus the old outer py-4 — vertical space
+                // is the scarce axis here in a way horizontal space was not.
+                <div className="flex flex-col w-full">
+                    <div className="flex flex-col pb-4">
                         <NextLaunchTimer launch={nextLaunch} onExpire={() => setExpireCount(c => c + 1)} />
                         <div className="text-xs text-cyan-400 mt-1 font-medium bg-black/20 rounded py-0.5 self-start mb-1">
                             {new Date(nextLaunch.net).toLocaleString(undefined, {
@@ -105,7 +113,7 @@ export const NextLaunchCard: React.FC<NextLaunchCardProps> = ({ launches, loadin
                             {nextLaunch.pad?.location?.name || "Unknown Location"}
                         </div>
                     </div>
-                    <div className="w-3/7 flex flex-col justify-center pl-4 py-4 border-l border-white/10">
+                    <div className="flex flex-col pt-4 border-t border-white/10">
                         <div className="text-[10px] text-muted-foreground uppercase font-bold mb-1.5">Upcoming Highlights</div>
                         <div className="flex flex-col gap-1.5">
                             {upcomingHighlights.map(h => {
