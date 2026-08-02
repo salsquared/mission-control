@@ -120,7 +120,15 @@ async function expectResult(actual: LivenessResult, expected: LivenessResult, ms
 // ─── Per-kind dispatch + status routing ───────────────────────────────────
 
 async function testGenericStatusCodes() {
-    const kinds: WatchlistKind[] = ["smartrecruiters", "workable", "recruitee", "personio", "clearcompany", "careers-page"];
+    // `clearcompany` was in this list until 2026-08-02, when it moved off
+    // probeGeneric onto the structured probeClearCompany (its SPA host answers
+    // 200 for EVERY job path, so "200 → alive" was unconditionally true and the
+    // kind never closed a single one of its 245 postings). It no longer probes
+    // an arbitrary sourceUrl at all — it derives a careers-api detail URL and
+    // needs a boardKey — so it cannot be exercised by this generic loop.
+    // Its dispatch, status routing and interlocks are covered in full by
+    // scripts/tests/hermetic/clearcompany-liveness-smoke.ts.
+    const kinds: WatchlistKind[] = ["smartrecruiters", "workable", "recruitee", "personio", "careers-page"];
     for (const kind of kinds) {
         // 404
         let stub = installFetchMock([{ matches: () => true, respond: () => respondStatus(404) }]);

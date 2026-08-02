@@ -617,6 +617,13 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // doesn't double-probe a stale-but-alive row (still status="new") in the
     // same tick.
     const staleProbedExternalIds = new Set<string>();
+    // Board-level id for the kinds whose per-posting liveness API is addressed
+    // as (board, posting). Only clearcompany today: its detail endpoint is
+    // careers-api.clearcompany.com/v1/<siteId>/<jobId> and the siteId lives
+    // ONLY here in the watchlist config — it is absent from the posting URL and
+    // from the posting page. Passed to both probeBatch call sites below; a kind
+    // that needs it and doesn't get it resolves "unknown", never "closed".
+    const probeBoardKey = config.kind === "clearcompany" ? config.boardSlug : undefined;
     if (!isFirstRun && fetchResult.postings.length > 0 && !fetchResult.partial) {
         const sixHoursAgo = new Date(runAt.getTime() - 6 * 60 * 60 * 1000);
         // OQ5a confirm window — a pending stamp confirms only when it is OLDER
@@ -638,7 +645,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
         for (const c of toProbe) staleProbedExternalIds.add(c.externalId);
         if (toProbe.length > 0) {
             const probeResults = await probeBatch(
-                toProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl })),
+                toProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl, boardKey: probeBoardKey })),
                 watchlist.kind as WatchlistKind,
             );
             // OQ5a two-tick partition: a closed verdict on a row already
@@ -817,7 +824,7 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             );
             if (c3ToProbe.length > 0) {
                 const c3Results = await probeBatch(
-                    c3ToProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl })),
+                    c3ToProbe.map(c => ({ externalId: c.externalId, sourceUrl: c.sourceUrl, boardKey: probeBoardKey })),
                     watchlist.kind as WatchlistKind,
                     { profile: { maxPerTick: c3Budget } },
                 );

@@ -65,6 +65,20 @@ export interface ProbeInput {
     /** Map key for batch results. Same value as `JobPosting.externalId`. */
     externalId: string;
     sourceUrl: string;
+    /**
+     * Optional board-level identifier from the owning `Watchlist.config`, for
+     * the kinds whose per-posting API is addressed as (board, posting) rather
+     * than by posting id alone.
+     *
+     * Only `clearcompany` reads it today (its detail endpoint is
+     * `/v1/<siteId>/<jobId>`, and the siteId appears nowhere in the posting
+     * URL — see probeClearCompany). It is OPTIONAL because the other callers of
+     * probeBatch (scripts/tests/debug/recover-false-closed.ts, the
+     * close-detection audit probe) build ProbeInputs straight from JobPosting
+     * rows and have no watchlist config in hand. A kind that needs it and
+     * doesn't get it resolves "unknown" — never "closed".
+     */
+    boardKey?: string;
 }
 
 export interface ProbeProfile {
@@ -107,7 +121,17 @@ export const PROBE_PROFILES: Record<WatchlistKind, ProbeProfile> = {
     workable:        { concurrency: 4, perHitDelayMs:    0, maxPerTick: 100, timeoutMs: 5000 },
     recruitee:       { concurrency: 4, perHitDelayMs:    0, maxPerTick: 100, timeoutMs: 5000 },
     personio:        { concurrency: 4, perHitDelayMs:    0, maxPerTick: 100, timeoutMs: 5000 },
-    clearcompany:    { concurrency: 4, perHitDelayMs:    0, maxPerTick: 100, timeoutMs: 5000 },
+    // 2026-08-02: was { concurrency: 4, perHitDelayMs: 0, maxPerTick: 100 }
+    // back when clearcompany was on probeGeneric and every probe hit the
+    // tenant's own SPA host. probeClearCompany now hits careers-api
+    // .clearcompany.com — the SAME host lib/fetchers/clearcompany-fetcher.ts
+    // crawls the job list from — so probe traffic and crawl traffic share one
+    // budget, and starving the crawl to detect closures would be a bad trade.
+    // A non-zero perHitDelayMs puts probeBatch in SERIAL mode (concurrency is
+    // then inert, same as the ashby row), giving ~4 requests/sec worst case.
+    // maxPerTick 50 drains the ~125-row stale backlog in ~3 ticks, which is
+    // well inside the two-strike close window.
+    clearcompany:    { concurrency: 2, perHitDelayMs:  250, maxPerTick:  50, timeoutMs: 6000 },
     "careers-page":  { concurrency: 3, perHitDelayMs:  500, maxPerTick:  50, timeoutMs: 6000 },
 };
 
@@ -327,6 +351,21 @@ async function probeViaHttpStatus(
     userAgent: string,
     extraClosedCheck?: (final: { finalUrl: string; bodyLower: string }) => LivenessResult | null,
     onRateLimit?: RateLimitCallback,
+    /**
+     * Optional hook that DOWNGRADES the default `404/410 → closed` rule by
+     * letting the caller inspect the not-found body first.
+     *
+     * Every other kind wants the default: a 404 from Greenhouse's or Lever's
+     * API means the posting is gone, full stop. ClearCompany is the exception
+     * — its API answers BOTH "this board has no such requisition" (posting-
+     * level, a ProblemDetails JSON body) and "I don't know this board at all"
+     * (board-level, an EMPTY body) with a bare 404, and only the first is
+     * evidence about the posting. See probeClearCompany.
+     *
+     * Absent ⇒ behavior is exactly as before (404/410 ⇒ closed), so this is
+     * inert for every existing caller.
+     */
+    notFoundCheck?: (nf: { status: number; bodyLower: string }) => LivenessResult,
 ): Promise<LivenessResult> {
     try {
         assertExternalHttpUrl(url);
@@ -363,7 +402,11 @@ async function probeViaHttpStatus(
             onRateLimit?.();
             return "rate-limited" as const;
         }
-        if (res.status === 404 || res.status === 410) return "closed" as LivenessResult;
+        if (res.status === 404 || res.status === 410) {
+            if (!notFoundCheck) return "closed" as LivenessResult;
+            const nfBody = await res.text().catch(() => "");
+            return notFoundCheck({ status: res.status, bodyLower: nfBody.toLowerCase() });
+        }
         if (!res.ok) return "unknown" as LivenessResult;
 
         // 2xx — let the optional extra check inspect body / final URL.
@@ -532,6 +575,124 @@ async function probeLever(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
         if (r !== "unknown") return r;
     }
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, POLITE_UA, undefined, onRateLimit);
+}
+
+/**
+ * ClearCompany posting URLs are the board's `applyLink`:
+ *   https://<shortname>.clearcompany.com/careers/jobs/<jobId>/apply
+ * `jobId` is the only part we need; `<shortname>` is a tenant vanity host and
+ * is deliberately NOT used to address the API (see probeClearCompany).
+ */
+const CLEARCOMPANY_URL_RE = /^https?:\/\/[^/]+\.clearcompany\.com\/careers\/jobs\/([0-9a-f-]{16,})(?:\/|$)/i;
+
+/**
+ * ClearCompany — tier-4 structured probe (2026-08-02).
+ *
+ * WHY THIS EXISTS. clearcompany was the last kind still on probeGeneric, and
+ * that was actively wrong rather than merely weak: `<shortname>.clearcompany
+ * .com` serves an empty client-rendered SPA shell with HTTP 200 for EVERY job
+ * path, so probeGeneric returned "alive" unconditionally. Measured on prod.db
+ * 2026-08-01: 245 postings, 0 ever closed, `pendingClosedAt` never once
+ * stamped. The shell is byte-identical (11,027 bytes) for a live posting, a
+ * long-removed one, and a syntactically bogus id, and contains neither the job
+ * id nor the title — so no body heuristic can ever work here, and the previous
+ * note in probeGeneric correctly refused to invent one.
+ *
+ * THE SIGNAL. The board's own career site is a thin client over a public JSON
+ * API — the same API `lib/fetchers/clearcompany-fetcher.ts` already crawls for
+ * the job LIST — which also exposes a per-requisition DETAIL resource:
+ *
+ *   GET https://careers-api.clearcompany.com/v1/<siteId>/<jobId>
+ *
+ * Validated 2026-08-02 against Firefly Aerospace (the only ClearCompany tenant
+ * in the DB) over a 10-posting stratified sample whose expected verdict was
+ * established INDEPENDENTLY of the probe, by cross-referencing the live board
+ * list against prod.db. All 10 agreed exactly:
+ *   - 5 live postings           → 200 + the full posting JSON
+ *   - 4 postings absent from the board → 404
+ *   - 1 deliberately bogus job id      → 404
+ * Reproduce with `scripts/tests/debug/clearcompany-probe-audit.ts detail`.
+ *
+ * THREE OF THOSE FIVE "alive" ROWS ARE THE POINT. Their `lastSeenAt` was 64
+ * days old — i.e. job-watcher had them queued as close candidates — while the
+ * posting was demonstrably still on the live board. They are exactly what a
+ * naive "stale ⇒ closed" rule (or a `probeGeneric` that had 404'd instead of
+ * 200'd) would have false-closed.
+ *
+ * WHY THIS IS INDEPENDENT EVIDENCE, not a restatement of the fetcher's view.
+ * The gate exists because the FETCHER's picture of a board can be incomplete.
+ * The detail endpoint asks about ONE requisition and cannot be truncated,
+ * paginated or filtered — the list endpoint demonstrably can: Firefly's list
+ * response is ~1.3 MB and TWO of five live fetches during this investigation
+ * came back truncated mid-stream. A posting dropped by a partial list read
+ * still answers 200 here, so it re-probes "alive" instead of closing.
+ *
+ * WHY THE 404 MUST CARRY A BODY. This is the mass-false-close interlock, and
+ * it is the ClearCompany analogue of Ashby's maintenanceMode bail-out. The API
+ * returns a bare 404 for two very different things:
+ *   - POSTING-level ("this board has no such requisition") → 404 WITH an
+ *     RFC 7231 ProblemDetails JSON body (161 bytes, `"status":404`);
+ *   - BOARD-level ("I don't know this siteId at all") → 404 with an EMPTY body,
+ *     because the request never reaches the controller.
+ * Confirmed reproducible against two different bogus siteIds. Closing on a
+ * bare 404 would mean that the day ClearCompany rotates or retires a tenant's
+ * siteId, every posting on that board closes at once — and a confirmed close
+ * cascades into auto-closing linked application cards and never self-heals.
+ * So an empty 404 resolves "unknown".
+ *
+ * Note this is strictly SAFER than the plain `404 ⇒ closed` rule that
+ * probeGreenhouse and probeLever use: if ClearCompany ever starts sending a
+ * body on board-level 404s too, we lose the interlock but degrade to their
+ * behavior; if it ever stops sending one on posting-level 404s, we close
+ * nothing — which is exactly today's status quo. Neither direction can
+ * over-close.
+ *
+ * WHY siteId COMES FROM THE WATCHLIST. The siteId appears nowhere in the
+ * posting URL, nowhere in the SPA shell, and is not derivable from the
+ * `<shortname>` host — it is a separate UUID that lives in
+ * `Watchlist.config.boardSlug` (the same value the fetcher crawls with). It is
+ * threaded in as `ProbeInput.boardKey`. A rejected alternative was to scrape it
+ * from the tenant's careers landing page and memoize per host; that adds a
+ * request, a cache, and a scrape to learn something the caller already knows.
+ * No boardKey ⇒ "unknown".
+ *
+ * A REJECTED SECOND SIGNAL, recorded so it is not re-discovered as an
+ * improvement: the career site's own job-detail view XHRs
+ * `<host>/api/v1/careers/jobs/<jobId>/posting-url` (requires an `API-ShortName`
+ * header) and redirects to an HRMDirect requisition page. It loses on every
+ * axis — two requests instead of one, and hop 1 does NOT discriminate (a
+ * REMOVED posting still answers 200 with a posting-url; only a wholly unknown
+ * id 404s), so removal detection lands back on an HTML marker ("Oops! The
+ * position you're looking for does not exist") served by a host that visibly
+ * degrades under rapid fire. `clearcompany-probe-audit.ts twohop` still runs it.
+ */
+async function probeClearCompany(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
+    const m = p.sourceUrl.match(CLEARCOMPANY_URL_RE);
+    // No boardKey (a caller with no watchlist config) or a non-canonical URL:
+    // there is no probe to run. Deliberately NOT falling back to probeGeneric —
+    // on this kind that is a guaranteed FALSE "alive" (the 200-for-everything
+    // SPA shell), which is the bug being fixed.
+    if (!m || !p.boardKey) return "unknown";
+    const jobId = m[1].toLowerCase();
+    const apiUrl = `https://careers-api.clearcompany.com/v1/${encodeURIComponent(p.boardKey)}/${encodeURIComponent(jobId)}`;
+    // The id-echo requirement: a 200 only means "alive" if the payload is
+    // actually THIS requisition. Guards against a future generic 200 (an empty
+    // envelope, a board-level summary, an interstitial) reading as a live
+    // posting. Whitespace-tolerant on a minified payload, same style as the
+    // Workday CXS and Ashby flag checks.
+    const idEcho = new RegExp(`"id"\\s*:\\s*"${jobId.replace(/[^0-9a-f-]/gi, "")}"`);
+    return probeViaHttpStatus(apiUrl, timeoutMs, POLITE_UA, ({ bodyLower }) => {
+        if (idEcho.test(bodyLower)) return "alive";
+        return "unknown";
+    }, onRateLimit, ({ bodyLower }) => {
+        // Posting-level 404 carries a ProblemDetails body; board-level 404 is
+        // empty. Only the former is evidence about this posting.
+        if (bodyLower.trim().length === 0) {
+            console.warn(`[liveness] clearcompany: empty 404 body for ${apiUrl} — board-level not-found (bad/rotated siteId?), not closure evidence`);
+            return "unknown";
+        }
+        return "closed";
+    });
 }
 
 /**
@@ -808,23 +969,18 @@ async function probeWorkday(p: ProbeInput, timeoutMs: number, onRateLimit?: Rate
 /**
  * Status-only probe for the kinds whose "removed" state is a real 404/410.
  *
- * KNOWN BLIND SPOT — clearcompany (investigated 2026-08-01, deliberately NOT
- * "fixed"). It shares Ashby's "200 for everything" shape: prod.db has 245
- * clearcompany postings, 82 of them unseen by the fetcher for >6h (the oldest
- * for 64 days) and ZERO ever closed, with no pendingClosedAt ever stamped. But
- * the resemblance ends there. Fetching a known-LIVE posting, a long-stale one,
- * and a bogus job id from the same tenant returned three BYTE-IDENTICAL 11KB
- * bodies — an empty client-rendered shell that does not contain the job id, the
- * title, or any posting field at all. So unlike Ashby there is no discriminator
- * in the response to key on: any body heuristic here would either close nothing
- * (today's behavior) or close all 245 including the live ones. Leaving it
- * status-only is the safe branch, and its cost is bounded — stale rows linger
- * rather than anything false-closing.
+ * clearcompany used to be handled here and was the module's known blind spot:
+ * its SPA host answers 200 with a byte-identical empty shell for every job
+ * path, so this probe returned "alive" unconditionally (245 postings, 0 ever
+ * closed). It moved to probeClearCompany on 2026-08-02 — a structured tier-4
+ * probe of the public detail API. If you are tempted to add clearcompany body
+ * markers here, read the note on probeClearCompany first: the shell contains
+ * neither the job id nor the title, so no marker can discriminate.
  *
- * Fixing it properly means probing whatever XHR the SPA uses for posting data,
- * i.e. a new structured (tier-4) probe like probeGreenhouse / probeLever /
- * probeWorkday's CXS path — a design change, not a marker tweak. Do not "solve"
- * it by adding body markers.
+ * The kinds left on this probe (smartrecruiters, workable, recruitee, personio,
+ * careers-page) have NOT been audited the way ashby / clearcompany were. If one
+ * of them shows a suspiciously low close rate, suspect the same "200 for
+ * everything" shape rather than assuming the postings are all still live.
  */
 async function probeGeneric(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, POLITE_UA, undefined, onRateLimit);
@@ -842,7 +998,7 @@ const PROBE_HANDLERS: Record<WatchlistKind, ProbeHandler> = {
     workable:        probeGeneric,
     recruitee:       probeGeneric,
     personio:        probeGeneric,
-    clearcompany:    probeGeneric,
+    clearcompany:    probeClearCompany,
     "careers-page":  probeGeneric,
 };
 
