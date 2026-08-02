@@ -139,7 +139,7 @@ flowchart TD
     <summary><h2 id="open">Open issues — the fix list</h2></summary>
     <div class="section-body">
 
-      <h3>3.1 · Workday: a sporadic 403 gets escalated into a 6-hour tenant outage</h3>
+      <h3>Workday: a sporadic 403 gets escalated into a 6-hour tenant outage</h3>
       <p><strong>Blue Origin · 1,621 postings · our bug · cheapest win on this page.</strong></p>
       <p>
         Blue Origin's CXS detail endpoint <strong>works</strong>. Measured 2026-08-02 from this machine: one run
@@ -167,7 +167,7 @@ flowchart TD
         correct and load-bearing (§1.2).
       </div>
 
-      <h3>3.2 · ClearCompany: the job-list response truncates mid-stream</h3>
+      <h3>ClearCompany: the job-list response truncates mid-stream</h3>
       <p><strong>Firefly Aerospace · 245 rows · real data loss · remedy already verified.</strong></p>
       <p>
         Reproduced live 2026-08-02. The unpaginated board response is <strong>1,351,175 bytes</strong> and does
@@ -187,6 +187,12 @@ flowchart TD
         <code>lastSeenAt</code> gets refreshed that tick.
       </p>
       <div class="callout danger">
+        <strong>This is hitting production right now.</strong> The Firefly watchlist's stored
+        <code>Watchlist.lastError</code> reads <code>Fetch failed: terminated</code> — undici's error for a
+        connection closed mid-body, i.e. the exact truncation above, recorded by the live scheduler rather than
+        inferred from a <code>curl</code> repro. Check it with the query in §7.6.
+      </div>
+      <div class="callout danger">
         <strong>The pagination fallback is unreachable in exactly the case that needs it.</strong>
         <code>lib/fetchers/clearcompany-fetcher.ts:61</code> does the one-shot fetch <em>first</em> and returns on
         failure; the paginated loop at :71 is only entered when the one-shot <strong>succeeded</strong> but came
@@ -202,7 +208,7 @@ flowchart TD
         comment: it says "verified against Firefly's 135-job board"; the board is <strong>181</strong> today.
       </div>
 
-      <h3>3.3 · Workday: three tenants refuse CXS permanently</h3>
+      <h3>Workday: three tenants refuse CXS permanently</h3>
       <p><strong>Boeing 3,832 + Maxar 278 + Axiom Space 127 = 4,237 postings · upstream · needs a design call.</strong></p>
       <p>
         Distinct from §3.1 and <strong>not</strong> fixable by retrying. All three answer the CXS detail endpoint
@@ -223,7 +229,7 @@ flowchart TD
         <li><strong>Accept it.</strong> These postings never close. Honest and free; the cost is a permanently growing stale population on the largest single watchlist we have.</li>
       </ul>
 
-      <h3>3.4 · Five probe kinds have never been audited</h3>
+      <h3>Five probe kinds have never been audited</h3>
       <p>
         <code>smartrecruiters</code>, <code>workable</code>, <code>recruitee</code>, <code>personio</code> and
         <code>careers-page</code> all sit on <code>probeGeneric</code> — plain HTTP status, no body inspection.
@@ -234,7 +240,7 @@ flowchart TD
         wrong. The moment one is added, check its close rate against the 40% band in §2.2 before trusting it.
       </p>
 
-      <h3>3.5 · Filtered-but-live rows are permanent close-candidates</h3>
+      <h3>Filtered-but-live rows are permanent close-candidates</h3>
       <p>
         Cross-cutting, and the mechanism behind two symptoms in §4. A posting already in the DB that later starts
         matching a negative filter is dropped at ingest, so its <code>lastSeenAt</code> stops advancing — it
@@ -244,6 +250,36 @@ flowchart TD
         Benign wherever the probe works (it answers <code>alive</code> and refreshes the row — this is the
         self-heal). <strong>Compounding wherever the probe is dark</strong>, i.e. all of §3.1 and §3.3: those rows
         queue up permanently and inflate every candidate count in the logs.
+      </p>
+
+      <h3>Two watchlists point at boards that no longer exist</h3>
+      <p>
+        Both fail every run with a hard 404 and are visible in <code>Watchlist.lastError</code> (§7.6). Neither is
+        a probe bug — the board is simply gone upstream, so the fix is a corrected slug or deactivation. Cheap,
+        but each needs an owner decision about the company rather than a code change.
+      </p>
+      <table>
+        <thead><tr><th>Watchlist</th><th>Kind</th><th>Active</th><th>Error</th><th>Postings stranded</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Capella Space</strong></td><td><code>greenhouse</code></td><td>🔴 yes</td>
+            <td><code>HTTP 404</code> from <code>boards-api.greenhouse.io/v1/boards/capellaspace/jobs</code></td>
+            <td>11, all <code>status="new"</code></td>
+          </tr>
+          <tr>
+            <td><strong>COSMOS</strong></td><td><code>ashby</code></td><td>no</td>
+            <td><code>HTTP 404</code> from <code>api.ashbyhq.com/posting-api/job-board/cosmos</code></td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>
+        Capella is the live one: it is still <code>active</code>, so it burns a fetch every scheduled run and its
+        11 postings will sit at <code>status="new"</code> forever. Four candidate slugs
+        (<code>capellaspace</code>, <code>capella</code>, <code>capella-space</code>, <code>capellaspaceinc</code>)
+        all 404, so the board is not merely renamed — the company has left this Greenhouse board. COSMOS was
+        deactivated at some point after being recorded as "left active on purpose", so it now costs nothing and is
+        purely a cleanup question.
       </p>
     </div>
   </details>
@@ -257,7 +293,7 @@ flowchart TD
         overturns the measurement, not because it looks wrong again.
       </div>
 
-      <h3>4.1 · "72 ClearCompany board postings are missing from the DB"</h3>
+      <h3>"72 ClearCompany board postings are missing from the DB"</h3>
       <p>
         <strong>All 72 are negative-filtered — 72/72, no residual.</strong> The global filter list is
         <code>["senior","II","III","Lead","Manager","Sr.","Director"]</code> and the absent titles are things like
@@ -271,7 +307,7 @@ flowchart TD
         rows, but <strong>0 of 181</strong> live postings lack either field.
       </p>
 
-      <h3>4.2 · "43 ClearCompany rows are 64 days stale while live on the board"</h3>
+      <h3>"43 ClearCompany rows are 64 days stale while live on the board"</h3>
       <p>
         Measured at <strong>41 rows, max 65 days</strong> — and <strong>41/41 match a negative filter</strong>.
         Same mechanism as §3.5: they entered the DB before the filters were tightened (<code>firstSeenAt</code>
@@ -285,7 +321,7 @@ flowchart TD
         stale candidates.
       </p>
 
-      <h3>4.3 · Blue Origin refreshes only ~281 of 1,621 rows per run</h3>
+      <h3>Blue Origin refreshes only ~281 of 1,621 rows per run</h3>
       <p>
         Looks like a shrinking listing; is <code>globalNegativeFilters</code> dropping ~72% at ingest. Close
         detection is unaffected because <code>seenExternalIds</code> is populated <em>before</em> the filter drop.
@@ -299,7 +335,7 @@ flowchart TD
     <div class="section-body">
       <p>Fixes applied, newest first, each with the evidence that it worked. Add a row when you land one.</p>
 
-      <h3>5.1 · Ashby not-found shell — <span style="color:#4ade80">confirmed working 2026-08-02</span></h3>
+      <h3>Ashby not-found shell — <span style="color:#4ade80">confirmed working 2026-08-02</span></h3>
       <p>
         <strong>Problem:</strong> <code>jobs.ashbyhq.com</code> answers every path with 200, and the ~7 KB
         not-found shell embeds <code>window.__appData</code> too — so the old alive-marker matched it and every
@@ -319,7 +355,7 @@ flowchart TD
         on it: a rate that keeps climbing past the band would mean over-closing.
       </div>
 
-      <h3>5.2 · Blue Origin <code>maxPages</code> 50 → 80 — landed 2026-08-02</h3>
+      <h3>Blue Origin <code>maxPages</code> 50 → 80 — landed 2026-08-02</h3>
       <p>
         The crawl hit its page cap, so every run was flagged <code>partial</code> and close-detection was skipped
         outright. Raised in <code>lib/company-directory.ts</code> (<strong>not</strong> the DB: both rows carry
@@ -332,7 +368,7 @@ flowchart TD
         previously skipped entirely). It then immediately hit §3.1, so the fix is correct but inert.
       </p>
 
-      <h3>5.3 · ClearCompany structured probe — landed 2026-08-02, not yet exercised</h3>
+      <h3>ClearCompany structured probe — landed 2026-08-02, not yet exercised</h3>
       <p>
         Replaced <code>probeGeneric</code> (which hit the tenant SPA host that returns a byte-identical 11,027-byte
         shell with 200 for <em>every</em> job path — hence 245 postings, 0 ever closed) with a probe of
@@ -346,7 +382,7 @@ flowchart TD
       </p>
       <p><strong>Status:</strong> still awaiting its first real workload — see §3.2 and §4.2 for what to watch.</p>
 
-      <h3>5.4 · Workday probe profile — landed 2026-07-31</h3>
+      <h3>Workday probe profile — landed 2026-07-31</h3>
       <p>
         Was <code>{concurrency: 6, maxPerTick: 500, timeoutMs: 5000}</code>, which issued 11.5k probe GETs in 24h
         at <em>nine times</em> the volume of the actual crawls and returned 5,558 <code>unknown</code> vs 427
@@ -362,7 +398,7 @@ flowchart TD
     <summary><h2 id="traps">Traps &amp; house rules</h2></summary>
     <div class="section-body">
 
-      <h3>6.1 · Rules that are load-bearing</h3>
+      <h3>Rules that are load-bearing</h3>
       <ul>
         <li><strong>Never map <code>403</code> to <code>closed</code>.</strong> Workday's 403 is deterministic per-posting at concurrency 1 <em>and</em> spreads to known-live postings under load. The evidence cannot separate those, and guessing "closed" re-introduces mass false-close.</li>
         <li><strong>Never conclude from a redirect alone.</strong> Off-path redirects only count as closure when the landing page is the board's own search/root surface or a body marker hits. Auth walls, consent gates and captchas are <code>unknown</code>.</li>
@@ -370,7 +406,7 @@ flowchart TD
         <li><strong>A "200 for everything" SPA host cannot be probed by body heuristics.</strong> ClearCompany's shell contains neither the job id nor the title. Find a structured endpoint or leave the kind unprobed — do not invent markers.</li>
       </ul>
 
-      <h3>6.2 · Ways this investigation can mislead you</h3>
+      <h3>Ways this investigation can mislead you</h3>
       <ul>
         <li><strong>The <code>careers-api.clearcompany.com</code> host is ambiguous in logs.</strong> <code>/v1/&lt;siteId&gt;</code> with <em>no</em> job id is the pre-existing <em>list fetcher</em> and predates the probe. Only the per-posting <code>/v1/&lt;siteId&gt;/&lt;jobId&gt;</code> form proves the new probe ran.</li>
         <li><strong>An aborted batch and a blocked endpoint look identical in the logs.</strong> Both produce a wall of <code>unknown</code>. Only a direct <code>curl</code> tells them apart — that distinction is the whole of §3.1 vs §3.3.</li>
@@ -386,7 +422,7 @@ flowchart TD
     <div class="section-body">
       <p>Everything in §2–§4 came from these. All read-only.</p>
 
-      <h3>7.1 · Close rate per kind (the first thing to run)</h3>
+      <h3>Close rate per kind (the first thing to run)</h3>
       <pre><code class="language-sql">sqlite3 prisma/prod.db "
 SELECT w.kind, COUNT(DISTINCT w.id) AS watchlists, COUNT(p.id) AS postings,
        SUM(CASE WHEN p.status='closed' THEN 1 ELSE 0 END) AS closed,
@@ -400,7 +436,7 @@ FROM JobPosting p JOIN Watchlist w ON w.id=p.watchlistId
 WHERE p.status='closed' AND p.removedAt &gt; (strftime('%s','now')-5*86400)*1000
 GROUP BY day, w.kind ORDER BY day DESC;"</code></pre>
 
-      <h3>7.2 · Is a Workday tenant blocked, or are we backing off?</h3>
+      <h3>Is a Workday tenant blocked, or are we backing off?</h3>
       <p>Derive the CXS URL from any posting and hit it directly. Repeat 6–12× — <em>deterministic</em> 403 means tenant config (§3.3); <em>intermittent</em> means it is our pacing (§3.1).</p>
       <pre><code class="language-bash">UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 # https://&lt;tenant&gt;.&lt;dc&gt;.myworkdayjobs.com/&lt;locale&gt;/&lt;site&gt;/job/&lt;rest&gt;
@@ -410,12 +446,12 @@ curl -s -w ' → %{http_code}\n' --max-time 15 -H "User-Agent: $UA" -H 'Accept: 
   | head -c 200</code></pre>
       <p><code>{"errorCode":"S22", … "permission denied"}</code> on every attempt ⇒ the tenant has the detail endpoint closed. No amount of pacing helps.</p>
 
-      <h3>7.3 · Are "missing" postings actually negative-filtered?</h3>
+      <h3>Are "missing" postings actually negative-filtered?</h3>
       <p>The check that turned two suspected bugs into non-bugs (§4.1, §4.2). Compile the stored patterns the same way <code>lib/postings/negative-filters.ts</code> does — plain keywords get <code>\b…\b</code>, anything with a regex metacharacter compiles verbatim — then replay them against the live board.</p>
       <pre><code class="language-sql">sqlite3 prisma/prod.db "SELECT globalNegativeFilters FROM GlobalSetting;"</code></pre>
       <p>Then diff live-board ids against <code>JobPosting.sourceUrl</code> job ids and test each absentee's title against the compiled patterns. If the residual is 0, there is no bug.</p>
 
-      <h3>7.4 · Does a job-list endpoint truncate?</h3>
+      <h3>Does a job-list endpoint truncate?</h3>
       <p>Size and completeness in one shot — <code>curl</code> exit 92 is an HTTP/2 framing error, 18 is a partial file:</p>
       <pre><code class="language-bash">curl -s --http1.1 --max-time 60 -H 'Accept: application/json' \
   'https://careers-api.clearcompany.com/v1/&lt;siteId&gt;' -o board.json \
@@ -423,7 +459,7 @@ curl -s -w ' → %{http_code}\n' --max-time 15 -H "User-Agent: $UA" -H 'Accept: 
 python3 -c "import json;d=json.load(open('board.json'));print('OK',len(d['results']),d['totalCount'])"</code></pre>
       <p>Run it 3–5×; a source that truncates does so intermittently. Compare against the paginated form (<code>?pageIndex=N&amp;pageSize=50</code>) before concluding the endpoint is unusable.</p>
 
-      <h3>7.5 · Live scheduler evidence</h3>
+      <h3>Live scheduler evidence</h3>
       <pre><code class="language-bash">pm2 logs mission-control-scheduler-prod --lines 4000 --nostream | grep 'probe-gate'
 pm2 logs mission-control-scheduler-prod --lines 4000 --nostream | grep -E 'refused|skipping its probes'</code></pre>
       <p>
@@ -433,6 +469,27 @@ pm2 logs mission-control-scheduler-prod --lines 4000 --nostream | grep -E 'refus
         watchlist's <code>scheduleMinutes</code> next comes due; a quiet log right after a restart may just mean
         the tick has not landed yet.
       </p>
+
+      <h3>Which watchlists are failing outright</h3>
+      <p>
+        The cheapest check on this page and the one most worth running first — <code>Watchlist.lastError</code>
+        is persisted by the scheduler, so a dead board or a truncating fetch shows up here without touching a log.
+        It is how both §3.6 entries and the live confirmation of §3.2 were found.
+      </p>
+      <pre><code class="language-sql">sqlite3 prisma/prod.db "
+SELECT kind, name, active, substr(lastError,1,90)
+FROM Watchlist WHERE lastError IS NOT NULL AND lastError != '' ORDER BY kind;"</code></pre>
+      <p>Read the two error shapes differently:</p>
+      <ul>
+        <li><code>HTTP 404 …</code> ⇒ the board is gone or the slug is wrong. Try a few candidate slugs against the ATS API before assuming the company left — if all of them 404, it did.</li>
+        <li><code>Fetch failed: terminated</code> ⇒ undici's connection-closed-mid-body error, i.e. a truncating response (§3.2). Distinguish from a timeout, which reports differently.</li>
+      </ul>
+      <p>And confirm nothing has silently stopped running:</p>
+      <pre><code class="language-sql">sqlite3 prisma/prod.db "
+SELECT kind, name, active,
+       CASE WHEN lastRunAt IS NULL THEN 'NEVER'
+            ELSE CAST((strftime('%s','now')*1000 - lastRunAt)/86400000 AS INT)||'d ago' END
+FROM Watchlist WHERE lastRunAt IS NULL OR lastRunAt &lt; (strftime('%s','now')-2*86400)*1000;"</code></pre>
     </div>
   </details>
 
