@@ -46,6 +46,31 @@
  * this suite tests against drifted in the first place. Cleanup re-reads the
  * profile, deletes entities that did not exist before, and PATCHes every
  * surviving entity's bullets back to the pre-import snapshot.
+ *
+ * THE REVERT COVERS THE PROFILE HEADER ROW TOO (2026-08-02), not just the child
+ * entities' bullets. The import writes both — `lib/profile/merge.ts:mergeHeader`
+ * produces a `headerPatch` that `app/api/profile/import/route.ts` hands to
+ * `updateProfileHeader` — and its two branches leak differently:
+ *
+ *   - headline / location / email / phone are gated on emptiness
+ *     (`!existingVal`), so the fixture's identity only lands on a profile whose
+ *     field is blank. Latent against today's owner, live the moment this runs
+ *     against a sparse profile — and a crew profile is exactly that.
+ *   - links APPEND UNCONDITIONALLY. There is no emptiness gate at all, so every
+ *     single run permanently added the fixture's `github.com/smoketester` to the
+ *     owner's real links. This is not hypothetical: on 2026-08-01 the owner's
+ *     dev profile was found holding that fake link as its ONLY link. Profile
+ *     links are user-visible — they render in generated resume headers.
+ *
+ * So the snapshot covers those five columns and cleanup writes them back. They
+ * are read RAW off the `Profile` row rather than out of GET /api/profile,
+ * because the API hydrates them: `parseLinks` rewrites each `url` to its
+ * canonical scheme-bearing form, drops entries that aren't URLs, and maps a NULL
+ * column to `null` but a `"[]"` column to `[]`. Re-serializing a hydrated value
+ * would therefore be a silent mutation of its own — `"[]"` written where NULL
+ * stood, or a legacy scheme-less link quietly canonicalized — committed by the
+ * one suite whose whole contract is to leave the profile as it found it.
+ * Round-tripping the raw column is exact by construction and needs no null case.
  */
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
@@ -171,6 +196,22 @@ interface WireProfile {
     education: WireEntity[];
 }
 
+/**
+ * Pre-import values of the five `Profile` columns `mergeHeader` can write, RAW —
+ * exactly as they sit on the row, not as GET /api/profile hydrates them. `links`
+ * is therefore the serialized JSON string (or NULL for a profile with no links),
+ * never the `{label,url}[]` the wire carries, so restoring it is a byte-exact
+ * put-back instead of a re-serialization that would have to guess whether the
+ * column held NULL or `"[]"` and would silently rewrite legacy link URLs.
+ */
+interface HeaderSnapshot {
+    headline: string | null;
+    location: string | null;
+    email: string | null;
+    phone: string | null;
+    links: string | null;
+}
+
 /** The three child collections, paired with the route that edits them. */
 const CATEGORIES = [
     { key: "workRoles", path: "work-roles", label: "work role" },
@@ -222,6 +263,8 @@ async function main() {
 
     /** Pre-import bullets per entity id, per category. Empty until snapshotted. */
     const snapshot = new Map<CategoryKey, Map<string, WireBullet[]>>();
+    /** Pre-import `Profile` header columns. Null until snapshotted. */
+    let headerSnapshot: HeaderSnapshot | null = null;
     let snapshotOk = false;
 
     try {
@@ -239,6 +282,18 @@ async function main() {
         if (!before) { fails++; return; }
         for (const c of CATEGORIES) {
             snapshot.set(c.key, new Map(before[c.key].map(e => [e.id, e.bullets])));
+        }
+        // The header row is guaranteed to exist by now — the GET above runs
+        // findOrCreateProfile, which lazily creates it. A miss is nonetheless
+        // fatal rather than skippable: the links append has no emptiness gate,
+        // so an import whose header write cannot be undone must not run at all.
+        headerSnapshot = await prisma.profile.findUnique({
+            where: { userId: user.id },
+            select: { headline: true, location: true, email: true, phone: true, links: true },
+        });
+        if (!headerSnapshot) {
+            fail(`no Profile row for ${user.email} — refusing to import with no header snapshot to revert to`);
+            return;
         }
         snapshotOk = true;
         const beforeTotalBullets = totalBullets(before);
@@ -376,10 +431,44 @@ async function main() {
         // REVERT, don't just delete. Re-reads the profile rather than trusting
         // the ids computed above, so a run that died mid-assertion — or a route
         // that half-applied its writes before throwing — is still cleaned up.
-        if (!snapshotOk) {
+        // (Both halves of the snapshot are taken together, so either check
+        // answers "did we get one" — testing `headerSnapshot` here is also what
+        // narrows it to non-null for the restore below.)
+        if (!snapshotOk || !headerSnapshot) {
             console.warn("[cleanup] no pre-import snapshot — nothing can be safely reverted, skipping");
         } else {
-            const current = await fetchProfile(cookie);
+            // HEADER FIRST. It's the restore that matters most — the links
+            // append is unconditional, so it fires on every run, pass or fail —
+            // and it's a plain Prisma write that still works when the dev server
+            // is the thing that died mid-run. The entity pass below re-reads the
+            // profile over HTTP and can throw on a dead server; putting the
+            // header ahead of it means no failure down there can skip it.
+            //
+            // Every column goes back exactly as it was read, including a NULL
+            // `links` as NULL — there is no JSON.stringify here, so a link-less
+            // profile is not "restored" to `"[]"`.
+            const headerRestored = await prisma.profile.update({
+                where: { userId: user.id },
+                data: headerSnapshot,
+            }).then(() => true, () => false);
+            if (!headerRestored) {
+                console.error(
+                    `[cleanup] FAILED to restore the Profile header for ${user.email} — the fixture's ` +
+                    "link (github.com/smoketester) is probably still on it. Check the profile's links by hand.",
+                );
+            } else {
+                console.log("[cleanup] reverted Profile header (headline / location / email / phone / links)");
+            }
+
+            // `.catch` HERE and not inside `fetchProfile`: the two in-`try`
+            // call sites SHOULD throw on a dead dev server — that is the run
+            // failing, and `finally` still gets to clean up. But this call is
+            // already inside `finally`, so an unhandled rejection would skip
+            // everything below it (`prisma.session.delete`, `$disconnect`),
+            // leaking a scratch Session row and an open handle on exactly the
+            // run that most needs the teardown. `fetchProfile` returns null on
+            // a non-200; only a transport-level failure rejects.
+            const current = await fetchProfile(cookie).catch(() => null);
             if (!current) {
                 console.error("[cleanup] COULD NOT RE-READ THE PROFILE — fixture entities may still be in it. Check by hand.");
             } else {
