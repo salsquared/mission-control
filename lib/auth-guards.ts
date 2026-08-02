@@ -222,8 +222,11 @@ export async function requireOwnerOrService(req: Request, config: ServiceTokenCo
 // It was historically "LAN request OR session"; once the LAN stopped being a
 // trust boundary it decayed into `requireSession` plus a vestigial `ok: true`
 // and an unread `_req`, kept only so its call sites would not have to change.
-// Its 13 remaining call sites — `/api/settings`, `/api/tasks`, `/api/goals` —
-// now call `requireSession()` directly. Nothing ever read the `ok` field.
+// Its 10 remaining call sites — `/api/settings` (2), `/api/tasks` (4),
+// `/api/goals` (4) — now call `requireSession()` directly. Nothing ever read
+// the `ok` field. (This said 13 until 2026-08-02: that count came from a grep
+// whose hits included the three `import` lines, so it was 10 invocations plus
+// 3 imports. Counted at the deletion commit's parent, `d32a935^`.)
 //
 // Removing it is not cosmetic: a guard NAMED for a LAN exemption that no longer
 // exists invites someone to believe this origin still trusts the network it is
