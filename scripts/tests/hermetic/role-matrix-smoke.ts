@@ -407,7 +407,14 @@ function checkManifestCoversEveryRoute(discovered: string[]): void {
 // ---------------------------------------------------------------------------
 
 function checkCounts(discovered: string[]): void {
-    section("2. Class counts — 28 owner + 39 crew + 2 unguarded = 69 (§2.5)");
+    // Interpolated from EXPECTED rather than spelled out: a hand-written header
+    // silently rots the moment a route is added (it read "28 + 39 + 2 = 69"
+    // while EXPECTED already said 29/70), and a stale banner over passing
+    // assertions is worse than no banner.
+    section(
+        `2. Class counts — ${EXPECTED.owner} owner + ${EXPECTED.crew} crew + ` +
+        `${EXPECTED.unguarded} unguarded = ${EXPECTED.total} (§2.5)`,
+    );
 
     const byClass = (cls: RouteClass) => MANIFEST.filter((r) => r.cls === cls).length;
     const cases: Array<[string, number, number]> = [
