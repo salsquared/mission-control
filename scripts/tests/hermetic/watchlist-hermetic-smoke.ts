@@ -21,7 +21,7 @@ import { PrismaClient } from "@prisma/client";
 // rejects private IPs otherwise.
 process.env.MC_ALLOW_PRIVATE_FETCH = "1";
 
-import { runWatchlist } from "@/scheduler/jobs/job-watcher";
+import { runWatchlist, MIN_PENDING_CLOSED_AGE_MS } from "@/scheduler/jobs/job-watcher";
 
 const prisma = new PrismaClient();
 
@@ -198,6 +198,17 @@ async function main() {
         else pass("Designer pendingClosedAt stamped on first closed verdict");
         if (designerPending?.removedAt) fail("Designer removedAt must not be set on first strike");
         else pass("Designer removedAt still null after first strike");
+
+        // Age the first strike past the OQ5a time floor (2026-08-01). The runs
+        // here are milliseconds apart, so an un-aged stamp is younger than
+        // MIN_PENDING_CLOSED_AGE_MS and the fourth run defers instead of
+        // confirming — correct behavior, but it would stop this suite reaching
+        // the confirmed-close path below. The floor's own semantics live in
+        // watchlist-closed-detection-smoke.ts.
+        await prisma.jobPosting.update({
+            where: { id: designer.id },
+            data: { pendingClosedAt: new Date(Date.now() - MIN_PENDING_CLOSED_AGE_MS - 60_000) },
+        });
 
         // ─── Fourth run: second consecutive closed verdict → confirmed close ───
         const r4 = await runWatchlist(watchlistId);

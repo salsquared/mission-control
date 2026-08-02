@@ -27,12 +27,19 @@
  *   (A) `MC_LIVENESS_BYPASS=closed`, careers-page watchlist, one row absent
  *       from the crawl and 7h stale. Tick 1 stamps `pendingClosedAt` only
  *       (OQ5a two-tick confirmation, 2026-06-12 — the reason the integration
- *       file's single re-run could not have been right against current code);
- *       tick 2 confirms: ▸ `RunResult.closed === 1`, ▸ `status === "closed"`,
- *       ▸ `removedAt` set. Plus the precision half the integration file never
- *       checked: the fetch-seen sibling row is untouched, nothing is created,
- *       and ZERO probe GETs are issued (the bypass short-circuits `probeBatch`
- *       — no network is load-bearing anywhere in this path).
+ *       file's single re-run could not have been right against current code).
+ *       A RAPID re-run seconds later must NOT confirm — the OQ5a time floor
+ *       (MIN_PENDING_CLOSED_AGE_MS, 2026-08-01) requires the stamp to be at
+ *       least that old, so a manual "Run now" landing right after a scheduler
+ *       tick can't collapse the two-strike rule into a one-transient sticky
+ *       close — and must leave the stamp untouched (not re-stamped). Then the
+ *       stamp is backdated past the floor (simulating the first strike having
+ *       landed a real tick ago) and tick 2 confirms: ▸ `RunResult.closed ===
+ *       1`, ▸ `status === "closed"`, ▸ `removedAt` set. Plus the precision
+ *       half the integration file never checked: the fetch-seen sibling row is
+ *       untouched, nothing is created, and ZERO probe GETs are issued (the
+ *       bypass short-circuits `probeBatch` — no network is load-bearing
+ *       anywhere in this path).
  *
  *   (B) `MC_LIVENESS_BYPASS=alive` on the identical staging → 0 closed,
  *       `refreshedAlive === 1`, `lastSeenAt` re-armed, `pendingClosedAt`
@@ -76,7 +83,7 @@ if (process.env.NODE_ENV === "production") {
 // of it even if the caller's env says otherwise (parity with pre-push.sh).
 process.env.EMAIL_ENABLED = "0";
 
-import { runWatchlist } from "@/scheduler/jobs/job-watcher";
+import { runWatchlist, MIN_PENDING_CLOSED_AGE_MS } from "@/scheduler/jobs/job-watcher";
 
 const prisma = new PrismaClient();
 
@@ -179,10 +186,21 @@ async function stageWatchlist(
                 companyName: company,
             }),
             scheduleMinutes: 60,
+            // lastRunAt = NOW so the fixture is never scheduler-due while the
+            // smoke runs: the pre-push gate executes against dev.db on a box
+            // where mission-control-scheduler-dev is live, and the previous
+            // 1h-old lastRunAt (with scheduleMinutes=60) made the row due the
+            // moment it existed — a tick landing in the smoke's window would
+            // really crawl the `.example.invalid` hosts and race these
+            // assertions (and a SIGKILL orphan became a standing crawl). Safe
+            // because close-detection arming does NOT key on lastRunAt:
+            // SAFETY 3 is `lastSuccessAt === null` (job-watcher's isFirstRun),
+            // and runWatchlist ignores due-ness entirely, so the smoke's own
+            // ticks are unaffected.
+            lastRunAt: new Date(),
             // Non-null lastSuccessAt ⇒ NOT a first run, so close-detection is
             // armed (SAFETY 3) and the inline employment-type classifier — the
             // one LLM call on this path — stays off.
-            lastRunAt: new Date(Date.now() - 60 * 60 * 1000),
             lastSuccessAt: new Date(Date.now() - 60 * 60 * 1000),
         },
     });
@@ -265,7 +283,44 @@ async function main() {
         if (target1.removedAt == null) pass("(A) OQ5a tick 1: target removedAt still null on the first strike");
         else fail(`(A) OQ5a tick 1: removedAt set on the first strike (${target1.removedAt?.toISOString()})`);
 
-        // ── tick 2: second consecutive closed verdict confirms ──
+        // ── rapid re-run: a second closed verdict SECONDS after the first must
+        //    NOT confirm. The OQ5a time floor (MIN_PENDING_CLOSED_AGE_MS)
+        //    requires the pending stamp to be at least that old — this is the
+        //    "scheduler tick stamps at T, manual Run-now at T+10s while a
+        //    transient persists" compression, which used to sticky-close. ──
+        const markARapid = fetchLog.length;
+        const rRapid = await runWatchlist(a.watchlistId);
+        if (rRapid.error) fail(`(A) rapid re-run errored: ${rRapid.error}`);
+        else pass("(A) rapid re-run ran clean");
+        if (probeFetchesSince(markARapid) === 0) pass("(A) rapid re-run: zero probe GETs (bypass still short-circuiting)");
+        else fail(`(A) rapid re-run: ${probeFetchesSince(markARapid)} probe GET(s) issued`);
+        if (rRapid.closed === 0) pass("(A) OQ5a floor: rapid second run does NOT confirm (closed=0 — stamp too young)");
+        else fail(`(A) OQ5a floor: rapid second run confirmed a close (closed=${rRapid.closed}) — the time floor is not enforced`);
+
+        const targetRapid = await prisma.jobPosting.findUniqueOrThrow({ where: { id: a.targetId } });
+        if (targetRapid.status === "new" && targetRapid.removedAt == null) {
+            pass("(A) OQ5a floor: target still status='new', removedAt null after the rapid re-run");
+        } else {
+            fail(`(A) OQ5a floor: target perturbed by rapid re-run — status='${targetRapid.status}' removedAt=${targetRapid.removedAt}`);
+        }
+        if (
+            target1.pendingClosedAt != null
+            && targetRapid.pendingClosedAt?.getTime() === target1.pendingClosedAt.getTime()
+        ) {
+            pass("(A) OQ5a floor: rapid re-run left the pending stamp untouched (not re-stamped — a run burst cannot push confirmation out forever)");
+        } else {
+            fail(`(A) OQ5a floor: pending stamp moved under a rapid re-run (${targetRapid.pendingClosedAt?.toISOString()} vs ${target1.pendingClosedAt?.toISOString()})`);
+        }
+
+        // ── age the stamp past the floor: simulate the first strike having
+        //    landed a real scheduler tick ago (any normal cadence ≥ 60 min
+        //    clears the 30-min floor), so the next verdict may confirm. ──
+        await prisma.jobPosting.update({
+            where: { id: a.targetId },
+            data: { pendingClosedAt: new Date(Date.now() - MIN_PENDING_CLOSED_AGE_MS - 60_000) },
+        });
+
+        // ── tick 2: second consecutive closed verdict on an aged stamp confirms ──
         const markA2 = fetchLog.length;
         const r2 = await runWatchlist(a.watchlistId);
         if (r2.error) fail(`(A) tick 2 errored: ${r2.error}`);

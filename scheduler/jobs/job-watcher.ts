@@ -100,6 +100,41 @@ export function c3BudgetForKind(kind: WatchlistKind): number {
  */
 export const AGGREGATOR_KINDS: ReadonlySet<WatchlistKind> = new Set<WatchlistKind>(["linkedin", "indeed"]);
 
+/**
+ * OQ5a time floor (2026-08-01) — minimum age a `pendingClosedAt` stamp must
+ * reach before a second "closed" verdict may CONFIRM the close.
+ *
+ * The two-strike rule wants two closed verdicts from probe rounds far enough
+ * apart that a transient (ATS maintenance window, CDN flap, degraded shell)
+ * has had time to clear. Without a floor, "two consecutive ticks" was really
+ * just "pendingClosedAt non-null at SELECT time": a scheduler tick stamping at
+ * T could be confirmed by a manual "Run now" at T+10s (the
+ * /api/watchlists/[id]/run route calls the same runWatchlist against the same
+ * DB), or by a fast owner-debugging cadence — collapsing the two-strike rule
+ * into a one-transient sticky close. Sticky is the operative word: a confirmed
+ * close cascades into auto-closing linked INTERESTED cards, and false-closed
+ * rows never self-heal (the stale re-probe excludes status="closed", the C3
+ * sweep selects only status="new"; recovery is a manual script).
+ *
+ * A closed verdict on a stamp YOUNGER than the floor leaves the row untouched
+ * — deliberately NOT re-stamped, since pushing the stamp forward would let a
+ * rapid-run burst defer confirmation forever. The stamp stays put and a later
+ * round confirms once it has aged past the floor.
+ *
+ * Why 30 minutes is conservative against real cadences: the API-created
+ * default is scheduleMinutes=240 (lib/schemas/watchlists.ts) and the crew
+ * floor is 60 (CREW_MIN_SCHEDULE_MINUTES) — so on every normal schedule the
+ * next tick arrives with the stamp already ≥ 60 min old, comfortably past the
+ * floor, and a genuinely removed posting still closes on its second tick
+ * exactly as before. Only a sub-30-minute cadence confirms later than tick 2
+ * (on the first tick after the stamp turns 30 min old — e.g. ~31 min at a
+ * 1-min debugging cadence); closing is never impossible at any cadence.
+ *
+ * Exported for the closed-detection hermetic smoke, which asserts both halves:
+ * a rapid re-run must not confirm; an aged stamp must.
+ */
+export const MIN_PENDING_CLOSED_AGE_MS = 30 * 60 * 1000;
+
 // Per-watchlist in-process mutex. Prevents the findUnique→create race when a
 // user double-clicks "Run now" or when a scheduler tick collides with a
 // manual run. Also avoids wasted external fetch work. Survives HMR in dev by
@@ -499,7 +534,9 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     // OQ5a (P3.2, 2026-06-12): a single "closed" verdict no longer flips the
     // row — it requires TWO CONSECUTIVE closed verdicts across ticks. The
     // first stamps JobPosting.pendingClosedAt (no status change, no cascade,
-    // not counted in `closed`); the second, on a still-pending row, confirms
+    // not counted in `closed`); the second, on a still-pending row whose stamp
+    // is at least MIN_PENDING_CLOSED_AGE_MS old (2026-08-01 — see that
+    // constant; a younger stamp defers, untouched, to a later round), confirms
     // the close. An explicit "alive" verdict clears the pending stamp;
     // fetch-presence does NOT (on aggregator feeds a listing sighting isn't
     // alive evidence); "unknown" preserves it (absence of evidence neither
@@ -530,6 +567,10 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
     const staleProbedExternalIds = new Set<string>();
     if (!isFirstRun && fetchResult.postings.length > 0 && !fetchResult.partial) {
         const sixHoursAgo = new Date(runAt.getTime() - 6 * 60 * 60 * 1000);
+        // OQ5a time floor — only a pending stamp OLDER than this cutoff can
+        // confirm. Computed once per run; used by both the stale-probe and C3
+        // partitions below and re-asserted in both confirm UPDATEs' WHERE.
+        const pendingConfirmCutoff = new Date(runAt.getTime() - MIN_PENDING_CLOSED_AGE_MS);
         const staleCandidates = await prisma.jobPosting.findMany({
             where: {
                 watchlistId,
@@ -551,11 +592,18 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
             const confirmedClosedIds: string[] = [];
             const firstStrikeClosedIds: string[] = [];
             const aliveIds: string[] = [];
+            let deferredTooYoung = 0;
             for (const c of toProbe) {
                 const verdict = probeResults.get(c.externalId) ?? "unknown";
                 if (verdict === "closed") {
-                    if (c.pendingClosedAt != null) confirmedClosedIds.push(c.id);
-                    else firstStrikeClosedIds.push(c.id);
+                    if (c.pendingClosedAt == null) firstStrikeClosedIds.push(c.id);
+                    else if (c.pendingClosedAt.getTime() < pendingConfirmCutoff.getTime()) confirmedClosedIds.push(c.id);
+                    // Stamp younger than MIN_PENDING_CLOSED_AGE_MS → defer:
+                    // leave the row untouched (NOT re-stamped — see the
+                    // constant's doc), so a rapid second run (manual "Run now"
+                    // seconds after a scheduler tick) cannot confirm off one
+                    // transient. A later round confirms once the stamp ages.
+                    else deferredTooYoung++;
                 } else if (verdict === "alive") aliveIds.push(c.id);
                 // "unknown" → leave the row alone (pendingClosedAt untouched);
                 // the next tick re-evaluates.
@@ -582,11 +630,13 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                     where: {
                         id: { in: confirmedClosedIds },
                         status: { notIn: ["closed", "hidden"] },
-                        // Re-assert still-pending: a concurrent process (manual
-                        // run in the Next.js tier vs the scheduler) may have
-                        // cleared the stamp on alive evidence during the probe
-                        // window — its evidence wins.
-                        pendingClosedAt: { not: null },
+                        // Re-assert still-pending AND past the OQ5a time
+                        // floor: a concurrent process (manual run in the
+                        // Next.js tier vs the scheduler) may have cleared the
+                        // stamp on alive evidence during the probe window —
+                        // its evidence wins — or re-stamped it moments ago,
+                        // in which case the too-young stamp must not confirm.
+                        pendingClosedAt: { not: null, lt: pendingConfirmCutoff },
                     },
                     data: { status: "closed", removedAt: runAt, pendingClosedAt: null },
                 });
@@ -613,12 +663,12 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                 });
                 refreshedAlive = aliveResult.count;
             }
-            const skipped = toProbe.length - confirmedClosedIds.length - firstStrikeClosedIds.length - aliveIds.length;
-            if (skipped > 0 || refreshedAlive > 0 || closed > 0 || firstStrikeClosedIds.length > 0) {
+            const skipped = toProbe.length - confirmedClosedIds.length - firstStrikeClosedIds.length - aliveIds.length - deferredTooYoung;
+            if (skipped > 0 || refreshedAlive > 0 || closed > 0 || firstStrikeClosedIds.length > 0 || deferredTooYoung > 0) {
                 console.info(
                     `[job-watcher] probe-gate watchlist=${watchlistId} kind=${watchlist.kind}: ` +
                     `candidates=${toProbe.length} closed=${closed} pending=${firstStrikeClosedIds.length} ` +
-                    `alive=${refreshedAlive} unknown=${skipped}`,
+                    `deferred=${deferredTooYoung} alive=${refreshedAlive} unknown=${skipped}`,
                 );
             }
         }
@@ -682,15 +732,19 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                     watchlist.kind as WatchlistKind,
                     { profile: { maxPerTick: c3Budget } },
                 );
-                // OQ5a two-tick partition — same rule as the stale path above.
+                // OQ5a two-tick partition — same rule as the stale path above,
+                // including the MIN_PENDING_CLOSED_AGE_MS floor on confirms.
                 const c3ConfirmedClosedIds: string[] = [];
                 const c3FirstStrikeIds: string[] = [];
                 const c3AliveIds: string[] = [];
+                let c3DeferredTooYoung = 0;
                 for (const c of c3ToProbe) {
                     const verdict = c3Results.get(c.externalId) ?? "unknown";
                     if (verdict === "closed") {
-                        if (c.pendingClosedAt != null) c3ConfirmedClosedIds.push(c.id);
-                        else c3FirstStrikeIds.push(c.id);
+                        if (c.pendingClosedAt == null) c3FirstStrikeIds.push(c.id);
+                        else if (c.pendingClosedAt.getTime() < pendingConfirmCutoff.getTime()) c3ConfirmedClosedIds.push(c.id);
+                        // Too-young stamp → defer untouched (see the stale path).
+                        else c3DeferredTooYoung++;
                     } else if (verdict === "alive") c3AliveIds.push(c.id);
                     // "unknown" → leave the row (pendingClosedAt preserved);
                     // lastProbedAt stamped below.
@@ -708,8 +762,9 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                         where: {
                             id: { in: c3ConfirmedClosedIds },
                             status: { notIn: ["closed", "hidden"] },
-                            // Same concurrent-alive race-guard as the stale path.
-                            pendingClosedAt: { not: null },
+                            // Same concurrent-alive race-guard + OQ5a time
+                            // floor as the stale path.
+                            pendingClosedAt: { not: null, lt: pendingConfirmCutoff },
                         },
                         data: { status: "closed", removedAt: runAt, pendingClosedAt: null },
                     });
@@ -731,12 +786,12 @@ async function processOneInner(watchlistId: string, opts?: { broadcast?: boolean
                         data: { lastSeenAt: runAt, pendingClosedAt: null },
                     });
                 }
-                const c3Unknown = c3ToProbe.length - c3ConfirmedClosedIds.length - c3FirstStrikeIds.length - c3AliveIds.length;
-                if (c3Closed > 0 || c3Unknown > 0 || c3AliveIds.length > 0 || c3FirstStrikeIds.length > 0) {
+                const c3Unknown = c3ToProbe.length - c3ConfirmedClosedIds.length - c3FirstStrikeIds.length - c3AliveIds.length - c3DeferredTooYoung;
+                if (c3Closed > 0 || c3Unknown > 0 || c3AliveIds.length > 0 || c3FirstStrikeIds.length > 0 || c3DeferredTooYoung > 0) {
                     console.info(
                         `[job-watcher] C3 re-probe watchlist=${watchlistId} kind=${watchlist.kind}: ` +
                         `probed=${c3ToProbe.length} closed=${c3Closed} pending=${c3FirstStrikeIds.length} ` +
-                        `alive=${c3AliveIds.length} unknown=${c3Unknown}`,
+                        `deferred=${c3DeferredTooYoung} alive=${c3AliveIds.length} unknown=${c3Unknown}`,
                     );
                 }
             }

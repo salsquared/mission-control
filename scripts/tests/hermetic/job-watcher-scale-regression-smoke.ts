@@ -17,7 +17,9 @@
  * (tick 1 stamps pendingClosedAt; tick 2 confirms), so the watchlist runs
  * TWICE. Both bulk UPDATEs — the tick-1 pendingClosedAt stamp and the
  * tick-2 close flip — handle the same >999-id load, so the P2029
- * regression coverage holds on both paths.
+ * regression coverage holds on both paths. Since 2026-08-01 a confirm also
+ * requires the stamp to have aged past MIN_PENDING_CLOSED_AGE_MS, so the
+ * stamps are backdated between the ticks (see the comment at that step).
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/job-watcher-scale-regression-smoke.ts
  */
@@ -35,7 +37,7 @@ process.env.MC_ALLOW_PRIVATE_FETCH = "1";
 // the cap. Production never sets this env.
 process.env.MC_LIVENESS_BYPASS = "closed";
 
-import { runWatchlist } from "@/scheduler/jobs/job-watcher";
+import { runWatchlist, MIN_PENDING_CLOSED_AGE_MS } from "@/scheduler/jobs/job-watcher";
 
 const prisma = new PrismaClient();
 
@@ -191,6 +193,18 @@ async function main() {
         } else {
             pass(`OQ5a tick 1: all ${ROW_COUNT} ghost rows stamped pendingClosedAt (still status='new')`);
         }
+
+        // Age every stamp past the OQ5a time floor (2026-08-01). Both ticks run
+        // milliseconds apart, so without this each stamp is younger than
+        // MIN_PENDING_CLOSED_AGE_MS and tick 2 defers all ROW_COUNT rows
+        // instead of confirming — correct behavior, but it would leave this
+        // suite unable to reach the >999-id close UPDATE it exists to guard.
+        // The floor's own semantics are asserted in
+        // watchlist-closed-detection-smoke.ts, not here.
+        await prisma.jobPosting.updateMany({
+            where: { watchlistId, pendingClosedAt: { not: null } },
+            data: { pendingClosedAt: new Date(Date.now() - MIN_PENDING_CLOSED_AGE_MS - 60_000) },
+        });
 
         // Tick 2 — second consecutive closed verdict confirms the close. This
         // is the >999-id close UPDATE the original regression guarded.

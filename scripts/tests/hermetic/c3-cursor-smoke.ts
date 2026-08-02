@@ -28,6 +28,9 @@
  *       the row (seen-again lastSeenAt bump) does NOT clear the pending stamp
  *       — fetch-presence isn't alive evidence on an aggregator feed. An
  *       "alive" verdict (row B) keeps pendingClosedAt null throughout.
+ *       The stamp is backdated between the ticks so it clears the OQ5a time
+ *       floor (MIN_PENDING_CLOSED_AGE_MS) — see the comment at that step; the
+ *       floor's own behavior lives in watchlist-closed-detection-smoke.ts.
  *
  * Throwaway user + watchlists + postings with unique ids (concurrent-safe);
  * full cleanup + global-negative-filter restore in finally.
@@ -39,7 +42,7 @@ import { createHash, randomBytes } from "crypto";
 delete process.env.MC_LIVENESS_BYPASS;
 process.env.EMAIL_ENABLED = "0";
 
-import { runWatchlist, c3BudgetForKind, AGGREGATOR_KINDS } from "@/scheduler/jobs/job-watcher";
+import { runWatchlist, c3BudgetForKind, AGGREGATOR_KINDS, MIN_PENDING_CLOSED_AGE_MS } from "@/scheduler/jobs/job-watcher";
 
 const prisma = new PrismaClient();
 
@@ -306,6 +309,22 @@ async function main() {
         }
         if (rLi.closed === 0) pass("(c) OQ5a tick 1: RunResult.closed === 0 (first strike not counted as a close)");
         else fail(`(c) OQ5a tick 1: RunResult.closed expected 0, got ${rLi.closed}`);
+
+        // Age the first strike past the OQ5a time floor (2026-08-01). Both
+        // ticks here run milliseconds apart, so without this the stamp is far
+        // younger than MIN_PENDING_CLOSED_AGE_MS and tick 2 DEFERS instead of
+        // confirming — correct behavior (that is exactly the rapid-re-run
+        // transient the floor exists to absorb), but it would leave this smoke
+        // unable to reach the two-tick confirmation it is here to test.
+        //
+        // Backdating keeps the two concerns in separate suites rather than
+        // duplicating them: the floor itself — that a too-young stamp defers
+        // and an aged one confirms — is asserted by watchlist-closed-detection-
+        // smoke.ts. This suite stays on the C3 rotation + the two-strike rule.
+        await prisma.jobPosting.update({
+            where: { watchlistId_externalId: { watchlistId: liWatchlist.id, externalId: liRows[0].externalId } },
+            data: { pendingClosedAt: new Date(Date.now() - MIN_PENDING_CLOSED_AGE_MS - 60_000) },
+        });
 
         // ── aggregator tick 2 — second consecutive closed verdict confirms ──
         // The search feed still lists row A, so the tick-2 fetch re-sees it
