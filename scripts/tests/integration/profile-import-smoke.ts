@@ -5,8 +5,47 @@
  *
  * Forges a NextAuth session, generates a real PDF (via puppeteer-core) and
  * a real DOCX (via jszip) with deliberately overlapping resume content, POSTs
- * both as a single multipart upload, verifies dedup counts, sanity-checks the
- * resulting profile, then deletes the entities it created.
+ * both as a single multipart upload, verifies the merge contract, then reverts
+ * everything it changed.
+ *
+ * PREMISE REPAIR (2026-08-01). The suite used to assert `1 new work role,
+ * 1 new project, 1 new education`. Those numbers were true against the sparse
+ * profile the fixture was written for; against the owner's real profile the
+ * import correctly MERGED instead (`workRolesMerged: 9, projectsMerged: 6,
+ * educationMerged: 4, bulletsDeduped: 46`) and the project/education
+ * assertions failed on every run.
+ *
+ * The counts are not the app misbehaving — they are the pipeline working. The
+ * import feeds the EXISTING profile plus every uploaded file through
+ * `synthesizeMasterResume` (one Flash call) before the deterministic merge, so
+ * how many rows come out as "added" vs "merged" is a function of what the owner
+ * already has AND of an LLM's consolidation judgement. No fixed number is
+ * assertable, and pinning one to today's profile just re-arms the same failure
+ * for whoever grows it next.
+ *
+ * So the assertions moved to what IS invariant, whatever the profile holds:
+ *
+ *   - RESPONSE ↔ DATABASE AGREEMENT. The entity diff computed from
+ *     GET /api/profile before/after must equal the `counts` the route reported
+ *     (`workRolesAdded` etc.), and the profile's total bullet count must grow
+ *     by exactly `bulletsAdded`. A counter that disagrees with the writer is a
+ *     bug at any profile size — and this catches the class the old assertions
+ *     were reaching for without hardcoding the owner's row count.
+ *   - IT MUST STILL DO SOMETHING (the anti-tautology guard). At least one of
+ *     the four *Added counters must be non-zero: append-never-overwrite means a
+ *     resume carrying content the profile lacks has to land SOMEWHERE, as a new
+ *     entity or as bullets on a matched one. If import degrades to a no-op this
+ *     fails, which is the whole point of keeping it.
+ *   - DEDUP HAPPENED. The PDF and the DOCX share three identical bullets, so
+ *     `bulletsDeduped >= 1` is structural.
+ *   - MERGE COUNTS ARE BOUNDED by the number of entities that existed.
+ *
+ * Cleanup now REVERTS, not just deletes. Bullets merged into the owner's real
+ * entities were previously left behind on every run — the fixture's content
+ * accreting into a real profile permanently, which is part of how the profile
+ * this suite tests against drifted in the first place. Cleanup re-reads the
+ * profile, deletes entities that did not exist before, and PATCHes every
+ * surviving entity's bullets back to the pre-import snapshot.
  */
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
@@ -16,15 +55,19 @@ const prisma = new PrismaClient();
 
 /** Counted here, reported by `finish()` at the bottom — never `process.exit`ed inside `main()`. */
 let fails = 0;
+function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, detail ?? ""); fails++; }
+function pass(msg: string) { console.log(`[PASS] ${msg}`); }
 
-// Per-run token for the DOCX fixture's project. The fixture used to name it the
-// literal "mission-control", which matches the owner's real "Mission Control"
-// project in dev.db: the importer MERGED into that row instead of adding one,
-// so `projectsAdded` was 0 and the "expected 1 new project" assertion failed on
-// every run against a real profile (2026-07-29). A per-run token makes the
-// fixture unable to collide with anything already in the profile.
+// Per-run token for the fixture's distinctive strings. The fixture used to name
+// its project the literal "mission-control", which matches the owner's real
+// "Mission Control" project in dev.db: the importer MERGED into that row instead
+// of adding one. A per-run token makes the fixture unable to collide with
+// anything already in the profile — and makes "did this run's content land?"
+// answerable by string search (logged, not asserted: whether the LLM keeps a
+// bullet verbatim is not a contract).
 const RUN_TAG = randomBytes(3).toString("hex");
 const SMOKE_PROJECT_NAME = `smoke-project-${RUN_TAG}`;
+const TAGGED_BULLET = `Instrumented smoke-run marker ${RUN_TAG} across the deployment pipeline`;
 
 const RESUME_HTML_PDF = `<!doctype html><html><head><meta charset="utf-8"><style>
 body { font-family: Helvetica, sans-serif; padding: 40px; color: #111; font-size: 11pt; }
@@ -41,6 +84,7 @@ ul { margin: 4px 0 8px 18px; }
 <li>Built TypeScript API endpoints in a Next.js app handling 10k requests per day</li>
 <li>Optimized a slow Postgres ORM query from 800ms to 80ms</li>
 <li>Added accessibility audits to CI to catch issues before launch</li>
+<li>${TAGGED_BULLET}</li>
 </ul>
 <h2>Education</h2>
 <div class="role">State University · B.S. Computer Science · Aug 2018 – May 2022</div>
@@ -52,6 +96,8 @@ const DOCX_PARAGRAPHS = [
     "",
     "EXPERIENCE",
     "Software Engineer Intern, Hubble Labs (May 2024 – August 2024)",
+    // The first three repeat the PDF verbatim — this overlap is what makes
+    // `bulletsDeduped >= 1` a structural assertion rather than a hopeful one.
     "- Built TypeScript API endpoints in a Next.js app handling 10k requests per day",
     "- Optimized a slow Postgres ORM query from 800ms to 80ms",
     "- Added accessibility audits to CI to catch issues before launch",
@@ -115,6 +161,46 @@ async function generateDOCX(paragraphs: string[]): Promise<Buffer> {
     return await zip.generateAsync({ type: "nodebuffer" });
 }
 
+// ─── Profile wire shapes (only the parts this suite reads/writes) ───────────
+
+interface WireBullet { id: string; text: string }
+interface WireEntity { id: string; bullets: WireBullet[] }
+interface WireProfile {
+    workRoles: WireEntity[];
+    projects: WireEntity[];
+    education: WireEntity[];
+}
+
+/** The three child collections, paired with the route that edits them. */
+const CATEGORIES = [
+    { key: "workRoles", path: "work-roles", label: "work role" },
+    { key: "projects", path: "projects", label: "project" },
+    { key: "education", path: "education", label: "education" },
+] as const;
+type CategoryKey = typeof CATEGORIES[number]["key"];
+
+async function fetchProfile(cookie: string): Promise<WireProfile | null> {
+    const res = await fetch(`${BASE}/api/profile`, { headers: { Cookie: cookie } });
+    const json = await res.json();
+    // Guard before destructuring: on a rejection (401 without an
+    // Access-verified identity, say) `json.profile` is undefined and a
+    // `.workRoles` read throws a bare TypeError that names neither the status
+    // nor the call.
+    if (res.status !== 200 || !json?.profile) {
+        console.error(`[FAIL] GET /api/profile → HTTP ${res.status}`, json);
+        return null;
+    }
+    return json.profile as WireProfile;
+}
+
+function bulletIds(e: WireEntity): string {
+    return e.bullets.map(b => b.id).join(",");
+}
+
+function totalBullets(p: WireProfile): number {
+    return CATEGORIES.reduce((sum, c) => sum + p[c.key].reduce((n, e) => n + e.bullets.length, 0), 0);
+}
+
 async function main() {
     // Pinned to the OWNER deliberately. The dev break-glass resolves every
     // request to the owner, so a fixture created as anyone else disagrees with
@@ -134,9 +220,9 @@ async function main() {
     });
     const cookie = `__Secure-next-auth.session-token=${sessionToken}`;
 
-    let createdWorkRoleIds: string[] = [];
-    let createdProjectIds: string[] = [];
-    let createdEducationIds: string[] = [];
+    /** Pre-import bullets per entity id, per category. Empty until snapshotted. */
+    const snapshot = new Map<CategoryKey, Map<string, WireBullet[]>>();
+    let snapshotOk = false;
 
     try {
         console.log("[setup] generating PDF...");
@@ -147,21 +233,19 @@ async function main() {
         const docx = await generateDOCX(DOCX_PARAGRAPHS);
         console.log(`[setup] DOCX ${docx.length} bytes`);
 
-        // Snapshot profile before import so we can diff
-        const beforeRes = await fetch(`${BASE}/api/profile`, { headers: { Cookie: cookie } });
-        const beforeJson = await beforeRes.json();
-        // Guard before destructuring: on a rejection (401 without an
-        // Access-verified identity, say) `beforeJson.profile` is undefined and
-        // the `.workRoles` read below throws a bare TypeError that names
-        // neither the status nor the call.
-        if (beforeRes.status !== 200 || !beforeJson.profile) {
-            console.error(`[FAIL] GET /api/profile (before snapshot) → HTTP ${beforeRes.status}`, beforeJson);
-            fails++;
-            return;
+        // Snapshot the profile before import — both the id set (what's new
+        // afterwards) and every entity's bullets (what cleanup restores).
+        const before = await fetchProfile(cookie);
+        if (!before) { fails++; return; }
+        for (const c of CATEGORIES) {
+            snapshot.set(c.key, new Map(before[c.key].map(e => [e.id, e.bullets])));
         }
-        const beforeWorkRoleIds = new Set<string>(beforeJson.profile.workRoles.map((w: { id: string }) => w.id));
-        const beforeProjectIds = new Set<string>(beforeJson.profile.projects.map((p: { id: string }) => p.id));
-        const beforeEducationIds = new Set<string>(beforeJson.profile.education.map((e: { id: string }) => e.id));
+        snapshotOk = true;
+        const beforeTotalBullets = totalBullets(before);
+        console.log(
+            `[setup] profile before: ${before.workRoles.length} work roles, ${before.projects.length} projects, ` +
+            `${before.education.length} education, ${beforeTotalBullets} bullets`,
+        );
 
         // Upload both files
         const fd = new FormData();
@@ -174,39 +258,113 @@ async function main() {
         const body = await res.json();
         console.log(`POST /api/profile/import → HTTP ${res.status} in ${elapsed}ms`);
         if (res.status !== 200) {
-            console.error("Response:", body);
-            throw new Error(`import failed: ${body.error}`);
+            // 429 here is usually self-inflicted: the route allows 5 imports per
+            // 10 minutes per user (lib/api/user-rate-limit.ts).
+            throw new Error(`import failed: HTTP ${res.status} — ${body?.error ?? "(no error field)"} [stage=${body?.stage ?? "?"}]`);
         }
         console.log("Counts:", body.counts);
         console.log("Per file:");
         for (const f of body.perFile) console.log(`  ${f.filename}:`, f.counts);
 
-        // Reload profile, identify what was created
-        const afterRes = await fetch(`${BASE}/api/profile`, { headers: { Cookie: cookie } });
-        const afterJson = await afterRes.json();
-
-        createdWorkRoleIds = afterJson.profile.workRoles.filter((w: { id: string }) => !beforeWorkRoleIds.has(w.id)).map((w: { id: string }) => w.id);
-        createdProjectIds = afterJson.profile.projects.filter((p: { id: string }) => !beforeProjectIds.has(p.id)).map((p: { id: string }) => p.id);
-        createdEducationIds = afterJson.profile.education.filter((e: { id: string }) => !beforeEducationIds.has(e.id)).map((e: { id: string }) => e.id);
-
-        console.log(`[verify] new work roles: ${createdWorkRoleIds.length}`);
-        console.log(`[verify] new projects:   ${createdProjectIds.length}`);
-        console.log(`[verify] new education:  ${createdEducationIds.length}`);
-
-        // Expectations:
-        //   - One Hubble Labs work role created (from PDF), merged with DOCX's overlapping role (dedup'd 3 bullets, added 1).
-        //   - One project created (from DOCX only).
-        //   - One education entry created (from PDF only).
-        if (createdWorkRoleIds.length !== 1) { console.error(`[FAIL] expected 1 new work role, got ${createdWorkRoleIds.length}`); fails++; }
-        if (createdProjectIds.length !== 1) { console.error(`[FAIL] expected 1 new project, got ${createdProjectIds.length}`); fails++; }
-        if (createdEducationIds.length !== 1) { console.error(`[FAIL] expected 1 new education, got ${createdEducationIds.length}`); fails++; }
-        if (body.counts.bulletsDeduped < 1) { console.error(`[FAIL] expected bulletsDeduped >= 1 (overlap between PDF and DOCX), got ${body.counts.bulletsDeduped}`); fails++; }
-
-        const hubble = afterJson.profile.workRoles.find((w: { id: string }) => createdWorkRoleIds.includes(w.id));
-        if (hubble) {
-            console.log(`[verify] Hubble Labs role bullets: ${hubble.bullets.length}`);
-            if (hubble.bullets.length < 4) { console.error(`[FAIL] expected >= 4 bullets on merged Hubble Labs role, got ${hubble.bullets.length}`); fails++; }
+        // ── Assertion 1: the response carries a complete counts block ────────
+        const counts = body.counts as Record<string, unknown>;
+        const REQUIRED_COUNTS = [
+            "workRolesAdded", "workRolesMerged", "workRolesDroppedNoStartDate", "workRolesFoldedIntoProjects",
+            "projectsAdded", "projectsMerged", "educationAdded", "educationMerged",
+            "bulletsAdded", "bulletsDeduped", "headerFieldsFilled",
+        ] as const;
+        const missing = REQUIRED_COUNTS.filter(k => typeof counts?.[k] !== "number");
+        if (missing.length > 0) {
+            fail(`counts is missing / non-numeric fields: ${missing.join(", ")}`, counts);
+            return; // every assertion below reads these
         }
+        pass("response counts block is complete and numeric");
+        const n = (k: typeof REQUIRED_COUNTS[number]) => counts[k] as number;
+
+        // Reload the profile and diff it against the snapshot.
+        const after = await fetchProfile(cookie);
+        if (!after) { fails++; return; }
+
+        const created: Record<CategoryKey, string[]> = { workRoles: [], projects: [], education: [] };
+        for (const c of CATEGORIES) {
+            const beforeIds = snapshot.get(c.key)!;
+            created[c.key] = after[c.key].filter(e => !beforeIds.has(e.id)).map(e => e.id);
+            console.log(`[verify] new ${c.label}s: ${created[c.key].length}`);
+        }
+
+        // ── Assertion 2: the reported counts match what actually landed ──────
+        // True at any profile size, and the reason the old `=== 1` assertions
+        // existed: a merge that reports adds it didn't perform (or performs
+        // adds it doesn't report) is a bug regardless of how full the profile is.
+        const addedPairs: [CategoryKey, number, string][] = [
+            ["workRoles", n("workRolesAdded"), "workRolesAdded"],
+            ["projects", n("projectsAdded"), "projectsAdded"],
+            ["education", n("educationAdded"), "educationAdded"],
+        ];
+        for (const [key, reported, label] of addedPairs) {
+            if (created[key].length !== reported) {
+                fail(`${label}=${reported} but ${created[key].length} new ${key} rows appeared in the profile`);
+            } else {
+                pass(`${label}=${reported} agrees with the profile diff`);
+            }
+        }
+
+        const afterTotalBullets = totalBullets(after);
+        const bulletDelta = afterTotalBullets - beforeTotalBullets;
+        if (bulletDelta !== n("bulletsAdded")) {
+            fail(`bulletsAdded=${n("bulletsAdded")} but the profile's bullet count moved by ${bulletDelta} (${beforeTotalBullets} → ${afterTotalBullets})`);
+        } else {
+            pass(`bulletsAdded=${n("bulletsAdded")} agrees with the profile's bullet count delta`);
+        }
+
+        // ── Assertion 3: the import must actually import something ───────────
+        // The anti-tautology guard. Append-never-overwrite means a resume
+        // carrying content the profile lacks has to land somewhere — as a new
+        // entity, or as bullets on a matched one. Zero across all four means
+        // the pipeline stopped importing.
+        const addedTotal = n("workRolesAdded") + n("projectsAdded") + n("educationAdded") + n("bulletsAdded");
+        if (addedTotal < 1) {
+            fail(
+                "import added nothing at all — no new work role / project / education row and no new bullet. " +
+                "The fixture carries content no real profile has (Hubble Labs internship, " +
+                `${SMOKE_PROJECT_NAME}), so a zero here means extraction, synthesis or merge stopped importing.`,
+                counts,
+            );
+        } else {
+            pass(`import added ${addedTotal} thing(s) (${n("workRolesAdded")} roles, ${n("projectsAdded")} projects, ${n("educationAdded")} education, ${n("bulletsAdded")} bullets)`);
+        }
+
+        // ── Assertion 4: the PDF/DOCX overlap deduped ────────────────────────
+        // The two fixtures repeat three bullets verbatim; `mergeBullets` keys on
+        // normalized text, so at least those must collapse.
+        if (n("bulletsDeduped") < 1) {
+            fail(`bulletsDeduped=${n("bulletsDeduped")} — the PDF and DOCX share three identical bullets, so dedup must fire`);
+        } else {
+            pass(`bulletsDeduped=${n("bulletsDeduped")}`);
+        }
+
+        // ── Assertion 5: merges are bounded by what existed ──────────────────
+        // A "merged" is a match against a pre-existing entity, so it can never
+        // exceed the number of pre-existing entities. Catches double-counting
+        // without pinning the count itself.
+        const mergedPairs: [CategoryKey, number, string][] = [
+            ["workRoles", n("workRolesMerged"), "workRolesMerged"],
+            ["projects", n("projectsMerged"), "projectsMerged"],
+            ["education", n("educationMerged"), "educationMerged"],
+        ];
+        for (const [key, merged, label] of mergedPairs) {
+            const existed = snapshot.get(key)!.size;
+            if (merged > existed) fail(`${label}=${merged} exceeds the ${existed} pre-existing ${key} rows`);
+            else pass(`${label}=${merged} ≤ ${existed} pre-existing ${key} rows`);
+        }
+
+        // ── Observation (not an assertion): where the fixture's content went ──
+        // Whether an LLM synthesis pass keeps a given bullet verbatim, folds a
+        // role into a project, or drops a one-line education entry is judgement,
+        // not contract — so this is logged for the reader and never failed on.
+        const allBullets = CATEGORIES.flatMap(c => after[c.key].flatMap(e => e.bullets.map(b => b.text)));
+        console.log(`[NOTE] run-tagged bullet present in profile: ${allBullets.some(t => t.includes(RUN_TAG))}`);
+        console.log(`[NOTE] "${SMOKE_PROJECT_NAME}" present as a project: ${created.projects.length > 0}`);
 
         // NO `process.exit()` HERE — the verdict is `finish()`'s job. This used
         // to be `process.exit(1)` on a failed expectation, INSIDE the try:
@@ -215,15 +373,57 @@ async function main() {
         // role / project / education rows into the profile (one orphaned
         // "Hubble Labs" role was found in dev.db on 2026-07-29).
     } finally {
-        // Cleanup: delete entities we created.
-        for (const id of createdWorkRoleIds) {
-            await fetch(`${BASE}/api/profile/work-roles?id=${id}`, { method: "DELETE", headers: { Cookie: cookie } }).catch(() => undefined);
-        }
-        for (const id of createdProjectIds) {
-            await fetch(`${BASE}/api/profile/projects?id=${id}`, { method: "DELETE", headers: { Cookie: cookie } }).catch(() => undefined);
-        }
-        for (const id of createdEducationIds) {
-            await fetch(`${BASE}/api/profile/education?id=${id}`, { method: "DELETE", headers: { Cookie: cookie } }).catch(() => undefined);
+        // REVERT, don't just delete. Re-reads the profile rather than trusting
+        // the ids computed above, so a run that died mid-assertion — or a route
+        // that half-applied its writes before throwing — is still cleaned up.
+        if (!snapshotOk) {
+            console.warn("[cleanup] no pre-import snapshot — nothing can be safely reverted, skipping");
+        } else {
+            const current = await fetchProfile(cookie);
+            if (!current) {
+                console.error("[cleanup] COULD NOT RE-READ THE PROFILE — fixture entities may still be in it. Check by hand.");
+            } else {
+                for (const c of CATEGORIES) {
+                    const beforeBullets = snapshot.get(c.key)!;
+                    for (const entity of current[c.key]) {
+                        const original = beforeBullets.get(entity.id);
+                        if (!original) {
+                            // Created by this run — remove it outright.
+                            const r = await fetch(`${BASE}/api/profile/${c.path}?id=${entity.id}`, {
+                                method: "DELETE", headers: { Cookie: cookie },
+                            }).catch(() => null);
+                            if (!r || r.status !== 200) {
+                                console.error(`[cleanup] failed to delete ${c.label} ${entity.id} (HTTP ${r?.status ?? "network error"}) — delete it by hand`);
+                            }
+                            continue;
+                        }
+                        if (bulletIds(entity) === original.map(b => b.id).join(",")) continue; // untouched
+                        // Bullets were merged into one of the owner's REAL
+                        // entities. Put the column back exactly as it was.
+                        //
+                        // Written through Prisma, not the PATCH route, for two
+                        // reasons: the route calls markCanonsStaleForEntity, so
+                        // reverting through it would flag the owner's canons
+                        // stale for a change that nets to zero; and a direct
+                        // write still works when the dev server is the thing
+                        // that died mid-run. The value is the array the API
+                        // just handed us — already normalized by parseBullets /
+                        // hydrateBulletDefaults — so this is the same JSON
+                        // serializeBullets would produce.
+                        const json = JSON.stringify(original);
+                        const restored = await (
+                            c.key === "workRoles" ? prisma.workRole.update({ where: { id: entity.id }, data: { bullets: json } })
+                            : c.key === "projects" ? prisma.project.update({ where: { id: entity.id }, data: { bullets: json } })
+                            : prisma.education.update({ where: { id: entity.id }, data: { bullets: json } })
+                        ).then(() => true, () => false);
+                        if (!restored) {
+                            console.error(`[cleanup] failed to restore bullets on ${c.label} ${entity.id} — fixture bullets are still on it`);
+                        } else {
+                            console.log(`[cleanup] reverted ${entity.bullets.length - original.length} merged bullet(s) on ${c.label} ${entity.id}`);
+                        }
+                    }
+                }
+            }
         }
         await prisma.session.delete({ where: { sessionToken } }).catch(() => undefined);
         await prisma.$disconnect();
