@@ -76,9 +76,13 @@ export const WorkdayConfigSchema = z.object({
     careerSite: z.string().min(1).regex(/^[A-Za-z0-9_-]+$/),
     companyName: z.string().min(1),
     // PB-ext-5: optional override of the per-crawl page cap. Defaults to 10
-    // (200 postings) — fine for most tenants. Boeing has ~1,177 jobs and
-    // Blue Origin ~957, so directory entries for those bump to 60 (= 1,200
-    // posting cap, room for growth). Bounded [1, 200] so a typo can't
+    // (200 postings) — fine for most tenants. Big tenants bump it in
+    // lib/company-directory.ts: Boeing 60 (~1,177 jobs), Blue Origin 80
+    // (total=1,355 measured 2026-08-02). Size these against the tenant's
+    // live `total` — a cap BELOW the listing size means the crawl never
+    // drains, which workday-fetcher reports as `partial: true` and
+    // job-watcher treats as "close-detection not safe to run", silently
+    // disabling closure for that tenant. Bounded [1, 200] so a typo can't
     // schedule a thousand HTTP round-trips per tick.
     maxPages: z.number().int().min(1).max(200).optional(),
 });

@@ -126,8 +126,17 @@ export const COMPANY_DIRECTORY: readonly CompanyDirectoryEntry[] = [
             tenantHost: "blueorigin.wd5.myworkdayjobs.com",
             careerSite: "BlueOrigin",
             companyName: "Blue Origin",
-            // PB-ext-5: ~957 jobs at last count.
-            maxPages: 50,
+            // Measured 2026-08-02: the jobs endpoint reports total=1,355 (was
+            // ~957 when this entry was written). At the old maxPages 50 the
+            // crawl capped at 1,000 and NEVER drained the listing, so
+            // workday-fetcher flagged every run `partial: true` and
+            // job-watcher skipped close-detection for this tenant entirely —
+            // postings could never close. Draining 1,355 needs
+            // ceil(1355/20) = 68 pages; 80 × 20 = 1,600 leaves ~18% headroom
+            // for growth. Cost is bounded by the drain, not the cap: the loop
+            // breaks on the first short page (~68 requests), so the extra 30
+            // pages are only ever spent if the listing actually grows.
+            maxPages: 80,
         },
     },
     {
