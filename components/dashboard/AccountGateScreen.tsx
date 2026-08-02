@@ -3,6 +3,7 @@
 import React from "react";
 import { AlertTriangle, RefreshCw, ShieldAlert, UserX } from "lucide-react";
 import type { AccountError, AccountState } from "@/hooks/useAccount";
+import { ACCESS_LOGOUT_PATH } from "@/hooks/useSignOut";
 
 /**
  * The three TERMINAL outcomes of `useAccount()` — everything that is neither
@@ -116,6 +117,31 @@ export const AccountGateScreen: React.FC<AccountGateScreenProps> = ({ state, err
                     it, retry — no need to reload the page.
                 </p>
                 <RetryButton label="I've been added — retry" onClick={onRetry} />
+                <p>
+                    {/*
+                     * Escape hatch for the MOST LIKELY 403: someone who
+                     * authenticated at the edge with the wrong Google account.
+                     * The only other sign-out control lives in AccountPanel
+                     * inside the Launchpad, which never mounts in a gate state
+                     * — and Access sessions last 24h on prod / a month on dev,
+                     * so without this link the trap is durable (clearing
+                     * cookies is the only manual escape, painful on mobile).
+                     * A plain navigation, same as useSignOut: the edge serves
+                     * ACCESS_LOGOUT_PATH on this hostname and clears the
+                     * Access cookie. Deliberately ONLY on this branch — on the
+                     * 401 screen there is no Access session to end, and
+                     * offering sign-out there would misdirect the reader
+                     * toward a fix that cannot work.
+                     */}
+                    Not you?{" "}
+                    <a
+                        href={ACCESS_LOGOUT_PATH}
+                        className="text-foreground/70 underline underline-offset-2 hover:text-foreground transition-colors"
+                    >
+                        Sign out and switch accounts
+                    </a>
+                    .
+                </p>
                 <StatusLine error={error} />
             </GateFrame>
         );
