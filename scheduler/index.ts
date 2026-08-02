@@ -20,6 +20,7 @@ import { runStaleApplicationNudges } from './jobs/stale-applications';
 import { runDeadlineNudges } from './jobs/deadline-nudges';
 import { runPostingDigest } from './jobs/posting-digest';
 import { runWebhookDeliveryPrune } from './jobs/webhook-delivery-prune';
+import { runNotificationPrune } from './jobs/notification-prune';
 import { runFailedIngestRetry } from './jobs/failed-ingest-retry';
 import { runClassifyPendingEmploymentTypes } from './jobs/classify-pending-employment-types';
 import { runGmailWatchRenew } from './jobs/gmail-watch-renew';
@@ -219,6 +220,23 @@ const JOBS: IntervalJob[] = [
             const r = await runFetcherHealthPrune();
             if (r.deleted > 0) {
                 console.info(`[fetcher-health-prune] deleted ${r.deleted} rows (older than ${r.cutoff.toISOString()})`);
+            }
+        },
+    },
+    {
+        name: 'notification-prune',
+        // Daily — bound the Notification table to 90 days (audit item #2).
+        // Unlike the other prune jobs this one sweeps a Prisma table, so it is
+        // PER-TIER (each scheduler hits its own dev.db/prod.db), not a shared
+        // sidecar file. Unread+undismissed criticals are preserved at any age
+        // because the bell pins them outside the recency window — the job file
+        // documents that carve-out and the dedupKey-recurrence analysis behind
+        // the predicate.
+        intervalMs: 24 * 60 * 60 * 1000,
+        run: async () => {
+            const r = await runNotificationPrune();
+            if (r.deleted > 0) {
+                console.info(`[notification-prune] deleted ${r.deleted} rows older than ${r.cutoff.toISOString()}`);
             }
         },
     },
