@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ATS Debug Notebook</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./assets/style.css">
+</head>
+<body>
+
+  <h4 class="kicker">mission-control</h4>
+  <h1>ATS Debug Notebook</h1>
+  <p class="subtitle">How each ATS behaves, what is currently broken, what we already fixed — and the exact commands to re-check any of it.</p>
+
+  <div class="callout tip">
+    <strong>What this doc is for.</strong> ATS quirks recur, and the expensive part is never the fix — it is
+    re-deriving <em>which</em> of a source's oddities are bugs and which are working as designed. Every claim
+    below is measured, and §7 holds the commands that produced it so any number can be re-run rather than
+    trusted. When you fix something, move it from §3 to §5 with the date and the evidence.
+  </div>
+
+  <details class="section no-count toc" open>
+    <summary><h3>Contents</h3></summary>
+    <ol class="toc-list">
+      <li><a href="#how-it-works">How liveness detection works</a></li>
+      <li><a href="#per-ats">Per-ATS reference &amp; current health</a></li>
+      <li><a href="#open">Open issues — the fix list</a></li>
+      <li><a href="#not-bugs">Working as designed (do not re-investigate)</a></li>
+      <li><a href="#remedies">Remedy log</a></li>
+      <li><a href="#traps">Traps &amp; house rules</a></li>
+      <li><a href="#recipes">Diagnostic recipes</a></li>
+    </ol>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="how-it-works">How liveness detection works</h2></summary>
+    <div class="section-body">
+
+      <h3>The pipeline</h3>
+      <p>
+        A posting is closed only on <strong>positive evidence of removal</strong>, never on absence from a
+        crawl. <code>scheduler/jobs/job-watcher.ts</code> picks stale candidates, <code>lib/postings/liveness.ts</code>
+        probes them, and a close needs <strong>two independent <code>closed</code> verdicts</strong> separated
+        by a confirm window.
+      </p>
+
+      <pre class="mermaid">
+flowchart TD
+  A["job-watcher tick"] --> B{"fetch partial?"}
+  B -->|yes| Z["skip close-detection<br/>(incomplete view of the board)"]
+  B -->|no| C["stale candidates<br/>(not seen in 6h)"]
+  C --> D["probeBatch by kind<br/>PROBE_PROFILES budget"]
+  D --> E{"verdict"}
+  E -->|alive| F["bump lastSeenAt<br/>clear pendingClosedAt"]
+  E -->|unknown| G["leave row untouched<br/>re-probe next tick"]
+  E -->|closed| H{"pendingClosedAt set?"}
+  H -->|no| I["STRIKE 1<br/>stamp pendingClosedAt"]
+  H -->|"yes, 30min-7d old"| J["STRIKE 2<br/>status=closed, cascade"]
+  H -->|"yes, &gt;7d old"| K["expired — re-stamp<br/>(strike 1 again)"]
+      </pre>
+
+      <h3>Verdict semantics — the one rule that matters</h3>
+      <table>
+        <thead><tr><th>Verdict</th><th>Means</th><th>Effect</th></tr></thead>
+        <tbody>
+          <tr><td><code>alive</code></td><td>Positive proof the posting is live</td><td>Refresh <code>lastSeenAt</code>, clear any strike</td></tr>
+          <tr><td><code>closed</code></td><td>Positive proof it was removed</td><td>Strike 1, or confirm to <code>status="closed"</code></td></tr>
+          <tr><td><code>unknown</code></td><td>Anything ambiguous — refusal, timeout, interstitial, shape drift</td><td><strong>Nothing.</strong> Row untouched</td></tr>
+        </tbody>
+      </table>
+      <div class="callout danger">
+        <strong>Ambiguity always resolves to <code>unknown</code>, never <code>closed</code>.</strong> A false close
+        cascades into auto-closing linked application cards and <strong>never self-heals</strong> — the stale
+        re-probe excludes <code>status="closed"</code> and the C3 sweep only selects <code>status="new"</code>.
+        Recovery is the manual <code>scripts/tests/debug/recover-false-closed.ts</code>. This is why <code>403</code>
+        is treated as back-off rather than removal, and why every "is it gone?" heuristic in
+        <code>liveness.ts</code> is written to fail toward <code>unknown</code>.
+      </div>
+
+      <h3>Where a source can block us</h3>
+      <p>Three independent failure surfaces, worth naming because they need different fixes:</p>
+      <ul>
+        <li><strong>The crawl</strong> (job list) — feeds ingest and <code>lastSeenAt</code>. Breaks as truncation, pagination caps, or a <code>partial</code> flag.</li>
+        <li><strong>The probe</strong> (per-posting detail) — feeds close-detection only. Breaks as refusals, SPA shells with no signal, or shape drift.</li>
+        <li><strong>Our own back-off</strong> — the batch abort and per-tenant breakers. Breaks by being too eager, which looks identical to an upstream block from the logs.</li>
+      </ul>
+      <p>
+        The third is the one that misleads. <strong>Two of the three issues in §3 turned out to be our
+        back-off, not the source.</strong> Always confirm upstream health with a direct <code>curl</code> before
+        concluding a source is blocking us.
+      </p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="per-ats">Per-ATS reference &amp; current health</h2></summary>
+    <div class="section-body">
+
+      <h3>Probe strategy per kind</h3>
+      <p>Handlers in <code>lib/postings/liveness.ts:PROBE_HANDLERS</code>; budgets in <code>PROBE_PROFILES</code>.</p>
+      <table>
+        <thead><tr><th>Kind</th><th>Probe target</th><th>Signal used</th><th>Profile (conc / delay / cap)</th></tr></thead>
+        <tbody>
+          <tr><td><code>greenhouse</code></td><td><code>boards-api.greenhouse.io/v1/boards/&lt;slug&gt;/jobs/&lt;id&gt;</code></td><td>HTTP 404/410 ⇒ closed</td><td>8 / 0ms / 200</td></tr>
+          <tr><td><code>lever</code></td><td><code>api.lever.co/v0/postings/&lt;slug&gt;/&lt;id&gt;</code></td><td>HTTP 404/410 ⇒ closed</td><td>6 / 0ms / 100</td></tr>
+          <tr><td><code>workday</code></td><td>CXS detail <code>/wday/cxs/&lt;tenant&gt;/&lt;site&gt;/job/…</code></td><td><code>"posted":false</code> ⇒ closed; 404 ⇒ closed</td><td>2 / 0ms / 60</td></tr>
+          <tr><td><code>ashby</code></td><td>Posting page (never 404s — always 200)</td><td><code>"isListed":false</code>, or the all-null not-found shell</td><td>4 / 200ms / 100</td></tr>
+          <tr><td><code>clearcompany</code></td><td><code>careers-api.clearcompany.com/v1/&lt;siteId&gt;/&lt;jobId&gt;</code></td><td>404 <em>with</em> a body ⇒ closed; id-echo ⇒ alive</td><td>2 / 250ms / 50</td></tr>
+          <tr><td><code>linkedin</code></td><td>Posting HTML</td><td>Body markers + parked-on-search-surface</td><td>1 / 1500ms / 30</td></tr>
+          <tr><td><code>indeed</code></td><td>Posting HTML</td><td>Body markers + parked-on-search-surface</td><td>1 / 1500ms / 30</td></tr>
+          <tr><td><code>smartrecruiters</code>, <code>workable</code>, <code>recruitee</code>, <code>personio</code>, <code>careers-page</code></td><td>Source URL, status only (<code>probeGeneric</code>)</td><td>404/410 ⇒ closed. <strong>Unaudited</strong></td><td>4 / 0ms / 100</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Current health — measured against <code>prisma/prod.db</code>, 2026-08-02</h3>
+      <table>
+        <thead><tr><th>Kind</th><th>Watchlists</th><th>Postings</th><th>Closed</th><th>Close rate</th><th>Read</th></tr></thead>
+        <tbody>
+          <tr><td><code>greenhouse</code></td><td>25</td><td>6,151</td><td>2,695</td><td><strong>43.8%</strong></td><td>Healthy — the reference baseline</td></tr>
+          <tr><td><code>ashby</code></td><td>7</td><td>373</td><td>160</td><td><strong>42.9%</strong></td><td>Healthy <em>as of 2026-08-02</em> — was 0.3% two days ago (§5.1)</td></tr>
+          <tr><td><code>lever</code></td><td>4</td><td>205</td><td>73</td><td><strong>35.6%</strong></td><td>Healthy</td></tr>
+          <tr><td><code>linkedin</code></td><td>7</td><td>7,657</td><td>1,000</td><td>13.1%</td><td>Low, but expected — aggregator, 24h-filtered crawl, HTML-only signal</td></tr>
+          <tr><td><code>workday</code></td><td>4</td><td>5,858</td><td>0</td><td><strong>0.0%</strong></td><td>🔴 Broken two different ways — §3.1 and §3.3</td></tr>
+          <tr><td><code>clearcompany</code></td><td>1</td><td>245</td><td>0</td><td><strong>0.0%</strong></td><td>🟡 Probe fixed 2026-08-02, not yet exercised — §3.2</td></tr>
+        </tbody>
+      </table>
+      <div class="callout tip">
+        <strong>The 40%-ish band is the tell.</strong> Greenhouse, Ashby and Lever independently land at 36–44%,
+        which is what a working close-detection looks like on this dataset. A kind sitting near 0% is a broken
+        probe until proven otherwise — that heuristic is what caught both the Ashby and ClearCompany bugs.
+      </div>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="open">Open issues — the fix list</h2></summary>
+    <div class="section-body">
+
+      <h3>3.1 · Workday: a sporadic 403 gets escalated into a 6-hour tenant outage</h3>
+      <p><strong>Blue Origin · 1,621 postings · our bug · cheapest win on this page.</strong></p>
+      <p>
+        Blue Origin's CXS detail endpoint <strong>works</strong>. Measured 2026-08-02 from this machine: one run
+        of 10 sequential probes returned <strong>200 on all 10</strong>; an earlier back-to-back burst of 12
+        returned <strong>8× 200 and 4× 403</strong>. So the 403 is <em>intermittent and load-shaped</em>, and the
+        endpoint recovers on its own.
+      </p>
+      <p>Our handling converts that flake into an outage, in two steps:</p>
+      <ol>
+        <li><code>probeBatch</code>'s abort flag trips on the <strong>first</strong> refusal anywhere in the batch, so one unlucky 403 discards the remaining ~59 probes of a 60-probe tick.</li>
+        <li>Each aborted tick calls <code>noteCxsRefusal</code>; three of those trip <code>WORKDAY_CXS_TRIP_AFTER</code> and park the whole tenant for <code>WORKDAY_CXS_COOLDOWN_MS</code> = <strong>6 hours</strong> with zero network activity.</li>
+      </ol>
+      <p>
+        That is the observed <code>aborting remaining 60 probes for this batch</code> → <code>skipping its probes
+        for 360m</code> sequence. At a ~33% burst-403 rate, the batch aborts after ~3 probes on average and the
+        tenant reaches the 6h park quickly — which is why Blue Origin logged <code>candidates=922 alive=1
+        unknown=921</code>. The single <code>alive=1</code> is the fingerprint: the endpoint answered, then our own
+        back-off stopped us.
+      </p>
+      <div class="callout warn">
+        <strong>Fix shape.</strong> Make a refusal cost a retry rather than the batch. Retry a 403 once or twice
+        with a short jittered backoff before calling <code>onRateLimit</code>; at the measured 33% flake rate two
+        retries drop a false refusal to ~3.7%. Optionally require <em>N consecutive</em> refusals (not one) to
+        trip the batch abort. Do <strong>not</strong> touch the <code>403 ⇒ unknown</code> mapping — that is
+        correct and load-bearing (§1.2).
+      </div>
+
+      <h3>3.2 · ClearCompany: the job-list response truncates mid-stream</h3>
+      <p><strong>Firefly Aerospace · 245 rows · real data loss · remedy already verified.</strong></p>
+      <p>
+        Reproduced live 2026-08-02. The unpaginated board response is <strong>1,351,175 bytes</strong> and does
+        not reliably complete:
+      </p>
+      <table>
+        <thead><tr><th>Transport</th><th>Attempts</th><th>Complete</th><th>Failure</th></tr></thead>
+        <tbody>
+          <tr><td>HTTP/2</td><td>3</td><td><strong>0</strong></td><td><code>curl 92</code> — stream error in the HTTP/2 framing layer, truncated at 395 KB / 498 KB / 804 KB</td></tr>
+          <tr><td>HTTP/1.1 <em>(what Node's <code>fetch</code> uses)</em></td><td>3</td><td>2</td><td><code>curl 18</code> — partial file at 613 KB</td></tr>
+          <tr><td>Paginated, <code>pageSize=50</code></td><td>8</td><td><strong>8</strong></td><td>none — 4 pages ≈ 380 KB each, <code>50+50+50+31 = 181 = totalCount</code></td></tr>
+        </tbody>
+      </table>
+      <p>
+        When it truncates, <code>await res.json()</code> throws, <code>fetchPage</code> returns <code>ok:false</code>,
+        and <code>fetchClearCompany</code> aborts the <strong>entire</strong> crawl — so not one row's
+        <code>lastSeenAt</code> gets refreshed that tick.
+      </p>
+      <div class="callout danger">
+        <strong>The pagination fallback is unreachable in exactly the case that needs it.</strong>
+        <code>lib/fetchers/clearcompany-fetcher.ts:61</code> does the one-shot fetch <em>first</em> and returns on
+        failure; the paginated loop at :71 is only entered when the one-shot <strong>succeeded</strong> but came
+        back short. A truncated first page therefore never reaches the fallback. Relatedly, the comment at :75
+        says <em>"Non-fatal: keep what we have"</em> while the code discards <code>all</code> and returns
+        <code>ok:false</code> — comment and behaviour disagree.
+      </div>
+      <div class="callout warn">
+        <strong>Fix shape.</strong> Paginate unconditionally from <code>pageIndex=0</code> (8/8 clean, ~380 KB
+        pages), or at minimum retry the one-shot on a parse failure and fall through to pagination instead of
+        returning. Note <code>FETCH_TIMEOUT_MS</code> is <em>not</em> the cause — <code>clearTimeout</code> at :137
+        fires before <code>res.json()</code>, so the body read is already untimed. Also refresh the header
+        comment: it says "verified against Firefly's 135-job board"; the board is <strong>181</strong> today.
+      </div>
+
+      <h3>3.3 · Workday: three tenants refuse CXS permanently</h3>
+      <p><strong>Boeing 3,832 + Maxar 278 + Axiom Space 127 = 4,237 postings · upstream · needs a design call.</strong></p>
+      <p>
+        Distinct from §3.1 and <strong>not</strong> fixable by retrying. All three answer the CXS detail endpoint
+        with a deterministic <code>403 {"errorCode":"S22","message":"permission denied"}</code> — Boeing returned
+        it <strong>6 times out of 6</strong> at one request per second, spaced far below any plausible rate limit.
+        Their job-<em>list</em> endpoints are fine, so crawling works and only close-detection is blocked.
+      </p>
+      <div class="callout tip">
+        <strong>This is tenant configuration, and we can now prove it.</strong> Blue Origin returned 200 from the
+        same IP, same UA, same minute (§3.1). A shared-IP throttle cannot be selective like that. The
+        <code>S22</code> breaker in <code>liveness.ts</code> is behaving correctly here — there is no verdict to be
+        had, so spending requests on it is pure waste.
+      </div>
+      <p>Candidate remedies, none free — recorded so the trade-offs aren't re-derived:</p>
+      <ul>
+        <li><strong>Trust a verifiably complete list drain.</strong> When a crawl is not <code>partial</code> <em>and</em> the returned count matches the tenant's advertised <code>total</code>, absence from the list becomes admissible evidence. This is the only signal available for these tenants — and it is precisely the inference the probe gate was built to distrust, so it would need the two-strike rule plus a hard "complete drain" assertion. Blue Origin's <code>maxPages</code> 50→80 fix (§5.2) is the shape of work this needs, per tenant.</li>
+        <li><strong>Scrape the posting HTML.</strong> Already tried and documented as dead: modern Workday tenants serve a ~6.5 KB client-rendered shell whose only hook is <code>id="root"</code>, so no marker in <code>WORKDAY_ALIVE_MARKERS</code> or <code>WORKDAY_CLOSED_MARKERS</code> can ever appear. See the caveat in <code>probeWorkday</code>.</li>
+        <li><strong>Accept it.</strong> These postings never close. Honest and free; the cost is a permanently growing stale population on the largest single watchlist we have.</li>
+      </ul>
+
+      <h3>3.4 · Five probe kinds have never been audited</h3>
+      <p>
+        <code>smartrecruiters</code>, <code>workable</code>, <code>recruitee</code>, <code>personio</code> and
+        <code>careers-page</code> all sit on <code>probeGeneric</code> — plain HTTP status, no body inspection.
+        That is exactly the configuration that made ClearCompany silently report 245/245 alive forever.
+      </p>
+      <p>
+        <strong>Latent, not live:</strong> prod has zero watchlists of these kinds today, so nothing is currently
+        wrong. The moment one is added, check its close rate against the 40% band in §2.2 before trusting it.
+      </p>
+
+      <h3>3.5 · Filtered-but-live rows are permanent close-candidates</h3>
+      <p>
+        Cross-cutting, and the mechanism behind two symptoms in §4. A posting already in the DB that later starts
+        matching a negative filter is dropped at ingest, so its <code>lastSeenAt</code> stops advancing — it
+        becomes a close-candidate on every tick, forever, despite being live on the board.
+      </p>
+      <p>
+        Benign wherever the probe works (it answers <code>alive</code> and refreshes the row — this is the
+        self-heal). <strong>Compounding wherever the probe is dark</strong>, i.e. all of §3.1 and §3.3: those rows
+        queue up permanently and inflate every candidate count in the logs.
+      </p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="not-bugs">Working as designed (do not re-investigate)</h2></summary>
+    <div class="section-body">
+      <div class="callout tip">
+        <strong>Why this section exists.</strong> Each item below was recorded as a suspected bug and cost real
+        investigation time. All three are correct behaviour. Delete an entry only if you have evidence that
+        overturns the measurement, not because it looks wrong again.
+      </div>
+
+      <h3>4.1 · "72 ClearCompany board postings are missing from the DB"</h3>
+      <p>
+        <strong>All 72 are negative-filtered — 72/72, no residual.</strong> The global filter list is
+        <code>["senior","II","III","Lead","Manager","Sr.","Director"]</code> and the absent titles are things like
+        <em>GNC Engineer II</em>, <em>Flight Dynamics Manager</em>, <em>Director, National Security Space
+        Programs</em>. The fetcher is not dropping them; the owner's filters are. Verified by replaying the
+        compiled patterns against the live board (§7.3).
+      </p>
+      <p>
+        A related hypothesis was also tested and <strong>refuted</strong>: the <code>.filter(p =&gt;
+        p.positionTitle &amp;&amp; p.applyLink)</code> at <code>clearcompany-fetcher.ts:91</code> silently drops
+        rows, but <strong>0 of 181</strong> live postings lack either field.
+      </p>
+
+      <h3>4.2 · "43 ClearCompany rows are 64 days stale while live on the board"</h3>
+      <p>
+        Measured at <strong>41 rows, max 65 days</strong> — and <strong>41/41 match a negative filter</strong>.
+        Same mechanism as §3.5: they entered the DB before the filters were tightened (<code>firstSeenAt</code>
+        clusters at 2026-05-20…05-29), and every crawl since has dropped them at ingest, so
+        <code>lastSeenAt</code> froze. Nothing is failing to fetch them.
+      </p>
+      <p>
+        These are the rows the new <code>probeClearCompany</code> exists to protect: a naive "stale ⇒ closed" rule
+        would have closed 41 live postings. It should now resolve them <code>alive</code> and unfreeze
+        <code>lastSeenAt</code> — <strong>that is the observable to watch</strong> on the next tick that produces
+        stale candidates.
+      </p>
+
+      <h3>4.3 · Blue Origin refreshes only ~281 of 1,621 rows per run</h3>
+      <p>
+        Looks like a shrinking listing; is <code>globalNegativeFilters</code> dropping ~72% at ingest. Close
+        detection is unaffected because <code>seenExternalIds</code> is populated <em>before</em> the filter drop.
+        Recorded 2026-08-02.
+      </p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="remedies">Remedy log</h2></summary>
+    <div class="section-body">
+      <p>Fixes applied, newest first, each with the evidence that it worked. Add a row when you land one.</p>
+
+      <h3>5.1 · Ashby not-found shell — <span style="color:#4ade80">confirmed working 2026-08-02</span></h3>
+      <p>
+        <strong>Problem:</strong> <code>jobs.ashbyhq.com</code> answers every path with 200, and the ~7 KB
+        not-found shell embeds <code>window.__appData</code> too — so the old alive-marker matched it and every
+        removed posting probed <code>alive</code> forever.
+      </p>
+      <p>
+        <strong>Fix:</strong> dropped <code>window.__appdata</code> as an alive marker, added
+        <code>isAshbyNotFoundShell</code> (four conjuncts: blob present, org/posting/jobBoard all null, no
+        hydrated entity anywhere, no <code>"isListed":true</code>), plus a <code>maintenanceMode</code> bail-out
+        hoisted above all four <code>closed</code> exits.
+      </p>
+      <div class="callout tip">
+        <strong>Result — this is what a fixed probe looks like.</strong> Ashby close rate went
+        <strong>0.3% → 42.9%</strong> (1 of 373 → 160 of 373), landing right on greenhouse's 43.8%. Closes by day:
+        <strong>155 on 2026-08-02</strong>, 4 on 08-01, and exactly <strong>1 in all prior history</strong>
+        (2026-06-12). The burst is a backlog drain, and the rate it settled at is the peer band — but keep an eye
+        on it: a rate that keeps climbing past the band would mean over-closing.
+      </div>
+
+      <h3>5.2 · Blue Origin <code>maxPages</code> 50 → 80 — landed 2026-08-02</h3>
+      <p>
+        The crawl hit its page cap, so every run was flagged <code>partial</code> and close-detection was skipped
+        outright. Raised in <code>lib/company-directory.ts</code> (<strong>not</strong> the DB: both rows carry
+        <code>directoryKey='Blue Origin'</code>, so stored <code>config</code> is a dead write and a PATCH would
+        have set <code>directoryKey=null</code> and permanently detached them from <code>COMPANY_DIRECTORY</code>).
+        Derived from a measured live <code>total</code> of 1,355 — draining needs 68 pages.
+      </p>
+      <p>
+        <strong>Result:</strong> close-detection ran for the first time at 21:34Z (<code>candidates=922</code>,
+        previously skipped entirely). It then immediately hit §3.1, so the fix is correct but inert.
+      </p>
+
+      <h3>5.3 · ClearCompany structured probe — landed 2026-08-02, not yet exercised</h3>
+      <p>
+        Replaced <code>probeGeneric</code> (which hit the tenant SPA host that returns a byte-identical 11,027-byte
+        shell with 200 for <em>every</em> job path — hence 245 postings, 0 ever closed) with a probe of
+        <code>careers-api.clearcompany.com/v1/&lt;siteId&gt;/&lt;jobId&gt;</code>. Validated 10/10 against verdicts
+        established independently from the live board.
+      </p>
+      <p>
+        <strong>Interlock worth preserving:</strong> a posting-level 404 carries a 161-byte ProblemDetails body; a
+        board-level 404 (unknown <code>siteId</code>) is <strong>empty</strong>. Only the former closes. Without
+        that, the day ClearCompany rotates a tenant's <code>siteId</code>, all 245 close at once.
+      </p>
+      <p><strong>Status:</strong> still awaiting its first real workload — see §3.2 and §4.2 for what to watch.</p>
+
+      <h3>5.4 · Workday probe profile — landed 2026-07-31</h3>
+      <p>
+        Was <code>{concurrency: 6, maxPerTick: 500, timeoutMs: 5000}</code>, which issued 11.5k probe GETs in 24h
+        at <em>nine times</em> the volume of the actual crawls and returned 5,558 <code>unknown</code> vs 427
+        <code>alive</code> (~93% waste). Axiom Space's own crawl was 429-blocked for 15 days as collateral. Now
+        <code>{concurrency: 2, maxPerTick: 60, timeoutMs: 8000}</code>. Also added <code>403</code> and
+        <code>5xx</code> to <code>BACKOFF_STATUSES</code> — previously only <code>429</code> tripped the abort, and
+        Workday essentially never sends 429.
+      </p>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="traps">Traps &amp; house rules</h2></summary>
+    <div class="section-body">
+
+      <h3>6.1 · Rules that are load-bearing</h3>
+      <ul>
+        <li><strong>Never map <code>403</code> to <code>closed</code>.</strong> Workday's 403 is deterministic per-posting at concurrency 1 <em>and</em> spreads to known-live postings under load. The evidence cannot separate those, and guessing "closed" re-introduces mass false-close.</li>
+        <li><strong>Never conclude from a redirect alone.</strong> Off-path redirects only count as closure when the landing page is the board's own search/root surface or a body marker hits. Auth walls, consent gates and captchas are <code>unknown</code>.</li>
+        <li><strong><code>MC_LIVENESS_BYPASS</code> must never be set in production.</strong> It is hard-ignored on a prod tier with a loud warn, because it would mass-close real rows.</li>
+        <li><strong>A "200 for everything" SPA host cannot be probed by body heuristics.</strong> ClearCompany's shell contains neither the job id nor the title. Find a structured endpoint or leave the kind unprobed — do not invent markers.</li>
+      </ul>
+
+      <h3>6.2 · Ways this investigation can mislead you</h3>
+      <ul>
+        <li><strong>The <code>careers-api.clearcompany.com</code> host is ambiguous in logs.</strong> <code>/v1/&lt;siteId&gt;</code> with <em>no</em> job id is the pre-existing <em>list fetcher</em> and predates the probe. Only the per-posting <code>/v1/&lt;siteId&gt;/&lt;jobId&gt;</code> form proves the new probe ran.</li>
+        <li><strong>An aborted batch and a blocked endpoint look identical in the logs.</strong> Both produce a wall of <code>unknown</code>. Only a direct <code>curl</code> tells them apart — that distinction is the whole of §3.1 vs §3.3.</li>
+        <li><strong>Prisma stores SQLite <code>DateTime</code> as epoch-ms integers.</strong> <code>date(removedAt)</code> silently returns empty; you need <code>date(removedAt/1000,'unixepoch')</code>. This quietly turned "160 closes" into "no closes have dates" on the first pass.</li>
+        <li><strong>A watchlist's enabled column is <code>active</code>, not <code>enabled</code>.</strong></li>
+        <li><strong>Probes are the dominant traffic source.</strong> Close-detection can out-request the actual crawls by ~9× when a profile is too hot, and it shares a budget with the crawl on ClearCompany (same host). Starving the crawl to detect closures is a bad trade.</li>
+      </ul>
+    </div>
+  </details>
+
+  <details class="section">
+    <summary><h2 id="recipes">Diagnostic recipes</h2></summary>
+    <div class="section-body">
+      <p>Everything in §2–§4 came from these. All read-only.</p>
+
+      <h3>7.1 · Close rate per kind (the first thing to run)</h3>
+      <pre><code class="language-sql">sqlite3 prisma/prod.db "
+SELECT w.kind, COUNT(DISTINCT w.id) AS watchlists, COUNT(p.id) AS postings,
+       SUM(CASE WHEN p.status='closed' THEN 1 ELSE 0 END) AS closed,
+       ROUND(100.0*SUM(CASE WHEN p.status='closed' THEN 1 ELSE 0 END)/COUNT(p.id),1) AS pct
+FROM Watchlist w LEFT JOIN JobPosting p ON p.watchlistId = w.id
+GROUP BY w.kind ORDER BY postings DESC;"</code></pre>
+      <p>Anything far off the 36–44% band deserves suspicion. Closes by day (note the epoch-ms divide):</p>
+      <pre><code class="language-sql">sqlite3 prisma/prod.db "
+SELECT date(p.removedAt/1000,'unixepoch') AS day, w.kind, COUNT(*)
+FROM JobPosting p JOIN Watchlist w ON w.id=p.watchlistId
+WHERE p.status='closed' AND p.removedAt &gt; (strftime('%s','now')-5*86400)*1000
+GROUP BY day, w.kind ORDER BY day DESC;"</code></pre>
+
+      <h3>7.2 · Is a Workday tenant blocked, or are we backing off?</h3>
+      <p>Derive the CXS URL from any posting and hit it directly. Repeat 6–12× — <em>deterministic</em> 403 means tenant config (§3.3); <em>intermittent</em> means it is our pacing (§3.1).</p>
+      <pre><code class="language-bash">UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+# https://&lt;tenant&gt;.&lt;dc&gt;.myworkdayjobs.com/&lt;locale&gt;/&lt;site&gt;/job/&lt;rest&gt;
+#   becomes https://&lt;host&gt;/wday/cxs/&lt;tenant&gt;/&lt;site&gt;/job/&lt;rest&gt;
+curl -s -w ' → %{http_code}\n' --max-time 15 -H "User-Agent: $UA" -H 'Accept: application/json' \
+  'https://blueorigin.wd5.myworkdayjobs.com/wday/cxs/blueorigin/BlueOrigin/job/Space-Coast-FL/Technician---Composites_R62180' \
+  | head -c 200</code></pre>
+      <p><code>{"errorCode":"S22", … "permission denied"}</code> on every attempt ⇒ the tenant has the detail endpoint closed. No amount of pacing helps.</p>
+
+      <h3>7.3 · Are "missing" postings actually negative-filtered?</h3>
+      <p>The check that turned two suspected bugs into non-bugs (§4.1, §4.2). Compile the stored patterns the same way <code>lib/postings/negative-filters.ts</code> does — plain keywords get <code>\b…\b</code>, anything with a regex metacharacter compiles verbatim — then replay them against the live board.</p>
+      <pre><code class="language-sql">sqlite3 prisma/prod.db "SELECT globalNegativeFilters FROM GlobalSetting;"</code></pre>
+      <p>Then diff live-board ids against <code>JobPosting.sourceUrl</code> job ids and test each absentee's title against the compiled patterns. If the residual is 0, there is no bug.</p>
+
+      <h3>7.4 · Does a job-list endpoint truncate?</h3>
+      <p>Size and completeness in one shot — <code>curl</code> exit 92 is an HTTP/2 framing error, 18 is a partial file:</p>
+      <pre><code class="language-bash">curl -s --http1.1 --max-time 60 -H 'Accept: application/json' \
+  'https://careers-api.clearcompany.com/v1/&lt;siteId&gt;' -o board.json \
+  -w 'http=%{http_code} bytes=%{size_download} time=%{time_total}\n'; echo "curl_rc=$?"
+python3 -c "import json;d=json.load(open('board.json'));print('OK',len(d['results']),d['totalCount'])"</code></pre>
+      <p>Run it 3–5×; a source that truncates does so intermittently. Compare against the paginated form (<code>?pageIndex=N&amp;pageSize=50</code>) before concluding the endpoint is unusable.</p>
+
+      <h3>7.5 · Live scheduler evidence</h3>
+      <pre><code class="language-bash">pm2 logs mission-control-scheduler-prod --lines 4000 --nostream | grep 'probe-gate'
+pm2 logs mission-control-scheduler-prod --lines 4000 --nostream | grep -E 'refused|skipping its probes'</code></pre>
+      <p>
+        <code>probe-gate</code> lines carry <code>candidates/closed/pending/expired/deferred/alive/unknown</code>
+        per watchlist per tick — the fastest read on whether a kind is producing verdicts at all. Remember the
+        scheduler ticks on a 10-minute cadence <em>from process boot</em>, so a restart shifts when a given
+        watchlist's <code>scheduleMinutes</code> next comes due; a quiet log right after a restart may just mean
+        the tick has not landed yet.
+      </p>
+    </div>
+  </details>
+
+  <footer class="doc-footer">
+    &copy; <span id="copyright-year">2026</span> salsquared. All rights reserved.
+  </footer>
+
+<script type="module">
+  import hljs from 'https://cdn.jsdelivr.net/npm/highlight.js@11/+esm';
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+  import svgPanZoom from 'https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/+esm';
+
+  hljs.highlightAll();
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#141414',
+      primaryColor: '#1e1e1e',
+      primaryTextColor: '#e5e5e5',
+      primaryBorderColor: '#60a5fa',
+      lineColor: '#4ade80',
+      secondaryColor: '#1e1e1e',
+      tertiaryColor: '#1e1e1e',
+      fontFamily: 'ui-monospace, JetBrains Mono, monospace',
+    },
+  });
+
+  function attachPanZoom(node) {
+    const svg = node.querySelector('svg');
+    if (!svg || node.dataset.panzoom) return;
+    node.dataset.panzoom = '1';
+    svg.style.maxWidth = 'none';
+    svg.style.width = '100%';
+    svg.style.height = '100%';
+    node.classList.add('pannable');
+    svgPanZoom(svg, {
+      controlIcons: true,
+      fit: true, center: true,
+      minZoom: 0.5, maxZoom: 12, zoomScaleSensitivity: 0.3,
+    });
+  }
+  async function renderVisibleMermaid(root) {
+    const nodes = [...root.querySelectorAll('.mermaid:not([data-processed])')]
+      .filter(n => n.offsetParent !== null);
+    if (!nodes.length) return;
+    await mermaid.run({ nodes });
+    nodes.forEach(attachPanZoom);
+  }
+  renderVisibleMermaid(document);
+  document.querySelectorAll('details.section').forEach(d => {
+    d.addEventListener('toggle', () => { if (d.open) renderVisibleMermaid(d); });
+  });
+
+  document.getElementById('copyright-year').textContent = new Date().getFullYear();
+</script>
+</body>
+</html>
