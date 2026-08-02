@@ -530,6 +530,20 @@ async function probeLever(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
  *   4. no `"isListed":true` anywhere — never conclude "removed" from a body
  *      that also carries a positive liveness claim.
  *
+ * Plus one bail-out that runs BEFORE the shape test so nothing can short-
+ * circuit past it: a `"maintenanceMode":true` claim anywhere in the body
+ * (2026-08-01). The SPA shell rendered while Ashby's data layer is degraded
+ * has EXACTLY the not-found shape — anchor present, the three entities null,
+ * nothing hydrated, no isListed — and the blob advertises that state itself
+ * via `maintenanceMode` (both captured fixtures carry
+ * `"maintenanceMode":false`). A maintenance shell says nothing about the
+ * posting, so it must resolve "unknown", never "closed": a platform-wide
+ * Ashby maintenance window would otherwise stamp/confirm closes across the
+ * whole board population, and false-closed rows never self-heal (the stale
+ * re-probe excludes status="closed" and the C3 sweep selects only
+ * status="new" — recovery is the manual recover-false-closed script), while
+ * confirmed closes also cascade into auto-closing linked INTERESTED cards.
+ *
  * Residual risk, stated honestly: if Ashby ever stopped server-rendering the
  * posting into the shell, live and dead pages would become indistinguishable
  * from HTML alone and this WOULD over-close. No body heuristic can defend
@@ -540,6 +554,12 @@ async function probeLever(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
  */
 function isAshbyNotFoundShell(bodyLower: string): boolean {
     if (!bodyLower.includes("window.__appdata")) return false;
+    // Maintenance bail-out — the degraded shell shares the all-null shape but
+    // self-identifies via the blob's maintenanceMode flag. Checked before the
+    // shape test so no later conjunct can reach "closed" past it. The leading
+    // quote keeps this keyed to the exact `maintenanceMode` field (it does NOT
+    // match `schedulingMaintenanceMode`, a different subsystem's flag).
+    if (/"maintenancemode"\s*:\s*true/.test(bodyLower)) return false;
     // Positive: the three documented nulls (blob is minified, but tolerate
     // whitespace the same way the workday CXS flag checks do).
     const allNull = /"organization"\s*:\s*null/.test(bodyLower)

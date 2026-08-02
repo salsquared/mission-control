@@ -209,6 +209,21 @@ async function testInterlocksNeverClose() {
         `<p>Our stack returns \\"organization\\":null for unknown tenants.</p>`,
     );
     await expectNotClosed(liveWithStrayNull, "interlock: live posting whose description quotes a null literal");
+
+    // Maintenance shell — Ashby's SPA shell while the data layer is degraded
+    // has the SAME all-null shape as the not-found shell, and the blob says so
+    // itself via `"maintenanceMode":true`. Not removal evidence: it must
+    // resolve exactly "unknown" (re-probe next tick), never "closed" — a
+    // platform-wide maintenance window would otherwise mass-false-close, and
+    // false-closed rows never self-heal (excluded from every re-probe path).
+    const maintenanceShell = ASHBY_NOT_FOUND_SHELL.replace(
+        `"maintenanceMode":false`,
+        `"maintenanceMode":true`,
+    );
+    await expectVerdict(
+        maintenanceShell, DEAD_POSTING_URL, "unknown",
+        "interlock: maintenance shell (three nulls + maintenanceMode:true)",
+    );
 }
 
 // ─── Pre-existing Ashby behavior must be preserved ────────────────────────
