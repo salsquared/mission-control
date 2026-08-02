@@ -23,21 +23,36 @@ export async function POST(req: NextRequest) {
   }
   // RAH-10: verifyPubSubOIDC only validates issuer + audience + signature, so
   // ANY Google-signed OIDC token with the right `aud` would pass — and the
-  // audience (the webhook URL) is not secret. Assert the signer's service-
-  // account email matches the env-configured one + email_verified is true.
-  // When PUBSUB_SERVICE_ACCOUNT_EMAIL is unset we keep the old behavior (just
-  // log a warning) so existing deployments don't break before the env var is
-  // populated; set it in `.env` after step 1 of docs/hosting.md.
+  // audience (the webhook URL) is not secret, it is this route's public URL.
+  // The signer check is therefore the ONLY thing standing between "Google
+  // signed this" and "OUR publisher signed this": without it, anyone able to
+  // mint a token from any Google service account can drive this endpoint.
+  //
+  // FAILS CLOSED since 2026-08-02. This used to warn-and-accept when the env
+  // var was unset, as a migration affordance for deployments that predated it.
+  // That grace period is long over — the var is set in the shared `.env`, so
+  // both tiers have it — and an unset var silently downgrading the check is
+  // exactly the shape of `lib/auth-allowlist.ts`'s pre-2026-07-29 bug, where a
+  // blank allowlist admitted everyone instead of no one. This route is one of
+  // only two under app/api that carry no auth-guard at all (it is
+  // OIDC-verified instead, and Cloudflare Access has a path-scoped Bypass on
+  // it so Pub/Sub can reach the origin) — so there is no second gate behind it
+  // to catch a mistake here.
+  //
+  // 500 not 401, matching the PUBSUB_AUDIENCE branch above and the allowlist's
+  // precedent: the caller did nothing wrong, the server is misconfigured. It
+  // also keeps the signal honest in the logs — an operator sees "fix your
+  // config", not "Pub/Sub is being rejected".
   const expectedSignerEmail = process.env.PUBSUB_SERVICE_ACCOUNT_EMAIL;
+  if (!expectedSignerEmail) {
+    console.error("[GMAIL WEBHOOK] PUBSUB_SERVICE_ACCOUNT_EMAIL not configured — refusing to accept any Google-signed token. Set it in `.env` and restart (RAH-10).");
+    return NextResponse.json({ error: 'Server misconfigured' }, { status: 500 });
+  }
   try {
     const claims = await verifyPubSubOIDC(req, audience);
-    if (expectedSignerEmail) {
-      if (claims.email !== expectedSignerEmail || claims.email_verified !== true) {
-        console.warn(`[GMAIL WEBHOOK] signer identity mismatch: got ${claims.email} (verified=${claims.email_verified}), expected ${expectedSignerEmail}`);
-        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-      }
-    } else {
-      console.warn("[GMAIL WEBHOOK] PUBSUB_SERVICE_ACCOUNT_EMAIL not set — accepting any Google-signed token (RAH-10 not yet enforced)");
+    if (claims.email !== expectedSignerEmail || claims.email_verified !== true) {
+      console.warn(`[GMAIL WEBHOOK] signer identity mismatch: got ${claims.email} (verified=${claims.email_verified}), expected ${expectedSignerEmail}`);
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
   } catch (e: any) {
     console.warn(`[GMAIL WEBHOOK] OIDC verification failed: ${e.message}`);
