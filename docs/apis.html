@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-08-01 · 70/70 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-08-02 · 70/70 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -3622,7 +3622,7 @@
 <div class="api-route" id="/api/account">
   <div class="api-route-head"><span class="api-method get">GET</span><code class="api-path">/api/account</code></div>
   <div class="api-chips"><span class="api-chip auth">requireSession</span></div>
-  <p class="api-purpose">Returns the single owner's identity (id + email) and whether their Google account is connected with the required Gmail/Calendar scopes — the frontend's edge-trusted replacement for useSession.</p>
+  <p class="api-purpose">Returns the calling viewer's identity (id, email, role) and whether their Google account is connected with the required Gmail/Calendar scopes — the one route every client hits before rendering, and the frontend's replacement for useSession. Crew never connect Google, so googleConnected is permanently false for them.</p>
   <p class="api-src"><code>app/api/account/route.ts</code></p>
 </div>
     </div>

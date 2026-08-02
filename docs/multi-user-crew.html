@@ -208,7 +208,8 @@ export async function requireOwnerOrService(req, cfg) // { userId }  | { error }
       <div class="callout warn"><strong>Hiding a dash is not access control.</strong> The role-filtered dash set (§2.10) is UX only. Every owner-only surface is enforced server-side by <code>requireOwner()</code>; the client filter merely stops crew being shown doors that would 403. Any future "just hide the card" change to an owner-only capability is a bug.</div>
       <div class="callout warn"><strong>Every crew-allowed route must scope its queries by the viewer's id.</strong> <strong>38 of 39 already do</strong> — spot-verified: <code>app/api/postings/route.ts:101-107</code> scopes through a <code>{ watchlist: { userId } }</code> join, <code>app/api/resumes/[id]/download/route.ts:32</code> uses <code>where: { id, userId }</code>, <code>app/api/applications/events/route.ts:158-163</code> re-checks <code>existing.application.userId !== userId</code>. <strong>The one exception is <code>events</code></strong> (<code>app/api/events/route.ts:19</code> subscribes to the process-global firehose with no scope at all) — which is precisely the leak P2.4 exists to close, not a second finding. The corollary invariant, inherited from <code>lib/cache.ts:279-281</code>: <strong>any newly-cached user-scoped route MUST pass <code>userKeyFn</code></strong> — and that <code>userKeyFn</code> must key on the <strong>verified viewer</strong>, never on the raw <code>Cf-Access-Authenticated-User-Email</code> header. <code>withCache</code> runs <em>before</em> the guard and therefore before JWT verification (<code>lib/cache.ts:307-315</code>), so a header-keyed cache is a cache-poisoning primitive under §2.7's forgery model: an attacker sets the header, seeds an entry under someone else's key, and the victim is served it after passing a perfectly valid Access check.</div>
 
-      <h3>The 67-route matrix</h3>
+      <h3>The 70-route matrix</h3>
+      <div class="callout"><strong>Reconciled 2026-08-01 (P7.4).</strong> This matrix was authored at <strong>67</strong> routes / 26 owner-only. Three owner-only routes landed during implementation — <code>crew</code> and <code>crew/[id]</code> (P7.2, the provisioning UI's backing routes) and <code>space/satellites/history</code> — taking the surface to <strong>70 / 29</strong>. The crew-allowed (39) and unguarded (2) columns are unchanged. The authoritative counts are <code>EXPECTED</code> in <code>scripts/tests/hermetic/role-matrix-smoke.ts</code>, which fails the push on an unclassified route; the tables below carry the new rows inline.</div>
       <p>Classification rule: a route is <strong>owner-only</strong> if it serves a non-job dash (research / space / finance / AI news), is an ops surface, or requires the owner's Google tokens. Everything on the job + resume path is crew-allowed. Guard column shows today's guard → the target.</p>
       <div class="table-wrap">
       <table>
@@ -216,14 +217,14 @@ export async function requireOwnerOrService(req, cfg) // { userId }  | { error }
         <tbody>
           <tr>
             <td><strong>Owner-only</strong> — other dashes</td>
-            <td>16</td>
-            <td><code>ai</code> · <code>ai/llmleaderboard</code> · <code>company-news</code> · <code>finance</code> · <code>finance/history</code> · <code>space</code> · <code>space/launches</code> · <code>space/moon</code> · <code>space/satellites</code> · <code>space/solar</code> · <code>research</code> · <code>research/hf</code> · <code>research/historical</code> · <code>research/review</code> · <code>research/import</code> · <code>research/saved</code></td>
+            <td>17</td>
+            <td><code>ai</code> · <code>ai/llmleaderboard</code> · <code>company-news</code> · <code>finance</code> · <code>finance/history</code> · <code>space</code> · <code>space/launches</code> · <code>space/moon</code> · <code>space/satellites</code> · <code>space/satellites/history</code> · <code>space/solar</code> · <code>research</code> · <code>research/hf</code> · <code>research/historical</code> · <code>research/review</code> · <code>research/import</code> · <code>research/saved</code></td>
             <td><code>requireLocalOrSession</code>/<code>requireSession</code> → <code>requireOwner</code></td>
           </tr>
           <tr>
             <td><strong>Owner-only</strong> — ops</td>
-            <td>6</td>
-            <td><code>system</code> · <code>system/cache/invalidate</code> · <code>system/logs</code> · <code>system/logs/historical</code> · <code>system/fetcher-health</code> · <code>notifications/test</code></td>
+            <td>8</td>
+            <td><code>system</code> · <code>system/cache/invalidate</code> · <code>system/logs</code> · <code>system/logs/historical</code> · <code>system/fetcher-health</code> · <code>notifications/test</code> · <code>crew</code> · <code>crew/[id]</code></td>
             <td>→ <code>requireOwner</code></td>
           </tr>
           <tr>
@@ -265,7 +266,8 @@ export async function requireOwnerOrService(req, cfg) // { userId }  | { error }
         </tbody>
       </table>
       </div>
-      <p><strong>26 owner-only + 39 crew-allowed + 2 unguarded = 67.</strong> Of the 26, seventeen currently use <code>requireLocalOrSession</code> — meaning only three <code>requireLocalOrSession</code> routes stay crew-allowed (<code>tasks</code>, <code>goals</code>, <code>settings</code>). That guard's LAN-bypass semantics have been dead since the Access change (it just calls <code>resolveOwner()</code>); collapsing it into <code>requireSession()</code> is <strong>deferred cleanup, explicitly not v1</strong> — it would touch 29 files for zero behavior change.</p>
+      <p><strong>29 owner-only + 39 crew-allowed + 2 unguarded = 70</strong> (as shipped; the plan was authored at 26 + 39 + 2 = 67). Of the 29, <code>calendar/event</code> uses <code>requireOwnerOrService</code> and the other 28 use <code>requireOwner</code>.</p>
+      <p><strong>The <code>requireLocalOrSession</code> plan changed during implementation, and the outcome is better than the plan.</strong> This section originally recorded that seventeen of the owner-only routes used that guard, that three crew-allowed routes would keep it (<code>tasks</code>, <code>goals</code>, <code>settings</code>), and that collapsing it into <code>requireSession()</code> was <strong>deferred cleanup, explicitly not v1</strong> because it would touch 29 files for zero behaviour change. In the event the seventeen moved to <code>requireOwner</code> anyway, which left the guard with only those three route files — so the "29 files" objection evaporated and <strong>P1.3.2 deleted it outright</strong> rather than deferring. Its 10 remaining call sites across <code>/api/settings</code>, <code>/api/tasks</code> and <code>/api/goals</code> now call <code>requireSession()</code> directly, nothing ever read its vestigial <code>ok: true</code>, and a tombstone comment in <code>lib/auth-guards.ts</code> records why it must not return: a guard <em>named</em> for a LAN exemption invites the belief that this origin still trusts the network it was reached over. It does not. <strong>Five guards remain</strong>, not six.</p>
       <p>Two entries deserve their reasoning on the record:</p>
       <ul>
         <li><code>settings</code> is <strong>crew-allowed with no change</strong>: <code>GlobalSetting</code> is already one row per user, so theme / hues / <code>dashOrder</code> / negative filters are already per-person. Nothing to design.</li>
@@ -470,7 +472,7 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
             <td><strong>A gating bug exposes everyone.</strong> One route left on <code>requireSession()</code> that should be <code>requireOwner()</code> gives every crew member full read/write on that surface — and the symmetric failure (a crew route not scoping by viewer id) gives them each other's data.</td>
             <td>med</td>
             <td><strong>total, for that surface</strong></td>
-            <td>Enforcement at the guard layer (not per-route), plus the 67-route <code>role-matrix-smoke</code> in the pre-push gate so an unclassified route <em>fails the push</em>, plus the generated auth chips in <code>docs/apis.html</code> as a human-readable audit. Post-implementation, route this change to <code>security-auditor</code> — not just the default review gate.</td>
+            <td>Enforcement at the guard layer (not per-route), plus the whole-surface <code>role-matrix-smoke</code> in the pre-push gate so an unclassified route <em>fails the push</em>, plus the generated auth chips in <code>docs/apis.html</code> as a human-readable audit. Post-implementation, route this change to <code>security-auditor</code> — not just the default review gate.</td>
           </tr>
           <tr>
             <td>R2</td>

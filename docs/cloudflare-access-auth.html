@@ -146,7 +146,7 @@ flowchart TB
     req["GET mc.salsquared.xyz/..."]
   end
   subgraph edge["Cloudflare edge (Zero Trust)"]
-    access{"Access policy<br/>email == owner?"}
+    access{"Access policy<br/>mc-dev: email == owner?<br/>mc (prod): any completed login<br/>(superseded 2026-08-01, OQ15b)"}
     bypassApp{"path == /api/gmail/webhook?<br/>(Bypass app, higher precedence)"}
   end
   subgraph tunnel["cloudflared tunnel"]
@@ -328,6 +328,15 @@ flowchart TB
 
         <p><strong>Consequences for this doc.</strong> Everything OQ3 does <em>not</em> touch still holds and is unchanged: the edge Access apps, the OQ1/OQ2 session lifetimes, the OQ4 path-scoped Bypass for <code>/api/gmail/webhook</code>, and the P4 runbook. What no longer describes the live system is the <strong>trust model</strong> — §2's "trust the edge" subsection and its closed-world argument, the request-flow diagram's <code>resolveOwner()</code> path and its <em>"LAN client → direct, never via edge"</em> edge, and the two risk rows annotated in §3.1. Those are kept as the record of the design as built; the live description lives in <a href="./multi-user-crew.html">docs/multi-user-crew.html</a> §2.3 (viewer resolution), §2.4 (role gating) and §2.7 (header authenticity).</p>
       </div>
+
+      <h3>The prod Allow policy superseded (2026-08-01) — the edge stopped being a per-person list</h3>
+      <div class="callout warn"><strong>This doc describes the Access Allow policy as a curated per-person email list. That is still exactly right for <code>mc-dev.salsquared.xyz</code>, and no longer true for <code>mc.salsquared.xyz</code>.</strong> Nothing above is rewritten — P4.1's policy line, P4.4's edge-403 check and the request-flow diagram keep their original shape and carry inline markers pointing here. Decision record: <a href="./multi-user-crew.html">docs/multi-user-crew.html</a> <strong>OQ15b</strong> (widen once), executed as <strong>P5.3.1 → P5.3.2 → P5.3.3</strong>.</div>
+      <div class="oq-detail">
+        <p><strong>What changed, and only on prod.</strong> The <code>mc.salsquared.xyz</code> app's Allow policy moved from <code>emails == &lt;owner&gt;</code> to an <strong>Everyone</strong> include rule with <code>allowed_idps: []</code>, so any identity that completes a supported login (Google, or the One-time PIN provider added at the same time) reaches the origin. <strong>The action stayed <code>Allow</code>, which is the whole safety property</strong> — a <em>Bypass</em> + Everyone policy would have made the origin fully public rather than merely authenticated. <code>mc-dev</code> was untouched and keeps the per-person list, because dev is owner-only (<strong>OQ12a</strong>) and crew never touch that tier. The two hosts had been sharing one reusable policy, so prod was moved onto its own policy <em>first</em>; editing the shared object in place would silently have widened dev as well.</p>
+        <p><strong>Why this is not the "policy widened by accident" scenario this doc warned about.</strong> Widening the edge hands out no accounts, and that is a property of a decision made <em>before</em> it: <code>resolveViewer()</code> <strong>rejects</strong> an unknown identity rather than auto-creating a row (multi-user-crew <strong>OQ3a</strong>). What changes is that OQ3a stops being belt-and-braces and becomes <strong>load-bearing</strong> — it is now the only thing between a completed login and an account, so any future proposal to auto-provision has to reopen OQ15 first.</p>
+        <p><strong>The two costs, both paid in code before the policy moved.</strong> <strong>(1)</strong> <code>/api/auth/[...nextauth]</code> is unguarded by necessity and <code>PrismaAdapter</code> mints a <code>role='crew'</code> row on first sign-in, so a widened edge would have made <code>ALLOWED_SIGNIN_EMAILS</code> the <em>sole</em> barrier against self-provisioning — restored by <strong>P5.3.2</strong>, a path-scoped owner-only Access app on <code>mc.salsquared.xyz/api/auth/*</code>, the same shape as OQ4's path-scoped Bypass for the webhook. <strong>(2)</strong> the unprovisioned-identity <code>console.warn</code> in <code>lib/viewer.ts</code> was unthrottled, making the now-internet-reachable 403 path a way to flush the 500-deep ring buffer and take the live log tail with it — throttled per-email by <strong>P5.3.1</strong>, which shipped before either Cloudflare step. The ordering was the security property, not a preference.</p>
+        <p><strong>Consequences for this doc.</strong> The <strong>OQ1/OQ2 session lifetimes</strong>, the <strong>OQ4 path-scoped Bypass</strong> for <code>/api/gmail/webhook</code>, and P4.2/P4.3 are all unaffected. What no longer describes prod is the <em>membership rule</em> of the hostname app: P4.1's <code>emails ==</code> line, P4.4's "confirm both hostnames return 403 at the edge", and the request-flow diagram's <code>email == owner?</code> decision node. The live per-tier description is in <a href="../CLAUDE.md">CLAUDE.md</a>'s Auth section.</p>
+      </div>
     </div>
   </details>
 
@@ -486,7 +495,8 @@ flowchart TB
 
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.1</span><span class="task-title">Access App #1 — prod hostname</span></summary>
-            <div class="task-body"><p>Self-hosted app for <code>mc.salsquared.xyz</code>. Allow policy: emails == <code>salsalcedo4321@gmail.com</code>; identity = Google / One-time-PIN; <strong>session duration 24h</strong> (OQ1). <em>Parallel-safe with P4.2/P4.3.</em></p></div>
+            <div class="task-body"><p>Self-hosted app for <code>mc.salsquared.xyz</code>. Allow policy: emails == <code>salsalcedo4321@gmail.com</code>; identity = Google / One-time-PIN; <strong>session duration 24h</strong> (OQ1). <em>Parallel-safe with P4.2/P4.3.</em></p>
+              <div class="callout warn"><strong>⚠ The Allow policy here is superseded (2026-08-01) — <code>mc.salsquared.xyz</code> only.</strong> The per-person <code>emails ==</code> rule was replaced by an <strong>Everyone</strong> include rule with <code>allowed_idps: []</code>; the origin's <code>User</code> row is now the sole authorization on prod. The session duration (24h) and the identity providers are unchanged. See the superseding note in §4 and <a href="./multi-user-crew.html">multi-user-crew</a> <strong>OQ15b</strong>. <strong>P4.2 (<code>mc-dev</code>) is NOT superseded</strong> — dev keeps this exact per-person policy.</div></div>
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.2</span><span class="task-title">Access App #2 — dev hostname</span></summary>
@@ -504,7 +514,8 @@ flowchart TB
           </details>
           <details class="task">
             <summary><input type="checkbox"><span class="task-id">P4.4</span><span class="task-title">Verify gate + LAN before P1 deploy</span></summary>
-            <div class="task-body"><p>From a non-owner identity, confirm both hostnames return 403 at the edge. From LAN (<code>localhost</code> / <code>mc.local</code>), confirm direct access still works (never traverses the edge). Only then merge/deploy P1.</p></div>
+            <div class="task-body"><p>From a non-owner identity, confirm both hostnames return 403 at the edge. From LAN (<code>localhost</code> / <code>mc.local</code>), confirm direct access still works (never traverses the edge). Only then merge/deploy P1.</p>
+              <div class="callout warn"><strong>⚠ Both halves of this check are superseded for <code>mc.salsquared.xyz</code>.</strong> <strong>(1)</strong> A non-owner no longer 403s <em>at the edge</em> on prod — since 2026-08-01 they pass the edge and are refused <em>at the origin</em> with a 403 naming their address (<a href="./multi-user-crew.html">multi-user-crew</a> OQ15b / P5.3.3). Reading a prod 403 as proof the edge list works is now a false positive; the edge check that still means something is <strong>401 vs 403</strong> — a 401 says the JWT/AUD config is wrong, a 403 says the identity is simply unprovisioned. On <code>mc-dev</code> the original edge-403 behaviour is intact. <strong>(2)</strong> The LAN half is superseded outright on both tiers: prod and dev bind <code>127.0.0.1</code> and the <code>mc.local</code> vhost is retired, so LAN access is <em>expected to fail</em> — that is the goal, not a regression.</div></div>
           </details>
         </div>
       </details>

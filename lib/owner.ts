@@ -9,11 +9,17 @@
 // header and has ZERO fallback branches. Do not reintroduce a call to this
 // module from anything that has a request in hand.
 //
-// The two sanctioned callers are contexts where there genuinely is no request
-// and "the owner" is the right answer:
-//   1. session-less scheduler reads, which act on the owner's behalf; and
-//   2. the two env-gated break-glass branches in `lib/viewer.ts:tryBreakGlass`
-//      (the dev-tier integration-suite escape and on-box prod recovery).
+// The ONE sanctioned caller today is `lib/viewer.ts:ownerViewer()`, reached
+// from the two env-gated break-glass branches in `tryBreakGlass` (the dev-tier
+// integration-suite escape and on-box prod recovery) — a context where there
+// genuinely is no request and "the owner" is the right answer.
+//
+// NOT the scheduler, despite what this comment used to claim. Verified
+// 2026-08-01: nothing under `scheduler/` imports this module. Scheduler jobs
+// derive their `userId` from the ROWS THEY PROCESS (`app.userId`,
+// `watchlist.userId`, `account.userId`) — which is what makes them correct
+// under multi-user, since a crew member's watchlist must run as that crew
+// member and not as the owner. Do not "restore" an owner fallback there.
 //
 // Ownership is a STORED FACT — `User.role = 'owner'`, written by the migration
 // that added the column (its hand-added `UPDATE "User" SET role = 'owner';`).

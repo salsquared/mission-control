@@ -439,9 +439,11 @@ async function tryBreakGlass(h: ViewerHeaderReader): Promise<ViewerResult | null
 }
 
 /**
- * The break-glass identity. `resolveOwner()` is the one remaining sanctioned
- * caller shape for "the owner's identity in a context with no request" (the
- * scheduler's session-less reads are the other). It selects on
+ * The break-glass identity. This is the ONLY production caller of
+ * `resolveOwner()` — "the owner's identity in a context with no request."
+ * (An earlier version of this comment also named the scheduler; that was
+ * wrong. Verified 2026-08-01: nothing under `scheduler/` imports `lib/owner`.
+ * Scheduler jobs take their `userId` from the rows they process.) It selects on
  * `role = 'owner'`, so the role is known without a second lookup. Zero owners
  * (a migration whose backfill never ran) → 401 rather than a fabricated
  * identity.
