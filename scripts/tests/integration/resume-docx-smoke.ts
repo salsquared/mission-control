@@ -11,6 +11,7 @@
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { writeFileSync, statSync } from "fs";
+import { deleteGeneratedResume } from "./_resume-cleanup";
 
 const BASE = process.env.MC_BASE_URL ?? "http://localhost:4101";
 const prisma = new PrismaClient();
@@ -35,6 +36,10 @@ async function main() {
     const cookie = `__Secure-next-auth.session-token=${sessionToken}`;
     const headers = { "Content-Type": "application/json", Cookie: cookie };
     const created: { kind: "work-roles" | "projects"; id: string }[] = [];
+    // The GeneratedResume row + its data/resumes/ artifact are created by the
+    // ROUTE, not by this script, so they were never in `created` and never
+    // cleaned up — see scripts/tests/integration/_resume-cleanup.ts.
+    let generatedResumeId: string | null = null;
 
     try {
         // Seed minimal profile
@@ -81,6 +86,10 @@ async function main() {
             const body = await res.json();
             throw new Error(`generation failed: ${JSON.stringify(body)}`);
         }
+        // Captured HERE, before the assertions below — every one of them can
+        // throw, and the row already exists by this point, so capturing it any
+        // later means a FAILING run is exactly the run that leaks.
+        generatedResumeId = res.headers.get("X-Resume-Id");
 
         // Verify response shape
         const ct = res.headers.get("Content-Type");
@@ -128,6 +137,7 @@ async function main() {
         for (const { kind, id } of created) {
             await fetch(`${BASE}/api/profile/${kind}?id=${id}`, { method: "DELETE", headers: { Cookie: cookie } }).catch(() => undefined);
         }
+        await deleteGeneratedResume(prisma, generatedResumeId);
         await prisma.session.delete({ where: { sessionToken } }).catch(() => undefined);
         await prisma.$disconnect();
     }

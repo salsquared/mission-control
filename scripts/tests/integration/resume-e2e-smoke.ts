@@ -13,6 +13,7 @@
 import { PrismaClient } from "@prisma/client";
 import { randomBytes } from "crypto";
 import { writeFileSync, statSync } from "fs";
+import { deleteGeneratedResume } from "./_resume-cleanup";
 
 const BASE = process.env.MC_BASE_URL ?? "http://localhost:4101";
 const prisma = new PrismaClient();
@@ -38,6 +39,12 @@ async function main() {
     const cookie = `__Secure-next-auth.session-token=${sessionToken}`;
     const headers = { "Content-Type": "application/json", Cookie: cookie };
     const created: { kind: "work-roles" | "projects"; id: string }[] = [];
+    // The GeneratedResume row is created by the ROUTE, not by this script, so
+    // it was never in `created` and never cleaned up — every run since
+    // 2026-05-15 left a row plus a file under data/resumes/ behind (10 rows
+    // across the two resume suites, found 2026-08-02). Captured from the
+    // X-Resume-Id response header and torn down in the finally below.
+    let generatedResumeId: string | null = null;
 
     try {
         // 1. Seed a work role
@@ -95,6 +102,11 @@ async function main() {
             const body = await res.json();
             throw new Error(`generation failed: ${JSON.stringify(body)}`);
         }
+        // Captured HERE, before the assertions below — every one of them can
+        // throw, and the row already exists by this point, so capturing it any
+        // later means a FAILING run is exactly the run that leaks.
+        generatedResumeId = res.headers.get("X-Resume-Id");
+
         const ab = await res.arrayBuffer();
         const buf = Buffer.from(ab);
         const outPath = "/tmp/mc-resume-e2e.pdf";
@@ -112,6 +124,7 @@ async function main() {
         for (const { kind, id } of created) {
             await fetch(`${BASE}/api/profile/${kind}?id=${id}`, { method: "DELETE", headers: { Cookie: cookie } }).catch(() => undefined);
         }
+        await deleteGeneratedResume(prisma, generatedResumeId);
         await prisma.session.delete({ where: { sessionToken } }).catch(() => undefined);
         await prisma.$disconnect();
     }
