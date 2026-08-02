@@ -67,11 +67,20 @@
  * never removes a row a later case still needs.
  *
  * Hermetic: no network, no PM2, no Gemini, no Google. The schema is pushed into
- * a THROWAWAY SQLite file in /tmp (`prisma db push`) with DATABASE_URL pinned
- * before any import; dev.db / prod.db are never opened. Routes that would leave
- * the box (a watchlist crawl, a Gcal sync, any Gemini callsite) are covered only
- * in the directions that refuse BEFORE reaching the side effect, and are listed
- * with their reason in SKIPPED below.
+ * a THROWAWAY SQLite file in /tmp (`prisma db push`) and every write below lands
+ * there; dev.db / prod.db are never opened. Routes that would leave the box (a
+ * watchlist crawl, a Gcal sync, any Gemini callsite) are covered only in the
+ * directions that refuse BEFORE reaching the side effect, and are listed with
+ * their reason in SKIPPED below.
+ *
+ * THAT ISOLATION IS ASSERTED, NOT ASSUMED — see `assertScratchDbBinding()` and
+ * phase 0. The `process.env.DATABASE_URL =` line below is the only thing standing
+ * between `createFixture` and ~68 rows written into the OWNER'S REAL dev.db (the
+ * pre-push hook exports `DATABASE_URL=file:./dev.db`, so the failure mode is not
+ * "no database"), and the reasons it holds are subtle enough — hoisting on one
+ * side, Prisma's lazy datasource resolution on the other — that this file checks
+ * the OUTCOME with SQLite's own `pragma_database_list` before creating anything,
+ * and hard-aborts on a mismatch.
  */
 
 const SCRATCH_DB = `/tmp/crew-scoping-writes-smoke-${process.pid}-${Date.now()}.db`;
@@ -90,14 +99,47 @@ delete process.env.MC_DEV_LOOPBACK_OWNER;
 delete process.env.MC_PROD_LOOPBACK_OWNER;
 
 import { execFileSync } from "node:child_process";
-import { rmSync } from "node:fs";
+import { realpathSync, rmSync } from "node:fs";
 import { NextRequest } from "next/server";
-import { __seedViewer, __resetViewer, type Viewer } from "@/lib/viewer";
+/**
+ * TYPE-ONLY, deliberately.
+ *
+ * Static imports are HOISTED: every one of them is evaluated before a single
+ * statement of this module's body — including the `process.env.DATABASE_URL =`
+ * assignment directly above — has run. `@/lib/viewer` statically imports
+ * `@/lib/prisma` (lib/viewer.ts:82), whose module body constructs a
+ * `PrismaClient` and fires PRAGMAs, so a VALUE import here would build that
+ * client while DATABASE_URL still held whatever the shell handed us.
+ *
+ * `import type` is erased by the compiler and loads nothing at runtime. The two
+ * seam FUNCTIONS are bound below from a dynamic `import()` inside main(), after
+ * the pin — and the binding is then verified, because "nothing static reaches
+ * prisma" is a property of the whole transitive import graph and no comment can
+ * keep it true on its own. See `assertScratchDbBinding()`.
+ */
+import type { Viewer } from "@/lib/viewer";
+
+/**
+ * The `__seedViewer` / `__resetViewer` test seam, bound in main() from the
+ * dynamic import. Typed off the module so the signatures cannot drift from
+ * lib/viewer.ts without tsc noticing.
+ */
+type ViewerSeam = typeof import("@/lib/viewer");
+let __seedViewer!: ViewerSeam["__seedViewer"];
+let __resetViewer!: ViewerSeam["__resetViewer"];
 
 let passes = 0;
 let fails = 0;
+let skips = 0;
 function pass(msg: string) { console.log(`[PASS] ${msg}`); passes++; }
 function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, detail ?? ""); fails++; }
+/**
+ * A SKIP IS NOT A PASS. It is printed and counted separately, and never folded
+ * into the "N/N steps passed" headline: a check that did not run has proved
+ * nothing, and in a file this preoccupied with anti-vacuity, letting a skip
+ * inflate the pass count is precisely the wrong default.
+ */
+function skipped(msg: string) { console.log(`[SKIP] ${msg}`); skips++; }
 function section(title: string) { console.log(`\n── ${title}`); }
 
 // ---------------------------------------------------------------------------
@@ -138,6 +180,13 @@ interface Fixture {
     goalId: string;
     blacklistId: string;
     snapshotId: string;
+    /**
+     * The user's `Profile.id`. WorkRole / Project / Education carry NO `userId`
+     * column (prisma/schema.prisma: they key on `profileId`), so this is the
+     * ownership handle for all three — phase 7 attributes a newly-created
+     * profile child by asserting it points HERE.
+     */
+    profileId: string;
     workRoleId: string;
     projectId: string;
     educationId: string;
@@ -292,6 +341,7 @@ async function createFixture(prisma: Prisma, viewer: Viewer): Promise<Fixture> {
         goalId: goal.id,
         blacklistId: blacklist.id,
         snapshotId: snapshot.id,
+        profileId: profile.id,
         workRoleId: workRole.id,
         projectId: project.id,
         educationId: education.id,
@@ -828,7 +878,8 @@ const SKIPPED: Array<[string, string]> = [
     ["POST /api/applications/events/sync", "pulls Google Calendar over the network. No id parameter — scoped to the caller's own Gcal state."],
     ["POST /api/watchlists", "fires a background runWatchlist() crawl on success. Creates only; no foreign id to name. (The PATCH/DELETE/run surface of the same resource IS covered.)"],
     ["POST /api/settings, PATCH /api/profile", "no id parameter — both key on the caller's own userId. Covered instead by phase 7's cross-user clobber check, which is the actual risk (a write that lands on the legacy id='global' / another user's singleton row)."],
-    ["POST /api/canons, /api/blacklist, /api/tasks, /api/goals, /api/applications, /api/profile/{work-roles,projects,education}, /api/profile/snapshots", "pure creates with no foreign id to name. Covered instead by phase 7's attribution check, which asserts the new row lands under the CALLER's userId rather than the owner's."],
+    ["POST /api/canons, /api/blacklist, /api/tasks, /api/goals, /api/applications, /api/profile/snapshots", "pure creates with no foreign id to name — nothing for phases 3–6 to point at another user. Covered instead by phase 7's attribution check, which asserts the new row lands under the CALLER's userId rather than the owner's. Every one of these six is in phase 7's CREATES array; this is a redirection, not an omission."],
+    ["POST /api/profile/{work-roles,projects,education}", "same reason, different ownership column: WorkRole / Project / Education have NO userId (prisma/schema.prisma — they key on profileId), so phase 7 attributes them against crew B's own Profile.id instead. Also in CREATES, via the `owns` override."],
 ];
 
 function urlFor(c: WriteCase, f: Fixture, idOverride?: string): string {
@@ -849,7 +900,7 @@ function phantomFixture(): Fixture {
         applicationId: g("app"), contactId: g("contact"), eventId: g("event"),
         watchlistId: g("wl"), postingId: g("posting"), canonId: g("canon"),
         notificationId: g("notif"), taskId: g("task"), goalId: g("goal"),
-        blacklistId: g("blacklist"), snapshotId: g("snap"),
+        blacklistId: g("blacklist"), snapshotId: g("snap"), profileId: g("profile"),
         workRoleId: g("workrole"), projectId: g("project"), educationId: g("education"),
     };
 }
@@ -924,9 +975,26 @@ async function runForeignCases(
         // Existence oracle: a real-but-foreign id and a never-existed id must be
         // answered identically. Run in the crew phase only — one direction is
         // enough to pin the property, and it doubles every case's cost.
+        //
+        // DIFFED LIKE EVERY OTHER CALL. `call(c, phantom)` drives a REAL handler
+        // with a real body; it was once the single handler invocation in this file
+        // with no snapshot around it, which made it the one blind spot in a suite
+        // whose entire thesis is "the response is not the evidence, the database
+        // is". Worse than a local gap: phase 4 re-baselines at its own start, so a
+        // write this probe caused in phase 3 did not merely go unreported — it
+        // silently BECAME phase 4's baseline, laundering itself into the expected
+        // state. The comparison is against `baseline`, the same phase-wide one the
+        // foreign-id calls use, so cumulative drift counts here too.
         if (opts.checkOracle && verdicts.length === 0) {
             try {
                 const res = await call(c, phantom);
+                const changes = diffSnapshots(baseline, await snapshot(prisma));
+                // Two independent verdicts, both reported: `refusalViolation`
+                // owns "did it write / did it refuse properly" (DB first, as
+                // always), and the status comparison below owns the oracle
+                // property, which is this probe's whole reason for existing.
+                const violation = refusalViolation({ res, changes, expect: c.expect });
+                if (violation) verdicts.push(`[nonexistent id] ${violation}`);
                 if (statuses.length > 0 && res.status !== statuses[0]) {
                     verdicts.push(
                         `a REAL foreign id answered ${statuses[0]} but a NONEXISTENT id answered ${res.status} — ` +
@@ -942,7 +1010,7 @@ async function runForeignCases(
             out.failed.push(`${c.label} [as ${MARK[actor.id]}]: ${verdicts.join(" | ")}`);
         } else {
             const shown = c.expect.kind === "bulkNoop" ? "200 + count 0" : String(c.expect.status);
-            const oracle = opts.checkOracle ? ", nonexistent id indistinguishable" : "";
+            const oracle = opts.checkOracle ? ", nonexistent id indistinguishable and equally inert" : "";
             out.passed.push(
                 `${c.label} [as ${MARK[actor.id]}] → ${shown} on ${targets.length} foreign id(s), ` +
                 `DB byte-identical${oracle}`,
@@ -958,7 +1026,10 @@ async function ownPhase(prisma: Prisma, actor: Viewer, mine: Fixture, foreignMar
 
     for (const c of CASES) {
         if (c.skipOwn) {
-            pass(`${c.label} [as ${mine.mark}] own-direction SKIPPED — ${c.skipOwn.split(".")[0]}`);
+            // Reported as a SKIP, never a pass — nothing was driven, so nothing
+            // was proved. The refusal direction for this same route IS covered in
+            // phases 3/4 and does count; only the own-direction is missing.
+            skipped(`${c.label} [as ${mine.mark}] own-direction NOT RUN — ${c.skipOwn.split(".")[0]}`);
             continue;
         }
         const before = await snapshot(prisma);
@@ -985,6 +1056,107 @@ async function ownPhase(prisma: Prisma, actor: Viewer, mine: Fixture, foreignMar
 }
 
 // ---------------------------------------------------------------------------
+// Phase 0 — prove the isolation before relying on it
+// ---------------------------------------------------------------------------
+
+/**
+ * HARD-ABORT unless the Prisma client is genuinely bound to the scratch file.
+ *
+ * WHY THIS IS NOT PARANOIA. The isolation this whole suite rests on is one line —
+ * the `process.env.DATABASE_URL =` assignment at the top — and the fallback when
+ * it fails to take is not "no database". `scripts/pre-push.sh:21` exports
+ * `DATABASE_URL=file:./dev.db`, so a mis-bound client points at the OWNER'S REAL
+ * dev.db, where `createFixture` immediately writes ~68 rows across nineteen
+ * tables under four invented users — and this file's teardown only unlinks /tmp,
+ * so none of it is ever cleaned up. There is no error, no failing assertion, and
+ * a suite that prints 140 passes on its way out.
+ *
+ * TWO PREMISES HOLD IT UP, AND NEITHER IS SELF-EVIDENT:
+ *
+ *   1. Nothing STATICALLY imported by this module may transitively reach
+ *      `@/lib/prisma`. Static imports are hoisted — all of them run before the
+ *      env assignment in this file's body — so a value import of anything that
+ *      drags the client in constructs `PrismaClient` against the INHERITED url.
+ *      `@/lib/viewer` is exactly such a module (lib/viewer.ts:82), which is why
+ *      its type comes in via `import type` and its two seam functions via a
+ *      dynamic import inside main(). This premise is one careless `import` away
+ *      from being false, in this file or in any module it pulls.
+ *
+ *   2. Even with premise 1 broken, constructing a client is not what BINDS the
+ *      datasource: Prisma resolves the url lazily, at first query, from the env
+ *      as it stands THEN. That — not the import ordering — is the mechanism that
+ *      has actually been keeping this file safe, and it is a property of the
+ *      engine rather than of anything written here, so it can change under us
+ *      without a line of this repo moving.
+ *
+ * So verify the OUTCOME instead of trusting either premise. Ask SQLite which file
+ * its `main` schema is attached to: `pragma_database_list` reports the resolved
+ * ABSOLUTE path of the open file, which sidesteps every relative-vs-absolute and
+ * `file:` prefix question in the url. Running it is also what FORCES the lazy
+ * resolution above — deliberately here, before `createFixture`, rather than
+ * somewhere in the middle of it.
+ *
+ * The failure path exits the process. It does not `fail()` and carry on: the
+ * danger is the very next statement, and a verdict that only shows up in the
+ * summary would be printed after the damage.
+ */
+async function assertScratchDbBinding(prisma: Prisma): Promise<void> {
+    const abort = (why: string): never => {
+        console.error("\n" + "!".repeat(78));
+        console.error("!! ABORTING — THE PRISMA CLIENT IS NOT BOUND TO THIS SUITE'S SCRATCH DATABASE.");
+        console.error("!!");
+        console.error(`!! ${why}`);
+        console.error("!!");
+        console.error(`!!   expected : ${SCRATCH_DB}`);
+        console.error(`!!   DATABASE_URL now: ${process.env.DATABASE_URL ?? "(unset)"}`);
+        console.error("!!");
+        console.error("!! Nothing has been written. Refusing to run createFixture(), which would");
+        console.error("!! otherwise create four users and ~68 rows in whatever database IS bound —");
+        console.error("!! under the pre-push hook that is the owner's real prisma/dev.db, with no");
+        console.error("!! cleanup path. Fix the DATABASE_URL pin at the top of this file (and check");
+        console.error("!! that no static import here transitively loads @/lib/prisma) before rerunning.");
+        console.error("!".repeat(78) + "\n");
+        process.exit(1);
+    };
+
+    let bound: string;
+    try {
+        const rows = await prisma.$queryRawUnsafe<Array<{ file: string | null }>>(
+            "SELECT file FROM pragma_database_list WHERE name = 'main'",
+        );
+        if (rows.length === 0) abort("SQLite reported no `main` database at all.");
+        bound = rows[0].file ?? "";
+    } catch (e) {
+        return abort(`the binding probe itself failed: ${(e as Error).message.split("\n")[0].slice(0, 200)}`);
+    }
+
+    if (bound === "") {
+        abort("SQLite reports an empty path for `main` (a temporary or in-memory database), not the scratch file.");
+    }
+
+    // realpath both sides: on macOS /tmp is a symlink to /private/tmp, so the
+    // path SQLite reports and the one this file composed are the same file under
+    // two spellings. Comparing the strings raw would abort on every run here.
+    let boundReal: string;
+    let scratchReal: string;
+    try {
+        boundReal = realpathSync(bound);
+        scratchReal = realpathSync(SCRATCH_DB);
+    } catch (e) {
+        return abort(
+            `bound to "${bound}", and resolving that against the scratch path failed: ` +
+            `${(e as Error).message.split("\n")[0].slice(0, 160)}`,
+        );
+    }
+
+    if (boundReal !== scratchReal) {
+        abort(`SQLite has "${boundReal}" open as \`main\` — a DIFFERENT file from this suite's scratch database.`);
+    }
+
+    pass(`Prisma is bound to the scratch DB (SQLite reports \`main\` = ${boundReal}) — dev.db/prod.db are not open`);
+}
+
+// ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
     // The LIVE schema pushed into a throwaway file — same technique and same
@@ -996,8 +1168,26 @@ async function main(): Promise<void> {
         stdio: "pipe",
     });
 
-    // Dynamic import: DATABASE_URL must be pinned before lib/prisma loads.
+    // Dynamic, not static — but NOT for the reason a previous version of this
+    // comment gave. It is not that "lib/prisma must not load until DATABASE_URL
+    // is pinned" and that deferring this line achieves it: `@/lib/prisma` has no
+    // say in the matter from here, because ANY static import in this file that
+    // transitively reaches it loads it first regardless (imports are hoisted
+    // above the env assignment at the top). What actually keeps this file off
+    // dev.db is that Prisma resolves its datasource url LAZILY, at first query,
+    // by which time the assignment has long since run.
+    //
+    // These two lines are deferred for a narrower, real reason: so the import
+    // graph rooted here contains nothing that constructs a client early, keeping
+    // premise 1 in assertScratchDbBinding() true and the whole thing depending on
+    // only one mechanism instead of two. The assertion below is what actually
+    // enforces the outcome, and neither of these imports is trusted without it.
     const { prisma } = await import("@/lib/prisma");
+    ({ __seedViewer, __resetViewer } = await import("@/lib/viewer"));
+
+    // ── 0. Isolation, before a single row is written ────────────────────
+    section("0. Isolation — the client really is bound to the scratch DB, not dev.db");
+    await assertScratchDbBinding(prisma);
 
     try {
         const owner = await createFixture(prisma, OWNER);
@@ -1233,6 +1423,11 @@ async function main(): Promise<void> {
         // a create that attributes the new row to `resolveOwner()` instead of
         // the session, or a per-user singleton write that lands on the legacy
         // id='global' row (which the schema comment records as the OWNER's).
+        //
+        // "Attributed" is per-table, not universally `userId` — see CreateCase's
+        // `owns`. The three profile children have no userId column and are
+        // checked against crew B's Profile.id, which is the same ownership fact
+        // one join out.
         section("7. Id-less writers — new rows land under the CALLER, and singletons do not clobber");
         __seedViewer(CREW_B);
         // `owner`, not `OWNER` — the Fixture carries `.mark`, the Viewer does not.
@@ -1241,7 +1436,35 @@ async function main(): Promise<void> {
         // the clobber check while it still printed PASS.
         const foreignMarksForB = [owner.mark, crewA.mark, canary.mark];
 
-        interface CreateCase { label: string; route: string; body: unknown; status: number; table: string }
+        interface CreateCase {
+            label: string;
+            route: string;
+            body: unknown;
+            status: number;
+            table: string;
+            /**
+             * The column on `table` that carries ownership, and the value it must
+             * hold for the new row to belong to crew B. Defaults to
+             * `userId = CREW_B.id`, which is what most tables here use.
+             *
+             * It is a parameter because THREE TABLES HAVE NO `userId` AT ALL.
+             * WorkRole, Project and Education key on `profileId` (see
+             * prisma/schema.prisma) — `Profile` is the row that carries the
+             * `userId`, one join away. Hardcoding the userId check would have
+             * flagged every one of those creates as misattributed, which is
+             * presumably why they were never added; the fix is to attribute them
+             * by the column they actually have, not to leave them uncovered.
+             *
+             * The property is the same one join out, and the bug it catches is
+             * the one this file exists for: `createWorkRole(userId, …)` resolves
+             * the profile from the SESSION (lib/repositories/profile.ts:250,
+             * `profileIdForUser`), and it is correct only because of that. Swap
+             * that lookup for a `resolveOwner()` and a crew POST attaches the new
+             * entity to the OWNER'S profile — it then shows up in the owner's
+             * resumes and canons, and no response anywhere says so.
+             */
+            owns?: { column: string; value: string };
+        }
         const CREATES: CreateCase[] = [
             { label: "POST /api/applications", route: "applications", status: 200, table: "Application",
               body: { company: "CREWBWMARK NewCo", role: "CREWBWMARK Analyst", track: "career" } },
@@ -1255,6 +1478,18 @@ async function main(): Promise<void> {
               body: { text: "CREWBWMARK new goal" } },
             { label: "POST /api/profile/snapshots", route: "profile/snapshots", status: 200, table: "ProfileSnapshot",
               body: { label: "CREWBWMARK new snapshot" } },
+            // The three profileId-keyed children. `crewB.profileId` is read from
+            // the fixture rather than recomputed, so if the Profile row ever moves
+            // the assertion moves with it instead of quietly matching nothing.
+            { label: "POST /api/profile/work-roles", route: "profile/work-roles", status: 200, table: "WorkRole",
+              owns: { column: "profileId", value: crewB.profileId },
+              body: { company: "CREWBWMARK NewCo", title: "CREWBWMARK Engineer", startDate: ISO } },
+            { label: "POST /api/profile/projects", route: "profile/projects", status: 200, table: "Project",
+              owns: { column: "profileId", value: crewB.profileId },
+              body: { name: "CREWBWMARK New Project" } },
+            { label: "POST /api/profile/education", route: "profile/education", status: 200, table: "Education",
+              owns: { column: "profileId", value: crewB.profileId },
+              body: { institution: "CREWBWMARK New University" } },
         ];
 
         for (const c of CREATES) {
@@ -1276,22 +1511,28 @@ async function main(): Promise<void> {
                 fail(`${c.label} [as crew B]: answered ${res.status} but created no ${c.table} row`);
                 continue;
             }
-            // Match the `"userId":"<id>"` PAIR, not the bare id: the id also
-            // appears inside unrelated columns on some rows, and a check that
-            // accepted any occurrence would pass on a row whose userId column
-            // actually said somebody else.
-            const attributed = `"userId":${JSON.stringify(CREW_B.id)}`;
+            // Match the `"<column>":"<value>"` PAIR, not the bare value: an id
+            // also appears inside unrelated columns on some rows, and a check
+            // that accepted any occurrence would pass on a row whose ownership
+            // column actually said somebody else. The pair is built with the same
+            // JSON.stringify canonicalRow() uses, so the two spellings cannot
+            // drift apart.
+            const owns = c.owns ?? { column: "userId", value: CREW_B.id };
+            const attributed = `${JSON.stringify(owns.column)}:${JSON.stringify(owns.value)}`;
             const misattributed = created.filter(ch => !(ch.after ?? "").includes(attributed));
             const collateral = changes.filter(ch => touchesMarks(ch, foreignMarksForB).length > 0);
             if (misattributed.length > 0) {
                 fail(
-                    `${c.label} [as crew B]: the new ${c.table} row does NOT carry crew B's userId — ` +
-                    `it was attributed to somebody else (${misattributed[0].after?.slice(0, 200)})`,
+                    `${c.label} [as crew B]: the new ${c.table} row does NOT carry crew B's ${owns.column} ` +
+                    `(${owns.value}) — it was attributed to somebody else (${misattributed[0].after?.slice(0, 200)})`,
                 );
             } else if (collateral.length > 0) {
                 fail(`${c.label} [as crew B]: also touched foreign row(s): ${collateral.map(describeChange).join(", ")}`);
             } else {
-                pass(`${c.label} [as crew B] → ${res.status}, new ${c.table} row attributed to crew B, zero foreign rows touched`);
+                pass(
+                    `${c.label} [as crew B] → ${res.status}, new ${c.table} row attributed to crew B ` +
+                    `via ${owns.column}, zero foreign rows touched`,
+                );
             }
         }
 
@@ -1382,7 +1623,12 @@ function cleanScratchDb(): void {
  * pre-push gate reads only the exit code.
  */
 function finish(): never {
-    console.log(`\n${passes}/${passes + fails} steps passed`);
+    // Skips are reported ALONGSIDE the ratio, never inside it: `passes + fails`
+    // is the number of checks that actually ran, and a skip is not one of them.
+    console.log(
+        `\n${passes}/${passes + fails} steps passed` +
+        (skips > 0 ? ` · ${skips} skipped (not counted as passes — nothing ran)` : ""),
+    );
     if (fails > 0) process.exit(1);
     console.log("All checks passed.");
     process.exit(0);
