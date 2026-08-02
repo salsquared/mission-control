@@ -166,6 +166,40 @@ const ASHBY_ALIVE_MARKERS = [
     "ashby_jb_posting", // posting widget container id (embedded board variant)
     "application-form",
 ];
+/**
+ * Ashby's self-declared "my data layer is degraded" flag (2026-08-01).
+ *
+ * The SPA shell rendered during an Ashby maintenance window has EXACTLY the
+ * not-found shape — `window.__appData` present, organization / posting /
+ * jobBoard all null, nothing hydrated, no `isListed` — and the ONLY thing that
+ * distinguishes it is the blob advertising the state itself (both captured
+ * fixtures carry `"maintenanceMode":false`). It is not evidence about the
+ * posting, so it must resolve "unknown", never "closed": a platform-wide
+ * maintenance window would otherwise stamp/confirm closes across the whole
+ * Ashby population, and false-closed rows never self-heal — the stale re-probe
+ * excludes status="closed" and the C3 sweep selects only status="new", so
+ * recovery is the manual recover-false-closed script, and a confirmed close
+ * also cascades into auto-closing linked INTERESTED cards.
+ *
+ * The pattern is LEADING-QUOTE anchored so it stays keyed to the exact
+ * `maintenanceMode` field and cannot match `schedulingMaintenanceMode`, a
+ * different subsystem's flag that sits right next to it in the same blob.
+ * Whitespace-tolerant like the workday CXS flag checks (the blob is minified
+ * today, but don't depend on it).
+ *
+ * Read by probeAshby as the FIRST test in its callback — see the comment there
+ * for why the position, not just the check, is the fix.
+ */
+const ASHBY_MAINTENANCE_RE = /"maintenancemode"\s*:\s*true/;
+/**
+ * The ONE host whose board root is closure evidence. `u.host.includes(
+ * "ashbyhq.com")` was a substring test, so `status.ashbyhq.com`,
+ * `www.ashbyhq.com` and anything else matching `*ashbyhq.com*` cleared it —
+ * and every one of those has a 0–1-segment path, so a redirect to a status or
+ * marketing holding page read as "posting removed" without the body ever being
+ * consulted. Only the canonical board host parks dead postings at its root.
+ */
+const ASHBY_BOARD_HOST = "jobs.ashbyhq.com";
 const WORKDAY_CLOSED_MARKERS = [
     "job is no longer",
     "this job is no longer available",
@@ -530,19 +564,14 @@ async function probeLever(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
  *   4. no `"isListed":true` anywhere — never conclude "removed" from a body
  *      that also carries a positive liveness claim.
  *
- * Plus one bail-out that runs BEFORE the shape test so nothing can short-
- * circuit past it: a `"maintenanceMode":true` claim anywhere in the body
- * (2026-08-01). The SPA shell rendered while Ashby's data layer is degraded
- * has EXACTLY the not-found shape — anchor present, the three entities null,
- * nothing hydrated, no isListed — and the blob advertises that state itself
- * via `maintenanceMode` (both captured fixtures carry
- * `"maintenanceMode":false`). A maintenance shell says nothing about the
- * posting, so it must resolve "unknown", never "closed": a platform-wide
- * Ashby maintenance window would otherwise stamp/confirm closes across the
- * whole board population, and false-closed rows never self-heal (the stale
- * re-probe excludes status="closed" and the C3 sweep selects only
- * status="new" — recovery is the manual recover-false-closed script), while
- * confirmed closes also cascade into auto-closing linked INTERESTED cards.
+ * The maintenance bail-out is deliberately NOT here. It lived inside this
+ * function from 2026-08-01 until 2026-08-02, which made it dead weight: this
+ * is only the THIRD of probeAshby's four "closed" exits, so the board-root
+ * redirect and the `"isListed":false` flag both reached "closed" without ever
+ * consulting it. It now runs once at the TOP of probeAshby's callback, gating
+ * all four. Do not re-add a copy here — one place to reason about beats two
+ * that can drift, and a second copy would re-create the illusion that guarding
+ * this function guards the probe.
  *
  * Residual risk, stated honestly: if Ashby ever stopped server-rendering the
  * posting into the shell, live and dead pages would become indistinguishable
@@ -554,12 +583,8 @@ async function probeLever(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLi
  */
 function isAshbyNotFoundShell(bodyLower: string): boolean {
     if (!bodyLower.includes("window.__appdata")) return false;
-    // Maintenance bail-out — the degraded shell shares the all-null shape but
-    // self-identifies via the blob's maintenanceMode flag. Checked before the
-    // shape test so no later conjunct can reach "closed" past it. The leading
-    // quote keeps this keyed to the exact `maintenanceMode` field (it does NOT
-    // match `schedulingMaintenanceMode`, a different subsystem's flag).
-    if (/"maintenancemode"\s*:\s*true/.test(bodyLower)) return false;
+    // NOTE: the maintenanceMode bail-out is NOT repeated here — probeAshby
+    // checks it before any exit can be reached. See the note above.
     // Positive: the three documented nulls (blob is minified, but tolerate
     // whitespace the same way the workday CXS flag checks do).
     const allNull = /"organization"\s*:\s*null/.test(bodyLower)
@@ -576,12 +601,24 @@ function isAshbyNotFoundShell(bodyLower: string): boolean {
 
 async function probeAshby(p: ProbeInput, timeoutMs: number, onRateLimit?: RateLimitCallback): Promise<LivenessResult> {
     return probeViaHttpStatus(p.sourceUrl, timeoutMs, POLITE_UA, ({ finalUrl, bodyLower }) => {
+        // ── Maintenance bail-out — FIRST, and that position is the point ──
+        // Ashby says "my data layer is degraded" and nothing about this
+        // posting, so NO exit below may reach "closed" on such a body. This
+        // check shipped inside isAshbyNotFoundShell, which is only the third
+        // of the four "closed" exits here — the board-root redirect (which
+        // runs before any body is read) and the `"isListed":false` flag both
+        // bypassed it entirely, so the protection did not exist. One gate,
+        // above all four exits, is the only placement that actually holds.
+        if (ASHBY_MAINTENANCE_RE.test(bodyLower)) return "unknown";
         // Redirected to the bare board root (no posting-id segment) → closed.
         // Posting URLs are jobs.ashbyhq.com/<slug>/<uuid>; board-root is /<slug>.
+        // Host must match ASHBY_BOARD_HOST EXACTLY — a redirect to status. /
+        // www. / any other host is not evidence the posting was removed, so it
+        // falls through to the body checks and, failing those, "unknown".
         try {
             const u = new URL(finalUrl);
             const segments = u.pathname.split("/").filter(Boolean);
-            if (u.host.includes("ashbyhq.com") && segments.length < 2) return "closed";
+            if (u.hostname === ASHBY_BOARD_HOST && segments.length < 2) return "closed";
         } catch { /* ignore */ }
         // C2 — tier-4 structured state. Ashby embeds the posting's open/closed
         // flag in the SPA's `window.__appData` JSON as `"isListed":<bool>`

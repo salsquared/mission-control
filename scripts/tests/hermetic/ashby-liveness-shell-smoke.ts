@@ -25,6 +25,16 @@
  *   - a live server-rendered posting still resolves "alive" (the fix is safe)
  *   - every near-miss body resolves "unknown", never "closed"
  *
+ * THE SECOND BUG (fixed 2026-08-02). The `"maintenanceMode":true` bail-out
+ * added for the first fix was placed inside isAshbyNotFoundShell — the THIRD of
+ * probeAshby's four "closed" exits — so the board-root redirect and the
+ * `"isListed":false` flag bypassed it and an Ashby maintenance window could
+ * still mass-close. Same fix shape, one layer up: the bail-out now gates the
+ * whole callback. The same commit narrowed the board-root exit from a
+ * `*ashbyhq.com*` substring host match to exactly jobs.ashbyhq.com. Both are
+ * covered below under "maintenance bail-out must gate EVERY closed exit" and
+ * "only the canonical board host closes".
+ *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/ashby-liveness-shell-smoke.ts
  *
  * Pure logic — no DB writes, no real network.
@@ -94,15 +104,22 @@ const DEAD_POSTING_URL = "https://jobs.ashbyhq.com/ashby/00000000-0000-0000-0000
 
 interface InstalledMock { callCount: () => number; restore: () => void }
 
-/** Serve `body` as a 200 for any URL, with response.url set to the request URL. */
-function installBodyMock(body: string): InstalledMock {
+/**
+ * Serve `body` as a 200 for any URL, with response.url set to the request URL.
+ *
+ * `landingUrl` overrides response.url — the probe reads that as the
+ * post-redirect landing page, which is how the board-root exit sees a redirect.
+ * Simulating it this way (rather than a real 3xx chain) keeps the fixture on the
+ * one thing under test: which URL the body is judged against.
+ */
+function installBodyMock(body: string, landingUrl?: string): InstalledMock {
     const original = globalThis.fetch;
     let callCount = 0;
     globalThis.fetch = (async (input: RequestInfo | URL) => {
         callCount++;
         const url = typeof input === "string" ? input : input.toString();
         const res = new Response(body, { status: 200, headers: { "content-type": "text/html" } });
-        Object.defineProperty(res, "url", { value: url, writable: false });
+        Object.defineProperty(res, "url", { value: landingUrl ?? url, writable: false });
         return res;
     }) as typeof fetch;
     return { callCount: () => callCount, restore: () => { globalThis.fetch = original; } };
@@ -115,6 +132,34 @@ async function probeBody(body: string, sourceUrl = LIVE_URL): Promise<LivenessRe
     } finally {
         stub.restore();
     }
+}
+
+/** Probe `body` as though the request had been redirected to `landingUrl`. */
+async function probeLanding(body: string, landingUrl: string): Promise<LivenessResult> {
+    const stub = installBodyMock(body, landingUrl);
+    try {
+        return await probePostingLiveness({ externalId: "x", sourceUrl: LIVE_URL }, "ashby");
+    } finally {
+        stub.restore();
+    }
+}
+
+async function expectLanding(body: string, landingUrl: string, expected: LivenessResult, msg: string) {
+    const actual = await probeLanding(body, landingUrl);
+    if (actual === expected) pass(`${msg} → ${actual}`);
+    else fail(`${msg} — expected ${expected}, got ${actual}`);
+}
+
+/**
+ * Flip a fixture into its maintenance-window variant, asserting the swap
+ * actually fired. Without this guard a renamed field would make the replace a
+ * silent no-op and the "maintenance" tests below would quietly be re-running
+ * the plain not-found shell.
+ */
+function asMaintenance(body: string, label: string): string {
+    const out = body.replace(`"maintenanceMode":false`, `"maintenanceMode":true`);
+    if (out === body) fail(`${label} — fixture has no \`"maintenanceMode":false\` to flip; it can no longer test maintenance`);
+    return out;
 }
 
 async function expectVerdict(body: string, sourceUrl: string, expected: LivenessResult, msg: string) {
@@ -216,13 +261,138 @@ async function testInterlocksNeverClose() {
     // resolve exactly "unknown" (re-probe next tick), never "closed" — a
     // platform-wide maintenance window would otherwise mass-false-close, and
     // false-closed rows never self-heal (excluded from every re-probe path).
-    const maintenanceShell = ASHBY_NOT_FOUND_SHELL.replace(
-        `"maintenanceMode":false`,
-        `"maintenanceMode":true`,
-    );
+    const maintenanceShell = asMaintenance(ASHBY_NOT_FOUND_SHELL, "maintenance shell");
     await expectVerdict(
         maintenanceShell, DEAD_POSTING_URL, "unknown",
         "interlock: maintenance shell (three nulls + maintenanceMode:true)",
+    );
+}
+
+// ─── The maintenance bail-out must gate EVERY closed exit ─────────────────
+//
+// SECOND BUG (fixed 2026-08-02). The `"maintenanceMode":true` bail-out landed
+// inside isAshbyNotFoundShell — but that helper is only the THIRD of
+// probeAshby's four "closed" exits. The board-root redirect (exit 1, which runs
+// before the body is even looked at) and the `"isListed":false` flag (exit 2)
+// both reached "closed" without consulting it, so the protection the commit
+// claimed did not exist for them. The bail-out now runs once at the top of the
+// callback. These tests pin the property that matters — a body Ashby has
+// flagged as degraded can NEVER close, by ANY route — rather than the
+// implementation detail of where the check sits.
+
+/**
+ * Exit 1: the board-root redirect. This is the one that was most broken —
+ * it classifies on the URL alone, before any body is read, so a maintenance
+ * window that parks requests on the board root closed every Ashby posting
+ * whose probe landed there. ~373 postings, and a confirmed close never
+ * self-heals.
+ */
+async function testMaintenanceSurvivesBoardRootRedirect() {
+    await expectLanding(
+        asMaintenance(ASHBY_NOT_FOUND_SHELL, "maintenance shell"),
+        "https://jobs.ashbyhq.com/ashby",
+        "unknown",
+        "maintenance body reached via board-root redirect (exit 1)",
+    );
+}
+
+/**
+ * Exit 2: the tier-4 `"isListed":false` flag. Built from the LIVE posting so
+ * the shell test (exit 3) cannot fire — organization/posting stay hydrated —
+ * which isolates exit 2 as the only thing that could reach "closed".
+ */
+async function testMaintenanceSurvivesIsListedFalse() {
+    const unlistedDuringMaintenance = asMaintenance(
+        ASHBY_LIVE_POSTING.replace(`"isListed":true`, `"isListed":false`),
+        "unlisted-during-maintenance",
+    );
+    await expectVerdict(
+        unlistedDuringMaintenance, LIVE_URL, "unknown",
+        "maintenance body also carrying isListed:false (exit 2)",
+    );
+}
+
+/**
+ * The bail-out is keyed to the EXACT `maintenanceMode` field. Ashby ships
+ * `schedulingMaintenanceMode` in the same blob (see the shell fixture) — a
+ * different subsystem's flag that says nothing about the data layer. If the
+ * pattern ever loses its leading-quote anchor it starts matching that too and
+ * silently stops closing real removals whenever scheduling is down.
+ */
+async function testSchedulingMaintenanceIsNotTheBailOut() {
+    const schedulingOnly = ASHBY_NOT_FOUND_SHELL.replace(
+        `"schedulingMaintenanceMode":false`,
+        `"schedulingMaintenanceMode":true`,
+    );
+    if (schedulingOnly === ASHBY_NOT_FOUND_SHELL) {
+        fail("fixture no longer carries schedulingMaintenanceMode — the anchoring test is vacuous");
+        return;
+    }
+    await expectVerdict(
+        schedulingOnly, DEAD_POSTING_URL, "closed",
+        "anchoring: schedulingMaintenanceMode:true alone does NOT trip the bail-out",
+    );
+}
+
+/**
+ * The bail-out reads a field on Ashby's wire format, and these fixtures are
+ * this repo's only record of that format. If Ashby drops or renames
+ * `maintenanceMode` and someone re-captures the fixtures, every maintenance
+ * test above would still "pass" against a body that can no longer express the
+ * state — the bail-out becomes dead code invisibly. Assert the field is
+ * PRESENT (value irrelevant: both captures are `false`) so that refresh fails
+ * the pre-push gate loudly instead.
+ */
+const MAINTENANCE_FIELD_RE = /"maintenanceMode"\s*:/;
+async function testFixturesStillCarryMaintenanceField() {
+    const fixtures: Array<[string, string]> = [
+        ["not-found shell", ASHBY_NOT_FOUND_SHELL],
+        ["live posting", ASHBY_LIVE_POSTING],
+    ];
+    for (const [label, body] of fixtures) {
+        if (MAINTENANCE_FIELD_RE.test(body)) {
+            pass(`fixture "${label}" still carries the maintenanceMode field`);
+        } else {
+            fail(
+                `fixture "${label}" no longer carries a maintenanceMode field — Ashby dropped or renamed it. ` +
+                `The bail-out in probeAshby is now DEAD CODE and Ashby maintenance windows can mass-false-close. ` +
+                `Find the new flag and update ASHBY_MAINTENANCE_RE in lib/postings/liveness.ts before re-greening this.`,
+            );
+        }
+    }
+}
+
+// ─── Board-root redirect: only the canonical board host is evidence ───────
+//
+// `u.host.includes("ashbyhq.com")` was a SUBSTRING test, so status.ashbyhq.com,
+// www.ashbyhq.com and any other *ashbyhq.com* host cleared it — and all of them
+// serve 0–1-segment paths, so a redirect to a status or marketing holding page
+// (exactly what a platform incident produces) read as "posting removed" with
+// the body never consulted. Only jobs.ashbyhq.com parks dead postings at its
+// root.
+
+async function testOnlyCanonicalBoardHostCloses() {
+    const holdingPage = `<html><body><h1>Ashby System Status</h1><p>We are investigating an incident.</p></body></html>`;
+
+    for (const host of ["status.ashbyhq.com", "www.ashbyhq.com"]) {
+        const actual = await probeLanding(holdingPage, `https://${host}/`);
+        if (actual !== "closed") pass(`redirect to ${host} → ${actual} (not closure evidence)`);
+        else fail(`redirect to ${host} returned 'closed'; FALSE-CLOSE RISK`);
+    }
+
+    // A different host entirely (custom board domain / marketing site) is not
+    // evidence either.
+    await expectLanding(
+        holdingPage, "https://ashbyhq.com/", "unknown",
+        "redirect to the apex marketing host",
+    );
+
+    // Positive control, kept adjacent on purpose: the tightened host check must
+    // NOT have disabled the real signal. A genuine board-root landing on
+    // jobs.ashbyhq.com still closes.
+    await expectLanding(
+        "board page", "https://jobs.ashbyhq.com/langchain", "closed",
+        "genuine board-root redirect on jobs.ashbyhq.com",
     );
 }
 
@@ -271,6 +441,11 @@ async function main() {
     await testLivePostingStaysAlive();
     await testRetiredMarkerNoLongerGrantsAlive();
     await testInterlocksNeverClose();
+    await testMaintenanceSurvivesBoardRootRedirect();
+    await testMaintenanceSurvivesIsListedFalse();
+    await testSchedulingMaintenanceIsNotTheBailOut();
+    await testFixturesStillCarryMaintenanceField();
+    await testOnlyCanonicalBoardHostCloses();
     await testExistingSignalsPreserved();
 
     await cleanupTempHealthDb();
