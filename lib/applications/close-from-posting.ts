@@ -17,6 +17,21 @@
  * you're already in the pipeline, so auto-closing those would bury live
  * applications. Because INTERESTED cards carry no newer status anchor, this
  * sidesteps the stale-status ordering problem entirely — no guard needed.
+ *
+ * `postingIds` is a REQUEST, not a licence (2026-08-02). Every caller checks
+ * the posting's own state before calling — the two job-watcher call sites pass
+ * the ids they *asked* to confirm closed, and the PATCH route flips the row
+ * first — but the ids a caller asked about and the postings that are ACTUALLY
+ * closed are not the same set. job-watcher's confirm `updateMany` re-asserts
+ * `status notIn [closed, hidden]` and the OQ5a time window in its WHERE, so a
+ * concurrent run (web tier vs scheduler — the per-watchlist mutex is
+ * per-process) clearing the pending stamp on alive evidence, or the user
+ * clicking "Hide" mid-probe-round, correctly leaves the posting OPEN and
+ * reports `closed = 0`. But it then passes the UNFILTERED id list here. So the
+ * posting's status is re-read below rather than trusted from the argument:
+ * without it the kanban card moved INTERESTED → CLOSED off a close that never
+ * happened — silently, since the summary notification is gated on `closed > 0`.
+ * Same guard `reconcileClosedPostingCascade` already applies to its sweep.
  */
 import { prisma } from "@/lib/prisma";
 import { broadcastEvent } from "@/lib/events";
@@ -34,8 +49,22 @@ export async function closeApplicationsForClosedPostings(
     // threaded in as a parameter, because `postingIds` is not guaranteed to
     // belong to one user — the manual PATCH caller passes a single posting, but
     // the probe caller passes a batch — so the owner has to be read per row.
+    //
+    // `posting: { is: { status: "closed" } }` is the confirm guard (see the
+    // header): only a posting that is closed RIGHT NOW cascades, whoever asked.
+    // The relation is nullable (`Application.postingId String?`), and on a
+    // nullable to-one an `is` filter matches nothing when the FK is null — but
+    // no legitimate row is dropped, because `postingId: { in: postingIds }`
+    // already excludes null-FK rows by construction. Fixing it here rather than
+    // at the two job-watcher call sites also covers the manual PATCH path
+    // (app/api/postings/[id]/route.ts, which flips the row to "closed" before
+    // calling and so still matches) in one place.
     const candidates = await prisma.application.findMany({
-        where: { postingId: { in: postingIds }, status: "INTERESTED" },
+        where: {
+            postingId: { in: postingIds },
+            status: "INTERESTED",
+            posting: { is: { status: "closed" } },
+        },
         select: { id: true, status: true, userId: true },
     });
 

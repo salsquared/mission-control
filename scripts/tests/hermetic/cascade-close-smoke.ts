@@ -11,6 +11,14 @@
  *   - a linked INTERESTED app → CLOSED with a STATUS_CHANGED event (OQ7)
  *   - a linked APPLIED app is untouched (cascade is INTERESTED-only)
  *   - an app linked to an unrelated posting is untouched
+ *   - an app whose posting id IS passed in but whose posting is NOT actually
+ *     status="closed" is untouched (2026-08-02). `postingIds` is a request, not
+ *     a licence: job-watcher's confirm UPDATE can reject (a concurrent run
+ *     cleared the pending stamp on alive evidence, or the user hit "Hide"
+ *     mid-probe-round) and correctly report closed=0, yet it still hands the
+ *     UNFILTERED id list to the cascade. Without the posting-status guard the
+ *     kanban card moved INTERESTED → CLOSED off a close that never happened —
+ *     silently, since the closure notification is gated on closed > 0.
  *   - re-running the cascade is idempotent (no second event, app stays CLOSED)
  *   - the event carries the supplied syncSource provenance
  *
@@ -53,15 +61,19 @@ async function main() {
         });
         watchlistIds.push(watchlist.id);
 
-        // Two postings to be closed (one with an INTERESTED app, one with an
-        // APPLIED app) + a third, unrelated posting that is NOT closed.
+        // Two CONFIRMED-CLOSED postings (one with an INTERESTED app, one with
+        // an APPLIED app) — every caller flips the row before calling, so
+        // status="closed" is the real precondition, not decoration. Plus two
+        // still-open ones: `unrelatedPosting` (never passed to the cascade) and
+        // `notActuallyClosedPosting` (passed in, but still open — the caller
+        // ASKED to close it and the UPDATE rejected).
         const closingPostingInterested = await prisma.jobPosting.create({
             data: {
                 watchlistId: watchlist.id,
                 externalId: `cascade-${tag}-int`,
                 company: "Cascade Co", title: "Interested Role",
                 sourceUrl: "https://example.invalid/careers/jobs/int",
-                status: "new", raw: JSON.stringify({}),
+                status: "closed", removedAt: new Date(), raw: JSON.stringify({}),
             },
         });
         const closingPostingApplied = await prisma.jobPosting.create({
@@ -70,7 +82,7 @@ async function main() {
                 externalId: `cascade-${tag}-app`,
                 company: "Cascade Co", title: "Applied Role",
                 sourceUrl: "https://example.invalid/careers/jobs/app",
-                status: "new", raw: JSON.stringify({}),
+                status: "closed", removedAt: new Date(), raw: JSON.stringify({}),
             },
         });
         const unrelatedPosting = await prisma.jobPosting.create({
@@ -79,6 +91,17 @@ async function main() {
                 externalId: `cascade-${tag}-unr`,
                 company: "Cascade Co", title: "Unrelated Role",
                 sourceUrl: "https://example.invalid/careers/jobs/unr",
+                status: "new", raw: JSON.stringify({}),
+            },
+        });
+        // Still "new" — models the confirm UPDATE rejecting (concurrent alive
+        // evidence / a user "Hide") while the caller passes the id anyway.
+        const notActuallyClosedPosting = await prisma.jobPosting.create({
+            data: {
+                watchlistId: watchlist.id,
+                externalId: `cascade-${tag}-open`,
+                company: "Cascade Co", title: "Still Open Role",
+                sourceUrl: "https://example.invalid/careers/jobs/open",
                 status: "new", raw: JSON.stringify({}),
             },
         });
@@ -103,11 +126,12 @@ async function main() {
         const interestedApp = await mkApp(closingPostingInterested.id, "INTERESTED", "Interested Role");
         const appliedApp = await mkApp(closingPostingApplied.id, "APPLIED", "Applied Role");
         const unrelatedApp = await mkApp(unrelatedPosting.id, "INTERESTED", "Unrelated Role");
+        const stillOpenApp = await mkApp(notActuallyClosedPosting.id, "INTERESTED", "Still Open Role");
 
-        // ─── Cascade: close the two posting ids ───
+        // ─── Cascade: ask for three posting ids, only two of which are closed ───
         const at = new Date();
         const r1 = await closeApplicationsForClosedPostings(
-            [closingPostingInterested.id, closingPostingApplied.id],
+            [closingPostingInterested.id, closingPostingApplied.id, notActuallyClosedPosting.id],
             { at, source: "probe" },
         );
 
@@ -150,6 +174,17 @@ async function main() {
         const unrAfter = await prisma.application.findUnique({ where: { id: unrelatedApp.id } });
         if (unrAfter?.status !== "INTERESTED") fail(`unrelated app status ${unrAfter?.status}, expected INTERESTED`);
         else pass("unrelated INTERESTED app (posting not closed) left untouched");
+
+        // ─── Confirm guard: id WAS passed, posting is NOT closed → no cascade ───
+        const openAfter = await prisma.application.findUnique({ where: { id: stillOpenApp.id } });
+        if (openAfter?.status !== "INTERESTED") {
+            fail(`app whose posting is still status='new' was closed anyway (${openAfter?.status}) — the cascade trusts postingIds instead of re-reading the posting`);
+        } else {
+            pass("app linked to a passed-but-still-open posting left untouched (cascade re-reads the posting's status)");
+        }
+        const openEvents = await prisma.applicationEvent.count({ where: { applicationId: stillOpenApp.id } });
+        if (openEvents !== 0) fail(`still-open app got ${openEvents} events, expected 0`);
+        else pass("still-open app got no STATUS_CHANGED event");
 
         // ─── Idempotent: re-running closes nothing, writes no new event ───
         const r2 = await closeApplicationsForClosedPostings(

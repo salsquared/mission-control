@@ -51,6 +51,18 @@
  *       `lastSeenAt` not bumped) — absence of evidence neither confirms nor
  *       clears.
  *
+ *   (D) The OQ5a time CEILING (MAX_PENDING_CLOSED_AGE_MS, 2026-08-02), the
+ *       companion to (A)'s floor. Nothing else ever expires a pending stamp —
+ *       fetch-presence does not clear it and (C) shows "unknown" preserves it —
+ *       so without a ceiling a transient that stamped on day 1 would be
+ *       confirmed INSTANTLY by an unrelated transient on day 30, the stamp
+ *       being trivially older than the 30-minute floor: a one-transient sticky
+ *       close on a slower clock. Staged with a stamp older than the ceiling and
+ *       `MC_LIVENESS_BYPASS=closed` → 0 closed, row still "new", and the stamp
+ *       RE-STAMPED to this run (a fresh first strike, not dropped). Then the
+ *       fresh stamp is aged into the window and a final tick confirms — proving
+ *       the ceiling only ever DEFERS a genuine close, never prevents one.
+ *
  * Hermetic: `globalThis.fetch` is stubbed and THROWS on an unstubbed URL, so a
  * probe that somehow escaped the bypass fails loudly instead of reaching the
  * network; no PM2, no session, no external API, no LLM (rows are pre-seeded, so
@@ -83,7 +95,7 @@ if (process.env.NODE_ENV === "production") {
 // of it even if the caller's env says otherwise (parity with pre-push.sh).
 process.env.EMAIL_ENABLED = "0";
 
-import { runWatchlist, MIN_PENDING_CLOSED_AGE_MS } from "@/scheduler/jobs/job-watcher";
+import { runWatchlist, MIN_PENDING_CLOSED_AGE_MS, MAX_PENDING_CLOSED_AGE_MS } from "@/scheduler/jobs/job-watcher";
 
 const prisma = new PrismaClient();
 
@@ -401,6 +413,57 @@ async function main() {
             pass("(C) unknown verdict: lastSeenAt untouched (staleness clock NOT re-armed — the row is re-probed next tick)");
         } else {
             fail(`(C) unknown verdict: lastSeenAt moved to ${targetC.lastSeenAt.toISOString()}`);
+        }
+
+        // ════ (D) OQ5a time ceiling — an EXPIRED stamp is not a strike ════
+        // Same staging as (A), except the prior first strike is older than
+        // MAX_PENDING_CLOSED_AGE_MS: the "stamped by a transient a month ago,
+        // sat through weeks of unknown verdicts" row. A closed verdict on it
+        // must restart the two-strike clock, not cash it in.
+        process.env.MC_LIVENESS_BYPASS = "closed";
+        const expiredStamp = new Date(Date.now() - MAX_PENDING_CLOSED_AGE_MS - 60 * 60 * 1000);
+        const d = await stageWatchlist(userId, tag, "expired", { pendingClosedAt: expiredStamp });
+        watchlistIds.push(d.watchlistId);
+
+        const beforeD = new Date();
+        const rD = await runWatchlist(d.watchlistId);
+        if (rD.error) fail(`(D) run errored: ${rD.error}`);
+        else pass("(D) run ran clean");
+        if (rD.closed === 0) {
+            pass("(D) OQ5a ceiling: an EXPIRED stamp does NOT confirm (closed=0 — a month-old transient is not half of a two-strike close)");
+        } else {
+            fail(`(D) OQ5a ceiling: expected closed=0, got ${rD.closed} — a stale stamp still confirms, so one fresh transient sticky-closes`);
+        }
+
+        const targetD = await prisma.jobPosting.findUniqueOrThrow({ where: { id: d.targetId } });
+        if (targetD.status === "new" && targetD.removedAt == null) {
+            pass("(D) OQ5a ceiling: target still status='new', removedAt null");
+        } else {
+            fail(`(D) OQ5a ceiling: target flipped on an expired stamp — status='${targetD.status}' removedAt=${targetD.removedAt}`);
+        }
+        if (targetD.pendingClosedAt != null && targetD.pendingClosedAt.getTime() >= beforeD.getTime()) {
+            pass("(D) OQ5a ceiling: the expired stamp was RE-STAMPED to this run — a fresh first strike, not a dropped one");
+        } else {
+            fail(`(D) OQ5a ceiling: expected a fresh re-stamp (>= ${beforeD.toISOString()}), got ${targetD.pendingClosedAt?.toISOString()}`);
+        }
+
+        // …and the re-stamped strike still closes once it ages into the window,
+        // so the ceiling defers a genuine close rather than preventing it.
+        await prisma.jobPosting.update({
+            where: { id: d.targetId },
+            data: { pendingClosedAt: new Date(Date.now() - MIN_PENDING_CLOSED_AGE_MS - 60_000) },
+        });
+        const rD2 = await runWatchlist(d.watchlistId);
+        if (rD2.error) fail(`(D) follow-up run errored: ${rD2.error}`);
+        else pass("(D) follow-up run ran clean");
+        if (rD2.closed === 1) pass("(D) OQ5a ceiling: the re-stamped strike confirms once it ages into the window (closed=1) — the ceiling defers, never blocks");
+        else fail(`(D) OQ5a ceiling: expected closed=1 on the follow-up, got ${rD2.closed} — an expired stamp can never close`);
+
+        const targetD2 = await prisma.jobPosting.findUniqueOrThrow({ where: { id: d.targetId } });
+        if (targetD2.status === "closed" && targetD2.removedAt != null && targetD2.pendingClosedAt == null) {
+            pass("(D) OQ5a ceiling: target closed, removedAt set, pendingClosedAt cleared");
+        } else {
+            fail(`(D) OQ5a ceiling: expected a confirmed close, got status='${targetD2.status}' removedAt=${targetD2.removedAt} pendingClosedAt=${targetD2.pendingClosedAt}`);
         }
     } finally {
         delete process.env.MC_LIVENESS_BYPASS;
