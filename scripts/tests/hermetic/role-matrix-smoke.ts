@@ -117,9 +117,8 @@ interface RouteSpec {
 
 const MANIFEST: RouteSpec[] = [
     // ---- Owner-only — other dashes (16) ----------------------------------
-    // Not the job/resume path: research, space, finance, AI news. Nothing here
+    // Not the job/resume path: research, space, finance. Nothing here
     // is crew-relevant and several are per-user-expensive upstream calls.
-    { route: "ai", cls: "owner", group: "owner/other-dashes" },
     { route: "ai/llmleaderboard", cls: "owner", group: "owner/other-dashes" },
     { route: "company-news", cls: "owner", group: "owner/other-dashes" },
     { route: "finance", cls: "owner", group: "owner/other-dashes" },
@@ -242,7 +241,7 @@ const MANIFEST: RouteSpec[] = [
 ];
 
 /** §2.5's totals. Asserted so a route MOVED between classes also trips. */
-const EXPECTED = { owner: 29, crew: 39, unguarded: 2, total: 70 } as const;
+const EXPECTED = { owner: 28, crew: 39, unguarded: 2, total: 69 } as const;
 
 // Guard families. Membership, not identity — see the header note on why exact
 // names are deliberately not pinned.
@@ -408,9 +407,9 @@ function checkManifestCoversEveryRoute(discovered: string[]): void {
 
 function checkCounts(discovered: string[]): void {
     // Interpolated from EXPECTED rather than spelled out: a hand-written header
-    // silently rots the moment a route is added (it read "28 + 39 + 2 = 69"
-    // while EXPECTED already said 29/70), and a stale banner over passing
-    // assertions is worse than no banner.
+    // silently rots the moment a route is added or removed (it once read
+    // "28 + 39 + 2 = 69" while EXPECTED already said 29/70), and a stale banner
+    // over passing assertions is worse than no banner.
     section(
         `2. Class counts — ${EXPECTED.owner} owner + ${EXPECTED.crew} crew + ` +
         `${EXPECTED.unguarded} unguarded = ${EXPECTED.total} (§2.5)`,
@@ -432,7 +431,7 @@ function checkCounts(discovered: string[]): void {
     // §2.5's sub-group sizes, so a route drifting between (say) owner/ops and
     // owner/google is visible even though the class total is unchanged.
     const groups: Array<[string, number]> = [
-        ["owner/other-dashes", 17],
+        ["owner/other-dashes", 16],
         ["owner/ops", 8],
         ["owner/google", 4],
         ["crew/applications", 6],

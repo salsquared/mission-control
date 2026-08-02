@@ -63,7 +63,6 @@ const ROUTES: RouteSpec[] = [
     { label: "/api/research/review",              file: "app/api/research/review/route.ts",              guard: "owner" },
     { label: "/api/research/hf",                  file: "app/api/research/hf/route.ts",                  guard: "owner" },
     { label: "/api/company-news",                 file: "app/api/company-news/route.ts",                 guard: "owner" },
-    { label: "/api/ai",                           file: "app/api/ai/route.ts",                           guard: "owner" },
     { label: "/api/ai/llmleaderboard",            file: "app/api/ai/llmleaderboard/route.ts",            guard: "owner" },
     { label: "/api/finance",                      file: "app/api/finance/route.ts",                      guard: "owner" },
     { label: "/api/finance/history",              file: "app/api/finance/history/route.ts",              guard: "owner" },

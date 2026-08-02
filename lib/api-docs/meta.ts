@@ -7,7 +7,7 @@
  * INTENT: what the route is for and which external service it talks to.
  *
  * Put that intent in a `meta.ts` file **next to** the route (e.g. for
- * `app/api/ai/route.ts` create `app/api/ai/meta.ts`):
+ * `app/api/ai/llmleaderboard/route.ts` create `app/api/ai/llmleaderboard/meta.ts`):
  *
  *   import type { ApiMeta } from '@/lib/api-docs/meta';
  *
