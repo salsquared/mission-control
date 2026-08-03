@@ -1,5 +1,26 @@
 import { z } from "zod";
 
+// The ReDoS bound for every user-supplied regex in this file lives in
+// lib/schemas/regex-guard.ts — a standalone zero-dependency module, because
+// lib/schemas/settings.ts and lib/postings/negative-filters.ts need the same
+// scan and neither should have to depend on this one to get it.
+//
+// TWO ENTRY POINTS, and the choice between them is deliberate per field:
+//   * `unsafeRegexSourceReason` = compile gate + shape scan. Used for
+//     `linkPattern`, where a pattern that does not compile is a broken
+//     watchlist worth rejecting at the boundary.
+//   * `regexShapeRisk`          = shape scan only. Used for `negativeFilters`,
+//     where lib/postings/negative-filters.ts documents that an invalid pattern
+//     is SILENTLY SKIPPED — so a user typing `C++` must keep getting today's
+//     harmless no-op rather than a new 400.
+import { regexShapeRisk, unsafeRegexSourceReason } from "@/lib/schemas/regex-guard";
+
+// Re-exported so existing importers of this module keep working.
+export { regexShapeRisk, unsafeRegexSourceReason };
+
+/** Max length of a user-supplied regex source. Necessary, nowhere near sufficient. */
+export const MAX_LINK_PATTERN_LEN = 200;
+
 // Source types:
 //   - careers-page: scrape an HTML page with cheerio + a link regex (small set
 //     of companies that still serve static HTML).
@@ -39,10 +60,21 @@ export const WatchlistKindSchema = z.enum(WATCHLIST_KINDS);
 export const CareersPageConfigSchema = z.object({
     kind: z.literal("careers-page"),
     rootUrl: z.string().url(),
-    // regex source; bounded length is a cheap defense against ReDoS — short
-    // patterns can still be catastrophic but the realistic worst case is much
-    // smaller than what arbitrary-length input allows.
-    linkPattern: z.string().min(1).max(200),
+    // Regex source, compiled in lib/fetchers/careers-page-fetcher.ts and run
+    // against every <a href> on the page. The length cap is NOT the bound —
+    // `(a+)+$` is six characters — so it is paired with the structural scan at
+    // the top of this file. See `unsafeRegexSourceReason` for what that catches
+    // and, importantly, what it does not.
+    linkPattern: z.string().min(1).max(MAX_LINK_PATTERN_LEN)
+        .superRefine((value, ctx) => {
+            const reason = unsafeRegexSourceReason(value);
+            if (reason) ctx.addIssue({ code: "custom", message: `Unsafe linkPattern — ${reason}.` });
+        })
+        .describe(
+            "Regular-expression source matched against each resolved <a href>. Rejected when it " +
+            "does not compile, uses a backreference, or has a catastrophic-backtracking shape " +
+            "(a repeated group that itself repeats or alternates, e.g. `(a+)+`).",
+        ),
     companyName: z.string().min(1),
     location: z.string().optional(),
 });
@@ -184,10 +216,31 @@ export type WatchlistConfig = z.infer<typeof WatchlistConfigSchema>;
 // Negative filters: array of regex patterns. The watchlist hides any
 // posting whose (title + snippet + location) matches any pattern at the
 // /api/postings GET layer.
+//
+// COUNT AND LENGTH ARE BOUNDED; COMPLEXITY HAS TO BE TOO (2026-08-02). These
+// are crew-writable regex sources (PATCH /api/watchlists/[id] is
+// `requireSession`) compiled by lib/postings/negative-filters.ts and `.test()`ed
+// once per posting row — 20,504 rows in prod as measured — INSIDE the
+// /api/postings request path. So this is the same ReDoS exposure as
+// `linkPattern` above with a much larger multiplier; see the header of
+// lib/schemas/regex-guard.ts for the measurements and the residual gap.
+//
+// `regexShapeRisk`, not `unsafeRegexSourceReason`: compilability is NOT checked
+// here on purpose, because negative-filters.ts documents that an invalid
+// pattern is silently skipped and a user typing `C++` should keep getting that
+// no-op instead of a new 400. Only catastrophic SHAPES are refused.
 const MAX_NEGATIVE_FILTERS = 20;
 const MAX_NEGATIVE_FILTER_LEN = 200;
 export const NegativeFiltersSchema = z.array(
-    z.string().min(1).max(MAX_NEGATIVE_FILTER_LEN),
+    z.string().min(1).max(MAX_NEGATIVE_FILTER_LEN).superRefine((value, ctx) => {
+        const risk = regexShapeRisk(value);
+        if (risk) ctx.addIssue({ code: "custom", message: `Unsafe filter pattern "${value}" — ${risk}.` });
+    }).describe(
+        "Plain keyword or regex source, matched case-insensitively against title+snippet+location. " +
+        "Rejected when it has a catastrophic-backtracking shape (a repeated group that itself repeats " +
+        "or alternates, e.g. `(a+)+`) or uses a backreference. A pattern that simply does not compile " +
+        "is accepted and silently skipped at match time.",
+    ),
 ).max(MAX_NEGATIVE_FILTERS);
 
 // Story S6.2 — per-watchlist notification preference. "each" fires per-posting,
@@ -328,8 +381,31 @@ export const WatchlistsListResponseSchema = z.object({
     watchlists: z.array(WatchlistSchema),
 });
 
+/**
+ * What `POST /api/watchlists` did about the initial background crawl.
+ *
+ * The create ALWAYS succeeds on its own terms (a row is cheap); the crawl it
+ * kicks off is what spends the owner's Gemini key, so a crew member over their
+ * daily AI credit gets the row and not the crawl. That is a partial outcome,
+ * and a bare 200 would misreport it — hence this field. See the credit block in
+ * `app/api/watchlists/route.ts` for the reasoning behind creating anyway.
+ *
+ * PATCH does not set it; it is absent on every response except a POST.
+ */
+export const WatchlistInitialCrawlSchema = z.union([
+    z.object({ started: z.literal(true) }),
+    z.object({
+        started: z.literal(false),
+        /** Only reason today. A new one is a wire-visible change. */
+        reason: z.literal("ai-quota"),
+        used: z.number().int(),
+        limit: z.number().int(),
+    }),
+]);
+
 export const WatchlistMutationResponseSchema = z.object({
     watchlist: WatchlistSchema,
+    initialCrawl: WatchlistInitialCrawlSchema.optional(),
 });
 
 export const PostingsListResponseSchema = z.object({

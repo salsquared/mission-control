@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireSession } from "@/lib/auth-guards";
+import { consumeAiCredit } from "@/lib/ai/quota";
 import { broadcastEvent } from "@/lib/events";
 import { WatchlistPostSchema, WatchlistTrackSchema } from "@/lib/schemas/watchlists";
 import { hydrateWatchlistConfig, resolveCreatePayload } from "@/lib/watchlists/hydrate";
@@ -251,14 +252,56 @@ export async function POST(req: NextRequest) {
         });
         broadcastEvent({ model: 'Watchlist', action: 'upsert', id: row.id, userId, timestamp: Date.now() });
 
-        // Kick off the first crawl in the background so the user gets postings
-        // within seconds instead of waiting up to scheduleMinutes for the next
-        // scheduler tick. Fire-and-forget — `runWatchlist` handles its own
-        // errors + persists lastRunAt / lastError + broadcasts Watchlist +
-        // Posting SSE events so the UI refreshes when it completes.
-        runWatchlist(row.id).catch((err) =>
-            console.warn(`[watchlists POST] initial runWatchlist failed for ${row.id}:`, err)
-        );
+        // ── The initial crawl is METERED (security fast-follow, 2026-08-02) ──
+        //
+        // The line below kicks off the first crawl in the background so the user
+        // gets postings within seconds instead of waiting up to scheduleMinutes
+        // for the next scheduler tick. It is fire-and-forget — `runWatchlist`
+        // handles its own errors + persists lastRunAt / lastError + broadcasts
+        // Watchlist + Posting SSE events so the UI refreshes when it completes.
+        //
+        // But `runWatchlist` runs `classifyEmploymentTypes` over every newly
+        // ingested posting, on the OWNER's Gemini key, and this route is
+        // `requireSession()` — so crew reach it. Unmetered, a crew member could
+        // create/delete watchlists in a loop and spend Gemini once per create,
+        // exactly the runaway shape lib/ai/quota.ts exists to bound. The sibling
+        // manual-run route (`[id]/run`) has always taken a credit for the very
+        // same call; this one not doing so was an oversight, not a decision.
+        //
+        // OVER QUOTA ⇒ THE ROW IS STILL CREATED, ONLY THE CRAWL IS SKIPPED.
+        // Deliberate, and the asymmetry with `[id]/run`'s 429 is the point: on
+        // that route the crawl IS the request, so refusing it means refusing the
+        // request. Here the crawl is a latency optimisation over a scheduler
+        // tick that will happen anyway. Failing the whole POST would throw away
+        // work the caller already did (naming, config, dedup) over a side
+        // effect, and would leave a crew member unable to create ANY watchlist
+        // for the rest of the UTC day — a far larger loss than "your first
+        // crawl waits for the scheduler". The expensive half is refused either
+        // way, which is all the quota is for.
+        //
+        // PLACEMENT. Last statement before the only Gemini-touching work, and
+        // after every rejection this handler can still make — the cap, the
+        // dedup 409, and the in-transaction race loser. `consumeAiCredit`
+        // MUTATES, so consuming any earlier would bill a crew member for a
+        // create that then 400s or 409s. (The one thing after it is the
+        // serialize-null 500, which is a server bug on a row we just wrote.)
+        //
+        // Fails OPEN by design — a DB hiccup in the counter grants the crawl
+        // rather than degrading the product. It is a cost bound, not an
+        // authorization boundary; the bounds that hold regardless are
+        // CREW_WATCHLIST_LIMIT above and the schedule floor.
+        const credit = await consumeAiCredit(userId, guard.session.user.role);
+        if (credit.ok) {
+            runWatchlist(row.id).catch((err) =>
+                console.warn(`[watchlists POST] initial runWatchlist failed for ${row.id}:`, err)
+            );
+        } else {
+            console.warn(
+                `[watchlists POST] user ${userId} is over their daily AI credit ` +
+                `(${credit.used}/${credit.limit}) — created watchlist ${row.id} but SKIPPED the ` +
+                `initial crawl. The scheduler will pick it up on its normal cadence.`,
+            );
+        }
 
         const serialized = serialize(row);
         if (!serialized) {
@@ -267,7 +310,15 @@ export async function POST(req: NextRequest) {
             console.error(`[watchlists POST] serialize returned null for fresh row ${row.id}`);
             return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
         }
-        return NextResponse.json({ watchlist: serialized }, { status: 200 });
+        // `initialCrawl` keeps the 200 honest: the row exists either way, but
+        // "we started fetching your postings" is only true on the granted path.
+        // Shape is pinned by WatchlistInitialCrawlSchema in lib/schemas/watchlists.ts.
+        return NextResponse.json({
+            watchlist: serialized,
+            initialCrawl: credit.ok
+                ? { started: true }
+                : { started: false, reason: "ai-quota", used: credit.used, limit: credit.limit },
+        }, { status: 200 });
     } catch (e) {
         // The concurrent-create loser: a real rejection, not a server fault.
         // Must be translated before the 500 branch or the race would surface as

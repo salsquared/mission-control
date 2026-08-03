@@ -26,21 +26,30 @@
  *      short-circuit in consumeAiCredit is what makes 0 mean 0).
  *   7. THE 429 CONTRACT (task P3.6 renders this body) — status, `code`,
  *      `stage`, `used`, `limit`, and a positive Retry-After.
- *   8. THE GATE IS WIRED INTO ALL SEVEN ROUTES, not just importable:
- *      (a) STRUCTURALLY, off a manifest of the 7 that is checked against a
- *          filesystem sweep for `consumeAiCredit`, so an 8th quota-wired route
+ *   8. THE GATE IS WIRED INTO ALL EIGHT ROUTES, not just importable:
+ *      (a) STRUCTURALLY, off a manifest of the 8 that is checked against a
+ *          filesystem sweep for `consumeAiCredit`, so a 9th quota-wired route
  *          (or a route that silently drops the gate) cannot land unrecorded.
- *          Each is asserted to await the credit, RETURN the shared refusal, and
- *          — the part that matters — to do so AFTER its own auth / validation /
- *          ownership gates. That order is not cosmetic: `consumeAiCredit`
- *          MUTATES, so a credit taken before a 400/404 bills a crew member for
- *          a call that never reached Gemini.
+ *          Each is asserted to await the credit, act on the refusal in the way
+ *          its `refusal` field declares, and — the part that matters — to do so
+ *          AFTER its own auth / validation / ownership gates. That order is not
+ *          cosmetic: `consumeAiCredit` MUTATES, so a credit taken before a
+ *          400/404 bills a crew member for a call that never reached Gemini.
  *      (b) BEHAVIOURALLY on the five routes reachable without a DB fixture —
  *          each driven at `CREW_AI_DAILY_LIMIT=0` as a crew viewer and asserted
  *          to answer the shared 429 before any Gemini-touching work. The other
- *          two (`profile/bullets/assist`, `watchlists/[id]/run`) sit behind a
- *          Profile-with-entities / Watchlist row respectively; their gate order
- *          is what (a)'s `mustPrecede` patterns pin.
+ *          three (`profile/bullets/assist`, `watchlists/[id]/run`, `watchlists`)
+ *          sit behind a Profile-with-entities / Watchlist row / a full watchlist
+ *          create respectively; their gate order is what (a)'s `mustPrecede`
+ *          patterns pin, and `watchlists` is driven end-to-end against dev.db in
+ *          scripts/tests/hermetic/watchlist-create-quota-smoke.ts.
+ *
+ * SEVEN OF THE EIGHT REFUSE BY RETURNING the shared 429. `POST /api/watchlists`
+ * is the one that does not, on purpose: there the LLM work is a fire-and-forget
+ * side effect (the initial crawl) rather than the request itself, so a refusal
+ * skips the crawl and still creates the row. `QuotaRouteSpec.refusal` is what
+ * keeps that a DECLARED exception rather than a hole — a route cannot quietly
+ * stop returning the 429 without changing its manifest entry.
  *
  * Genuinely hermetic: no network, no PM2, no Gemini, no server. The DB is a
  * THROWAWAY SQLite file in /tmp (DATABASE_URL pinned before any import; tables
@@ -109,7 +118,7 @@ const DDL = [
 // ---------------------------------------------------------------------------
 // The quota-wired route manifest (docs/multi-user-crew.html §2.9 / P2.5.2).
 //
-// Seven crew-reachable LLM routes take a credit. The list is asserted against a
+// Eight crew-reachable LLM routes take a credit. The list is asserted against a
 // filesystem sweep below, so it cannot drift silently in either direction: a
 // new route that calls consumeAiCredit fails until it is recorded here, and a
 // route that DROPS the call fails until it is removed.
@@ -120,13 +129,33 @@ const DDL = [
 // credit consume. They are per-route rather than generic because what counts as
 // "ownership" differs: a body schema on one route, a watchlist lookup on
 // another. The guard call itself is checked separately for every route.
+//
+// `refusal` encodes what the route DOES when the credit is denied, because the
+// two shapes are not interchangeable and "returns a 429" is not a property that
+// can be asserted generically any more. Seven routes return the shared
+// `aiQuotaExceededResponse`. `POST /api/watchlists` instead SKIPS a
+// fire-and-forget side effect (the initial `runWatchlist` crawl) and still
+// creates the row — see that route's comment for why. Declaring the exception
+// here is what stops it becoming a way for a route to drop the 429 unnoticed:
+// a skip-shaped route must prove the credit result GATES the LLM-bearing call,
+// which is the same protection stated differently.
 // ---------------------------------------------------------------------------
+
+/**
+ * How a route acts on a denied credit.
+ *  - `"return-429"` — returns `aiQuotaExceededResponse(credit)`; the request fails.
+ *  - `{ skips, why }` — the request still succeeds; the LLM-bearing call named by
+ *    `skips` must be gated on `credit.ok` and must appear exactly once.
+ */
+type RefusalShape = "return-429" | { skips: RegExp; why: string };
 
 interface QuotaRouteSpec {
     /** Path under app/api — the file is `app/api/<route>/route.ts`. */
     route: string;
     /** Gates that MUST run before the (mutating) credit consume. */
     mustPrecede: Array<{ pattern: RegExp; why: string }>;
+    /** What a denial does — a returned 429, or a gated-away side effect. */
+    refusal: RefusalShape;
     /** Whether §11 drives this route end-to-end, and if not, why not. */
     drive: "behavioural" | { structuralOnly: string };
 }
@@ -138,6 +167,7 @@ const QUOTA_ROUTES: QuotaRouteSpec[] = [
             { pattern: /ResumePostBodySchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
             { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
         ],
+        refusal: "return-429",
         drive: "behavioural",
     },
     {
@@ -146,6 +176,7 @@ const QUOTA_ROUTES: QuotaRouteSpec[] = [
             { pattern: /BodySchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
             { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
         ],
+        refusal: "return-429",
         drive: "behavioural",
     },
     {
@@ -155,6 +186,7 @@ const QUOTA_ROUTES: QuotaRouteSpec[] = [
             { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
             { pattern: /loadParent\(/, why: "the cross-user 404 must come first — a foreign parentId must not cost the caller a credit" },
         ],
+        refusal: "return-429",
         // Reaching the credit needs a Profile with a work-role/project entity
         // carrying a bullet; the gate ORDER is what mustPrecede pins instead.
         drive: { structuralOnly: "needs a Profile + entity + bullet fixture to get past loadParent()" },
@@ -164,6 +196,7 @@ const QUOTA_ROUTES: QuotaRouteSpec[] = [
         mustPrecede: [
             { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
         ],
+        refusal: "return-429",
         drive: "behavioural",
     },
     {
@@ -172,6 +205,7 @@ const QUOTA_ROUTES: QuotaRouteSpec[] = [
             { pattern: /checkUserRateLimit\(/, why: "never burn a credit on a request the rate limiter is about to reject" },
             { pattern: /req\.formData\(\)/, why: "the four multipart 400s must come first — a malformed upload must not cost a credit" },
         ],
+        refusal: "return-429",
         drive: "behavioural",
     },
     {
@@ -179,6 +213,7 @@ const QUOTA_ROUTES: QuotaRouteSpec[] = [
         mustPrecede: [
             { pattern: /RequestSchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
         ],
+        refusal: "return-429",
         drive: "behavioural",
     },
     {
@@ -186,9 +221,35 @@ const QUOTA_ROUTES: QuotaRouteSpec[] = [
         mustPrecede: [
             { pattern: /prisma\.watchlist\.findFirst/, why: "the ownership 404 must come first — a foreign watchlist id must not cost a credit" },
         ],
+        refusal: "return-429",
         // Reaching the credit needs a Watchlist row owned by the caller; this
         // file's DDL is deliberately User + AiUsage only.
         drive: { structuralOnly: "needs a Watchlist row to get past the ownership check" },
+    },
+    {
+        // Security fast-follow 2026-08-02. POST fire-and-forgets `runWatchlist`,
+        // which classifies employment types through Gemini, and the route is
+        // requireSession() — so this was unmetered crew-reachable LLM spend.
+        route: "watchlists",
+        mustPrecede: [
+            { pattern: /WatchlistPostSchema\.safeParse/, why: "a 400 on a malformed body must not burn a credit" },
+            { pattern: /scheduleFloorRejection\(/, why: "the cadence-floor 400 must come first — a rejected cadence must not cost a credit" },
+            { pattern: /prisma\.watchlist\.count\(/, why: "the CREW_WATCHLIST_LIMIT 400 must come first — a create that cannot happen must not cost a credit" },
+            { pattern: /prisma\.\$transaction\(/, why: "the row must exist first: the dedup 409 and the in-transaction race loser must not cost a credit" },
+        ],
+        // The ONE skip-shaped route. A denial does not fail the request — the
+        // watchlist is created and only the initial crawl is skipped (the
+        // scheduler will crawl it on its normal cadence), so the expensive half
+        // is still refused. What must hold is that `runWatchlist` is reachable
+        // ONLY through the credit gate.
+        refusal: {
+            skips: /runWatchlist\s*\(/,
+            why: "the initial crawl is the Gemini-bearing side effect; an ungated call is unmetered crew spend",
+        },
+        // Reaching the credit needs a committed Watchlist row, which needs the
+        // full Watchlist table (+ its FKs); this file's DDL is deliberately
+        // User + AiUsage only. Driven for real in watchlist-create-quota-smoke.ts.
+        drive: { structuralOnly: "needs a full Watchlist create; driven in watchlist-create-quota-smoke.ts" },
     },
 ];
 
@@ -244,10 +305,39 @@ function quotaWiringViolation(src: string, spec: QuotaRouteSpec): string | null 
     if (creditAt < guardAt) {
         return "consumes a credit BEFORE the auth guard — an unauthenticated caller would move the counter";
     }
-    // The refusal must be RETURNED, not merely computed: a `credit.ok` that is
-    // ignored is the exact shape of a gate that meters and then admits anyway.
-    if (!/if\s*\(\s*!\s*(\w+)\.ok\s*\)\s*return\s+aiQuotaExceededResponse\(\s*\1\s*\)/.test(src)) {
-        return "the refusal is not returned (expected `if (!credit.ok) return aiQuotaExceededResponse(credit)`)";
+    if (spec.refusal === "return-429") {
+        // The refusal must be RETURNED, not merely computed: a `credit.ok` that
+        // is ignored is the exact shape of a gate that meters and then admits
+        // anyway.
+        if (!/if\s*\(\s*!\s*(\w+)\.ok\s*\)\s*return\s+aiQuotaExceededResponse\(\s*\1\s*\)/.test(src)) {
+            return "the refusal is not returned (expected `if (!credit.ok) return aiQuotaExceededResponse(credit)`)";
+        }
+    } else {
+        // Skip-shaped: the request still succeeds, so there is no 429 to look
+        // for. What replaces it is stricter in the way that matters — the
+        // Gemini-bearing call must be reachable ONLY under `credit.ok`. Three
+        // things are checked: the result is bound, it gates something, and the
+        // named call appears EXACTLY ONCE (a second, ungated call site is
+        // precisely how a "gated" side effect leaks back out).
+        const bind = /const\s+(\w+)\s*=\s*await\s+consumeAiCredit\s*\(/.exec(src);
+        if (!bind) return "the credit result is not bound to a variable, so nothing can gate on it";
+        const gateAt = at(src, new RegExp(`if\\s*\\(\\s*${bind[1]}\\.ok\\s*\\)\\s*\\{`));
+        if (gateAt < 0) {
+            return `the credit result is never used as a gate (expected \`if (${bind[1]}.ok) { … }\`)`;
+        }
+        const calls = [...src.matchAll(new RegExp(spec.refusal.skips.source, "g"))];
+        if (calls.length === 0) {
+            return `the gated call ${String(spec.refusal.skips)} is not present — ${spec.refusal.why}`;
+        }
+        if (calls.length > 1) {
+            return (
+                `${String(spec.refusal.skips)} appears ${calls.length} times; exactly one gated call ` +
+                `site is required — ${spec.refusal.why}`
+            );
+        }
+        if (calls[0].index! < gateAt) {
+            return `${String(spec.refusal.skips)} runs BEFORE the credit gate — ${spec.refusal.why}`;
+        }
     }
     const late = spec.mustPrecede.filter(g => {
         const gateAt = at(src, g.pattern);
@@ -460,15 +550,16 @@ async function main() {
         if (orphans !== 0) fail(`AiUsage rows survived their user (${orphans} orphans)`);
         else pass("AiUsage cascades on user delete (no orphaned counters)");
 
-        // ── 10. …and into ALL SEVEN of them, structurally ───────────────────
+        // ── 10. …and into ALL EIGHT of them, structurally ───────────────────
         // §8 proves ONE route is wired. That is the assertion that catches "the
         // module exists and nobody calls it" — but it says nothing about the
-        // other six, and a seven-route wiring task fails route-by-route, not
-        // all-or-nothing. This check closes that: the manifest is reconciled
+        // other seven, and an eight-route wiring surface fails route-by-route,
+        // not all-or-nothing. This check closes that: the manifest is reconciled
         // against the filesystem (so it cannot go stale in either direction) and
-        // each route is asserted to await the credit, RETURN the shared refusal,
-        // and do both AFTER its own auth / validation / ownership gates.
-        section("10. All 7 quota-wired routes — manifest ⇄ filesystem, and the gate order in each");
+        // each route is asserted to await the credit, act on the refusal in the
+        // shape its entry declares, and do both AFTER its own auth / validation
+        // / ownership gates.
+        section("10. All 8 quota-wired routes — manifest ⇄ filesystem, and the gate order in each");
 
         const declared = new Set(QUOTA_ROUTES.map(r => r.route));
         const onDisk = discoverRoutes(API_ROOT)
@@ -488,10 +579,24 @@ async function main() {
                 `Either the gate was dropped (a crew member can now spend unmetered on that route) or the ` +
                 `route moved — reconcile the manifest with §2.9's list.`,
             );
-        } else if (QUOTA_ROUTES.length !== 7) {
-            fail(`§2.9 wires SEVEN routes; the manifest holds ${QUOTA_ROUTES.length}`);
+        } else if (QUOTA_ROUTES.length !== 8) {
+            fail(`§2.9 + the 2026-08-02 fast-follow wire EIGHT routes; the manifest holds ${QUOTA_ROUTES.length}`);
         } else {
-            pass(`all 7 quota-wired routes accounted for, and no 8th exists on disk: ${onDisk.join(", ")}`);
+            pass(`all 8 quota-wired routes accounted for, and no 9th exists on disk: ${onDisk.join(", ")}`);
+        }
+
+        // Exactly one route is allowed to refuse by skipping instead of by
+        // returning the 429. Pinning the COUNT is what makes the exception an
+        // exception: converting a second route to the weaker shape has to be a
+        // deliberate edit here, not a quiet one in the route.
+        const skipShaped = QUOTA_ROUTES.filter(r => r.refusal !== "return-429").map(r => r.route);
+        if (skipShaped.join(",") !== "watchlists") {
+            fail(
+                `exactly one route (watchlists) may refuse by skipping a side effect rather than ` +
+                `returning the shared 429; the manifest declares [${skipShaped.join(", ")}]`,
+            );
+        } else {
+            pass("7 routes return the shared 429; `watchlists` alone refuses by skipping its initial crawl (declared)");
         }
 
         for (const spec of QUOTA_ROUTES) {
@@ -501,7 +606,8 @@ async function main() {
                 continue;
             }
             const how = spec.drive === "behavioural" ? "driven" : `structural-only (${spec.drive.structuralOnly})`;
-            pass(`/api/${spec.route}: guard → ${spec.mustPrecede.length} gate(s) → consumeAiCredit → returned refusal · ${how}`);
+            const acted = spec.refusal === "return-429" ? "returned refusal" : "gated side effect";
+            pass(`/api/${spec.route}: guard → ${spec.mustPrecede.length} gate(s) → consumeAiCredit → ${acted} · ${how}`);
         }
 
         // Teeth. A structural check that has never been shown to reject
@@ -511,6 +617,7 @@ async function main() {
         const SPEC: QuotaRouteSpec = {
             route: "synthetic",
             mustPrecede: [{ pattern: /BodySchema\.safeParse/, why: "a 400 must not burn a credit" }],
+            refusal: "return-429",
             drive: { structuralOnly: "synthetic" },
         };
         const GOOD = `
@@ -535,6 +642,46 @@ async function main() {
             const missed = MUTANTS.filter(([, src]) => quotaWiringViolation(src, SPEC) === null).map(([name]) => name);
             if (missed.length > 0) fail(`the structural check has no teeth against: ${missed.join("; ")}`);
             else pass(`structural check has teeth: accepts the correct shape, rejects all ${MUTANTS.length} regression shapes`);
+        }
+
+        // …and the same teeth for the SKIP shape, which is the weaker of the two
+        // and therefore the one that must be pinned hardest. Its whole claim is
+        // "the LLM call is reachable only under credit.ok"; each mutant below
+        // breaks exactly that claim while still looking metered.
+        const SKIP_SPEC: QuotaRouteSpec = {
+            route: "synthetic-skip",
+            mustPrecede: [{ pattern: /BodySchema\.safeParse/, why: "a 400 must not burn a credit" }],
+            refusal: { skips: /runWatchlist\s*\(/, why: "the crawl is the Gemini-bearing side effect" },
+            drive: { structuralOnly: "synthetic" },
+        };
+        const GOOD_SKIP = `
+            import { consumeAiCredit } from "@/lib/ai/quota";
+            import { runWatchlist } from "@/scheduler/jobs/job-watcher";
+            export async function POST(req) {
+                const guard = await requireSession();
+                if ('error' in guard) return guard.error;
+                const parsed = BodySchema.safeParse(await req.json());
+                if (!parsed.success) return NextResponse.json({}, { status: 400 });
+                const row = await prisma.watchlist.create({ data: {} });
+                const credit = await consumeAiCredit(userId, guard.session.user.role);
+                if (credit.ok) {
+                    runWatchlist(row.id).catch(() => {});
+                }
+                return NextResponse.json({ watchlist: row });
+            }`;
+        const SKIP_MUTANTS: Array<[string, string]> = [
+            ["side effect fired unconditionally", GOOD_SKIP.replace(/if \(credit\.ok\) \{\n\s*runWatchlist\(row\.id\)\.catch\(\(\) => \{\}\);\n\s*\}/, "runWatchlist(row.id).catch(() => {});")],
+            ["side effect fired BEFORE the credit", GOOD_SKIP.replace("const credit = await consumeAiCredit(userId, guard.session.user.role);", "runWatchlist(row.id).catch(() => {});\n const credit = await consumeAiCredit(userId, guard.session.user.role);")],
+            ["a second, ungated call site", GOOD_SKIP.replace("return NextResponse.json({ watchlist: row });", "runWatchlist(row.id).catch(() => {});\n return NextResponse.json({ watchlist: row });")],
+            ["credit taken but never bound", GOOD_SKIP.replace("const credit = await consumeAiCredit(userId, guard.session.user.role);", "await consumeAiCredit(userId, guard.session.user.role);").replace("if (credit.ok) {", "if (true) {")],
+            ["gate removed entirely", GOOD_SKIP.replace(/const credit = await consumeAiCredit[^\n]*\n/, "").replace("if (credit.ok) {", "if (true) {")],
+        ];
+        if (quotaWiringViolation(GOOD_SKIP, SKIP_SPEC) !== null) {
+            fail("the skip-shape check rejects a CORRECTLY wired handler", quotaWiringViolation(GOOD_SKIP, SKIP_SPEC));
+        } else {
+            const missedSkip = SKIP_MUTANTS.filter(([, src]) => quotaWiringViolation(src, SKIP_SPEC) === null).map(([n]) => n);
+            if (missedSkip.length > 0) fail(`the skip-shape check has no teeth against: ${missedSkip.join("; ")}`);
+            else pass(`skip-shape check has teeth: accepts the correct shape, rejects all ${SKIP_MUTANTS.length} regression shapes`);
         }
 
         // ── 11. …and behaviourally on the routes reachable without a fixture ─
@@ -609,7 +756,11 @@ async function main() {
         if (unproven.length > 0) {
             fail(`QUOTA_ROUTES marks ${unproven.join(", ")} as behaviourally covered, but no drive exists for it`);
         } else {
-            pass(`${claimed.length} of 7 routes are covered behaviourally; the other 2 are structural-only by declaration`);
+            pass(
+                `${claimed.length} of ${QUOTA_ROUTES.length} routes are covered behaviourally; the other ` +
+                `${QUOTA_ROUTES.length - claimed.length} are structural-only by declaration ` +
+                `(watchlists is driven in watchlist-create-quota-smoke.ts)`,
+            );
         }
     } finally {
         delete process.env.CREW_AI_DAILY_LIMIT;

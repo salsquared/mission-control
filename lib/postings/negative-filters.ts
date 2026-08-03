@@ -6,6 +6,11 @@
 // `${title}\n${snippet}\n${location}`. Invalid regexes are silently skipped
 // so a bad pattern can't break the bell feed.
 //
+// Patterns whose SHAPE can backtrack catastrophically are skipped the same
+// way — see `compilePattern`. That check is at the read boundary on purpose:
+// this module is the only chokepoint the three compile sites share, and
+// neither negative-filter read path passes through a Zod schema.
+//
 // Plain-keyword patterns (text containing no regex metacharacters) are
 // auto-wrapped in `\b…\b` word boundaries so "armed" matches the word
 // "armed" but NOT the inside of "unarmed". Patterns that contain any of
@@ -13,15 +18,50 @@
 // compiled verbatim — so escape hatches like `\bjr\b` or `senior.*` still
 // work.
 
+import { regexShapeRisk } from "@/lib/schemas/regex-guard";
+
 // Compile-once cache keyed by the raw JSON string. Bounded in practice by the
 // number of distinct filter strings observed, which equals the number of
 // distinct watchlist configurations.
+//
+// Zero-dependency import only: this module is deliberately client-safe (see the
+// note on `normalizeNegativeFilterForDedup`), so it pulls the shape scan from
+// lib/schemas/regex-guard.ts — which imports nothing, not even zod — rather
+// than from lib/schemas/watchlists.ts.
 const regexCache = new Map<string, RegExp[]>();
 
 const HAS_REGEX_METACHAR = /[.*+?()[\]{}^$|\\/]/;
 const HAS_WORD_CHAR = /\w/;
 
 function compilePattern(p: string): RegExp | null {
+    // ReDoS bound at the READ boundary (2026-08-02). The write paths
+    // (WatchlistPatchSchema.negativeFilters, SettingsPostSchema.negativeFilters)
+    // now refuse catastrophic shapes, but that buys NOTHING here: unlike
+    // `linkPattern` — whose read path runs through
+    // `hydrateWatchlistConfig` → `WatchlistConfigSchema.parse` and so inherits
+    // its schema for free — neither negative-filter read path touches Zod at
+    // all. `lib/repositories/settings.ts:parseNegativeFilters` is a hand-rolled
+    // JSON.parse + typeof filter, and `compileNegativeFilters` below is handed
+    // the raw `Watchlist.negativeFilters` column string. So a row written
+    // before the bound existed, restored from a backup, or hand-edited in
+    // SQLite reaches `new RegExp` with nothing in between — and this function
+    // is the only chokepoint all three compile sites share
+    // (app/api/postings/route.ts, scheduler/jobs/job-watcher.ts,
+    // scheduler/jobs/posting-digest.ts).
+    //
+    // Skipping matches this function's existing contract for a bad pattern —
+    // return null, drop the filter, never break the feed — but it warns,
+    // because a stored catastrophic pattern is a fact an operator wants to see
+    // rather than a routine typo. Compiles are cached by the caller, so this
+    // cannot spam the log ring buffer.
+    const risk = regexShapeRisk(p);
+    if (risk) {
+        console.warn(
+            `[negative-filters] skipping stored pattern ${JSON.stringify(p)} — ${risk}. ` +
+            `It is not applied to any posting. Edit it in Settings or on the watchlist to clear this.`,
+        );
+        return null;
+    }
     try {
         const isPlainKeyword = HAS_WORD_CHAR.test(p) && !HAS_REGEX_METACHAR.test(p);
         const source = isPlainKeyword ? `\\b${p}\\b` : p;

@@ -13,7 +13,7 @@
 
   <h4 class="kicker">mission-control</h4>
   <h1>API Reference</h1>
-  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-08-02 · 69/69 routes documented.</p>
+  <p class="subtitle"><strong>Generated — do not edit by hand.</strong> Run <code>npm run gen:api-docs</code> to regenerate from <code>app/api/**/route.ts</code>. Structural facts (methods, auth, cache, request schema) are read from the code; the one-line purpose + external-service list come from each route's <code>export const apiMeta</code> (see <code>lib/api-docs/meta.ts</code>). Generated 2026-08-03 · 69/69 routes documented.</p>
 
   <details class="section no-count toc" open>
     <summary><h3>Contents</h3></summary>
@@ -1043,9 +1043,9 @@
 
 <div class="api-route" id="/api/watchlists">
   <div class="api-route-head"><span class="api-method get">GET</span><span class="api-method post">POST</span><code class="api-path">/api/watchlists</code></div>
-  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Job-board fetchers (varies)</span></div>
-  <p class="api-purpose">Lists and creates saved job-search watchlists; creation kicks off the first crawl in the background.</p>
-  <p class="api-notes">POST fire-and-forgets runWatchlist for the new row; mutations broadcast { model: 'Watchlist' }.</p>
+  <div class="api-chips"><span class="api-chip auth">requireSession</span><span class="api-chip ext">Job-board fetchers (varies)</span><span class="api-chip ext">Google Gemini (via the initial crawl)</span></div>
+  <p class="api-purpose">Lists and creates saved job-search watchlists; creation kicks off the first crawl in the background unless the caller is out of daily AI credit.</p>
+  <p class="api-notes">POST fire-and-forgets runWatchlist for the new row, but only after consumeAiCredit grants — that crawl classifies employment types through Gemini. Over quota the row is still created and the crawl is skipped (the scheduler picks it up on its normal cadence); the 200 reports which happened via `initialCrawl`. Mutations broadcast { model: 'Watchlist' }.</p>
   <p class="api-schema-label">GET body — <code>WatchlistTrackSchema</code></p><pre><code class="language-json">{
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "type": "string",
@@ -1078,7 +1078,8 @@
             "linkPattern": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 200
+              "maxLength": 200,
+              "description": "Regular-expression source matched against each resolved &lt;a href&gt;. Rejected when it does not compile, uses a backreference, or has a catastrophic-backtracking shape (a repeated group that itself repeats or alternates, e.g. `(a+)+`)."
             },
             "companyName": {
               "type": "string",
@@ -1462,7 +1463,8 @@
             "linkPattern": {
               "type": "string",
               "minLength": 1,
-              "maxLength": 200
+              "maxLength": 200,
+              "description": "Regular-expression source matched against each resolved &lt;a href&gt;. Rejected when it does not compile, uses a backreference, or has a catastrophic-backtracking shape (a repeated group that itself repeats or alternates, e.g. `(a+)+`)."
             },
             "companyName": {
               "type": "string",
@@ -1779,7 +1781,8 @@
       "items": {
         "type": "string",
         "minLength": 1,
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Plain keyword or regex source, matched case-insensitively against title+snippet+location. Rejected when it has a catastrophic-backtracking shape (a repeated group that itself repeats or alternates, e.g. `(a+)+`) or uses a backreference. A pattern that simply does not compile is accepted and silently skipped at match time."
       }
     },
     "notificationMode": {
@@ -3133,7 +3136,8 @@
       "type": "array",
       "items": {
         "type": "string",
-        "maxLength": 200
+        "maxLength": 200,
+        "description": "Plain keyword or regex source, matched case-insensitively against title+snippet+location of every posting. Rejected when it has a catastrophic-backtracking shape (a repeated group that itself repeats or alternates, e.g. `(a+)+`) or uses a backreference. A pattern that simply does not compile is accepted and silently skipped at match time."
       }
     },
     "hiddenWatchlistIds": {

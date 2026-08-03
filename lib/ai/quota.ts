@@ -55,6 +55,27 @@
 // The owner is EXEMPT and never touches the table at all — no read, no write,
 // no row. `used: 0 / limit: Infinity` on that path means "not metered", not
 // "has made zero requests".
+//
+// EIGHT ROUTES ARE WIRED (was seven; `POST /api/watchlists` joined on
+// 2026-08-02). Seven of them refuse by RETURNING `aiQuotaExceededResponse` —
+// the request fails. The eighth is deliberately different and is the only one
+// allowed to be: on `POST /api/watchlists` the LLM work is a fire-and-forget
+// SIDE EFFECT (the initial `runWatchlist` crawl, which classifies employment
+// types through Gemini), not the request itself. A denial there creates the
+// watchlist anyway and skips only the crawl — the expensive half is still
+// refused, the scheduler crawls the row on its normal cadence, and the 200
+// reports which happened via an `initialCrawl` field so it is not silently
+// doing less than it says. Failing that whole POST would instead discard work
+// the caller already did (naming, config, dedup) over a side effect, and lock a
+// crew member out of creating ANY watchlist for the rest of the UTC day.
+//
+// That exception is COUNT-PINNED, not open: `scripts/tests/hermetic/ai-quota-smoke.ts`
+// carries a `refusal` field per route and asserts exactly one skip-shaped
+// route exists, plus — for that shape — that the Gemini-bearing call is
+// reachable ONLY under `credit.ok` and appears exactly once. Before adding a
+// second, read that manifest: "returns a 429" is the default for a reason, and
+// a skip is only correct when the request has independent value without the
+// LLM work.
 
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
