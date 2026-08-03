@@ -33,6 +33,7 @@
  */
 import { unlinkSync } from "node:fs";
 import { probePostingLiveness, PROBE_PROFILES, type LivenessResult } from "@/lib/postings/liveness";
+import { __setUrlGuardResolver } from "@/lib/security/url-guard";
 
 // Probes record their verdict to the fetcher-health store. Point it at a
 // throwaway file BEFORE the first probe so the pre-push gate never writes
@@ -41,6 +42,14 @@ const TMP_HEALTH_DB = `/tmp/clearcompany-liveness-smoke-health-${process.pid}-${
 process.env.FETCHER_HEALTH_PATH = TMP_HEALTH_DB;
 delete process.env.MC_LIVENESS_BYPASS;  // must exercise the REAL probe logic
 delete process.env.MC_SCHEDULER_TIER;   // deterministic: web-process semantics
+
+// Since 2026-08-02 the SSRF guard RESOLVES every hostname before allowing a
+// fetch (lib/security/url-guard.ts layer 2), and this suite probes the real
+// careers-api.clearcompany.com host. Stub the resolver so the suite stays
+// hermetic — scripts/tests/hermetic/ must never depend on live DNS, or the
+// pre-push gate stops working offline. Literal IP checks run BEFORE the
+// resolver, so private-address assertions are unaffected.
+__setUrlGuardResolver(() => [{ address: "93.184.216.34", family: 4 }]);
 
 let passes = 0;
 let fails = 0;

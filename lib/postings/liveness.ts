@@ -19,7 +19,7 @@
  */
 import { loggedFetch, hostOf } from "@/lib/external-fetch";
 import { recordFetchOutcome } from "@/lib/fetcher-health/store";
-import { assertExternalHttpUrl, assertSafeResponseUrl, UnsafeURLError } from "@/lib/security/url-guard";
+import { assertExternalHttpUrlAsync, assertSafeResponseUrlAsync, UnsafeURLError } from "@/lib/security/url-guard";
 import type { WATCHLIST_KINDS } from "@/lib/schemas/watchlists";
 
 /**
@@ -541,7 +541,7 @@ const MAX_REDIRECT_HOPS = 5;
  * P3.1b — SSRF-safe redirect follower. `redirect: "follow"` only let us
  * validate the FINAL URL after the fact: an intermediate hop through an
  * internal host (SSRF via open redirect on the source) had already been
- * fetched by the time `assertSafeResponseUrl` ran. This fetches with
+ * fetched by the time `assertSafeResponseUrlAsync` ran. This fetches with
  * `redirect: "manual"`, resolves each Location against the current URL, and
  * runs the URL guard on EVERY hop target before following it.
  *
@@ -584,7 +584,7 @@ async function fetchWithGuardedRedirects(
             return "unknown";
         }
         try {
-            assertExternalHttpUrl(next.toString());
+            await assertExternalHttpUrlAsync(next.toString());
         } catch (e) {
             if (e instanceof UnsafeURLError) {
                 console.warn(`[liveness] unsafe redirect target from ${current}: ${e.message}`);
@@ -653,7 +653,7 @@ async function probeViaHttpStatus(
     notFoundCheck?: (nf: { status: number; bodyLower: string }) => LivenessResult,
 ): Promise<LivenessResult> {
     try {
-        assertExternalHttpUrl(url);
+        await assertExternalHttpUrlAsync(url);
     } catch (e) {
         if (e instanceof UnsafeURLError) return "unknown";
         throw e;
@@ -686,7 +686,7 @@ async function probeViaHttpStatus(
             // `res.url` beyond what we requested — refuse to conclude from an
             // internal target either way.
             try {
-                assertSafeResponseUrl(res);
+                await assertSafeResponseUrlAsync(res);
             } catch (e) {
                 if (e instanceof UnsafeURLError) {
                     console.warn(`[liveness] unsafe redirect target from ${url}: ${e.message}`);

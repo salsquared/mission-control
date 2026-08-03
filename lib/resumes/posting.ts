@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import { chatJSON } from "@/lib/ai/gemini";
 import { loadPrompt } from "@/lib/ai/prompts";
-import { assertExternalHttpUrl, assertSafeResponseUrl } from "@/lib/security/url-guard";
+import { assertExternalHttpUrlAsync, assertSafeResponseUrlAsync } from "@/lib/security/url-guard";
 
 // Test seam: parsePosting accepts an injectable chat function so hermetic
 // smokes can count LLM calls (and assert the cache below actually elides
@@ -268,7 +268,7 @@ export function extractPostingTextFromHtml(html: string): string {
 }
 
 async function fetchVisibleText(url: string): Promise<string> {
-    assertExternalHttpUrl(url);
+    await assertExternalHttpUrlAsync(url);
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 8_000);
     let res: Response;
@@ -286,7 +286,7 @@ async function fetchVisibleText(url: string): Promise<string> {
     }
     if (!res.ok) throw new Error(`Fetch failed: ${res.status} ${res.statusText}`);
     // Re-check in case the redirect chain landed on an internal target.
-    assertSafeResponseUrl(res);
+    await assertSafeResponseUrlAsync(res);
     const html = await res.text();
     // DOM text when present; embedded posting JSON as the SPA fallback.
     return extractPostingTextFromHtml(html);

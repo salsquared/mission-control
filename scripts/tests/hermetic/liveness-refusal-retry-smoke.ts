@@ -59,6 +59,7 @@ import {
     type ProbeInput,
     type WatchlistKind,
 } from "@/lib/postings/liveness";
+import { __setUrlGuardResolver } from "@/lib/security/url-guard";
 
 // Probes record their verdict to the fetcher-health store. Point it at a
 // throwaway file BEFORE the first probe so the pre-push gate never writes
@@ -67,6 +68,14 @@ const TMP_HEALTH_DB = `/tmp/liveness-refusal-retry-smoke-health-${process.pid}-$
 process.env.FETCHER_HEALTH_PATH = TMP_HEALTH_DB;
 delete process.env.MC_LIVENESS_BYPASS;  // must exercise the REAL probe logic
 delete process.env.MC_SCHEDULER_TIER;   // deterministic: web-process semantics
+
+// Since 2026-08-02 the SSRF guard RESOLVES every hostname before allowing a
+// fetch (lib/security/url-guard.ts layer 2), and this suite's fixtures are real
+// third-party hostnames (*.myworkdayjobs.com, job-boards.greenhouse.io). Stub
+// the resolver so the suite stays hermetic — scripts/tests/hermetic/ must never
+// depend on live DNS, or the pre-push gate stops working offline. Literal IP
+// checks run BEFORE the resolver, so private-address assertions are unaffected.
+__setUrlGuardResolver(() => [{ address: "93.184.216.34", family: 4 }]);
 
 /**
  * The real backoff is 300ms→600ms jittered. This file drives the retry path

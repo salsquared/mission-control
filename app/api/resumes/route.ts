@@ -692,7 +692,7 @@ export async function POST(req: NextRequest) {
             }
             // Rewrite the parsed body to feed the parse step a URL it already
             // knows is safe (cuid was validated by zod, sourceUrl is whatever
-            // the watchlist fetcher persisted — assertExternalHttpUrl in
+            // the watchlist fetcher persisted — assertExternalHttpUrlAsync in
             // parsePosting still gates SSRF).
             parsed.data.posting.url = sourceUrl;
             autoLinkApplicationId = application.id;

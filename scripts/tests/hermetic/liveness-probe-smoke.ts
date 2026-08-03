@@ -41,6 +41,16 @@ import {
     type ProbeInput,
     type WatchlistKind,
 } from "@/lib/postings/liveness";
+import { __setUrlGuardResolver } from "@/lib/security/url-guard";
+
+// Since 2026-08-02 the SSRF guard RESOLVES every hostname before allowing a
+// fetch (lib/security/url-guard.ts layer 2), and this suite's fixtures are real
+// third-party hostnames (www.linkedin.com, job-boards.greenhouse.io,
+// *.myworkdayjobs.com, …). Stub the resolver so the suite stays hermetic —
+// scripts/tests/hermetic/ must never depend on live DNS, or the pre-push gate
+// stops working offline. Literal IP checks run BEFORE the resolver, so the
+// redirect-to-127.0.0.1 / RFC1918 assertions below are unaffected by the stub.
+__setUrlGuardResolver(() => [{ address: "93.184.216.34", family: 4 }]);
 
 // A soft (403) refusal is retried with a 300ms→600ms jittered backoff before
 // probeBatch hears about it. Several tests below drive that path repeatedly;

@@ -10,7 +10,7 @@
 import * as cheerio from "cheerio";
 import type { CareersPageConfigSchema } from "@/lib/schemas/watchlists";
 import { z } from "zod";
-import { assertExternalHttpUrl, assertSafeResponseUrl, UnsafeURLError } from "@/lib/security/url-guard";
+import { assertExternalHttpUrlAsync, assertSafeResponseUrlAsync, UnsafeURLError } from "@/lib/security/url-guard";
 import { inferEmploymentTypeFromTitle } from "./employment-type";
 import { loggedFetch, hostOf } from "@/lib/external-fetch";
 import { recordFetchOutcome } from "@/lib/fetcher-health/store";
@@ -60,7 +60,7 @@ function tryResolveURL(href: string, base: string): string | null {
 
 export async function fetchCareersPage(config: CareersPageConfig): Promise<FetcherResult> {
     try {
-        assertExternalHttpUrl(config.rootUrl);
+        await assertExternalHttpUrlAsync(config.rootUrl);
     } catch (e) {
         if (e instanceof UnsafeURLError) return { ok: false, error: e.message };
         throw e;
@@ -95,7 +95,7 @@ export async function fetchCareersPage(config: CareersPageConfig): Promise<Fetch
         }
         // If redirects landed on an internal target, refuse.
         try {
-            assertSafeResponseUrl(res);
+            await assertSafeResponseUrlAsync(res);
         } catch (e) {
             if (e instanceof UnsafeURLError) {
                 recordFetchOutcome(hostOf(config.rootUrl), "error");

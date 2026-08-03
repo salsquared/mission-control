@@ -54,6 +54,7 @@
  */
 import { PrismaClient } from "@prisma/client";
 import { createHash, randomBytes } from "crypto";
+import { __setUrlGuardResolver } from "@/lib/security/url-guard";
 
 // Real probes must run (through the fetch stub) — never the bypass.
 delete process.env.MC_LIVENESS_BYPASS;
@@ -66,6 +67,19 @@ import {
     MIN_PENDING_CLOSED_AGE_MS,
     MAX_PENDING_CLOSED_AGE_MS,
 } from "@/scheduler/jobs/job-watcher";
+
+// Since 2026-08-02 the SSRF guard RESOLVES every hostname before allowing a
+// fetch (lib/security/url-guard.ts layer 2). The `*.example.invalid` fixtures
+// are carved out of that (IANA-reserved, can never be a real host), but the
+// www.linkedin.com sourceUrls are not. Stub the resolver so the suite stays
+// hermetic — scripts/tests/hermetic/ must never depend on live DNS.
+//
+// Placed AFTER every import on purpose. The guard reads its resolver lazily, so
+// this works either way today, but `tsx` emits CJS and runs statements in source
+// order while a move to `"type": "module"` would hoist all imports above any
+// statement between them. Keeping it below the imports means the ordering is
+// the same under both.
+__setUrlGuardResolver(() => [{ address: "93.184.216.34", family: 4 }]);
 
 const prisma = new PrismaClient();
 
