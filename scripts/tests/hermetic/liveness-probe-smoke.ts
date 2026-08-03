@@ -17,6 +17,14 @@
  *   - probeBatch respects maxPerTick (overflow → unknown).
  *   - probeBatch respects concurrency (no more than N in flight at once).
  *   - probeBatch honors perHitDelayMs between same-host hits.
+ *   - A refusal aborts the batch — a hard one (429/5xx) on sight, a soft one
+ *     (403) after SOFT_REFUSAL_ABORT_AFTER consecutive probes.
+ *
+ * The SOFT-refusal retry itself — a sporadic 403 recovering to a real verdict
+ * without aborting the batch or advancing the CXS breaker, and the request-
+ * volume ceiling that keeps a deterministic refuser cheap — lives in
+ * scripts/tests/hermetic/liveness-refusal-retry-smoke.ts. Only the "still
+ * aborts" half is asserted here, next to its 429 sibling.
  *
  *   DATABASE_URL="file:./dev.db" npx tsx scripts/tests/hermetic/liveness-probe-smoke.ts
  *
@@ -28,10 +36,17 @@ import {
     probeBatch,
     PROBE_PROFILES,
     _resetWorkdayCxsBreakerForTests,
+    _setSoftRefusalBackoffForTests,
     type LivenessResult,
     type ProbeInput,
     type WatchlistKind,
 } from "@/lib/postings/liveness";
+
+// A soft (403) refusal is retried with a 300ms→600ms jittered backoff before
+// probeBatch hears about it. Several tests below drive that path repeatedly;
+// at the real backoff they'd add ~10s to the pre-push gate for no extra signal
+// (nothing here asserts on timing — only request counts and verdicts).
+_setSoftRefusalBackoffForTests(2);
 
 // Probes now record their outcome to the fetcher-health store (classified by
 // VERDICT — see recordProbeOutcome in lib/postings/liveness.ts). Point that
@@ -775,24 +790,31 @@ async function testBatch403AbortsSerial() {
     // 5,558 failed Workday probes, i.e. we kept hammering a source that was
     // already refusing us, which got the shared IP blocked hard enough to
     // stall Axiom Space's actual CRAWL for 15 days.
+    //
+    // 2026-08-02: the abort survives, but a 403 is now a SOFT refusal — it is
+    // retried, and it takes SOFT_REFUSAL_ABORT_AFTER (3) consecutive refused
+    // probes to stop the tick, because ONE sporadic 403 killing 59 of 60 probes
+    // was its own outage (see the Blue Origin measurement in liveness.ts). So
+    // this fixture refuses EVERYTHING — the deterministic-tenant case, which is
+    // the one that must still abort. The sporadic case is covered end-to-end in
+    // scripts/tests/hermetic/liveness-refusal-retry-smoke.ts.
     const kind: WatchlistKind = "linkedin"; // serial mode → exact fetch count
-    const inputs: ProbeInput[] = Array.from({ length: 5 }, (_, i) => ({
+    const inputs: ProbeInput[] = Array.from({ length: 10 }, (_, i) => ({
         externalId: `e${i}`,
         sourceUrl: `https://www.linkedin.com/jobs/view/test-403-${i}`,
     }));
-    let serveCount = 0;
     const stub = installFetchMock([{
         matches: () => true,
-        respond: () => {
-            const i = serveCount++;
-            return i === 0 ? respondStatus(403) : respondStatus(404);
-        },
+        respond: () => respondStatus(403),
     }]);
     const results = await probeBatch(inputs, kind, { profile: { perHitDelayMs: 10 } });
-    if (stub.callCount() === 1) {
-        pass("probeBatch 403-abort (serial): 1 fetch only — remaining probes short-circuited");
+    // 3 refused probes × 3 attempts (1 + SOFT_REFUSAL_MAX_RETRIES) = 9 fetches,
+    // then the batch stops. The number that matters is that it is BOUNDED and
+    // far below the 10 inputs (which at 3 attempts each would be 30).
+    if (stub.callCount() === 9) {
+        pass("probeBatch 403-abort (serial): persistent 403 → 9 fetches (3 probes × 3 attempts), then abort");
     } else {
-        fail(`probeBatch 403-abort (serial): expected 1 fetch, got ${stub.callCount()}`);
+        fail(`probeBatch 403-abort (serial): expected 9 fetches, got ${stub.callCount()}`);
     }
     // Critical: a refusal must never be read as closure evidence, or every
     // throttled posting mass-false-closes.
@@ -888,18 +910,23 @@ async function testWorkdayCxsBreakerTripsAndSkips() {
             : respond200(`<html><body><div id="root"></div></body></html>`),
     }]);
 
-    // Trip the breaker: WORKDAY_CXS_TRIP_AFTER (3) consecutive refusals.
+    // Trip the breaker: WORKDAY_CXS_TRIP_AFTER (3) consecutive refusals. Since
+    // 2026-08-02 each of those costs 3 requests, not 1 — a 403 is retried twice
+    // before it counts as a refusal at all, which is what stops Blue Origin's
+    // sporadic 403 from parking a healthy tenant for six hours.
     for (let i = 0; i < 3; i++) {
         await probePostingLiveness({ externalId: `e${i}`, sourceUrl: src(i) }, "workday");
     }
     const afterTrip = stub.callCount();
 
     // A refusal must NOT be followed by an HTML fallback to the same host:
-    // 3 probes → exactly 3 requests, not 6.
-    if (afterTrip === 3) {
-        pass("workday CXS breaker: refusal skips the same-host HTML fallback (3 probes → 3 requests)");
+    // 3 probes × 3 attempts → exactly 9 requests, not 18. (The retries are all
+    // on the CXS URL; a fallback would double this and hit the same host.)
+    const cxsHits = stub.callLog().filter(c => c.url.includes("/wday/cxs/")).length;
+    if (afterTrip === 9 && cxsHits === 9) {
+        pass("workday CXS breaker: refusal skips the same-host HTML fallback (3 probes × 3 attempts → 9 CXS requests, 0 HTML)");
     } else {
-        fail(`workday CXS breaker: expected 3 requests for 3 refused probes, got ${afterTrip}`);
+        fail(`workday CXS breaker: expected 9 requests all on CXS for 3 refused probes, got ${afterTrip} total / ${cxsHits} CXS`);
     }
 
     // Breaker is now open — further probes must issue ZERO network calls.
