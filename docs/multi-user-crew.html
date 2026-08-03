@@ -21,6 +21,7 @@
       <li><a href="#context">Context &amp; problem</a></li>
       <li><a href="#design">Design</a></li>
       <li><a href="#risks">Risks &amp; rollback</a></li>
+      <li><a href="#post-ship">Post-ship notes (2026-08-03)</a></li>
       <li><a href="#open-questions">Open Questions</a></li>
       <li><a href="#tasks">Tasks</a></li>
     </ol>
@@ -590,6 +591,177 @@ export async function consumeAiCredit(userId: string, role: Role): Promise&lt;{ 
         <li><strong>Migration-down, only if genuinely wanted.</strong> <code>ALTER TABLE User DROP COLUMN role</code> and drop <code>AiUsage</code>. Not needed for rollback; listed for completeness.</li>
       </ol>
       <p>Before any of it: <code>scripts/backup-db.sh</code> for a pre-migration snapshot of both <code>prod.db</code> and <code>data/resumes/</code>. The full fresh-machine recovery path is in <code>docs/backup-recovery.md</code>.</p>
+    </div>
+  </details>
+
+  <details class="section" open>
+    <summary><h2 id="post-ship">Post-ship notes (2026-08-03)</h2></summary>
+    <div class="section-body">
+
+      <div class="callout tip">
+        <strong>Why this section exists.</strong> All 90 tasks above are ticked and the build is done. This
+        records what was learned <em>after</em> shipping — reconciled code-first on 2026-08-03, against a tree
+        where <code>docs/next_steps.md</code> claimed six boxes were still open and this doc claimed none. This
+        doc was right. Findings are kept here rather than in Tasks because none of them is the original plan
+        being completed; they are things the plan could not have known.
+      </div>
+
+      <h3>The build is done; the validation is not</h3>
+      <p>
+        The single most important fact about multi-user today, and it reframes every other item on this page:
+      </p>
+      <table>
+        <thead><tr><th>User</th><th>Role</th><th>Watchlists</th><th>Applications</th></tr></thead>
+        <tbody>
+          <tr><td><code>salsalcedo4321@gmail.com</code></td><td>owner</td><td>48</td><td>48</td></tr>
+          <tr><td><code>chavita4321@live.com</code></td><td>crew</td><td>0</td><td>0</td></tr>
+          <tr><td><code>marioclj99@gmail.com</code></td><td>crew</td><td>0</td><td>0</td></tr>
+          <tr><td><code>ashleyrosecollab@gmail.com</code></td><td>crew</td><td>0</td><td>0</td></tr>
+          <tr><td><code>angelina21kid@gmail.com</code></td><td>crew</td><td>0</td><td>0</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Four crew accounts exist on prod and <strong>none has ever used the system</strong> — zero watchlists,
+        zero applications, and <strong>zero <code>AiUsage</code> rows on the entire tier</strong>. So
+        <code>CREW_AI_DAILY_LIMIT</code>, <code>CREW_WATCHLIST_LIMIT</code>,
+        <code>CREW_MIN_SCHEDULE_MINUTES</code> and every per-user scoping clause are hermetically tested but have
+        never been load-bearing against a real second identity. <strong>The remaining risk in this project is
+        unexercised code, not unwritten code.</strong>
+      </p>
+
+      <h3>Crew-identity integration coverage (P5.1.5) is structurally unreachable</h3>
+      <p>
+        P5.1.5 is ticked as re-scoped, and the residual gap it names — "the crew boundary can regress silently"
+        — is real. It cannot be closed at the integration layer without a new production auth seam. All three
+        candidate seams are closed to crew <em>by design</em>:
+      </p>
+      <ul>
+        <li><strong>Break-glass</strong> (<code>MC_DEV_LOOPBACK_OWNER</code>) ends at <code>ownerViewer()</code>, which returns <code>role: 'owner'</code> as a <em>literal</em>. Repointing which DB row it resolves changes <em>who</em> acts but not the role, so every <code>requireOwner</code> and every <code>if (!isOwner)</code> branch still takes the owner path. There is no DB-only trick.</li>
+        <li><strong>The identity header</strong> — <code>tryBreakGlass</code> returns null the moment <code>cf-access-authenticated-user-email</code> is non-empty, dropping to the fail-closed JWT path. Verified live against <code>:4101</code>: a request carrying a real crew address returns <strong>401</strong>, not crew. Minting a valid assertion needs Cloudflare's signing key.</li>
+        <li><strong><code>__seedViewer</code></strong> is module state in the server process; an HTTP client cannot reach it.</li>
+      </ul>
+      <div class="callout danger">
+        <strong>Do not "fix" this with a crew break-glass.</strong> The existing owner break-glass is defensible
+        partly <em>because</em> dev is owner-only (OQ12a) — it grants nothing that is not already the only
+        identity there. A crew variant destroys that argument, and the loopback check is XFF-based and
+        self-documented as forgeable by anything that can open a socket to the port. A test seam that becomes an
+        auth bypass is a worse outcome than no test.
+      </div>
+      <p>The options, with what each costs — recorded so this is not re-derived:</p>
+      <table>
+        <thead><tr><th>Option</th><th>Buys</th><th>Cost</th></tr></thead>
+        <tbody>
+          <tr><td>A. <code>MC_DEV_LOOPBACK_CREW</code></td><td>Full crew coverage</td><td>A second identity-assumption branch in <code>resolveViewer</code>. Not recommended.</td></tr>
+          <tr><td>B. Header-trust gated on <code>NODE_ENV</code></td><td>Any identity, trivially</td><td>Worst option — makes the forged-header shape <em>work</em> on one tier. One env misread from prod.</td></tr>
+          <tr><td>C. Test-only signed JWT</td><td>Real crew identity via the real path</td><td>A new trusted signer in a fail-closed module, plus key material. Verifies the JWT layer, not the crew boundary.</td></tr>
+          <tr><td>D. Test hosts its own HTTP server + <code>__seedViewer</code></td><td>Crew identity, no prod change</td><td>Doesn't exercise the real Next stack — the only reason to be at this layer. A worse <code>crew-scoping-routes-smoke</code>.</td></tr>
+          <tr><td><strong>E. Do nothing; harden hermetically</strong></td><td>—</td><td><strong>Zero. Recommended.</strong></td></tr>
+        </tbody>
+      </table>
+
+      <h3>A latent cross-user leak that nothing currently prevents</h3>
+      <p>
+        The one defect class real-HTTP testing would catch that hermetic structurally cannot is
+        <strong>cross-user cache poisoning</strong>: a crew-allowed route wrapped in <code>withCache</code>
+        without a <code>userKeyFn</code>, where a long-lived process serves user A's payload to user B.
+        Cross-referencing every cached route against its guard:
+      </p>
+      <p>
+        All cache-wrapped routes are <code>requireOwner</code> today, so the defect does not exist — and unlike
+        most "holds by accident" invariants, <strong>this one is already enforced.</strong>
+      </p>
+      <div class="callout tip">
+        <strong>Already covered — do not re-implement it.</strong> <code>role-matrix-smoke.ts</code> carries a
+        cache tripwire beside the MANIFEST, and it is stricter than the obvious version. It checks
+        <strong>three</strong> surfaces, because the leak does not care which was used: <code>withCache</code>
+        and <code>withSharedCache</code> wrap the handler, and <code>cachedValue(key, …)</code> is called
+        <em>inside</em> one with a hand-built key — that third has no hook to forget, so its rule is that a crew
+        route's key must name the viewer. It reads the <code>withCache</code>-has-<code>userKeyFn</code> /
+        <code>withSharedCache</code>-has-none asymmetry off the source rather than hardcoding it, strips comments
+        first so a <code>withCache</code> named in prose cannot read as a call, and <strong>mutation-tests
+        itself</strong> against 5 leak shapes and 5 safe ones so it fails loudly if it ever loses teeth or starts
+        over-firing. Living beside the MANIFEST is what makes it exhaustive by construction rather than a list
+        someone must remember to extend.
+      </div>
+      <p>
+        Recorded because this recommendation was independently proposed twice during the 2026-08-03 review and
+        both times the checker had not looked. The reason it is easy to miss is that the row-scoping suites
+        (<code>user-scoping-smoke</code>, <code>crew-scoping-routes-smoke</code>) all drive handlers directly,
+        i.e. <em>below</em> the cache wrapper — so the protection genuinely is absent from the place you would
+        first look for it. It is one file over.
+      </p>
+
+      <h3>Crew-reachable input hardening — three holes found, three closed</h3>
+      <p>All three were reachable by a provisioned crew member; all three are fixed as of 2026-08-03.</p>
+      <table>
+        <thead><tr><th>Hole</th><th>Reach</th><th>Resolution</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Unmetered LLM spend</strong> — <code>POST /api/watchlists</code> fire-and-forgot <code>runWatchlist</code> with no <code>consumeAiCredit</code> in the file</td>
+            <td><code>requireSession</code>, so any crew member</td>
+            <td>Metered. The 8th quota route, and the first with a <strong>skip-shaped</strong> refusal rather than a 429 — over quota the row is still created and only the crawl is skipped, reported honestly via a new <code>initialCrawl</code> field. Refusing the whole POST would discard work the caller already did and lock a crew member out of creating <em>any</em> watchlist for the rest of the UTC day.</td>
+          </tr>
+          <tr>
+            <td><strong><code>linkPattern</code> ReDoS</strong> — <code>z.string().min(1).max(200)</code> bounded length, not complexity</td>
+            <td>Compiled and <code>.test()</code>ed per <code>&lt;a href&gt;</code> in both tiers</td>
+            <td>Shape scan + compile gate at the schema boundary.</td>
+          </tr>
+          <tr>
+            <td><strong>Negative-filter ReDoS</strong> — same class, <em>larger</em> exposure</td>
+            <td>Two write paths (<code>PATCH /api/watchlists/[id]</code>, <code>/api/settings</code>), 20 and 40 patterns; compiled <em>and matched</em> inside <code>app/api/postings/route.ts</code> in a <code>.filter()</code> <strong>per posting row</strong></td>
+            <td>Same scan, applied to both schemas <em>and</em> to <code>compilePattern</code>.</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout danger">
+        <strong>The asymmetry worth remembering: a write-schema bound is not automatically enough.</strong>
+        <code>linkPattern</code> got read-path coverage free because <code>hydrateWatchlistConfig</code>
+        re-parses stored config through Zod. <strong>Neither negative-filter read path touches Zod at all</strong>
+        — <code>parseNegativeFilters</code> is a hand-rolled <code>JSON.parse</code> and
+        <code>compileNegativeFilters</code> receives the raw column. So bounding the write schemas alone still
+        let pre-existing, backup-restored and hand-edited rows reach <code>new RegExp</code>; the revert-check
+        proved it. <code>compilePattern</code> is the only chokepoint the three compile sites share.
+      </div>
+      <p>
+        <strong>Still open — the polynomial class.</strong> The exponential shapes are gone; polynomial blowup
+        (<code>.*.*.*x</code>) is not addressed. It was initially dismissed because the haystack is short, and
+        that is true — <code>title+snippet+location</code> maxes at 206 chars in prod. What makes it bite is the
+        <strong>row multiplier</strong>: <code>/api/postings</code> iterates <strong>20,504 rows</strong>, so a
+        pattern costing ~10ms once is ~3.5 minutes of blocked event loop per request. Closing it needs a match
+        budget, not a bigger scan. Note also that a shape scan reasons about <em>form</em>, not about the
+        languages the branches match — it over-rejects harmless patterns like <code>(jobs|careers)+</code> and
+        cannot see ambiguity expressed without those shapes.
+      </p>
+
+      <h3>SSRF: the guard was defeated by a DNS name rather than an IP</h3>
+      <p>
+        <code>assertExternalHttpUrl</code> blocked literal internal addresses but admitted hostnames that
+        <em>resolve</em> to them. Verified live before the fix: <code>127.0.0.1.nip.io</code> and
+        <code>localtest.me</code> were <strong>allowed</strong> while <code>127.0.0.1</code>,
+        <code>10.0.0.1</code> and <code>169.254.169.254</code> were blocked. Crew supply URLs that server-side
+        fetchers follow, so this is crew-reachable.
+      </p>
+      <p>Adversarial review found the gap was wider than reported — the pre-change guard also admitted:</p>
+      <ul>
+        <li><code>http://localhost./admin</code> — a trailing dot on a <em>name</em> survives <code>URL.hostname</code> and walks past the blocklist.</li>
+        <li><strong>Every IPv4-mapped IPv6 literal.</strong> WHATWG re-serializes <code>[::ffff:127.0.0.1]</code> to <code>[::ffff:7f00:1]</code>, so the old <code>startsWith("::ffff:")</code> branch fed <code>7f00:1</code> to a dotted-quad parser and returned false — the handling never fired on a real URL.</li>
+        <li><code>[64:ff9b::7f00:1]</code> (NAT64) and <code>[2002:7f00:1::]</code> (6to4) loopback embeddings.</li>
+      </ul>
+      <p>
+        <strong>Residual, deliberately not closed:</strong> true DNS rebinding. Resolve-then-fetch is TOCTOU —
+        <code>fetch()</code> re-resolves independently, so a ~0-TTL record can answer public to the guard and
+        loopback to undici microseconds later. Closing it needs <em>connect-time</em> enforcement (a custom
+        undici dispatcher pinning the vetted IP), which is a change at the fetch call sites, not in the guard.
+        This raises the attack cost from "register a nip.io hostname" to "run an authoritative nameserver with a
+        rebinding record" — it does not eliminate it.
+      </p>
+
+      <h3>Operational notes</h3>
+      <ul>
+        <li><strong><code>MC_DEV_LOOPBACK_OWNER</code> is disarmed</strong> on the running dev tier (<code>:4101/api/account</code> → 401). That is the correct default posture — but it means the whole integration suite is red until it is armed per <code>scripts/test-integration.sh</code>. Do not read that red as a regression.</li>
+        <li><strong>Run the gate through <code>bash scripts/pre-push.sh</code>, never a hand-rolled loop.</strong> The script exports <code>DATABASE_URL</code> <em>and</em> <code>LUNARY_PUBLIC_KEY=""</code>; without the latter, a live Lunary template fetch slips through <code>discovery-suggest-smoke</code>'s fetch mock and it fails on a count mismatch. Two separate agents independently mis-attributed that failure to their own changes.</li>
+        <li><strong>No Google disconnect exists</strong> anywhere — nothing revokes the OAuth token or deletes the <code>Account</code> row. The Internal Systems button is honestly labelled "Sign out" (which ends the Access session instead). Building a real disconnect is unstarted, and needs product calls first: what happens to the Gmail watch, and is the <code>Account</code> row deleted or just the token revoked?</li>
+      </ul>
     </div>
   </details>
 
