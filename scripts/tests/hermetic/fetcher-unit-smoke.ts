@@ -24,14 +24,27 @@ let fails = 0;
 function pass(msg: string) { console.log(`[PASS] ${msg}`); passes++; }
 function fail(msg: string, detail?: unknown) { console.error(`[FAIL] ${msg}`, detail ?? ""); fails++; }
 
+// Captured before any test patches globalThis.setTimeout, so watchdogs can
+// still schedule in real wall-clock time. See testClearCompany.
+const REAL_SET_TIMEOUT = globalThis.setTimeout;
+
 type MockSpec =
     | { kind: "json"; status?: number; body: unknown; headers?: Record<string, string> }
     | { kind: "text"; status?: number; body: string; headers?: Record<string, string> }
-    | { kind: "throw"; error: Error };
+    | { kind: "throw"; error: Error }
+    // Headers resolve normally; the BODY never completes. Emulates undici's
+    // wiring of the request signal to the response stream, so `res.json()`
+    // rejects if and only if the signal is still armed after headers. This is
+    // what distinguishes a timeout that covers the body read from one that was
+    // cleared as soon as headers arrived.
+    | { kind: "hang" };
 
 const realFetch = globalThis.fetch;
 const responseQueue: MockSpec[] = [];
 let lastRequestURL: string | null = null;
+// The `init` the fetcher passed. Needed to assert on AbortSignal wiring — see
+// the timeout case in testClearCompany.
+let lastRequestInit: RequestInit | undefined;
 
 // Single-shot semantics: clear the queue first. Tests where the fetcher
 // might early-return before calling fetch (invalid input, SSRF guard, etc.)
@@ -42,11 +55,28 @@ function mockNext(spec: MockSpec) { responseQueue.length = 0; responseQueue.push
 function mockSequence(specs: MockSpec[]) { responseQueue.length = 0; responseQueue.push(...specs); }
 function resetMocks() { responseQueue.length = 0; }
 
-globalThis.fetch = (async (input: RequestInfo | URL) => {
+globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     lastRequestURL = typeof input === "string" ? input : input.toString();
+    lastRequestInit = init;
     const spec = responseQueue.shift();
     if (!spec) throw new Error(`Unexpected fetch (no mock set) to ${lastRequestURL}`);
     if (spec.kind === "throw") throw spec.error;
+    if (spec.kind === "hang") {
+        const signal = init?.signal;
+        // A body stream that never enqueues. It errors only when the request
+        // signal aborts — exactly undici's behaviour. With no signal (or one
+        // already cleared by the caller) it stays pending forever, which the
+        // caller's watchdog turns into a clean failure.
+        const body = new ReadableStream({
+            start(controller) {
+                if (!signal) return;
+                const onAbort = () => controller.error(new Error("This operation was aborted"));
+                if (signal.aborted) onAbort();
+                else signal.addEventListener("abort", onAbort, { once: true });
+            },
+        });
+        return new Response(body, { status: 200, headers: { "content-type": "application/json" } }) as unknown as Response;
+    }
     const status = spec.status ?? 200;
     const body = spec.kind === "json" ? JSON.stringify(spec.body) : spec.body;
     return new Response(body, {
@@ -699,7 +729,58 @@ async function testPersonio() {
 
 // ─── ClearCompany ───────────────────────────────────────────────────────
 
+/**
+ * ClearCompany paginates UNCONDITIONALLY as of 2026-08-02. Firefly's board is
+ * 181 postings and the old unpaginated response was 1,351,175 bytes, which did
+ * not reliably complete — `Watchlist.lastError` in prod read
+ * `Fetch failed: terminated`. Worse, the old code's paginated fallback was
+ * unreachable in exactly that case: the one-shot fetch `return`ed on failure
+ * before the fallback loop was entered. These cases pin the new shape:
+ * every page (including page 0) goes through identical retry + failure
+ * handling, a truncated first page can never yield a partial-but-successful
+ * result, and an incomplete crawl is flagged `partial` so job-watcher's
+ * SAFETY 2 skips close-detection.
+ */
+function ccPage(rows: number, totalCount: number, idPrefix: string, pageIndex = 0) {
+    return {
+        kind: "json" as const,
+        body: {
+            results: Array.from({ length: rows }, (_, i) => ({
+                id: `${idPrefix}-${i}`,
+                positionTitle: `Job ${idPrefix}-${i}`,
+                applyLink: `https://x.com/${idPrefix}-${i}`,
+            })),
+            currentPageIndex: pageIndex,
+            currentPageCount: rows,
+            totalCount,
+        },
+    };
+}
+
 async function testClearCompany() {
+    // The fetcher paces itself (PAGE_DELAY_MS between pages, RETRY_DELAY_MS
+    // before a retry) because probeClearCompany shares its host. Honoured
+    // literally, these cases cost ~8s of pure sleeping. Collapse the clock for
+    // the duration instead of adding an env-var seam to production: an env
+    // knob like MC_PAGE_DELAY_MS=0 could silently defeat politeness in a real
+    // .env, whereas this patch has a blast radius of one function.
+    //
+    // Delays still elapse (real setTimeout, 0ms) so async ordering is
+    // unchanged. AbortSignal.timeout does NOT route through globalThis
+    // .setTimeout — it uses an internal timer — so the fetch-timeout path is
+    // untouched by this. That asymmetry is load-bearing for the timeout case
+    // below.
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((fn: (...a: never[]) => void, _ms?: number, ...args: never[]) =>
+        realSetTimeout(fn, 0, ...args)) as unknown as typeof globalThis.setTimeout;
+    try {
+        await clearCompanyCases();
+    } finally {
+        globalThis.setTimeout = realSetTimeout;
+    }
+}
+
+async function clearCompanyCases() {
     // Happy single-page (totalCount matches results length so the loop exits).
     mockNext({ kind: "json", body: {
         results: [
@@ -715,21 +796,32 @@ async function testClearCompany() {
     else if (r.postings[1].location !== "Austin, TX, US") fail(`clearcompany: structured fallback (${r.postings[1].location})`);
     else if (r.postings[1].employmentType !== "internship") fail(`clearcompany: title-inferred internship (${r.postings[1].employmentType})`);
     else if (!r.postings[1].snippet?.includes("Remote")) fail(`clearcompany: remote tag in snippet (${r.postings[1].snippet})`);
+    else if (r.partial) fail("clearcompany happy: a drained board must not be flagged partial");
     else pass("clearcompany happy: 2 postings, locations + type derived");
 
-    // Pagination — single-shot returned partial (count < total), fetcher should
-    // pull additional pages until total is reached.
+    // Even a single-page board is requested WITH pagination params — page 0 is
+    // inside the loop, not a special unparameterized pre-flight.
+    if (lastRequestURL && lastRequestURL.includes("?pageIndex=0&pageSize=50")) {
+        pass("clearcompany: page 0 is a paginated request (no unpaginated one-shot)");
+    } else {
+        fail(`clearcompany: page 0 should carry pageIndex/pageSize (${lastRequestURL})`);
+    }
+
+    // Pagination — drains across pages and stops on totalCount.
     resetMocks();
     mockSequence([
-        // pageIndex=0 (implicit) — returns 1 of 3
+        // pageIndex=0 — returns 1 of 3
         { kind: "json", body: {
             results: [{ id: "p0", positionTitle: "Job 0", applyLink: "https://x.com/0" }],
             currentPageIndex: 0, currentPageCount: 1, totalCount: 3,
         } },
-        // pageIndex=1 — returns 1 more
+        // pageIndex=1 — returns 1 more, plus a repeat of p0 to exercise dedup
         { kind: "json", body: {
-            results: [{ id: "p1", positionTitle: "Job 1", applyLink: "https://x.com/1" }],
-            currentPageIndex: 1, currentPageCount: 1, totalCount: 3,
+            results: [
+                { id: "p0", positionTitle: "Job 0", applyLink: "https://x.com/0" },
+                { id: "p1", positionTitle: "Job 1", applyLink: "https://x.com/1" },
+            ],
+            currentPageIndex: 1, currentPageCount: 2, totalCount: 3,
         } },
         // pageIndex=2 — returns last 1
         { kind: "json", body: {
@@ -739,7 +831,8 @@ async function testClearCompany() {
     ]);
     const r2 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "site-uuid-here-needs-20", companyName: "X" });
     if (!r2.ok) fail("clearcompany paginated: not ok", r2);
-    else if (r2.postings.length !== 3) fail(`clearcompany paginated: expected 3, got ${r2.postings.length}`);
+    else if (r2.postings.length !== 3) fail(`clearcompany paginated: expected 3 (cross-page dup collapses), got ${r2.postings.length}`);
+    else if (r2.partial) fail("clearcompany paginated: totalCount reached = drained, must not be partial");
     else pass("clearcompany paginated: drains across pages, dedups by id");
 
     // Empty board
@@ -768,6 +861,252 @@ async function testClearCompany() {
     if (!r5.ok) fail("clearcompany filter: not ok", r5);
     else if (r5.postings.length !== 1) fail(`clearcompany filter: expected 1 (apply-link required), got ${r5.postings.length}`);
     else pass("clearcompany: postings without applyLink are dropped");
+
+    // ── Firefly-shaped drain: the regression test for the real bug ──────────
+    // 50 + 50 + 50 + 31 = 181 = totalCount, exactly as measured live on
+    // 2026-08-02. Four ~380 KB pages instead of one 1,351,175-byte response.
+    resetMocks();
+    mockSequence([
+        ccPage(50, 181, "a", 0),
+        ccPage(50, 181, "b", 1),
+        ccPage(50, 181, "c", 2),
+        ccPage(31, 181, "d", 3),
+    ]);
+    const r6 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "00ed92c3-5bfb-7bfb-456d-4d9d77fef9a5", companyName: "Firefly" });
+    if (!r6.ok) fail("clearcompany firefly-shape: not ok", r6);
+    else if (r6.postings.length !== 181) fail(`clearcompany firefly-shape: expected 181, got ${r6.postings.length}`);
+    else if (r6.partial) fail("clearcompany firefly-shape: full drain must not be partial");
+    else if (responseQueue.length !== 0) fail(`clearcompany firefly-shape: should consume exactly 4 pages, ${responseQueue.length} mock(s) left`);
+    else pass("clearcompany: 181-posting board drains in 4 pages, stops on totalCount");
+
+    // ── Truncated FIRST page must NOT yield a partial-but-successful result ──
+    // This is the shape the old code could not reach its own fallback for: the
+    // one-shot fetch failed and returned before the paginated loop. A body that
+    // stops mid-JSON throws in res.json(); after the single bounded retry also
+    // fails, the whole crawl must abort with ok:false so the failure lands in
+    // Watchlist.lastError instead of being recorded as a healthy run.
+    resetMocks();
+    mockSequence([
+        { kind: "text", body: '{"results":[{"id":"a-1","positionTitle":"Trunc' }, // attempt 1: truncated
+        { kind: "text", body: '{"results":[{"id":"a-1","positionTitle":"Trunc' }, // retry: truncated too
+    ]);
+    const r7 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "trunc-uuid-12345678901234", companyName: "x" });
+    if (r7.ok) fail(`clearcompany truncated-first-page: must be ok:false, got ${r7.postings.length} postings (partial=${r7.partial})`);
+    else if (!r7.error.includes("pageIndex=0")) fail(`clearcompany truncated-first-page: error should name the page (${r7.error})`);
+    else pass("clearcompany: truncated first page → ok:false (never a silent partial success)");
+
+    // Same, via undici's real-world symptom: a thrown `terminated`.
+    resetMocks();
+    mockSequence([
+        { kind: "throw", error: new Error("terminated") },
+        { kind: "throw", error: new Error("terminated") },
+    ]);
+    const r8 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "term-uuid-123456789012345", companyName: "x" });
+    if (r8.ok) fail("clearcompany terminated: must be ok:false");
+    else if (!r8.error.toLowerCase().includes("terminated")) fail(`clearcompany terminated: error not surfaced (${r8.error})`);
+    else pass("clearcompany: connection terminated mid-body → ok:false");
+
+    // ── The single bounded retry actually recovers a transient page ─────────
+    resetMocks();
+    mockSequence([
+        { kind: "throw", error: new Error("terminated") }, // attempt 1 fails
+        ccPage(2, 2, "r", 0),                              // retry succeeds
+    ]);
+    const r9 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "retry-uuid-12345678901234", companyName: "x" });
+    if (!r9.ok) fail("clearcompany retry: transient page should recover", r9);
+    else if (r9.postings.length !== 2) fail(`clearcompany retry: expected 2, got ${r9.postings.length}`);
+    else if (r9.partial) fail("clearcompany retry: recovered drain must not be partial");
+    else pass("clearcompany: one bounded retry recovers a transient network failure");
+
+    // ── A mid-drain failure aborts rather than returning what it has ────────
+    // Returning ok:true+partial here would clear Watchlist.lastError and bump
+    // lastSuccessAt (job-watcher.ts:961), recording a truncating board as
+    // healthy. See the rationale comment in the fetcher.
+    resetMocks();
+    mockSequence([
+        ccPage(50, 100, "m", 0),                           // page 0 fine
+        { kind: "throw", error: new Error("terminated") }, // page 1 attempt 1
+        { kind: "throw", error: new Error("terminated") }, // page 1 retry
+    ]);
+    const r10 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "mid-uuid-1234567890123456", companyName: "x" });
+    if (r10.ok) fail(`clearcompany mid-drain failure: must abort, got ok with ${r10.postings.length} postings`);
+    else if (!r10.error.includes("pageIndex=1")) fail(`clearcompany mid-drain: error should name the failing page (${r10.error})`);
+    else pass("clearcompany: mid-drain page failure aborts the crawl (no partial success)");
+
+    // ── Non-network failures are NOT retried ───────────────────────────────
+    // A trailing good-page mock is left in the queue; if the fetcher had
+    // retried, it would have been consumed.
+    resetMocks();
+    mockSequence([
+        { kind: "json", body: { notResults: [] } }, // deterministic shape failure
+        ccPage(1, 1, "unused", 0),                  // must survive untouched
+    ]);
+    const r11 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "shape-uuid-123456789012", companyName: "x" });
+    if (r11.ok) fail("clearcompany shape failure: should not be ok");
+    else if (responseQueue.length !== 1) fail("clearcompany shape failure: must not be retried (retry consumed the spare mock)");
+    else pass("clearcompany: 200-with-bad-shape fails immediately, no retry");
+
+    resetMocks();
+    mockSequence([
+        { kind: "json", status: 503, body: { error: "unavailable" } },
+        ccPage(1, 1, "unused", 0), // must survive untouched
+    ]);
+    const r12 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "http-uuid-1234567890123", companyName: "x" });
+    if (r12.ok) fail("clearcompany 503: should not be ok");
+    else if (!r12.error.includes("503")) fail(`clearcompany 503: status missing from error (${r12.error})`);
+    else if (responseQueue.length !== 1) fail("clearcompany 503: must not be retried (retry consumed the spare mock)");
+    else pass("clearcompany: HTTP error fails immediately, no retry");
+
+    // ── Termination: over-reported totalCount drains on the empty page ──────
+    // There is deliberately no "short page ⇒ drained" rule (a short page that
+    // hasn't reached totalCount is ambiguous), so an inflated totalCount costs
+    // one extra request, plus one more to CONFIRM the empty page, and then
+    // resolves unambiguously as drained.
+    resetMocks();
+    mockSequence([
+        ccPage(2, 5, "o", 0),  // claims 5, gives 2
+        ccPage(0, 5, "o", 1),  // nothing left
+        ccPage(0, 5, "o", 1),  // empty-page confirmation — still nothing
+    ]);
+    const r13 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "over-uuid-1234567890123", companyName: "x" });
+    if (!r13.ok) fail("clearcompany over-reported total: not ok", r13);
+    else if (r13.postings.length !== 2) fail(`clearcompany over-reported total: expected 2, got ${r13.postings.length}`);
+    else if (r13.partial) fail("clearcompany over-reported total: confirmed empty page = drained, not partial");
+    else if (responseQueue.length !== 0) fail("clearcompany over-reported total: empty page should be confirmed with one extra request");
+    else pass("clearcompany: over-reported totalCount drains on a CONFIRMED empty page (not partial)");
+
+    // ── A TRANSIENT empty page must not truncate the crawl ─────────────────
+    // A valid-JSON `results: []` from a cache/backend hiccup mid-board used to
+    // set drained=true / partial=false, so close-detection would run against a
+    // 50-of-181 view. job-watcher's SAFETY 1 does NOT catch this: it gates on
+    // `fetchResult.postings.length > 0`, which a 50-of-181 crawl passes. The
+    // confirmation request recovers the real page and the crawl continues.
+    resetMocks();
+    mockSequence([
+        ccPage(50, 181, "a", 0),
+        { kind: "json", body: { results: [], currentPageIndex: 1, currentPageCount: 0, totalCount: 181 } }, // hiccup
+        ccPage(50, 181, "b", 1), // confirmation returns the real page
+        ccPage(50, 181, "c", 2),
+        ccPage(31, 181, "d", 3),
+    ]);
+    const r16 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "hiccup-uuid-123456789012", companyName: "x" });
+    if (!r16.ok) fail("clearcompany transient-empty: not ok", r16);
+    else if (r16.postings.length !== 181) fail(`clearcompany transient-empty: a hiccup must not truncate the board — expected 181, got ${r16.postings.length}`);
+    else if (r16.partial) fail("clearcompany transient-empty: recovered crawl reached totalCount, must not be partial");
+    else pass("clearcompany: transient empty page is confirmed, recovers, and does not truncate the crawl");
+
+    // A failed CONFIRMATION is two stacked anomalies — abort visibly rather
+    // than guessing drained-vs-truncated.
+    resetMocks();
+    mockSequence([
+        ccPage(50, 181, "a", 0),
+        { kind: "json", body: { results: [], currentPageIndex: 1, currentPageCount: 0, totalCount: 181 } },
+        { kind: "throw", error: new Error("terminated") }, // confirm attempt 1
+        { kind: "throw", error: new Error("terminated") }, // confirm retry
+    ]);
+    const r17 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "hicfail-uuid-12345678901", companyName: "x" });
+    if (r17.ok) fail(`clearcompany empty-confirm failure: must abort, got ok with ${r17.postings.length} postings`);
+    else if (!r17.error.includes("confirming empty pageIndex=1")) fail(`clearcompany empty-confirm failure: error should name the confirmation (${r17.error})`);
+    else pass("clearcompany: a failed empty-page confirmation aborts the crawl");
+
+    // ── totalCount is a high-water mark, not the current page's value ───────
+    // One page reporting a stale/low count must not short-circuit the crawl.
+    // Page 1 below claims totalCount=1 while page 0 said 4; reading the current
+    // page would satisfy `all.length (3) >= 1` and drain at 3 of 4.
+    resetMocks();
+    mockSequence([
+        ccPage(2, 4, "h", 0),
+        ccPage(1, 1, "i", 1), // stale/low count
+        ccPage(1, 4, "j", 2),
+    ]);
+    const r18 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "hwm-uuid-12345678901234", companyName: "x" });
+    if (!r18.ok) fail("clearcompany totalCount high-water mark: not ok", r18);
+    else if (r18.postings.length !== 4) fail(`clearcompany totalCount high-water mark: a stale low count must not end the crawl — expected 4, got ${r18.postings.length}`);
+    else if (r18.partial) fail("clearcompany totalCount high-water mark: reached the true total, must not be partial");
+    else pass("clearcompany: totalCount tracked as a monotonic high-water mark");
+
+    // ── The timeout must cover the BODY read, not just the headers ─────────
+    // The original code armed an AbortController with setTimeout and called
+    // clearTimeout as soon as loggedFetch resolved — i.e. at HEADERS — leaving
+    // `await res.json()` completely untimed. That is precisely where this
+    // endpoint fails (a 1.35 MB body that stops streaming), so a stalled read
+    // would hang indefinitely rather than failing at FETCH_TIMEOUT_MS. The fix
+    // is AbortSignal.timeout, which stays armed through the body read.
+    //
+    // The `hang` mock resolves headers and then never completes the body,
+    // erroring only when the request signal aborts. So:
+    //   - signal still armed after headers (AbortSignal.timeout) => res.json()
+    //     rejects => `network` failure => one retry => ok:false. ~40ms.
+    //   - signal cleared at headers (the old shape) => res.json() never settles
+    //     => the watchdog below fires and this FAILS loudly instead of hanging.
+    //
+    // AbortSignal.timeout is patched down to 20ms for this case only, for the
+    // same reason globalThis.setTimeout is collapsed for the whole function:
+    // honouring FETCH_TIMEOUT_MS literally would cost 8s x 2 attempts.
+    // NOTE a bare presence/aborted assertion on `init.signal` does NOT
+    // discriminate here — verified: the old shape's clearTimeout wins the
+    // microtask race against a 0ms timer, so the signal looks live in both
+    // shapes. Only actually stalling the body read tells them apart.
+    {
+        const realAbortTimeout = AbortSignal.timeout;
+        const patchTarget = AbortSignal as unknown as { timeout: (ms: number) => AbortSignal };
+        patchTarget.timeout = () => realAbortTimeout.call(AbortSignal, 20);
+        try {
+            resetMocks();
+            mockSequence([{ kind: "hang" }, { kind: "hang" }]); // first attempt + its retry
+            // Cleared as soon as the race settles — an unfired 2s timer would
+            // otherwise keep the event loop alive and add 2s to the suite.
+            let watchdog: ReturnType<typeof REAL_SET_TIMEOUT> | undefined;
+            const outcome = await Promise.race([
+                fetchClearCompany({ kind: "clearcompany", boardSlug: "hang-uuid-123456789012345", companyName: "x" })
+                    .then(r => ({ hung: false as const, r })),
+                // Real wall-clock timer: globalThis.setTimeout is collapsed to
+                // 0ms inside testClearCompany and would fire instantly.
+                new Promise<{ hung: true }>(resolve => { watchdog = REAL_SET_TIMEOUT(() => resolve({ hung: true }), 2000); }),
+            ]);
+            clearTimeout(watchdog);
+            if (outcome.hung) {
+                fail("clearcompany: a stalled response BODY never timed out — the fetch timeout is not armed through res.json() (regression to controller + clearTimeout at headers)");
+            } else if (outcome.r.ok) {
+                fail("clearcompany: a stalled body should abort into ok:false");
+            } else if (!/abort/i.test(outcome.r.error)) {
+                fail(`clearcompany: stalled body should surface as an abort (${outcome.r.error})`);
+            } else {
+                pass("clearcompany: fetch timeout stays armed through the body read (stalled body aborts, not hangs)");
+            }
+            if (lastRequestInit?.signal) pass("clearcompany: request carries an AbortSignal");
+            else fail("clearcompany: no AbortSignal passed to fetch — the request is untimed");
+        } finally {
+            patchTarget.timeout = realAbortTimeout;
+        }
+    }
+
+    // ── Termination: a server that repeats a page stops and flags partial ───
+    resetMocks();
+    mockSequence([
+        ccPage(50, 500, "rep", 0),
+        ccPage(50, 500, "rep", 1), // identical ids — 0 new
+    ]);
+    const r14 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "rep-uuid-12345678901234", companyName: "x" });
+    if (!r14.ok) fail("clearcompany repeating page: not ok", r14);
+    else if (r14.postings.length !== 50) fail(`clearcompany repeating page: expected 50, got ${r14.postings.length}`);
+    else if (!r14.partial) fail("clearcompany repeating page: incomplete view must be flagged partial");
+    else if (responseQueue.length !== 0) fail("clearcompany repeating page: should stop after the repeat");
+    else pass("clearcompany: repeated page stops the crawl and flags partial");
+
+    // ── Termination: MAX_PAGES cap → partial (never a claimed-complete crawl) ─
+    // 20 pages x 50 = 1,000-posting cap. Firefly is 181, so ~5.5x headroom —
+    // but a board past the cap must not look COMPLETE to close-detection, or
+    // every posting beyond it becomes a false-close candidate (the lesson from
+    // workday-fetcher's `drained` flag).
+    resetMocks();
+    mockSequence(Array.from({ length: 20 }, (_, i) => ccPage(50, 9999, `cap${i}`, i)));
+    const r15 = await fetchClearCompany({ kind: "clearcompany", boardSlug: "cap-uuid-12345678901234", companyName: "x" });
+    if (!r15.ok) fail("clearcompany cap: not ok", r15);
+    else if (r15.postings.length !== 1000) fail(`clearcompany cap: expected 1000 (20 x 50), got ${r15.postings.length}`);
+    else if (!r15.partial) fail("clearcompany cap: exhausting MAX_PAGES must flag partial");
+    else if (responseQueue.length !== 0) fail(`clearcompany cap: should request exactly 20 pages, ${responseQueue.length} left`);
+    else pass("clearcompany: MAX_PAGES cap stops at 20 pages and flags partial");
 }
 
 async function main() {

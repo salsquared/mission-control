@@ -88,9 +88,17 @@ flowchart TD
         <li><strong>Our own back-off</strong> — the batch abort and per-tenant breakers. Breaks by being too eager, which looks identical to an upstream block from the logs.</li>
       </ul>
       <p>
-        The third is the one that misleads. <strong>Two of the three issues in §3 turned out to be our
-        back-off, not the source.</strong> Always confirm upstream health with a direct <code>curl</code> before
-        concluding a source is blocking us.
+        The third is the one that misleads, and it is the single most useful thing on this page.
+        <strong>Both issues fixed on 2026-08-02 (§5.1, §5.2) turned out to be our own back-off and error
+        handling, not the source refusing us</strong> — and in both cases the logs read exactly like an upstream
+        block. Always confirm upstream health with a direct <code>curl</code> before concluding a source is
+        blocking you.
+      </p>
+      <p>
+        A corollary learned the same day: <strong>a green test suite tells you the probe returns the right
+        verdicts, and nothing about what those verdicts cost.</strong> The §5.1 rework passed 46 assertions while
+        still containing a path that spent 30 requests where the old code spent 1. If you change anything in
+        this area, measure request volume explicitly — see the worked bounds in §5.1.
       </p>
     </div>
   </details>
@@ -120,11 +128,11 @@ flowchart TD
         <thead><tr><th>Kind</th><th>Watchlists</th><th>Postings</th><th>Closed</th><th>Close rate</th><th>Read</th></tr></thead>
         <tbody>
           <tr><td><code>greenhouse</code></td><td>25</td><td>6,151</td><td>2,695</td><td><strong>43.8%</strong></td><td>Healthy — the reference baseline</td></tr>
-          <tr><td><code>ashby</code></td><td>7</td><td>373</td><td>160</td><td><strong>42.9%</strong></td><td>Healthy <em>as of 2026-08-02</em> — was 0.3% two days ago (§5.1)</td></tr>
+          <tr><td><code>ashby</code></td><td>7</td><td>373</td><td>160</td><td><strong>42.9%</strong></td><td>Healthy <em>as of 2026-08-02</em> — was 0.3% two days ago (§5.3)</td></tr>
           <tr><td><code>lever</code></td><td>4</td><td>205</td><td>73</td><td><strong>35.6%</strong></td><td>Healthy</td></tr>
           <tr><td><code>linkedin</code></td><td>7</td><td>7,657</td><td>1,000</td><td>13.1%</td><td>Low, but expected — aggregator, 24h-filtered crawl, HTML-only signal</td></tr>
-          <tr><td><code>workday</code></td><td>4</td><td>5,858</td><td>0</td><td><strong>0.0%</strong></td><td>🔴 Broken two different ways — §3.1 and §3.3</td></tr>
-          <tr><td><code>clearcompany</code></td><td>1</td><td>245</td><td>0</td><td><strong>0.0%</strong></td><td>🟡 Probe fixed 2026-08-02, not yet exercised — §3.2</td></tr>
+          <tr><td><code>workday</code></td><td>4</td><td>5,858</td><td>0</td><td><strong>0.0%</strong></td><td>🟡 Half fixed 2026-08-02 (§5.1, Blue Origin's 1,621); §3.1 still blocks the other 4,237</td></tr>
+          <tr><td><code>clearcompany</code></td><td>1</td><td>245</td><td>0</td><td><strong>0.0%</strong></td><td>🟡 Probe fixed (§5.5, not yet exercised); truncation fixed (§5.2)</td></tr>
         </tbody>
       </table>
       <div class="callout tip">
@@ -139,92 +147,23 @@ flowchart TD
     <summary><h2 id="open">Open issues — the fix list</h2></summary>
     <div class="section-body">
 
-      <h3>Workday: a sporadic 403 gets escalated into a 6-hour tenant outage</h3>
-      <p><strong>Blue Origin · 1,621 postings · our bug · cheapest win on this page.</strong></p>
-      <p>
-        Blue Origin's CXS detail endpoint <strong>works</strong>. Measured 2026-08-02 from this machine: one run
-        of 10 sequential probes returned <strong>200 on all 10</strong>; an earlier back-to-back burst of 12
-        returned <strong>8× 200 and 4× 403</strong>. So the 403 is <em>intermittent and load-shaped</em>, and the
-        endpoint recovers on its own.
-      </p>
-      <p>Our handling converts that flake into an outage, in two steps:</p>
-      <ol>
-        <li><code>probeBatch</code>'s abort flag trips on the <strong>first</strong> refusal anywhere in the batch, so one unlucky 403 discards the remaining ~59 probes of a 60-probe tick.</li>
-        <li>Each aborted tick calls <code>noteCxsRefusal</code>; three of those trip <code>WORKDAY_CXS_TRIP_AFTER</code> and park the whole tenant for <code>WORKDAY_CXS_COOLDOWN_MS</code> = <strong>6 hours</strong> with zero network activity.</li>
-      </ol>
-      <p>
-        That is the observed <code>aborting remaining 60 probes for this batch</code> → <code>skipping its probes
-        for 360m</code> sequence. At a ~33% burst-403 rate, the batch aborts after ~3 probes on average and the
-        tenant reaches the 6h park quickly — which is why Blue Origin logged <code>candidates=922 alive=1
-        unknown=921</code>. The single <code>alive=1</code> is the fingerprint: the endpoint answered, then our own
-        back-off stopped us.
-      </p>
-      <div class="callout warn">
-        <strong>Fix shape.</strong> Make a refusal cost a retry rather than the batch. Retry a 403 once or twice
-        with a short jittered backoff before calling <code>onRateLimit</code>; at the measured 33% flake rate two
-        retries drop a false refusal to ~3.7%. Optionally require <em>N consecutive</em> refusals (not one) to
-        trip the batch abort. Do <strong>not</strong> touch the <code>403 ⇒ unknown</code> mapping — that is
-        correct and load-bearing (§1.2).
-      </div>
-
-      <h3>ClearCompany: the job-list response truncates mid-stream</h3>
-      <p><strong>Firefly Aerospace · 245 rows · real data loss · remedy already verified.</strong></p>
-      <p>
-        Reproduced live 2026-08-02. The unpaginated board response is <strong>1,351,175 bytes</strong> and does
-        not reliably complete:
-      </p>
-      <table>
-        <thead><tr><th>Transport</th><th>Attempts</th><th>Complete</th><th>Failure</th></tr></thead>
-        <tbody>
-          <tr><td>HTTP/2</td><td>3</td><td><strong>0</strong></td><td><code>curl 92</code> — stream error in the HTTP/2 framing layer, truncated at 395 KB / 498 KB / 804 KB</td></tr>
-          <tr><td>HTTP/1.1 <em>(what Node's <code>fetch</code> uses)</em></td><td>3</td><td>2</td><td><code>curl 18</code> — partial file at 613 KB</td></tr>
-          <tr><td>Paginated, <code>pageSize=50</code></td><td>8</td><td><strong>8</strong></td><td>none — 4 pages ≈ 380 KB each, <code>50+50+50+31 = 181 = totalCount</code></td></tr>
-        </tbody>
-      </table>
-      <p>
-        When it truncates, <code>await res.json()</code> throws, <code>fetchPage</code> returns <code>ok:false</code>,
-        and <code>fetchClearCompany</code> aborts the <strong>entire</strong> crawl — so not one row's
-        <code>lastSeenAt</code> gets refreshed that tick.
-      </p>
-      <div class="callout danger">
-        <strong>This is hitting production right now.</strong> The Firefly watchlist's stored
-        <code>Watchlist.lastError</code> reads <code>Fetch failed: terminated</code> — undici's error for a
-        connection closed mid-body, i.e. the exact truncation above, recorded by the live scheduler rather than
-        inferred from a <code>curl</code> repro. Check it with the query in §7.6.
-      </div>
-      <div class="callout danger">
-        <strong>The pagination fallback is unreachable in exactly the case that needs it.</strong>
-        <code>lib/fetchers/clearcompany-fetcher.ts:61</code> does the one-shot fetch <em>first</em> and returns on
-        failure; the paginated loop at :71 is only entered when the one-shot <strong>succeeded</strong> but came
-        back short. A truncated first page therefore never reaches the fallback. Relatedly, the comment at :75
-        says <em>"Non-fatal: keep what we have"</em> while the code discards <code>all</code> and returns
-        <code>ok:false</code> — comment and behaviour disagree.
-      </div>
-      <div class="callout warn">
-        <strong>Fix shape.</strong> Paginate unconditionally from <code>pageIndex=0</code> (8/8 clean, ~380 KB
-        pages), or at minimum retry the one-shot on a parse failure and fall through to pagination instead of
-        returning. Note <code>FETCH_TIMEOUT_MS</code> is <em>not</em> the cause — <code>clearTimeout</code> at :137
-        fires before <code>res.json()</code>, so the body read is already untimed. Also refresh the header
-        comment: it says "verified against Firefly's 135-job board"; the board is <strong>181</strong> today.
-      </div>
-
       <h3>Workday: three tenants refuse CXS permanently</h3>
       <p><strong>Boeing 3,832 + Maxar 278 + Axiom Space 127 = 4,237 postings · upstream · needs a design call.</strong></p>
       <p>
-        Distinct from §3.1 and <strong>not</strong> fixable by retrying. All three answer the CXS detail endpoint
+        Distinct from §5.1 and <strong>not</strong> fixable by retrying. All three answer the CXS detail endpoint
         with a deterministic <code>403 {"errorCode":"S22","message":"permission denied"}</code> — Boeing returned
         it <strong>6 times out of 6</strong> at one request per second, spaced far below any plausible rate limit.
         Their job-<em>list</em> endpoints are fine, so crawling works and only close-detection is blocked.
       </p>
       <div class="callout tip">
         <strong>This is tenant configuration, and we can now prove it.</strong> Blue Origin returned 200 from the
-        same IP, same UA, same minute (§3.1). A shared-IP throttle cannot be selective like that. The
+        same IP, same UA, same minute (§5.1). A shared-IP throttle cannot be selective like that. The
         <code>S22</code> breaker in <code>liveness.ts</code> is behaving correctly here — there is no verdict to be
         had, so spending requests on it is pure waste.
       </div>
       <p>Candidate remedies, none free — recorded so the trade-offs aren't re-derived:</p>
       <ul>
-        <li><strong>Trust a verifiably complete list drain.</strong> When a crawl is not <code>partial</code> <em>and</em> the returned count matches the tenant's advertised <code>total</code>, absence from the list becomes admissible evidence. This is the only signal available for these tenants — and it is precisely the inference the probe gate was built to distrust, so it would need the two-strike rule plus a hard "complete drain" assertion. Blue Origin's <code>maxPages</code> 50→80 fix (§5.2) is the shape of work this needs, per tenant.</li>
+        <li><strong>Trust a verifiably complete list drain.</strong> When a crawl is not <code>partial</code> <em>and</em> the returned count matches the tenant's advertised <code>total</code>, absence from the list becomes admissible evidence. This is the only signal available for these tenants — and it is precisely the inference the probe gate was built to distrust, so it would need the two-strike rule plus a hard "complete drain" assertion. Blue Origin's <code>maxPages</code> 50→80 fix (§5.4) is the shape of work this needs, per tenant.</li>
         <li><strong>Scrape the posting HTML.</strong> Already tried and documented as dead: modern Workday tenants serve a ~6.5 KB client-rendered shell whose only hook is <code>id="root"</code>, so no marker in <code>WORKDAY_ALIVE_MARKERS</code> or <code>WORKDAY_CLOSED_MARKERS</code> can ever appear. See the caveat in <code>probeWorkday</code>.</li>
         <li><strong>Accept it.</strong> These postings never close. Honest and free; the cost is a permanently growing stale population on the largest single watchlist we have.</li>
       </ul>
@@ -248,7 +187,7 @@ flowchart TD
       </p>
       <p>
         Benign wherever the probe works (it answers <code>alive</code> and refreshes the row — this is the
-        self-heal). <strong>Compounding wherever the probe is dark</strong>, i.e. all of §3.1 and §3.3: those rows
+        self-heal). <strong>Compounding wherever the probe is dark</strong>, i.e. §3.1: those rows
         queue up permanently and inflate every candidate count in the logs.
       </p>
 
@@ -310,7 +249,7 @@ flowchart TD
       <h3>"43 ClearCompany rows are 64 days stale while live on the board"</h3>
       <p>
         Measured at <strong>41 rows, max 65 days</strong> — and <strong>41/41 match a negative filter</strong>.
-        Same mechanism as §3.5: they entered the DB before the filters were tightened (<code>firstSeenAt</code>
+        Same mechanism as §3.3: they entered the DB before the filters were tightened (<code>firstSeenAt</code>
         clusters at 2026-05-20…05-29), and every crawl since has dropped them at ingest, so
         <code>lastSeenAt</code> froze. Nothing is failing to fetch them.
       </p>
@@ -334,6 +273,77 @@ flowchart TD
     <summary><h2 id="remedies">Remedy log</h2></summary>
     <div class="section-body">
       <p>Fixes applied, newest first, each with the evidence that it worked. Add a row when you land one.</p>
+
+      <h3>Workday sporadic-403 back-off — <span style="color:#4ade80">fixed 2026-08-02</span></h3>
+      <p>
+        <strong>Unblocks Blue Origin's 1,621 postings.</strong> A single sporadic 403 aborted a
+        60-probe batch and, after three ticks, parked the tenant for 6 hours. Refusals are now split:
+        <strong>403 is soft</strong> (retried up to twice, jittered, all attempts sharing one deadline);
+        <strong>429 and 5xx stay hard</strong> and abort on sight — 429 is the standard slow-down signal and,
+        per the <code>PROBE_PROFILES</code> history, a 5xx means a Workday tenant is <em>already</em> degrading
+        under our pressure, so retrying either is the opposite of backing off. The batch abort now needs
+        <strong>three consecutive refused probes</strong> rather than one.
+      </p>
+      <div class="callout danger">
+        <strong>Four defects were found by adversarial review AFTER the tests were green — worth knowing, because
+        each is a trap the next person will re-lay.</strong>
+        <ul>
+          <li><strong>A refusal was forgotten when the final attempt wasn't itself a refusal.</strong> 403-then-timeout signalled nothing: breaker never tripped, batch never aborted, and <code>probeWorkday</code> fell through to the HTML fallback on the host that had just refused it. Measured at 30 requests for 10 postings — <em>worse than the code it replaced</em>, which spent 1 and aborted. Fixed by latching the refusal across attempts and reporting it whenever the probe reached no definitive verdict.</li>
+          <li><strong>The volume bound only constrained a <em>fully</em> refusing tenant.</strong> The abort counter can only reach three when every probe refuses, so the sporadic tenant this fix exists for was unbounded — measured 140 requests against a <code>maxPerTick</code> of 60. Fixed with a shared per-batch retry budget.</li>
+          <li><strong>A probe refused on its primary endpoint but answered by its fallback still counted toward the abort</strong>, and could never reset the run. Measured: 10 genuine <code>alive</code> verdicts and the batch aborted anyway — which would have capped greenhouse close-detection at ~10 postings per tick, the same blackout relocated to the largest kind in the fleet.</li>
+          <li><strong>Retry backoff undercut <code>perHitDelayMs</code></strong>, hitting LinkedIn faster than its own profile allows. Now floored at the profile delay.</li>
+        </ul>
+        The lesson worth keeping: every one of these is a <em>back-pressure</em> failure, and none of them could
+        be seen from the verdict logic. A green suite proved the probe returned the right answers; it said
+        nothing about how many requests that cost.
+      </div>
+      <p>
+        <strong>Worst-case volume, now bounded by construction rather than by argument.</strong> Deterministic
+        refuser (Boeing): 12 requests per tick, and since the breaker trips in the same tick, steady state is
+        <strong>2/hour</strong> — 0.4% of the 2026-07-31 incident rate. Sporadic refuser (Blue Origin), formerly
+        unbounded: workday <strong>90</strong>, greenhouse <strong>500</strong>, linkedin <strong>45</strong>.
+        <code>maxPerTick</code> caps probes; the retry budget is what caps requests.
+      </p>
+      <p>
+        Coverage: <code>liveness-refusal-retry-smoke.ts</code> (62 assertions, new). Each fix was verified by
+        reverting it and confirming the matching test fails — including two pre-existing timing assertions that
+        turned out to pass against the old code and therefore pinned nothing.
+      </p>
+
+      <h3>ClearCompany list truncation — <span style="color:#4ade80">fixed 2026-08-02</span></h3>
+      <p>
+        The one-shot 1.35 MB board fetch truncated intermittently, and on truncation
+        the <em>entire</em> crawl aborted, refreshing no row's <code>lastSeenAt</code>. Now paginated
+        unconditionally from <code>pageIndex=0</code> at <code>pageSize=50</code> (~380 KB/page, measured 8/8
+        clean), with one bounded retry for transient network failures and the timeout armed <em>across the body
+        read</em> — the old code cleared its timer when headers arrived, leaving the body read untimed, which is
+        exactly where this endpoint fails.
+      </p>
+      <p>
+        <strong>Two latent bugs surfaced on the way.</strong> Exiting via the <code>MAX_PAGES</code> cap returned
+        <code>ok:true</code> with <strong>no <code>partial</code> flag</strong>, so a board over 1,000 postings
+        would have looked like a complete crawl to <code>job-watcher</code> and every posting past the cap became
+        a false-close candidate. And a transient empty page mid-board would set <code>drained = true</code>; an
+        empty page short of <code>totalCount</code> is now confirmed by a second fetch before it is believed.
+      </p>
+      <div class="callout tip">
+        <strong>Why <code>ok:false</code> and not a partial return</strong> — the reasoning that matters, because
+        the obvious answer is wrong. Returning partial results would <em>not</em> mass-close: <code>job-watcher.ts:627</code>
+        already gates close-detection on <code>!fetchResult.partial</code>. The real disqualifier is
+        <code>:963</code>, where the success path writes <code>lastSuccessAt</code> and clears
+        <code>lastError</code> — so a truncating board would be recorded as <strong>healthy</strong>. That is
+        precisely how the 1.35 MB truncation stayed invisible until someone read the stored
+        <code>lastError</code> by hand (§7.6).
+      </div>
+      <p>
+        Coverage: <code>fetcher-unit-smoke.ts</code>, ClearCompany block 6 → 18 assertions. The
+        <code>AbortSignal</code> test is worth copying rather than the assertion it replaced: merely asserting a
+        signal is <em>present</em> passes against the old broken shape, because <code>clearTimeout</code> wins
+        the microtask race. Only a genuinely hanging body discriminates — verified by reverting the fetcher and
+        watching the suite drop to 87/88. Suite runtime also went <strong>9.5s → 0.49s</strong> by collapsing
+        <code>globalThis.setTimeout</code> inside the test rather than adding an env seam, since a
+        <code>MC_PAGE_DELAY_MS=0</code> in a <code>.env</code> would silently defeat politeness in production.
+      </p>
 
       <h3>Ashby not-found shell — <span style="color:#4ade80">confirmed working 2026-08-02</span></h3>
       <p>
@@ -365,7 +375,7 @@ flowchart TD
       </p>
       <p>
         <strong>Result:</strong> close-detection ran for the first time at 21:34Z (<code>candidates=922</code>,
-        previously skipped entirely). It then immediately hit §3.1, so the fix is correct but inert.
+        previously skipped entirely). It then immediately hit the sporadic-403 back-off, which is why that ran as the same batch of work — with §5.1 landed, this fix is no longer inert.
       </p>
 
       <h3>ClearCompany structured probe — landed 2026-08-02, not yet exercised</h3>
@@ -380,7 +390,7 @@ flowchart TD
         board-level 404 (unknown <code>siteId</code>) is <strong>empty</strong>. Only the former closes. Without
         that, the day ClearCompany rotates a tenant's <code>siteId</code>, all 245 close at once.
       </p>
-      <p><strong>Status:</strong> still awaiting its first real workload — see §3.2 and §4.2 for what to watch.</p>
+      <p><strong>Status:</strong> still awaiting its first real workload — see §5.2 and §4.2 for what to watch.</p>
 
       <h3>Workday probe profile — landed 2026-07-31</h3>
       <p>
@@ -437,7 +447,7 @@ WHERE p.status='closed' AND p.removedAt &gt; (strftime('%s','now')-5*86400)*1000
 GROUP BY day, w.kind ORDER BY day DESC;"</code></pre>
 
       <h3>Is a Workday tenant blocked, or are we backing off?</h3>
-      <p>Derive the CXS URL from any posting and hit it directly. Repeat 6–12× — <em>deterministic</em> 403 means tenant config (§3.3); <em>intermittent</em> means it is our pacing (§3.1).</p>
+      <p>Derive the CXS URL from any posting and hit it directly. Repeat 6–12× — <em>deterministic</em> 403 means tenant config (§3.1); <em>intermittent</em> means it is our pacing (§5.1).</p>
       <pre><code class="language-bash">UA='Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
 # https://&lt;tenant&gt;.&lt;dc&gt;.myworkdayjobs.com/&lt;locale&gt;/&lt;site&gt;/job/&lt;rest&gt;
 #   becomes https://&lt;host&gt;/wday/cxs/&lt;tenant&gt;/&lt;site&gt;/job/&lt;rest&gt;
@@ -474,7 +484,7 @@ pm2 logs mission-control-scheduler-prod --lines 4000 --nostream | grep -E 'refus
       <p>
         The cheapest check on this page and the one most worth running first — <code>Watchlist.lastError</code>
         is persisted by the scheduler, so a dead board or a truncating fetch shows up here without touching a log.
-        It is how both §3.6 entries and the live confirmation of §3.2 were found.
+        It is how both §3.4 entries and the live confirmation of §5.2 were found.
       </p>
       <pre><code class="language-sql">sqlite3 prisma/prod.db "
 SELECT kind, name, active, substr(lastError,1,90)
@@ -482,7 +492,7 @@ FROM Watchlist WHERE lastError IS NOT NULL AND lastError != '' ORDER BY kind;"</
       <p>Read the two error shapes differently:</p>
       <ul>
         <li><code>HTTP 404 …</code> ⇒ the board is gone or the slug is wrong. Try a few candidate slugs against the ATS API before assuming the company left — if all of them 404, it did.</li>
-        <li><code>Fetch failed: terminated</code> ⇒ undici's connection-closed-mid-body error, i.e. a truncating response (§3.2). Distinguish from a timeout, which reports differently.</li>
+        <li><code>Fetch failed: terminated</code> ⇒ undici's connection-closed-mid-body error, i.e. a truncating response (§5.2). Distinguish from a timeout, which reports differently.</li>
       </ul>
       <p>And confirm nothing has silently stopped running:</p>
       <pre><code class="language-sql">sqlite3 prisma/prod.db "
